@@ -1,34 +1,23 @@
 // src/App.tsx
-import { Link, Routes, Route, NavLink } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
+import Header from "./components/Header";
 import Home from "./pages/Home";
 import CFB from "./pages/CFB";
-import Players from "./pages/Players"; // <-- add
+import Players from "./pages/Players";
+import "./theme.css";
+import "./index.css";
 
 export default function App() {
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", color: "#0f172a" }}>
-      <header style={{ background: "#fff", borderBottom: "1px solid #e2e8f0" }}>
-        <div style={{ maxWidth: 960, margin: "0 auto", padding: "12px 16px", display: "flex", gap: 24, alignItems: "center" }}>
-          <Link to="/" style={{ fontSize: 20, fontWeight: 800 }}>Sim Site</Link>
-          <nav style={{ display: "flex", gap: 16, fontSize: 14 }}>
-            <NavLink to="/" end style={({ isActive }) => ({ fontWeight: isActive ? 700 : 400, opacity: isActive ? 1 : 0.7 })}>Home</NavLink>
-            <NavLink to="/cfb" style={({ isActive }) => ({ fontWeight: isActive ? 700 : 400, opacity: isActive ? 1 : 0.7 })}>CFB</NavLink>
-            <NavLink to="/players" style={({ isActive }) => ({ fontWeight: isActive ? 700 : 400, opacity: isActive ? 1 : 0.7 })}>Players</NavLink>
-          </nav>
-        </div>
-      </header>
-
-      <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px" }}>
+    <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+      <Header />
+      <main style={{ maxWidth: 1200, margin: "20px auto", padding: "0 16px 40px" }}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/cfb" element={<CFB />} />
-          <Route path="/players" element={<Players />} /> {/* <-- add */}
+          <Route path="/players" element={<Players />} />
         </Routes>
       </main>
-
-      <footer style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px", fontSize: 12, opacity: 0.7 }}>
-        © {new Date().getFullYear()} — built with React
-      </footer>
     </div>
   );
 }

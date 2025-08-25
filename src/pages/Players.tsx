@@ -12,6 +12,49 @@ import {
   CartesianGrid,
   ReferenceLine,
 } from "recharts";
+import { Cell } from "recharts";
+import { getTeamColors } from "../utils/teamColors";
+
+
+// Shared theming helpers for Recharts + UI
+const axisProps = {
+    axisLine: { stroke: "var(--border)" },
+    tickLine: { stroke: "var(--border)" },
+    tick: { fill: "var(--text)", fontSize: 12 },
+  };
+  
+  const tooltipProps = {
+    contentStyle: {
+      background: "var(--card)",
+      border: "1px solid var(--border)",
+      borderRadius: 12,
+    },
+    labelStyle: { color: "var(--muted)" },
+    itemStyle: { color: "var(--text)" },
+  };
+
+  /** Convert win probability (0–1) to American odds */
+function toAmericanOdds(p: number): string {
+    if (!(p > 0 && p < 1)) return "—";            // 0% or 100% -> no finite price
+    const val = p >= 0.5 ? -Math.round((100 * p) / (1 - p))
+                         :  Math.round((100 * (1 - p)) / p);
+    return (val > 0 ? "+" : "") + val;
+  }
+  function pct(x: number) { return (x * 100).toFixed(1) + "%"; }
+  
+  
+  const listButtonStyle = (active: boolean) => ({
+    textAlign: "left" as const,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: `1px solid ${active ? "var(--brand)" : "var(--border)"}`,
+    background: active
+      ? "color-mix(in oklab, var(--brand) 10%, white)"
+      : "var(--card)",
+    color: "var(--text)",
+    cursor: "pointer",
+  });
+  
 
 /* ------------------------------------------------------------------ */
 /* Robust discovery (relative paths + multiple patterns, raw preferred) */
@@ -364,6 +407,7 @@ export default function Players() {
   }, [players, search]);
 
   const selected = selectedKey ? players[selectedKey] ?? null : null;
+  const playerColor = (selected && getTeamColors(selected.team || ""))?.primary || "var(--brand)";
 
   const series = useMemo(() => {
     if (!selected || !selectedMetric) return [] as number[];
@@ -410,6 +454,26 @@ export default function Players() {
     }
     return { lt: lt / n, eq: eq / n, gt: gt / n, line: L };
   }, [series, line]);
+
+  const odds = useMemo(() => {
+    if (!prob) return null as null | {
+      under: string; over: string; underNoPush: string; overNoPush: string;
+      uNP: number; oNP: number;
+    };
+    // raw (includes push in the denominator)
+    const underOdds = toAmericanOdds(prob.lt);
+    const overOdds  = toAmericanOdds(prob.gt);
+  
+    // “win only” (exclude pushes from the denominator)
+    const denom = prob.lt + prob.gt;
+    const uNP = denom > 0 ? prob.lt / denom : 0;
+    const oNP = denom > 0 ? prob.gt / denom : 0;
+    const underNoPush = toAmericanOdds(uNP);
+    const overNoPush  = toAmericanOdds(oNP);
+  
+    return { under: underOdds, over: overOdds, underNoPush, overNoPush, uNP, oNP };
+  }, [prob]);
+  
 
   /* ------------------------------- UI ------------------------------- */
   return (
@@ -597,7 +661,11 @@ export default function Players() {
                       label={{ value: `Line ${prob.line}`, position: "top", fontSize: 12, fill: "#ef4444" }}
                     />
                   )}
-                  <Bar dataKey="count" name="Frequency" />
+                  <Bar dataKey="count" name="Frequency">
+                    {hist.map((_,i) => (
+                        <Cell key={i} fill={playerColor} />
+                    ))}
+                    </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -627,13 +695,15 @@ export default function Players() {
             {prob ? (
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 14 }}>
                 <span>
-                  <b>P(value &lt; line)</b>: {(prob.lt * 100).toFixed(1)}%
+                  <b>Under</b>: {(prob.lt * 100).toFixed(1)}%
+                  {odds ? <> ({odds.under})</> : null}
                 </span>
                 <span>
-                  <b>P(value = line)</b>: {(prob.eq * 100).toFixed(1)}%
+                  <b>Push</b>: {(prob.eq * 100).toFixed(1)}%
                 </span>
                 <span>
-                  <b>P(value &gt; line)</b>: {(prob.gt * 100).toFixed(1)}%
+                  <b>Over</b>: {(prob.gt * 100).toFixed(1)}%
+                  {odds ? <> ({odds.over})</> : null}
                 </span>
               </div>
             ) : (

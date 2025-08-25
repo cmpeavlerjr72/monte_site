@@ -12,17 +12,18 @@ import {
   Legend,
   CartesianGrid,
   ReferenceLine,
-  Cell,
 } from "recharts";
+import { Cell } from "recharts";
 import { getTeamColors } from "../utils/teamColors";
 
-/* ---------- Discover CSVs (scores) ---------- */
-// Raw text first (preferred so we avoid fetch)
+
+/* ---------- Robust discovery (relative paths + many patterns) ---------- */
+// Raw text (preferred)
 const RAW1 = import.meta.glob("../data/**/scores/*.csv",     { as: "raw", eager: true }) as Record<string, string>;
 const RAW2 = import.meta.glob("../data/**/scores/*.csv.csv", { as: "raw", eager: true }) as Record<string, string>;
 const RAW3 = import.meta.glob("../data/**/scores/*.CSV",     { as: "raw", eager: true }) as Record<string, string>;
 const RAW4 = import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "raw", eager: true }) as Record<string, string>;
-// URL fallback for anything not caught above
+// URL fallback (only if a path wasn’t captured by RAW*)
 const URL1 = import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: true }) as Record<string, string>;
 const URL2 = import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: true }) as Record<string, string>;
 const URL3 = import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: true }) as Record<string, string>;
@@ -31,7 +32,7 @@ const URL4 = import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager:
 type FileInfo = { path: string; week: string; file: string; raw?: string; url?: string };
 
 function extractWeekFromPath(p: string): string {
-  const s = p.replace(/\\/g, "/");
+  const s = p.replace(/\\/g, "/"); // normalize Windows slashes
   const m1 = s.match(/\/(week[^/]+)\//i);
   if (m1) return m1[1].toLowerCase();
   const m2 = s.match(/\/data\/([^/]+)\//i);
@@ -54,7 +55,7 @@ function buildFiles(): FileInfo[] {
 
 /* ---------- Types & helpers ---------- */
 interface SimRow { team: string; opp: string; pts: number; opp_pts: number; }
-interface GameData { teamA: string; teamB: string; rowsA: SimRow[]; } // rows normalized to A vs B
+interface GameData { teamA: string; teamB: string; rowsA: SimRow[]; } // rows normalized to A vs B (alphabetical key)
 type GameMap = Record<string, GameData>;
 type Metric = "spread" | "total" | "teamLeft" | "teamRight";
 
@@ -65,10 +66,8 @@ function niceGameTitle(g: GameData) {
   return `${g.teamA} vs ${g.teamB}`;
 }
 
-type HistBin = { bin: string; count: number; start: number; end: number };
-
-function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: number }): HistBin[] {
-  if (!values.length) return [];
+function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: number }) {
+  if (!values.length) return [] as { bin: string; count: number; start: number; end: number }[];
   const v = values.slice().sort((a, b) => a - b);
   const n = v.length, min = v[0], max = v[n - 1];
   const q1 = v[Math.floor(0.25 * (n - 1))];
@@ -95,7 +94,6 @@ function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: n
     return { bin: `${Number(s.toFixed(1))}–${Number(e.toFixed(1))}`, count: c, start: s, end: e };
   });
 }
-
 function summaryStats(values: number[]) {
   if (!values.length) return null as null | Record<string, number>;
   const v = values.slice().sort((a, b) => a - b);
@@ -110,10 +108,11 @@ function summaryStats(values: number[]) {
 }
 
 /** Given hist bars and a numeric value, return the bar label that contains it */
-function findBinLabelForValue(hist: HistBin[], x: number) {
+function findBinLabelForValue(hist: { start: number; end: number; bin: string }[], x: number) {
   for (const h of hist) {
     if (x >= h.start && x < h.end) return h.bin;
   }
+  // if exactly on the last edge, snap to last bin
   if (hist.length && x === hist[hist.length - 1].end) return hist[hist.length - 1].bin;
   return undefined;
 }
@@ -122,6 +121,8 @@ function findBinLabelForValue(hist: HistBin[], x: number) {
 function metricLabel(metric: Metric, g: GameData, teamOrder: 0 | 1) {
   const leftName  = teamOrder === 0 ? g.teamA : g.teamB;
   const rightName = teamOrder === 0 ? g.teamB : g.teamA;
+  const leftColor  = (getTeamColors(leftName)?.primary)  || "var(--brand)";
+  const rightColor = (getTeamColors(rightName)?.primary) || "var(--accent)";
   switch (metric) {
     case "spread":    return `Spread (${rightName} − ${leftName})`;
     case "total":     return `Total (${leftName} + ${rightName})`;
@@ -130,21 +131,23 @@ function metricLabel(metric: Metric, g: GameData, teamOrder: 0 | 1) {
   }
 }
 
-/** Series builder (orientation aware)
- *  - spread:  Right − Left
- *  - total:   Left + Right
- *  - teamLeft/teamRight: that side's points
+/** Series builder — orientation aware.
+ *  - spread: Right − Left  (matches sportsbook convention when viewing "Left vs Right")
+ *  - total:  Left + Right
+ *  - teamLeft:  Left points
+ *  - teamRight: Right points
  */
 function metricSeries(g: GameData, metric: Metric, teamOrder: 0 | 1) {
-  const A = g.rowsA.map((r) => r.pts);     // points for alphabetical team (A)
-  const B = g.rowsA.map((r) => r.opp_pts); // points for alphabetical opponent (B)
+  const A = g.rowsA.map((r) => r.pts);     // A points (alphabetical first)
+  const B = g.rowsA.map((r) => r.opp_pts); // B points
   const left  = teamOrder === 0 ? A : B;
   const right = teamOrder === 0 ? B : A;
 
   if (metric === "teamLeft")  return left;
   if (metric === "teamRight") return right;
   if (metric === "total")     return left.map((x, i) => x + right[i]);
-  return right.map((x, i) => x - left[i]); // spread
+  // spread == Right − Left
+  return right.map((x, i) => x - left[i]);
 }
 
 /* ---------- Component ---------- */
@@ -154,9 +157,7 @@ export default function CFB() {
   const { weeks, weekToFiles } = useMemo(() => {
     const map: Record<string, FileInfo[]> = {};
     for (const f of discovered) (map[f.week] ||= []).push(f);
-    const names = Object.keys(map).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true })
-    );
+    const names = Object.keys(map).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     return { weeks: names, weekToFiles: map };
   }, [discovered]);
 
@@ -167,23 +168,22 @@ export default function CFB() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const [metric, setMetric] = useState<Metric>("spread");
-  const [teamOrder, setTeamOrder] = useState<0 | 1>(0); // 0 = A vs B (left=A, right=B)
+  const [teamOrder, setTeamOrder] = useState<0 | 1>(0); // 0 = A vs B (left=A, right=B), 1 = B vs A
   const [bins, setBins] = useState<number | "auto">("auto");
-  const [line, setLine] = useState<string>("");
+  const [line, setLine] = useState<string>("");         // custom line
 
-  /* ---------- Derived values (ORDER MATTERS) ---------- */
-
-  // Game currently selected
   const selectedGame = selectedKey ? games[selectedKey] : null;
 
-  // Series for current metric/orientation
-  const series = useMemo(
-    () => (selectedGame ? metricSeries(selectedGame, metric, teamOrder) : []),
-    [selectedGame, metric, teamOrder]
-  );
+  const filteredEntries = useMemo(() => {
+    const entries = Object.entries(games) as [string, GameData][];
+    if (!search.trim()) return entries;
+    const q = search.toLowerCase();
+    return entries.filter(([, g]) => g.teamA.toLowerCase().includes(q) || g.teamB.toLowerCase().includes(q));
+  }, [games, search]);
 
-  // Histogram & stats
-  const hist: HistBin[] = useMemo(() => {
+  const series = useMemo(() => (selectedGame ? metricSeries(selectedGame, metric, teamOrder) : []), [selectedGame, metric, teamOrder]);
+
+  const hist = useMemo(() => {
     if (!series.length) return [];
     const opts: any = {};
     if (bins !== "auto") opts.bins = Math.max(1, Number(bins));
@@ -192,7 +192,6 @@ export default function CFB() {
 
   const stats = useMemo(() => summaryStats(series), [series]);
 
-  // Probability vs custom line
   const prob = useMemo(() => {
     if (!series.length) return null as null | { under: number; at: number; over: number; line: number };
     const L = Number(line);
@@ -207,60 +206,9 @@ export default function CFB() {
     return { under: under / n, at: at / n, over: over / n, line: L };
   }, [series, line]);
 
-  // Orientation-aware team names & colors
-  const leftName  = selectedGame ? (teamOrder === 0 ? selectedGame.teamA : selectedGame.teamB) : "";
-  const rightName = selectedGame ? (teamOrder === 0 ? selectedGame.teamB : selectedGame.teamA) : "";
-  const leftColor  = getTeamColors(leftName)?.primary  ?? "var(--brand)";
-  const rightColor = getTeamColors(rightName)?.primary ?? "var(--accent)";
-
-  // Per-bin colors (spread/total/team totals)
-  const binColors = useMemo(() => {
-    if (!hist.length || !selectedGame) return [] as string[];
-
-    if (metric === "spread") {
-      // negative = left winning, positive = right winning
-      return hist.map((h) => {
-        const mid = (h.start + h.end) / 2;
-        if (mid < 0) return leftColor;
-        if (mid > 0) return rightColor;
-        return "var(--border)"; // bin centered at 0
-      });
-    }
-
-    if (metric === "total") {
-      const med = stats?.median ?? 0;
-      return hist.map((h) => ((h.start + h.end) / 2) < med ? leftColor : rightColor);
-    }
-
-    if (metric === "teamLeft")  return hist.map(() => leftColor);
-    if (metric === "teamRight") return hist.map(() => rightColor);
-
-    return hist.map(() => "var(--brand)");
-  }, [hist, selectedGame, metric, leftColor, rightColor, stats?.median]);
-
-  // For placing the vertical line on the matching bar (categorical X)
-  const lineBinLabel = useMemo(
-    () => (prob && hist.length ? findBinLabelForValue(hist, prob.line) : undefined),
-    [prob, hist]
-  );
-
-  // Filter list by search
-  const filteredEntries = useMemo(() => {
-    const entries = Object.entries(games) as [string, GameData][];
-    if (!search.trim()) return entries;
-    const q = search.toLowerCase();
-    return entries.filter(([, g]) =>
-      g.teamA.toLowerCase().includes(q) || g.teamB.toLowerCase().includes(q)
-    );
-  }, [games, search]);
-
   /* ---------- Load the selected week ---------- */
   useEffect(() => {
-    if (!selectedWeek) {
-      setGames({});
-      setSelectedKey(null);
-      return;
-    }
+    if (!selectedWeek) { setGames({}); setSelectedKey(null); return; }
 
     async function loadWeek() {
       setLoading(true);
@@ -278,14 +226,7 @@ export default function CFB() {
                     complete: (res) => {
                       try {
                         const rows = (res.data as any[])
-                          .filter(
-                            (r) =>
-                              r &&
-                              r.team != null &&
-                              r.opp != null &&
-                              r.pts != null &&
-                              r.opp_pts != null
-                          )
+                          .filter((r) => r && r.team != null && r.opp != null && r.pts != null && r.opp_pts != null)
                           .map((r) => ({
                             team: String(r.team),
                             opp: String(r.opp),
@@ -301,34 +242,31 @@ export default function CFB() {
                   });
 
                 if (item.raw) parseText(item.raw);
-                else if (item.url)
-                  fetch(item.url).then((r) => r.text()).then(parseText).catch(reject);
-                else reject(new Error("No raw or url for " + item.path));
+                else if (item.url) fetch(item.url).then((r) => r.text()).then(parseText).catch(reject);
+                else reject(new Error("No raw or url available for " + item.path));
               })
           )
         );
 
-        // Merge all files into unordered game pairs, normalized to A vs B
         const nextGames: GameMap = {};
         for (const rows of parsedArrays) {
+          // group by unordered pair
           const byPair = new Map<string, SimRow[]>();
           for (const row of rows) {
             const key = sortedKey(row.team, row.opp);
-            const arr = byPair.get(key);
-            if (arr) arr.push(row);
-            else byPair.set(key, [row]);
+            const existing = byPair.get(key);
+            if (existing) existing.push(row); else byPair.set(key, [row]);
           }
+          // normalize to A vs B
           for (const [pairKey, allRows] of byPair.entries()) {
             const [A, B] = pairKey.split("__");
-            const normalized = allRows
-              .map((r) =>
-                r.team === A && r.opp === B
-                  ? { team: A, opp: B, pts: r.pts, opp_pts: r.opp_pts }
-                  : r.team === B && r.opp === A
-                  ? { team: A, opp: B, pts: r.opp_pts, opp_pts: r.pts }
-                  : null
-              )
-              .filter(Boolean) as SimRow[];
+            const normalized = allRows.map((r) =>
+              r.team === A && r.opp === B
+                ? { team: A, opp: B, pts: r.pts, opp_pts: r.opp_pts }
+                : r.team === B && r.opp === A
+                ? { team: A, opp: B, pts: r.opp_pts, opp_pts: r.pts }
+                : null
+            ).filter(Boolean) as SimRow[];
 
             if (!nextGames[pairKey]) nextGames[pairKey] = { teamA: A, teamB: B, rowsA: [] };
             nextGames[pairKey].rowsA.push(...normalized);
@@ -337,21 +275,22 @@ export default function CFB() {
 
         setGames(nextGames);
         setSelectedKey(Object.keys(nextGames)[0] ?? null);
-        setTeamOrder(0);
+        setTeamOrder(0); // default to A vs B
       } finally {
         setLoading(false);
       }
     }
-
     loadWeek();
   }, [selectedWeek, weekToFiles]);
 
-  /* ---------- UI ---------- */
+  // For placing the vertical line on the matching bar (categorical X)
+  const lineBinLabel = useMemo(() => (prob && hist.length ? findBinLabelForValue(hist as any, prob.line) : undefined), [prob, hist]);
+
   return (
     <div style={{ display: "grid", gap: 24, gridTemplateColumns: "1fr", maxWidth: 1200, margin: "0 auto" }}>
       {/* Week selector */}
-      <section className="card" style={{ padding: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--brand)" }}>Week</h2>
+      <section style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Week</h2>
         {weeks.length === 0 ? (
           <div style={{ marginTop: 8, fontSize: 14, opacity: 0.7 }}>
             Put score CSVs under <code>src/data/week#/scores/</code>
@@ -361,7 +300,7 @@ export default function CFB() {
             <select
               value={selectedWeek}
               onChange={(e) => setSelectedWeek(e.target.value)}
-              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff" }}
             >
               {weeks.map((w) => (
                 <option key={w} value={w}>{w}</option>
@@ -378,13 +317,13 @@ export default function CFB() {
       </section>
 
       {/* Find a game */}
-      <section className="card" style={{ padding: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--brand)" }}>Find a game</h2>
+      <section style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Find a game</h2>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search teams (e.g., Hawaii, Stanford)"
-          style={{ marginTop: 8, width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+          style={{ marginTop: 8, width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #cbd5e1" }}
         />
         <div style={{ marginTop: 12, maxHeight: 220, overflow: "auto", display: "grid", gap: 8 }}>
           {filteredEntries.length === 0 ? (
@@ -398,8 +337,8 @@ export default function CFB() {
                   textAlign: "left",
                   padding: "10px 12px",
                   borderRadius: 10,
-                  border: `1px solid ${selectedKey === key ? "var(--brand)" : "var(--border)"}`,
-                  background: selectedKey === key ? "color-mix(in oklab, var(--brand) 10%, white)" : "var(--card)",
+                  border: `1px solid ${selectedKey === key ? "#3b82f6" : "#e2e8f0"}`,
+                  background: selectedKey === key ? "#eff6ff" : "#fff",
                   cursor: "pointer",
                 }}
               >
@@ -422,7 +361,7 @@ export default function CFB() {
 
       {/* Chart + stats */}
       <section style={{ display: "grid", gap: 16 }}>
-        <div className="card" style={{ padding: 16, minHeight: 420 }}>
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, minHeight: 420 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
             <div>
               <div style={{ fontSize: 12, opacity: 0.7 }}>Histogram</div>
@@ -445,44 +384,23 @@ export default function CFB() {
             <div style={{ height: 340 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={hist} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
-                  <CartesianGrid stroke="var(--border)" strokeOpacity={0.4} />
+                  <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="bin" angle={-30} textAnchor="end" interval={0} height={50} />
                   <YAxis allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}
-                    labelStyle={{ color: "var(--muted)" }}
-                    itemStyle={{ color: "var(--text)" }}
-                    formatter={(v: any) => [v, "Count"]}
-                  />
+                  <Tooltip formatter={(v: any) => [v, "Count"]} />
                   <Legend />
                   {prob && lineBinLabel && (
                     <ReferenceLine
                       x={lineBinLabel}
                       ifOverflow="extendDomain"
-                      stroke="var(--accent)"
+                      stroke="#ef4444"
                       strokeDasharray="4 4"
-                      label={{ value: `Line ${prob.line}`, position: "top", fontSize: 12, fill: "var(--accent)" }}
+                      label={{ value: `Line ${prob.line}`, position: "top", fontSize: 12, fill: "#ef4444" }}
                     />
                   )}
-                  <Bar dataKey="count" name="Frequency">
-                    {hist.map((_, i) => <Cell key={i} fill={binColors[i]} />)}
-                  </Bar>
+                  <Bar dataKey="count" name="Frequency" />
                 </BarChart>
               </ResponsiveContainer>
-
-              {/* Tiny legend chips for team colors */}
-              {selectedGame && (
-                <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 12 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <i style={{ width: 10, height: 10, borderRadius: 999, background: leftColor }} />
-                    {leftName}
-                  </span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <i style={{ width: 10, height: 10, borderRadius: 999, background: rightColor }} />
-                    {rightName}
-                  </span>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -497,8 +415,8 @@ export default function CFB() {
           <Card span={3} title="75th %ile" value={stats ? stats.p75.toFixed(2) : "—"} />
           <Card span={3} title="95th %ile" value={stats ? stats.p95.toFixed(2) : "—"} />
 
-          <div className="card" style={{ gridColumn: "span 12", padding: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 8, color: "var(--brand)" }}>Probability vs Line</div>
+          <div style={{ gridColumn: "span 12", background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Probability vs Line</div>
             {prob ? (
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 14 }}>
                 <span><b>Under</b>: {(prob.under * 100).toFixed(1)}%</span>
@@ -534,8 +452,8 @@ function MetricOptions({
   setLine: (s: string) => void;
 }) {
   return (
-    <section className="card" style={{ padding: 16 }}>
-      <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--brand)" }}>Metric & Options</h2>
+    <section style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16 }}>
+      <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Metric & Options</h2>
 
       <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 8 }}>
         {(["spread", "total", "teamLeft", "teamRight"] as Metric[]).map((m) => (
@@ -545,9 +463,8 @@ function MetricOptions({
             style={{
               padding: "8px 10px",
               borderRadius: 10,
-              border: `1px solid ${metric === m ? "var(--brand)" : "var(--border)"}`,
-              background: metric === m ? "var(--brand)" : "var(--card)",
-              color: metric === m ? "var(--brand-contrast)" : "var(--text)",
+              border: `1px solid ${metric === m ? "#3b82f6" : "#e2e8f0"}`,
+              background: metric === m ? "#eff6ff" : "#fff",
               cursor: "pointer",
               fontSize: 14,
             }}
@@ -566,8 +483,8 @@ function MetricOptions({
             style={{
               padding: "6px 10px",
               borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "var(--card)",
+              border: "1px solid #cbd5e1",
+              background: "#fff",
               cursor: selectedGame ? "pointer" : "not-allowed",
             }}
           >
@@ -584,13 +501,13 @@ function MetricOptions({
           <select
             value={String(bins)}
             onChange={(e) => setBins(e.target.value === "auto" ? "auto" : Number(e.target.value))}
-            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff" }}
           >
             <option value="auto">Auto</option>
             <option value="10">10</option>
             <option value="20">20</option>
-            <option value="30">30</option>
-            <option value="40">40</option>
+            <option value="20">30</option>
+            <option value="40">30</option>
             <option value="50">50</option>
           </select>
         </div>
@@ -602,7 +519,7 @@ function MetricOptions({
             inputMode="decimal"
             placeholder={metric === "spread" ? "e.g., -6.5" : "e.g., 55.5"}
             onChange={(e) => setLine(e.target.value)}
-            style={{ width: 140, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)", color: "var(--text)" }}
+            style={{ width: 140, padding: "6px 10px", borderRadius: 8, border: "1px solid #cbd5e1" }}
           />
         </div>
       </div>
@@ -616,10 +533,17 @@ function MetricOptions({
 
 function Card({ span = 3, title, value }: { span?: number; title: string; value: any }) {
   return (
-    <div className="card" style={{ gridColumn: `span ${span}`, padding: 16 }}>
-      <div style={{ fontSize: 12, color: "var(--muted)" }}>{title}</div>
-      <div style={{ fontWeight: 700, color: "var(--text)" }}>{String(value)}</div>
-      <div style={{ height: 3, marginTop: 8, background: "var(--accent)", borderRadius: 999 }} />
+    <div
+      style={{
+        gridColumn: `span ${span}`,
+        background: "#fff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 16,
+        padding: 16,
+      }}
+    >
+      <div style={{ fontSize: 12, opacity: 0.7 }}>{title}</div>
+      <div style={{ fontWeight: 700 }}>{String(value)}</div>
     </div>
   );
 }
