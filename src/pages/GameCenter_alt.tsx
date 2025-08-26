@@ -63,51 +63,6 @@ function buildFiles(raw: Record<string,string>, url: Record<string,string>): Fil
 const scoreFilesAll = buildFiles(S_RAW, S_URL);
 const playerFilesAll = buildFiles(P_RAW, P_URL);
 
-/* --------------------- Team logo lookup (from src/assets/team_info.csv) --------------------- */
-const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
-const teamInfoRaw = Object.values(TEAM_INFO_RAW)[0] ?? "";
-
-const LOGO_MAP: Record<string, string> = {};
-
-function normTeamKey(t: string) {
-  return t
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/\bst\.\b/g, "state")
-    .replace(/[^a-z0-9]+/g, "");
-}
-function fixLogoUrl(u?: string) {
-  if (!u) return undefined;
-  let s = u.trim();
-  if (!s) return undefined;
-  if (s.startsWith("//")) s = "https:" + s;
-  if (s.startsWith("http://")) s = "https://" + s.slice(7);
-  return s;
-}
-function firstLogoFromCell(cell?: string) {
-  if (!cell) return undefined;
-  const parts = String(cell).split(/[|,;\s]+/).filter(Boolean);
-  for (const p of parts) {
-    const fixed = fixLogoUrl(p);
-    if (fixed?.startsWith("https://")) return fixed;
-  }
-  return undefined;
-}
-if (teamInfoRaw) {
-  const parsed = Papa.parse(teamInfoRaw, { header: true, skipEmptyLines: true });
-  for (const row of (parsed.data as any[])) {
-    if (!row) continue;
-    const name = row.Team ?? row.team ?? row.School ?? row.school ?? row.Name ?? row.name;
-    const key = name ? normTeamKey(String(name)) : "";
-    if (!key) continue;
-    const logo = firstLogoFromCell(row.Logos ?? row.logo ?? row.Logo ?? row.logos);
-    if (logo) LOGO_MAP[key] = logo;
-  }
-}
-function getTeamLogo(name: string) {
-  return LOGO_MAP[normTeamKey(name)];
-}
-
 /* --------------------- Types & helpers --------------------- */
 interface SimRow { team: string; opp: string; pts: number; opp_pts: number; }
 interface GameData { teamA: string; teamB: string; rowsA: SimRow[]; } // normalized to A vs B
@@ -151,69 +106,70 @@ function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: n
 }
 
 function NumberSpinner({
-  value,
-  onChange,
-  step = 0.5,
-  min,
-  max,
-  width = 140,
-  placeholder,
-}: {
-  value: string;
-  onChange: (s: string) => void;
-  step?: number;
-  min?: number;
-  max?: number;
-  width?: number;
-  placeholder?: string;
-}) {
-  const toNum = (s: string) => (s.trim() === "" ? NaN : Number(s));
-  const clamp = (n: number) =>
-    Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n));
-
-  const bump = (dir: -1 | 1) => {
-    const curr = toNum(value);
-    const base = Number.isFinite(curr) ? curr : 0;
-    const next = clamp(base + dir * step);
-    onChange(next.toFixed(1));
-  };
-
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <button
-        type="button"
-        onClick={() => bump(-1)}
-        style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
-      >
-        −
-      </button>
-      <input
-        type="number"
-        step={step}
-        min={min}
-        max={max}
-        value={value}
-        placeholder={placeholder}
-        inputMode="decimal"
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          width,
-          padding: "6px 10px",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-        }}
-      />
-      <button
-        type="button"
-        onClick={() => bump(1)}
-        style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
-      >
-        +
-      </button>
-    </div>
-  );
-}
+    value,
+    onChange,
+    step = 0.5,
+    min,
+    max,
+    width = 140,
+    placeholder,
+  }: {
+    value: string;
+    onChange: (s: string) => void;
+    step?: number;
+    min?: number;
+    max?: number;
+    width?: number;
+    placeholder?: string;
+  }) {
+    const toNum = (s: string) => (s.trim() === "" ? NaN : Number(s));
+    const clamp = (n: number) =>
+      Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n));
+  
+    const bump = (dir: -1 | 1) => {
+      const curr = toNum(value);
+      const base = Number.isFinite(curr) ? curr : 0;
+      const next = clamp(base + dir * step);
+      onChange(next.toFixed(1));
+    };
+  
+    return (
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <button
+          type="button"
+          onClick={() => bump(-1)}
+          style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
+        >
+          −
+        </button>
+        <input
+          type="number"
+          step={step}
+          min={min}
+          max={max}
+          value={value}
+          placeholder={placeholder}
+          inputMode="decimal"
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            width,
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--card)",
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => bump(1)}
+          style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
+        >
+          +
+        </button>
+      </div>
+    );
+  }
+  
 
 function summaryStats(values: number[]) {
   if (!values.length) return null as null | Record<string, number>;
@@ -538,15 +494,12 @@ export default function GameCenter() {
     const n = series.length;
     return { under: u / n, at: a / n, over: o / n, line: L };
   }, [series, teamLine]);
+  
 
   const leftName  = selectedGame ? (teamOrder===0 ? selectedGame.teamA : selectedGame.teamB) : "";
   const rightName = selectedGame ? (teamOrder===0 ? selectedGame.teamB : selectedGame.teamA) : "";
   const leftColor  = getTeamColors(leftName)?.primary  ?? "var(--brand)";
   const rightColor = getTeamColors(rightName)?.primary ?? "var(--accent)";
-
-  // NEW: compute logos for the two teams
-  const leftLogo  = leftName  ? getTeamLogo(leftName)  : undefined;
-  const rightLogo = rightName ? getTeamLogo(rightName) : undefined;
 
   const binColors = useMemo(() => {
     if (!hist.length || !selectedGame) return [] as string[];
@@ -644,52 +597,21 @@ export default function GameCenter() {
           style={{ marginTop:8, width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
         />
         <div style={{ marginTop:12, maxHeight:220, overflow:"auto", display:"grid", gap:8 }}>
-          {filteredEntries.map(([key,g]) => {
-            const logoA = getTeamLogo(g.teamA);
-            const logoB = getTeamLogo(g.teamB);
-            return (
-              <button
-                key={key}
-                onClick={()=>{ setSelectedKey(key); setTeamOrder(0); }}
-                style={{
-                  textAlign:"left", padding:"10px 12px", borderRadius:10,
-                  border:`1px solid ${selectedKey===key ? "var(--brand)":"var(--border)"}`,
-                  background: selectedKey===key ? "color-mix(in oklab, var(--brand) 10%, white)" : "var(--card)",
-                  cursor:"pointer",
-                  display:"grid",
-                  gridTemplateColumns:"1fr auto 1fr",
-                  alignItems:"center",
-                  gap:8
-                }}
-              >
-                <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
-                  {logoA && (
-                    <img
-                      src={logoA}
-                      alt={`${g.teamA} logo`}
-                      height={20}
-                      style={{ display:"block", objectFit:"contain" }}
-                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                    />
-                  )}
-                  <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.teamA}</div>
-                </div>
-                <div style={{ fontSize:12, opacity:0.7, justifySelf:"center" }}>{g.rowsA.length} sims</div>
-                <div style={{ display:"flex", alignItems:"center", gap:8, justifySelf:"end", minWidth:0 }}>
-                  <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.teamB}</div>
-                  {logoB && (
-                    <img
-                      src={logoB}
-                      alt={`${g.teamB} logo`}
-                      height={20}
-                      style={{ display:"block", objectFit:"contain" }}
-                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                    />
-                  )}
-                </div>
-              </button>
-            );
-          })}
+          {filteredEntries.map(([key,g]) => (
+            <button
+              key={key}
+              onClick={()=>{ setSelectedKey(key); setTeamOrder(0); }}
+              style={{
+                textAlign:"left", padding:"10px 12px", borderRadius:10,
+                border:`1px solid ${selectedKey===key ? "var(--brand)":"var(--border)"}`,
+                background: selectedKey===key ? "color-mix(in oklab, var(--brand) 10%, white)" : "var(--card)",
+                cursor:"pointer"
+              }}
+            >
+              <div style={{ fontWeight:600 }}>{g.teamA} vs {g.teamB}</div>
+              <div style={{ fontSize:12, opacity:0.7 }}>{g.rowsA.length} simulations</div>
+            </button>
+          ))}
           {!filteredEntries.length && <div style={{ opacity:.7 }}>No games.</div>}
         </div>
       </section>
@@ -705,34 +627,18 @@ export default function GameCenter() {
             alignItems:"center", gap:16, background:"color-mix(in oklab, var(--brand) 6%, white)",
             borderRadius:12, padding:"12px 16px"
           }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, color:leftColor, minWidth:0 }}>
-              {leftLogo && (
-                <img
-                  src={leftLogo}
-                  alt={`${leftName} logo`}
-                  height={28}
-                  style={{ display:"block", objectFit:"contain" }}
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              )}
-              <div style={{ fontWeight:800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{leftName}</div>
+            <div style={{ display:"flex", alignItems:"center", gap:10, color:leftColor }}>
+              <i style={{ width:12, height:12, background:leftColor, borderRadius:999 }} />
+              <div style={{ fontWeight:800 }}>{leftName}</div>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", justifyItems:"center", gap:12 }}>
               <div style={{ fontWeight:800, fontSize:40, lineHeight:1, color:leftColor }}>{Math.round(medLeft)}</div>
               <div style={{ fontWeight:700, opacity:.75 }}>vs</div>
               <div style={{ fontWeight:800, fontSize:40, lineHeight:1, color:rightColor }}>{Math.round(medRight)}</div>
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"end", color:rightColor, minWidth:0 }}>
-              <div style={{ fontWeight:800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{rightName}</div>
-              {rightLogo && (
-                <img
-                  src={rightLogo}
-                  alt={`${rightName} logo`}
-                  height={28}
-                  style={{ display:"block", objectFit:"contain" }}
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              )}
+            <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"end", color:rightColor }}>
+              <div style={{ fontWeight:800 }}>{rightName}</div>
+              <i style={{ width:12, height:12, background:rightColor, borderRadius:999 }} />
             </div>
           </div>
         )}
@@ -787,10 +693,10 @@ export default function GameCenter() {
           <div>
             <span style={{ marginRight:8 }}>Line:</span>
             <NumberSpinner
-              value={teamLine}
-              onChange={setTeamLine}
-              step={0.5}
-              placeholder={metric === "spread" ? "e.g., -6.5" : "e.g., 55.5"}
+                value={teamLine}
+                onChange={setTeamLine}
+                step={0.5}
+                placeholder={metric === "spread" ? "e.g., -6.5" : "e.g., 55.5"}
             />
           </div>
         </div>
@@ -858,7 +764,7 @@ export default function GameCenter() {
           <div style={{ marginTop: 8, opacity: 0.7 }}>Select a game.</div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 12 }}>
-            {[{ team: leftName, color: leftColor, logo: leftLogo }, { team: rightName, color: rightColor, logo: rightLogo }].map(({ team, color, logo }) => {
+            {[{ team: leftName, color: leftColor }, { team: rightName, color: rightColor }].map(({ team, color }) => {
               const renderGroup = (role: Role) => {
                 const cols = COLUMNS[role];
                 const names = teamPlayersByRole(team, role);
@@ -867,16 +773,6 @@ export default function GameCenter() {
                 return (
                   <div key={role} className="card" style={{ padding: 12, borderColor: "var(--border)", marginTop: 10 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      {/* team logo next to the team name in each role group */}
-                      {logo && (
-                        <img
-                          src={logo}
-                          alt={`${team} logo`}
-                          height={20}
-                          style={{ display:"block", objectFit:"contain" }}
-                          onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                        />
-                      )}
                       <i style={{ width: 10, height: 10, borderRadius: 999, background: color }} />
                       <div style={{ fontWeight: 800 }}>
                         {team} • {role === "QB" ? "QBs" : role === "Rusher" ? "Rushers" : "Receivers"}
@@ -903,7 +799,7 @@ export default function GameCenter() {
                               agg[canon] && agg[canon].length ? Math.round(median(agg[canon])) : "—";
 
                             // default stat for detail panel for this role
-                            const defaultCanon = COLUMNS[role][0];
+                            const defaultCanon = cols[0];
                             const defaultRawKey =
                               Object.keys(rawStats).find((k) => STAT_SYNONYMS[norm(k)] === defaultCanon) ||
                               Object.keys(rawStats)[0] ||
@@ -962,17 +858,7 @@ export default function GameCenter() {
       {detailTeam && detailPlayer && (
         <section className="card" style={{ padding:16 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)", display:"flex", alignItems:"center", gap:8 }}>
-              {/* team logo in the header too */}
-              {getTeamLogo(detailTeam) && (
-                <img
-                  src={getTeamLogo(detailTeam)!}
-                  alt={`${detailTeam} logo`}
-                  height={22}
-                  style={{ display:"block", objectFit:"contain" }}
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              )}
+            <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>
               {detailPlayer} — {detailTeam} • {detailRole}
             </h2>
             <button
@@ -996,7 +882,12 @@ export default function GameCenter() {
               ))}
             </select>
             <span>Line:</span>
-            <NumberSpinner value={playerLine} onChange={setPlayerLine} step={0.5} />
+            <input
+              value={playerLine}
+              inputMode="decimal"
+              onChange={(e)=>setPlayerLine(e.target.value)}
+              style={{ width:120, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+            />
           </div>
 
           <PlayerChart
