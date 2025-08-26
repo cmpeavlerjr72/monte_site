@@ -3,3 +3,28 @@ body { margin: 0; }
 a { color: inherit; text-decoration: none; }
 
 
+/* Keep content nicely padded and fluid */
+.page-wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding-inline: clamp(12px, 3vw, 20px);
+  }
+  
+  /* Any wide table (boxscore) scrolls horizontally inside its card */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Give tables a sensible minimum so columns don't squish into unreadable blobs */
+  .table-scroll > table {
+    min-width: 680px; /* adjust if you add/remove columns */
+  }
+  
+  /* Optional: hide crowded X-axis labels on narrow screens */
+  @media (max-width: 640px) {
+    .chart-compact .recharts-x-axis .recharts-cartesian-axis-tick {
+      display: none;
+    }
+  }
+  

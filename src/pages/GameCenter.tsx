@@ -105,6 +105,72 @@ function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: n
   });
 }
 
+function NumberSpinner({
+    value,
+    onChange,
+    step = 0.5,
+    min,
+    max,
+    width = 140,
+    placeholder,
+  }: {
+    value: string;
+    onChange: (s: string) => void;
+    step?: number;
+    min?: number;
+    max?: number;
+    width?: number;
+    placeholder?: string;
+  }) {
+    const toNum = (s: string) => (s.trim() === "" ? NaN : Number(s));
+    const clamp = (n: number) =>
+      Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n));
+  
+    const bump = (dir: -1 | 1) => {
+      const curr = toNum(value);
+      const base = Number.isFinite(curr) ? curr : 0;
+      const next = clamp(base + dir * step);
+      onChange(next.toFixed(1));
+    };
+  
+    return (
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <button
+          type="button"
+          onClick={() => bump(-1)}
+          style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
+        >
+          −
+        </button>
+        <input
+          type="number"
+          step={step}
+          min={min}
+          max={max}
+          value={value}
+          placeholder={placeholder}
+          inputMode="decimal"
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            width,
+            padding: "6px 10px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--card)",
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => bump(1)}
+          style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
+        >
+          +
+        </button>
+      </div>
+    );
+  }
+  
+
 function summaryStats(values: number[]) {
   if (!values.length) return null as null | Record<string, number>;
   const v = values.slice().sort((a,b)=>a-b);
@@ -416,12 +482,19 @@ export default function GameCenter() {
 
   // TEAM probability uses teamLine
   const teamProb = useMemo(() => {
-    if (!series.length) return null as null | { under:number; at:number; over:number; line:number };
-    const L = Number(teamLine); if (!Number.isFinite(L)) return null;
+    if (!series.length) return null;
+    const L = Number(teamLine);
+    if (!Number.isFinite(L)) return null;
+    let u = 0, a = 0, o = 0;
+    for (const x of series) {
+      if (Math.abs(x - L) < 1e-9) a++;
+      else if (x < L) u++;
+      else o++;
+    }
     const n = series.length;
-    let u=0,a=0,o=0; for (const x of series) { if (Math.abs(x-L)<1e-9) a++; else if (x<L) u++; else o++; }
-    return { under:u/n, at:a/n, over:o/n, line:L };
+    return { under: u / n, at: a / n, over: o / n, line: L };
   }, [series, teamLine]);
+  
 
   const leftName  = selectedGame ? (teamOrder===0 ? selectedGame.teamA : selectedGame.teamB) : "";
   const rightName = selectedGame ? (teamOrder===0 ? selectedGame.teamB : selectedGame.teamA) : "";
@@ -619,12 +692,11 @@ export default function GameCenter() {
 
           <div>
             <span style={{ marginRight:8 }}>Line:</span>
-            <input
-              value={teamLine}
-              inputMode="decimal"
-              placeholder={metric==="spread" ? "e.g., -6.5" : "e.g., 55.5"}
-              onChange={(e)=>setTeamLine(e.target.value)}
-              style={{ width:140, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+            <NumberSpinner
+                value={teamLine}
+                onChange={setTeamLine}
+                step={0.5}
+                placeholder={metric === "spread" ? "e.g., -6.5" : "e.g., 55.5"}
             />
           </div>
         </div>
