@@ -6,6 +6,7 @@ import CFB from "./pages/CFB";
 import Players from "./pages/Players";
 import "./theme.css";
 import "./index.css";
+import GameCenter from "./pages/GameCenter"
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/cfb" element={<CFB />} />
           <Route path="/players" element={<Players />} />
+          <Route path = "/game" element={<GameCenter />} />
         </Routes>
       </main>
     </div>
