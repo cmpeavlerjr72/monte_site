@@ -41,6 +41,22 @@ const P_URL = Object.assign(
   import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: true })
 ) as Record<string, string>;
 
+// --- book lines (week-level games CSV) ---
+const G_RAW = Object.assign(
+    {},
+    // covers: week1/week_1_games.csv, week2/week_2_games.csv, etc.
+    import.meta.glob("../data/**/week*_games*.csv", { as: "raw", eager: true }),
+    // optional: also match generic names like games.csv if you ever use them
+    import.meta.glob("../data/**/games*.csv", { as: "raw", eager: true })
+  ) as Record<string, string>;
+  
+  const G_URL = Object.assign(
+    {},
+    import.meta.glob("../data/**/week*_games*.csv", { as: "url", eager: true }),
+    import.meta.glob("../data/**/games*.csv", { as: "url", eager: true })
+  ) as Record<string, string>;
+  
+
 type FileInfo = { path: string; week: string; file: string; raw?: string; url?: string };
 
 function normSlashes(p: string) { return p.replace(/\\/g, "/"); }
@@ -62,6 +78,9 @@ function buildFiles(raw: Record<string,string>, url: Record<string,string>): Fil
 }
 const scoreFilesAll = buildFiles(S_RAW, S_URL);
 const playerFilesAll = buildFiles(P_RAW, P_URL);
+const gameLineFilesAll = buildFiles(G_RAW, G_URL);
+
+
 
 /* --------------------- Team logo lookup (from src/assets/team_info.csv) --------------------- */
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
@@ -256,6 +275,20 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
   return right.map((x,i)=>x-left[i]);
 }
 
+/** convert probability (0..1) to American odds (e.g. -150, +120) */
+function probToAmerican(pRaw: number): number {
+    // clamp to avoid 0/1 infinities
+    const p = Math.min(0.999999, Math.max(0.000001, pRaw));
+    if (p > 0.5) return -Math.round((p / (1 - p)) * 100);
+    // p <= 0.5 => underdog -> positive odds
+    return Math.round(((1 - p) / p) * 100);
+  }
+  function fmtAmerican(p: number) {
+    const o = probToAmerican(p);
+    return o > 0 ? `+${o}` : `${o}`;
+  }
+  
+
 /* --------------------- Roles & stat canonicalization --------------------- */
 type Role = "QB" | "Rusher" | "Receiver";
 
@@ -281,6 +314,8 @@ const STAT_SYNONYMS: Record<string, string> = {
   rec_td: "rec_td", receiving_tds: "rec_td",
   receptions: "receptions", rec: "receptions", catches: "receptions",
 };
+
+const TD_MEAN_CANON = new Set(["pass_td", "rush_td", "rec_td"]);
 
 // pretty labels
 const CANON_LABEL: Record<string, string> = {
@@ -316,6 +351,11 @@ function aggregateCanon(stats: Record<string, number[]>) {
 
 function median(arr:number[]) { const s=[...arr].sort((a,b)=>a-b); const n=s.length; return n? (n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2):0; }
 
+function mean(arr: number[]) {
+    return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  }
+  
+
 function canonicalRoleFromValueKey(statKey: string): Role | null {
   const canon = STAT_SYNONYMS[norm(statKey)];
   return canon ? (ROLE_BY_CANON[canon] ?? null) : null;
@@ -341,6 +381,7 @@ export default function GameCenter() {
   const weeks = useMemo(() => {
     const s = new Set<string>(scoreFilesAll.map(f=>f.week));
     for (const f of playerFilesAll) s.add(f.week);
+    for (const f of gameLineFilesAll) s.add(f.week);
     return Array.from(s).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   }, []);
 
@@ -354,6 +395,13 @@ export default function GameCenter() {
     for (const f of playerFilesAll) (m[f.week] ||= []).push(f);
     return m;
   }, []);
+  const filesByWeekGameLines = useMemo(() => {
+    const m:Record<string,FileInfo[]> = {};
+    for (const f of gameLineFilesAll) (m[f.week] ||= []).push(f);
+    return m;
+  }, []);
+
+
 
   const [selectedWeek, setSelectedWeek] = useState(weeks[0] ?? "");
   const [loading, setLoading] = useState(false);
@@ -380,6 +428,21 @@ export default function GameCenter() {
   const [detailPlayer, setDetailPlayer] = useState<string>("");
   const [detailRole, setDetailRole] = useState<Role>("QB");
   const [detailStat, setDetailStat] = useState<string>("");
+
+  type BookMap = Record<string, { leftSpread: number; total: number; rawA: string; rawB: string }>;
+  const [books, setBooks] = useState<BookMap>({});
+
+  const fmtSigned = (x: number) => (x > 0 ? `+${x}` : `${x}`);
+  const fmt1 = (x: number) => (Number.isInteger(x) ? `${x}` : x.toFixed(1));
+
+  function firstKey<T = any>(obj: any, keys: string[]): T | undefined {
+    for (const k of keys) {
+      const v = obj?.[k];
+      if (v !== undefined && v !== null && `${v}` !== "") return v as T;
+    }
+    return undefined;
+  }
+
 
   /* --------- Load both score + player CSVs for the selected week --------- */
   useEffect(() => {
@@ -494,6 +557,58 @@ export default function GameCenter() {
               })
           )
         );
+
+                /* ---- book lines (spread/total) ---- */
+        const gFiles = filesByWeekGameLines[selectedWeek] ?? [];
+        const gameLineArrays = await Promise.all(
+        gFiles.map(
+            (item) =>
+            new Promise<any[]>((resolve, reject) => {
+                const parse = (text: string) =>
+                Papa.parse(text, {
+                    header: true,
+                    dynamicTyping: true,
+                    skipEmptyLines: true,
+                    complete: (res) => resolve(res.data as any[]),
+                    error: reject,
+                });
+                if (item.raw) parse(item.raw);
+                else if (item.url) fetch(item.url).then((r) => r.text()).then(parse).catch(reject);
+                else reject(new Error("No raw/url for " + item.path));
+            })
+        )
+        );
+
+        // Build a map: sorted pair -> {leftSpread, total}
+        const bookMap: BookMap = {};
+        for (const rows of gameLineArrays) {
+        for (const raw of rows) {
+            // Try common header names; adjust if your file uses different labels
+            const A = String(
+            firstKey(raw, ["Team A", "TeamA", "teamA", "team_a", "A", "Home", "home", "Left", "left", "Team"])
+            ?? ""
+            ).trim();
+            const B = String(
+            firstKey(raw, ["Team B", "TeamB", "teamB", "team_b", "B", "Away", "away", "Right", "right", "Opponent", "Opp", "opp"])
+            ?? ""
+            ).trim();
+
+            const spreadA = Number(
+            firstKey(raw, ["Spread", "spread", "A Spread", "a_spread", "teamA_spread", "Line", "line"])
+            );
+            const total = Number(firstKey(raw, ["Total", "total", "OU", "ou", "O/U", "o/u", "over_under"]));
+
+            if (!A || !B || !Number.isFinite(spreadA) || !Number.isFinite(total)) continue;
+
+            const key = sortedKey(A, B);
+            const [alphaLeft] = key.split("__");        // alphabetical left we show in the UI
+            const leftSpread = (A === alphaLeft) ? spreadA : -spreadA;
+
+            bookMap[key] = { leftSpread, total, rawA: A, rawB: B };
+        }
+        }
+        setBooks(bookMap);
+
 
         const pmap: PlayerMap = {};
         for (const arr of playerArrays) {
@@ -674,7 +789,18 @@ export default function GameCenter() {
                   )}
                   <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.teamA}</div>
                 </div>
-                <div style={{ fontSize:12, opacity:0.7, justifySelf:"center" }}>{g.rowsA.length} sims</div>
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                {books[key] ? (
+                    <>
+                    {" • "}
+                    <span>
+                        Book: {g.teamA} {fmtSigned(Number(fmt1(books[key].leftSpread)))}, Total {fmt1(books[key].total)}
+                    </span>
+                    {" • "}
+                    </>
+                ) : null}
+                </div>
+
                 <div style={{ display:"flex", alignItems:"center", gap:8, justifySelf:"end", minWidth:0 }}>
                   <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.teamB}</div>
                   {logoB && (
@@ -837,9 +963,15 @@ export default function GameCenter() {
             <div style={{ fontWeight:700, marginBottom:6, color:"var(--brand)" }}>Probability vs Line</div>
             {teamProb ? (
               <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:14 }}>
-                <span><b>Under</b>: {(teamProb.under*100).toFixed(1)}%</span>
-                <span><b>At</b>: {(teamProb.at*100).toFixed(1)}%</span>
-                <span><b>Over</b>: {(teamProb.over*100).toFixed(1)}%</span>
+                <span>
+                    <b>Under (Cover)</b>: {(teamProb.under*100).toFixed(1)}%
+                    <span style={{ opacity:.8 }}> ({fmtAmerican(teamProb.under)})</span>
+                    </span>
+                <span><b>At (Push)</b>: {(teamProb.at*100).toFixed(1)}%</span>
+                <span>
+                    <b>Over (No Cover)</b>: {(teamProb.over*100).toFixed(1)}%
+                    <span style={{ opacity:.8 }}> ({fmtAmerican(teamProb.over)})</span>
+                    </span>
               </div>
             ) : (
               <div style={{ opacity:.7, fontSize:14 }}>Enter a numeric line to see probabilities.</div>
@@ -899,8 +1031,17 @@ export default function GameCenter() {
                           {names.map((name) => {
                             const rawStats = (players[team]?.[name]?.[role]) || {};
                             const agg = aggregateCanon(rawStats);
-                            const val = (canon: string) =>
-                              agg[canon] && agg[canon].length ? Math.round(median(agg[canon])) : "—";
+                            const val = (canon: string) => {
+                              const arr = agg[canon];
+                              if (!arr || !arr.length) return "—";
+                              if (TD_MEAN_CANON.has(canon)) {
+                                // Show average TDs (e.g., 1.3). Use toFixed(2) if you prefer two decimals.
+                                return mean(arr).toFixed(1);
+                              }
+                              // Everything else stays as median, rounded to whole numbers
+                              return Math.round(median(arr));
+                            };
+                            
 
                             // default stat for detail panel for this role
                             const defaultCanon = COLUMNS[role][0];
@@ -1073,9 +1214,15 @@ function PlayerChart({
             <div style={{ fontWeight:700, marginBottom:6, color:"var(--brand)" }}>Probability vs Line</div>
             {prob ? (
               <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:14 }}>
-                <span><b>Under</b>: {(prob.under*100).toFixed(1)}%</span>
+                <span>
+                    <b>Under</b>: {(prob.under*100).toFixed(1)}%
+                    <span style={{ opacity:.8 }}> ({fmtAmerican(prob.under)})</span>
+                    </span>
                 <span><b>At</b>: {(prob.at*100).toFixed(1)}%</span>
-                <span><b>Over</b>: {(prob.over*100).toFixed(1)}%</span>
+                <span>
+                    <b>Over</b>: {(prob.over*100).toFixed(1)}%
+                    <span style={{ opacity:.8 }}> ({fmtAmerican(prob.over)})</span>
+                    </span>
               </div>
             ) : (
               <div style={{ opacity:.7, fontSize:14 }}>Enter a numeric line above to see probabilities.</div>

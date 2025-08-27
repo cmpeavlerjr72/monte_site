@@ -15,8 +15,8 @@ export default function App() {
       <main style={{ maxWidth: 1200, margin: "20px auto", padding: "0 16px 40px" }}>
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/cfb" element={<CFB />} />
-          <Route path="/players" element={<Players />} />
+          {/* <Route path="/cfb" element={<CFB />} />
+          <Route path="/players" element={<Players />} /> */}
           <Route path = "/game" element={<GameCenter />} />
         </Routes>
       </main>
