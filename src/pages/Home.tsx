@@ -8,7 +8,7 @@ export default function Home() {
         This site hosts interactive views of my college football simulations.
       </p>
       <div style={{ marginTop: 24 }}>
-        <Link to="/game" style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 12 }}>
+        <Link to="/scoreboard" style={{ padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: 12 }}>
           Go to CFB Explorer
         </Link>
       </div>

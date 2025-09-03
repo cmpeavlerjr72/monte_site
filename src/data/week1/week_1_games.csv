@@ -1,44 +1,44 @@
-﻿Team A,Team B,Spread,OU
-Boise State,South Florida,-6,63.5
-Rutgers,Ohio,-14,47.5
-NC State,East Carolina,-11.5,60.5
-UCF,Jacksonville State,-18.5,52.5
-Akron,Wyoming,7,50.5
-Minnesota,Buffalo,-18.5,44.5
-Wisconsin,Miami (OH),-17.5,39.5
-Cincinnati,Nebraska,6.5,53.5
-Charlotte,App State,6.5,51.5
-Wake Forest,Kennesaw State,-17.5,51.5
-Michigan State,Western Michigan,-19.5,49.5
-Baylor,Auburn,2.5,57.5
-Colorado,Georgia Tech,4,54.5
-Sam Houston,UNLV,10.5,60.5
-San José State,Central Michigan,-11.5,50.5
-Purdue,Ball State,-17.5,50.5
-Tennessee,Syracuse,-14,50.5
-Maryland,Florida Atlantic,-14.5,59.5
-Southern Miss,Mississippi State,11.5,61.5
-Tulane,Northwestern,-6.5,46.5
-Ohio State,Texas,-1.5,47.5
-Kentucky,Toledo,-7.5,48.5
-Indiana,Old Dominion,-22.5,54.5
-Florida State,Alabama,13.5,50.5
-Georgia,Marshall,-38.5,55.5
-Penn State,Nevada,-44.5,57.5
-Umass,Temple,2.5,49.5
-Virginia,Coastal Carolina,-12.5,58.5
-Texas A&M,UTSA,-22.5,56.5
-Clemson,LSU,-4,57.5
-Michigan,New Mexico,-34.5,51.5
-Utah State,UTEP,-6,61.5
-Ole Miss,Georgia State,-38,61.5
-Texas State,Eastern Michigan,-13.5,57.5
-Louisiana,Rice,-13.5,48.5
-Fresno State,Georgia Southern,-1.5,51.5
-Oregon State,California,-3,50.5
-Arizona,Hawaii,-16.5,55.5
-Washington,Colorado State,-20.5,52.5
-UCLA,Utah,6.5,50.5
-South Carolina,Virginia Tech,-7.5,50.5
-Miami,Notre Dame,2.5,49.5
-North Carolina,TCU,3.5,58.5
+﻿Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual
+Boise State,South Florida,-6,63.5,7,34
+Rutgers,Ohio,-14,47.5,34,31
+NC State,East Carolina,-11.5,60.5,24,17
+UCF,Jacksonville State,-18.5,52.5,17,10
+Akron,Wyoming,7,50.5,0,10
+Minnesota,Buffalo,-18.5,44.5,23,10
+Wisconsin,Miami (OH),-17.5,39.5,17,0
+Cincinnati,Nebraska,7.5,53.5,17,20
+Charlotte,App State,6.5,51.5,11,34
+Wake Forest,Kennesaw State,-17.5,51.5,10,9
+Michigan State,Western Michigan,-19.5,49.5,23,6
+Baylor,Auburn,2.5,57.5,24,38
+Colorado,Georgia Tech,4,54.5,20,27
+Sam Houston,UNLV,10.5,60.5,21,38
+San José State,Central Michigan,-11.5,50.5,14,16
+Purdue,Ball State,-17.5,50.5,31,0
+Tennessee,Syracuse,-14,50.5,45,26
+Maryland,Florida Atlantic,-13.5,59.5,39,7
+Southern Miss,Mississippi State,11.5,61.5,17,34
+Tulane,Northwestern,-6.5,46.5,23,3
+Ohio State,Texas,-1.5,47.5,14,7
+Kentucky,Toledo,-7.5,48.5,24,16
+Indiana,Old Dominion,-22.5,54.5,27,14
+Florida State,Alabama,13.5,50.5,31,17
+Georgia,Marshall,-38.5,55.5,45,7
+Penn State,Nevada,-44.5,57.5,46,11
+Umass,Temple,2.5,49.5,10,42
+Virginia,Coastal Carolina,-12.5,58.5,48,7
+Texas A&M,UTSA,-22.5,56.5,42,24
+Clemson,LSU,-4,57.5,10,17
+Michigan,New Mexico,-34.5,51.5,34,17
+Utah State,UTEP,-6,61.5,28,16
+Ole Miss,Georgia State,-38,61.5,63,7
+Texas State,Eastern Michigan,-13.5,57.5,52,27
+Louisiana,Rice,-13.5,48.5,12,14
+Fresno State,Georgia Southern,-1.5,51.5,42,14
+Oregon State,California,-3,50.5,15,34
+Arizona,Hawaii,-16.5,55.5,40,6
+Washington,Colorado State,-20.5,52.5,38,21
+UCLA,Utah,6.5,50.5,10,43
+South Carolina,Virginia Tech,-7.5,50.5,24,11
+Miami,Notre Dame,2.5,49.5,27,24
+North Carolina,TCU,3.5,58.5,48,10
