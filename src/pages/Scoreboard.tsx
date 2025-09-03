@@ -674,7 +674,7 @@ function GameCard({ card, gdata, players }: { card: CardGame; gdata: GameData; p
   const [pPlayer, setPPlayer] = useState<string>("");
   useEffect(()=>{ setPPlayer(defaultPlayer); }, [defaultPlayer]);
 
-  const defaultStat = useMemo(() => statsFor(pTeam, pPlayer, pRole)[0] || "", [pTeam, pPlayer, pRole, players]);
+  const defaultStat = useMemo(() => statsFor(pTeam, pPlayer, pRole)[4] || "", [pTeam, pPlayer, pRole, players]);
   const [pStat, setPStat] = useState<string>("");
   useEffect(()=>{ setPStat(defaultStat); }, [defaultStat]);
 
