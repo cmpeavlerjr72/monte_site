@@ -141,6 +141,7 @@ type CardGame = {
   kickoffMs?: number;
   pickSpread?: string;
   pickTotal?: string;
+  spreadProb?:number;
 };
 
 const median = (arr: number[]) => {
@@ -547,6 +548,36 @@ export default function Scoreboard() {
         const predTotal = simsA + simsB;
         pickTotal = predTotal > joined.total ? `Over ${joined.total}` : `Under ${joined.total}`;
       }
+      // --- Spread probability at the BOOK line (Team A line) ---
+      let spreadProb: number | undefined;
+      if (joined?.spread !== undefined) {
+      const s = joined.spread; // Team A line
+
+    // Orientation: Avals/Bvals must match book's Team A/B
+      const Avals = g.teamA === joined.teamA
+          ? g.rowsA.map(r => r.pts)
+          : g.rowsA.map(r => r.opp_pts);
+      const Bvals = g.teamA === joined.teamA
+          ? g.rowsA.map(r => r.opp_pts)
+          : g.rowsA.map(r => r.pts);
+
+    // P(Team A covers) = P(A + s > B)
+      let coverA = 0;
+      const n = Math.min(Avals.length, Bvals.length);
+      for (let i = 0; i < n; i++) {
+          if ((Avals[i] + s) > Bvals[i]) coverA++;
+      }
+      const pA = n ? coverA / n : undefined;
+
+    // Which side did we pick? (same logic you used to set pickSpread)
+      const diff = (simsA + s) - simsB; // >0 means Team A covers
+      if (typeof pA === "number") {
+          spreadProb = diff > 0
+          ? pA                // picked Team A side
+          : 1 - pA;           // picked Team B side
+      }
+    }
+
 
       out.push({
         key,
@@ -555,7 +586,7 @@ export default function Scoreboard() {
         medA, medB,
         kickoffLabel: joined?.kickoffLabel,
         kickoffMs: joined?.kickoffMs,
-        pickSpread, pickTotal,
+        pickSpread, pickTotal,spreadProb,
       });
     }
     // Strict numeric sort by kickoff timestamp (date then time). Unknown -> bottom.
@@ -762,11 +793,13 @@ function GameCard({ card, gdata, players }: { card: CardGame; gdata: GameData; p
           {card.pickSpread && (
             <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: "color-mix(in oklab, var(--brand) 10%, white)", border: "1px solid var(--border)" }}>
               Spread: Pick • {card.pickSpread}
+              {typeof card.spreadProb === "number" ? ` (${(card.spreadProb * 100).toFixed(1)}%)` : ""}
             </span>
           )}
           {card.pickTotal && (
             <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: "color-mix(in oklab, var(--accent) 10%, white)", border: "1px solid var(--border)" }}>
               Total: Pick • {card.pickTotal}
+              
             </span>
           )}
         </div>
