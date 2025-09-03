@@ -1,44 +1,44 @@
-﻿Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual
-Boise State,South Florida,-6,63.5,7,34
-Rutgers,Ohio,-14,47.5,34,31
-NC State,East Carolina,-11.5,60.5,24,17
-UCF,Jacksonville State,-18.5,52.5,17,10
-Akron,Wyoming,7,50.5,0,10
-Minnesota,Buffalo,-18.5,44.5,23,10
-Wisconsin,Miami (OH),-17.5,39.5,17,0
-Cincinnati,Nebraska,7.5,53.5,17,20
-Charlotte,App State,6.5,51.5,11,34
-Wake Forest,Kennesaw State,-17.5,51.5,10,9
-Michigan State,Western Michigan,-19.5,49.5,23,6
-Baylor,Auburn,2.5,57.5,24,38
-Colorado,Georgia Tech,4,54.5,20,27
-Sam Houston,UNLV,10.5,60.5,21,38
-San José State,Central Michigan,-11.5,50.5,14,16
-Purdue,Ball State,-17.5,50.5,31,0
-Tennessee,Syracuse,-14,50.5,45,26
-Maryland,Florida Atlantic,-13.5,59.5,39,7
-Southern Miss,Mississippi State,11.5,61.5,17,34
-Tulane,Northwestern,-6.5,46.5,23,3
-Ohio State,Texas,-1.5,47.5,14,7
-Kentucky,Toledo,-7.5,48.5,24,16
-Indiana,Old Dominion,-22.5,54.5,27,14
-Florida State,Alabama,13.5,50.5,31,17
-Georgia,Marshall,-38.5,55.5,45,7
-Penn State,Nevada,-44.5,57.5,46,11
-Umass,Temple,2.5,49.5,10,42
-Virginia,Coastal Carolina,-12.5,58.5,48,7
-Texas A&M,UTSA,-22.5,56.5,42,24
-Clemson,LSU,-4,57.5,10,17
-Michigan,New Mexico,-34.5,51.5,34,17
-Utah State,UTEP,-6,61.5,28,16
-Ole Miss,Georgia State,-38,61.5,63,7
-Texas State,Eastern Michigan,-13.5,57.5,52,27
-Louisiana,Rice,-13.5,48.5,12,14
-Fresno State,Georgia Southern,-1.5,51.5,42,14
-Oregon State,California,-3,50.5,15,34
-Arizona,Hawaii,-16.5,55.5,40,6
-Washington,Colorado State,-20.5,52.5,38,21
-UCLA,Utah,6.5,50.5,10,43
-South Carolina,Virginia Tech,-7.5,50.5,24,11
-Miami,Notre Dame,2.5,49.5,27,24
-North Carolina,TCU,3.5,58.5,48,10
+﻿date,time,Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual
+28-Aug,7:00:00 PM,Boise State,South Florida,-6,63.5,7,34
+28-Aug,7:00:00 PM,Rutgers,Ohio,-14,47.5,34,31
+28-Aug,7:00:00 PM,NC State,East Carolina,-14,60.5,24,17
+28-Aug,7:00:00 PM,UCF,Jacksonville State,-18.5,52.5,17,10
+28-Aug,7:00:00 PM,Akron,Wyoming,7,50.5,0,10
+28-Aug,7:00:00 PM,Minnesota,Buffalo,-18.5,44.5,23,10
+28-Aug,7:00:00 PM,Wisconsin,Miami (OH),-17.5,39.5,17,0
+28-Aug,7:00:00 PM,Cincinnati,Nebraska,7.5,53.5,17,20
+29-Aug,7:00:00 PM,Charlotte,App State,6.5,51.5,11,34
+29-Aug,7:00:00 PM,Wake Forest,Kennesaw State,-17.5,51.5,10,9
+29-Aug,7:00:00 PM,Michigan State,Western Michigan,-19.5,49.5,23,6
+29-Aug,7:00:00 PM,Baylor,Auburn,2.5,57.5,24,38
+29-Aug,7:00:00 PM,Colorado,Georgia Tech,4,54.5,20,27
+29-Aug,7:00:00 PM,Sam Houston,UNLV,10.5,60.5,21,38
+29-Aug,7:00:00 PM,San José State,Central Michigan,-11.5,50.5,14,16
+30-Aug,12:00:00 PM,Purdue,Ball State,-17.5,50.5,31,0
+30-Aug,12:00:00 PM,Tennessee,Syracuse,-14,50.5,45,26
+30-Aug,12:00:00 PM,Maryland,Florida Atlantic,-13.5,59.5,39,7
+30-Aug,12:00:00 PM,Southern Miss,Mississippi State,11.5,61.5,17,34
+30-Aug,12:00:00 PM,Tulane,Northwestern,-6.5,46.5,23,3
+30-Aug,12:00:00 PM,Ohio State,Texas,-1.5,47.5,14,7
+30-Aug,12:45:00 PM,Kentucky,Toledo,-7.5,48.5,24,16
+30-Aug,2:00:00 PM,Indiana,Old Dominion,-22.5,54.5,27,14
+30-Aug,3:30:00 PM,Florida State,Alabama,13.5,50.5,31,17
+30-Aug,3:30:00 PM,Georgia,Marshall,-38.5,55.5,45,7
+30-Aug,3:30:00 PM,Penn State,Nevada,-44.5,57.5,46,11
+30-Aug,3:30:00 PM,Umass,Temple,2.5,49.5,10,42
+30-Aug,6:00:00 PM,Virginia,Coastal Carolina,-12.5,58.5,48,7
+30-Aug,7:00:00 PM,Texas A&M,UTSA,-22.5,56.5,42,24
+30-Aug,7:00:00 PM,Clemson,LSU,-4,57.5,10,17
+30-Aug,7:00:00 PM,Michigan,New Mexico,-34.5,51.5,34,17
+30-Aug,7:00:00 PM,Utah State,UTEP,-6,61.5,28,16
+30-Aug,7:00:00 PM,Ole Miss,Georgia State,-32.5,61.5,63,7
+30-Aug,7:00:00 PM,Texas State,Eastern Michigan,-13.5,57.5,52,27
+30-Aug,7:00:00 PM,Louisiana,Rice,-13.5,48.5,12,14
+30-Aug,9:00:00 PM,Fresno State,Georgia Southern,-1.5,51.5,42,14
+30-Aug,9:00:00 PM,Oregon State,California,-3,50.5,15,34
+30-Aug,9:00:00 PM,Arizona,Hawaii,-16.5,55.5,40,6
+30-Aug,9:00:00 PM,Washington,Colorado State,-20.5,52.5,38,21
+30-Aug,9:00:00 PM,UCLA,Utah,6.5,50.5,10,43
+31-Aug,3:00:00 PM,South Carolina,Virginia Tech,-7.5,50.5,24,11
+31-Aug,5:00:00 PM,Miami,Notre Dame,2.5,49.5,27,24
+1-Sep,8:00:00 PM,North Carolina,TCU,3.5,58.5,14,48

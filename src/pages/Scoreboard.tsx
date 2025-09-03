@@ -1,5 +1,5 @@
 // src/pages/Scoreboard.tsx
-import { useEffect, useMemo, useState } from "react";
+import { act, useEffect, useMemo, useState } from "react";
 import * as Papa from "papaparse";
 import { getTeamColors } from "../utils/teamColors";
 import {
@@ -117,6 +117,7 @@ if (teamInfoRaw) {
 function getTeamLogo(name: string) { return LOGO_MAP[normTeamKey(name)]; }
 
 /* --------------------- types & helpers --------------------- */
+
 interface SimRow { team: string; opp: string; pts: number; opp_pts: number; }
 interface GameData { teamA: string; teamB: string; rowsA: SimRow[]; }
 type GameMap = Record<string, GameData>;
@@ -128,6 +129,8 @@ type GameMeta = {
   kickoffMs?: number;
   spread?: number; // Team A line
   total?: number;
+  finalA?: number;
+  finalB?: number;
 };
 type GameMetaMap = Record<string, GameMeta>;
 
@@ -142,6 +145,8 @@ type CardGame = {
   pickSpread?: string;
   pickTotal?: string;
   spreadProb?:number;
+  spreadResult?: "win" | "loss" | "push";
+  totalResult?: "win" | "loss" | "push";
 };
 
 const median = (arr: number[]) => {
@@ -432,6 +437,9 @@ export default function Scoreboard() {
             const b = String(row["Team B"] ?? row.team_b ?? row.teamB ?? row.B ?? row.Away ?? row.away ?? "").trim();
             if (!a || !b) continue;
 
+            const finalA = row['Team A Score Actual'];
+            const finalB = row['Team B Score Actual'];
+
             const dateStr = row.Date ?? row.date ?? row["Game Date"] ?? row.game_date;
             const timeStr = row.Time ?? row.time ?? row.Kick ?? row.kick ?? row.Kickoff ?? row.kickoff;
             const datetimeStr = row.Datetime ?? row.DateTime ?? row.datetime ?? row.start_time ?? row.StartTime;
@@ -447,6 +455,8 @@ export default function Scoreboard() {
               kickoffLabel: label,
               spread: Number.isFinite(spread) ? spread : undefined,
               total: Number.isFinite(total) ? total : undefined,
+              finalA,
+              finalB,
             };
           }
         }
@@ -575,8 +585,48 @@ export default function Scoreboard() {
           spreadProb = diff > 0
           ? pA                // picked Team A side
           : 1 - pA;           // picked Team B side
+        }
       }
-    }
+
+      let spreadResult: "win" | "loss" | "push" | undefined;
+      let totalResult: "win" | "loss" | "push" | undefined;
+
+      if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
+        const fA = joined.finalA as number;
+        const fB = joined.finalB as number;
+
+
+        if (Number.isFinite(joined.spread)) {
+            const s = joined.spread as number;
+            const diff = (simsA + s) - simsB;
+            const coverA = (fA + s) > fB ? 1 : (fA + s) < fB ? -1 : 0;
+
+            const pickedA = diff > 0;
+            if (coverA === 0) {
+                spreadResult = "push"
+            } else {
+                const pickedWins = (coverA > 0 && pickedA) || (coverA < 0 && !pickedA);
+                spreadResult = pickedWins ? "win" : "loss"
+            }
+        }
+      }
+
+    //   if (Number.isFinite(joined.total)) {
+
+    //     if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
+    //         const fA = joined.finalA as number;
+    //         const fB = joined.finalB as number;
+    //         const lineT = joined.total as number;
+    //         const actualSide = fA + fB > lineT ? "Over" : fA + fB < lineT ? "Under" : "Push"
+    //         const predictedSide = (simsA + simsB) > lineT ? "Over" : (simsA + simsB) < lineT ? "Under" : "Push"
+
+    //         if (actualSide === "Push" || predictedSide === "Push") {
+    //             totalResult = "push"
+    //         } else {
+    //             totalResult = actualSide === predictedSide ? "win" : "loss"
+    //         }
+    //     }
+    //   }
 
 
       out.push({
@@ -587,6 +637,7 @@ export default function Scoreboard() {
         kickoffLabel: joined?.kickoffLabel,
         kickoffMs: joined?.kickoffMs,
         pickSpread, pickTotal,spreadProb,
+        spreadResult,totalResult
       });
     }
     // Strict numeric sort by kickoff timestamp (date then time). Unknown -> bottom.
@@ -668,6 +719,12 @@ function GameCard({ card, gdata, players }: { card: CardGame; gdata: GameData; p
   const [teamOrder, setTeamOrder] = useState<0|1>(0);
   const [bins, setBins] = useState<number|"auto">("auto");
   const [teamLine, setTeamLine] = useState<string>("");
+
+  const pillBg = (result?: "win" | "loss" | "push") => {
+    if (result == "win") return "color-mix(in oklab, #16a34a 22%, white)";
+    if (result == "loss") return "color-mix(in oklab, #ef4444 22%, white)";
+    return "color-mix(in oklab, var(--brand) 12%, white)"
+  };
 
   const series = useMemo(() => metricSeries(gdata, metric, teamOrder), [gdata, metric, teamOrder]);
   const qScore = useMemo(()=> quantiles(series), [series]);
@@ -791,13 +848,13 @@ function GameCard({ card, gdata, players }: { card: CardGame; gdata: GameData; p
       {(card.pickSpread || card.pickTotal) && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
           {card.pickSpread && (
-            <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: "color-mix(in oklab, var(--brand) 10%, white)", border: "1px solid var(--border)" }}>
+            <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.spreadResult), border: "1px solid var(--border)" }}>
               Spread: Pick • {card.pickSpread}
               {typeof card.spreadProb === "number" ? ` (${(card.spreadProb * 100).toFixed(1)}%)` : ""}
             </span>
           )}
           {card.pickTotal && (
-            <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: "color-mix(in oklab, var(--accent) 10%, white)", border: "1px solid var(--border)" }}>
+            <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.totalResult), border: "1px solid var(--border)" }}>
               Total: Pick • {card.pickTotal}
               
             </span>

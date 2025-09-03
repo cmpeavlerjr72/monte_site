@@ -17,6 +17,7 @@ export default function Header() {
           <Link to="/players">Players</Link> */}
           {/* <Link to="/game">Games</Link> */}
           <Link to="/scoreboard">Scoreboard</Link>
+          <Link to='/results'>Results</Link>
         </nav>
       </div>
     </header>

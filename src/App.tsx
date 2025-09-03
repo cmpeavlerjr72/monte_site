@@ -8,6 +8,7 @@ import "./theme.css";
 import "./index.css";
 import GameCenter from "./pages/GameCenter"
 import Scoreboard from "./pages/Scoreboard"
+import Results from "./pages/Results";
 
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/players" element={<Players />} /> */}
           <Route path = "/game" element={<GameCenter />} />
           <Route path="/scoreboard" element={<Scoreboard />} />
+          <Route path='/results' element={<Results/>}/>
         </Routes>
       </main>
     </div>
