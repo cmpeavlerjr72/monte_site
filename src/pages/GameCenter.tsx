@@ -627,7 +627,6 @@ export default function GameCenter() {
                 }}
               >
                 <div style={{ fontWeight:600 }}>{g.teamA} vs {g.teamB}</div>
-                <div style={{ fontSize:12, opacity:0.7 }}>{g.rowsA.length} simulations</div>
               </button>
             ))}
             {!filteredEntries.length && <div style={{ opacity:.7 }}>No games.</div>}

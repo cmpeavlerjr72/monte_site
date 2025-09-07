@@ -15,7 +15,7 @@ export default function Header() {
         <nav style={{display:"flex", gap:16, fontWeight:600}}>
           {/* <Link to="/cfb">CFB</Link>
           <Link to="/players">Players</Link> */}
-          {/* <Link to="/game">Games</Link> */}
+          <Link to="/game">Detailed Player</Link>
           <Link to="/scoreboard">Scoreboard</Link>
           <Link to='/results'>Results</Link>
         </nav>
