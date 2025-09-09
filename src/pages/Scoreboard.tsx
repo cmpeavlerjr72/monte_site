@@ -377,7 +377,9 @@ export default function Scoreboard() {
     return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }, []);
 
-  const [selectedWeek, setSelectedWeek] = useState(weeks[0] ?? "");
+  const [selectedWeek, setSelectedWeek] = useState<string>(() =>
+  weeks.length ? weeks[weeks.length - 1] : ""
+  );
   const [loading, setLoading] = useState(false);
 
   const [games, setGames] = useState<GameMap>({});
@@ -861,6 +863,41 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
   }, [series, teamLine]);
   const lineBinLabel = useMemo(() => (teamProb && hist.length ? findBinLabelForValue(hist, teamProb.line) : undefined), [teamProb, hist]);
 
+  // pick the correct side colors under the current Orientation
+  const leftColor  =
+  (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
+  const rightColor =
+  (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
+
+  // same coloring rule as GameCenter
+  const binColors = useMemo(() => {
+  if (!hist.length) return [] as string[];
+
+  if (metric === "spread") {
+    // pivot around 0 because spread is (Right − Left)
+    return hist.map(h => {
+      const mid = (h.start + h.end) / 2;
+      if (mid < 0) return leftColor;
+      if (mid > 0) return rightColor;
+      return "var(--border)";
+    });
+  }
+
+  if (metric === "total") {
+    // pivot around the distribution median (use your computed qScore.med)
+    const med = qScore?.med ?? 0;
+    return hist.map(h => ((h.start + h.end) / 2) < med ? leftColor : rightColor);
+  }
+
+  if (metric === "teamLeft")  return hist.map(() => leftColor);
+  if (metric === "teamRight") return hist.map(() => rightColor);
+
+  return hist.map(() => "var(--brand)");
+  }, [hist, metric, leftColor, rightColor, qScore?.med]);
+
+
+
+
   /* ----- PLAYER PANEL STATE ----- */
   const [pTeam, setPTeam] = useState<string>(card.teamA);
   const [pRole, setPRole] = useState<Role>("QB");
@@ -1049,7 +1086,11 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             </div>
           </div>
 
+          
+
           <div style={{ height: 180, marginTop: 6 }}>
+
+            
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
                 <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
@@ -1079,9 +1120,12 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
                   <ReferenceLine x={lineBinLabel} ifOverflow="extendDomain" stroke="var(--accent)" strokeDasharray="4 4"
                     label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }} />
                 )}
-                <Bar dataKey="count" name="Frequency">
-                  {hist.map((_,i)=><Cell key={i} fill={i < hist.length/2 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--accent)")} />)}
-                </Bar>
+              <Bar dataKey="count" name="Frequency">
+                {hist.map((_, i) => (
+                  <Cell key={i} fill={binColors[i]} />
+                ))}
+              </Bar>
+
               </BarChart>
             </ResponsiveContainer>
           </div>

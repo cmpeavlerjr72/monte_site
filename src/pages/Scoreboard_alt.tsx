@@ -924,40 +924,68 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
       </div>
 
       {/* teams + scores */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8 }}>
-        {/* A */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          {aLogo ? (
-            <img src={aLogo} alt={`${card.teamA} logo`} width={28} height={28} style={{ objectFit: "contain" }} loading="lazy" />
-          ) : (
-            <div style={{ width: 28, height: 28, borderRadius: 6, background: aColors?.primary ?? "var(--brand)" }} />
-          )}
-          <div style={{ overflow: "hidden" }}>
-            <div style={{ fontWeight: 800, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{card.teamA}</div>
-          </div>
-        </div>
-        {/* medians */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
-          <div style={{ fontWeight: 800, fontSize: 26, lineHeight: 1, color: aColors?.primary ?? "var(--text)" }}>
-              {useMean ? card.meanA : card.medA}
-          </div>
-          <div style={{ fontWeight: 700, color: "var(--muted)" }}>vs</div>
-          <div style={{ fontWeight: 800, fontSize: 26, lineHeight: 1, color: bColors?.primary ?? "var(--text)" }}>
-              {useMean ? card.meanB : card.medB}
-          </div>
-        </div>
-        {/* B */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "end", minWidth: 0 }}>
-          <div style={{ overflow: "hidden", textAlign: "right" }}>
-            <div style={{ fontWeight: 800, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{card.teamB}</div>
-          </div>
-          {bLogo ? (
-            <img src={bLogo} alt={`${card.teamB} logo`} width={28} height={28} style={{ objectFit: "contain" }} loading="lazy" />
-          ) : (
-            <div style={{ width: 28, height: 28, borderRadius: 6, background: bColors?.primary ?? "var(--accent)" }} />
-          )}
-        </div>
-      </div>
+        {/* teams + scores (stacked with Projected / Actual) */}
+        {(() => {
+        const projA = useMean ? card.meanA : card.medA;
+        const projB = useMean ? card.meanB : card.medB;
+
+        const hasFinalA = Number.isFinite(card.finalA);
+        const hasFinalB = Number.isFinite(card.finalB);
+
+        return (
+            <div
+            style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0,1fr) 90px 90px",
+                rowGap: 6,
+                columnGap: 8,
+                alignItems: "center",
+            }}
+            >
+            {/* header */}
+            <div />
+            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Projected</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Actual</div>
+
+            {/* Team B (top) */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                {bLogo ? (
+                <img src={bLogo} alt={`${card.teamB} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
+                ) : (
+                <div style={{ width: 24, height: 24, borderRadius: 6, background: bColors?.primary ?? "var(--accent)" }} />
+                )}
+                <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {card.teamB}
+                </div>
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: bColors?.primary ?? "var(--text)" }}>
+                {projB}
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+                {hasFinalB ? card.finalB : "–"}
+            </div>
+
+            {/* Team A (bottom) */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                {aLogo ? (
+                <img src={aLogo} alt={`${card.teamA} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
+                ) : (
+                <div style={{ width: 24, height: 24, borderRadius: 6, background: aColors?.primary ?? "var(--brand)" }} />
+                )}
+                <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {card.teamA}
+                </div>
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: aColors?.primary ?? "var(--text)" }}>
+                {projA}
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+                {hasFinalA ? card.finalA : "–"}
+            </div>
+            </div>
+        );
+        })()}
+
 
       {/* picks row */}
       {(card.pickSpread || card.pickTotal) && (
