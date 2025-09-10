@@ -377,9 +377,7 @@ export default function Scoreboard() {
     return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }, []);
 
-  const [selectedWeek, setSelectedWeek] = useState<string>(() =>
-  weeks.length ? weeks[weeks.length - 1] : ""
-  );
+  const [selectedWeek, setSelectedWeek] = useState(weeks[0] ?? "");
   const [loading, setLoading] = useState(false);
 
   const [games, setGames] = useState<GameMap>({});
