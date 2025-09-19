@@ -244,6 +244,10 @@ type CardGame = {
   totalResult?: "win" | "loss" | "push";
   finalA?: number;
   finalB?: number;
+  mlPickTeam?: string;   // team name we predict to WIN
+  mlPickProb?: number;   // 0..1 win probability for that team
+  mlFair?: string;       // American odds string from that prob (e.g. -165 / +145)
+  mlResult?: "win" | "loss" | "push";
 };
 
 const median = (arr: number[]) => {
@@ -668,6 +672,47 @@ export default function Scoreboard() {
         }
       }
 
+      let aWins = 0, bWins = 0, ties = 0;
+      for (const r of g.rowsA) {
+        if (r.pts > r.opp_pts) aWins++;
+        else if (r.pts < r.opp_pts) bWins++;
+        else ties++;
+      }
+      const nPairs = g.rowsA.length;
+      const pA = nPairs ? (aWins + 0.5 * ties) / nPairs : undefined; // P(teamA wins)
+      const pB = typeof pA === "number" ? 1 - pA : undefined;
+
+      let mlPickTeam: string | undefined;
+      let mlPickProb: number | undefined;
+      let mlFair: string | undefined;
+
+      if (typeof pA === "number" && typeof pB === "number") {
+        const pickA = pA >= pB;
+        mlPickTeam = pickA ? g.teamA : g.teamB;
+        mlPickProb = pickA ? pA : pB;
+        mlFair = americanOdds(mlPickProb); // uses your helper below
+      }
+
+      let mlResult: "win" | "loss" | "push" | undefined;
+
+      if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
+        const fA = joined.finalA as number;
+        const fB = joined.finalB as number;
+
+        // ...existing spread/total grading...
+
+        // --- ML grading (compare predicted winner vs actual winner) ---
+        if (typeof mlPickTeam === "string") {
+          if (fA === fB) {
+            mlResult = "push"; // tie/void
+          } else {
+            const actualWinner = fA > fB ? joined.teamA : joined.teamB;
+            mlResult = (actualWinner === mlPickTeam) ? "win" : "loss";
+          }
+        }
+      }
+
+
       let spreadResult: "win" | "loss" | "push" | undefined;
       let totalResult:  "win" | "loss" | "push" | undefined;
       let dispFinalA: number | undefined;
@@ -728,6 +773,10 @@ export default function Scoreboard() {
         spreadResult, totalResult,
         finalA: dispFinalA,
         finalB: dispFinalB,
+        mlPickTeam,
+        mlPickProb,
+        mlFair,
+        mlResult,
       });
     }
 
@@ -1046,7 +1095,7 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
       })()}
 
       {/* picks row */}
-      {(card.pickSpread || card.pickTotal) && (
+      {(card.pickSpread || card.pickTotal || typeof card.mlPickProb === "number") && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
           {card.pickSpread && (
             <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.spreadResult), border: "1px solid var(--border)" }}>
@@ -1059,6 +1108,19 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
               Total: Pick • {card.pickTotal}
               {typeof card.totalProb === "number" ? ` (${(card.totalProb * 100).toFixed(1)}%)` : ""}
             </span>
+          )}
+          {typeof card.mlPickProb === "number" && card.mlPickTeam && card.mlFair && (
+                <span
+                  style={{
+                    fontSize: 12,
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    background: pillBg(card.mlResult),           // <-- same coloring logic
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  ML: Pick • {card.mlPickTeam} ({(card.mlPickProb * 100).toFixed(1)}%) • Fair {card.mlFair}
+                </span>
           )}
         </div>
       )}

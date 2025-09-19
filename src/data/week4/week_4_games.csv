@@ -1,51 +1,51 @@
-﻿date,time,Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual
-9/18/2025,19:30,Charlotte,Rice,3.5,42.5,17,28
-19-Sep,19:30,Oklahoma State,Tulsa,-12.5,55.5,,
-19-Sep,20:00,Rutgers,Iowa,2.5,45.5,,
-20-Sep,12:00,Memphis,Arkansas,6.5,62.5,,
-20-Sep,12:00,Louisville,Bowling Green,-26.5,52.5,,
-20-Sep,12:00,Clemson,Syracuse,-17.5,55.5,,
-20-Sep,12:00,Wisconsin,Maryland,-7.5,43.5,,
-20-Sep,12:00,Army,North Texas,-1.5,52.5,,
-20-Sep,12:00,TCU,SMU,-7,63.5,,
-20-Sep,12:00,Utah,Texas Tech,-3.5,57.5,,
-20-Sep,12:00,Miami (OH),UNLV,3.5,49.5,,
-20-Sep,12:45,Tennessee,UAB,-36.5,,,
-20-Sep,15:00,Oregon,Oregon State,-35.5,,,
-20-Sep,15:30,Oklahoma,Auburn,-6.5,48.5,,
-20-Sep,15:30,UConn,Ball State,-20.5,52.5,,
-20-Sep,15:30,Liberty,James Madison,10,49.5,,
-20-Sep,15:30,Florida State,Kent State,-43.5,55.5,,
-20-Sep,15:30,Nebraska,Michigan,1.5,44.5,,
-20-Sep,15:30,Notre Dame,Purdue,-26.5,52.5,,
-20-Sep,15:30,Western Michigan,Toledo,14.5,50.5,,
-20-Sep,15:30,Buffalo,Troy,-6,42.5,,
-20-Sep,15:30,Ole Miss,Tulane,-12.5,60.5,,
-20-Sep,15:30,Eastern Michigan,Louisiana,3.5,52.5,,
-20-Sep,15:30,UCF,North Carolina,-6.5,49.5,,
-20-Sep,16:00,Duke,NC State,-2.5,59,,
-20-Sep,16:15,Mississippi State,Northern Illinois,-21.5,49.5,,
-20-Sep,16:30,Georgia Tech,Temple,-24.5,52.5,,
-20-Sep,18:00,Kennesaw State,Arkansas State,6.5,54.5,,
-20-Sep,18:00,Florida International,Delaware,-4.5,54.5,,
-20-Sep,18:00,Kansas,West Virginia,-11.5,55.5,,
-20-Sep,19:00,Air Force,Boise State,9.5,51.5,,
-20-Sep,19:00,South Alabama,Coastal Carolina,-14.5,51.5,,
-20-Sep,19:00,Middle Tennessee,Marshall,3,46.5,,
-20-Sep,19:00,Western Kentucky,Nevada,-10,54.5,,
-20-Sep,19:00,Missouri,South Carolina,-13.5,46.5,,
-20-Sep,19:30,Baylor,Arizona State,-2.5,59.5,,
-20-Sep,19:30,East Carolina,BYU,6.5,48.5,,
-20-Sep,19:30,Miami,Florida,-7.5,52.5,,
-20-Sep,19:30,Vanderbilt,Georgia State,-26.5,53.5,,
-20-Sep,19:30,Indiana,Illinois,-4.5,52.5,,
-20-Sep,19:30,Virginia,Stanford,-15.5,48.5,,
-20-Sep,19:30,Louisiana Tech,Southern Miss,-2.5,51.5,,
-20-Sep,19:30,Washington State,Washington,20.5,52.5,,
-20-Sep,20:00,Texas,Sam Houston,-40.5,51.5,,
-20-Sep,21:00,UTEP,UL Monroe,-4.5,47.5,,
-20-Sep,21:30,Colorado State,UTSA,4,59.5,,
-20-Sep,22:15,Colorado,Wyoming,-13.5,44.5,,
-20-Sep,22:30,San Diego State,California,12.5,48.5,,
-20-Sep,23:00,USC,Michigan State,-15.5,55.5,,
-20-Sep,23:59,Hawaii,Fresno State,3.5,47.5,,
+﻿date,time,Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual,TeamAML,TeamBML
+9/18/2025,19:30,Charlotte,Rice,3.5,42.5,17,28,180,-220
+19-Sep,19:30,Oklahoma State,Tulsa,-12.5,55.5,,,-510,370
+19-Sep,20:00,Rutgers,Iowa,2.5,45.5,,,105,-125
+20-Sep,12:00,Memphis,Arkansas,6.5,62.5,,,195,-235
+20-Sep,12:00,Louisville,Bowling Green,-26.5,52.5,,,-6500,1300
+20-Sep,12:00,Clemson,Syracuse,-17.5,55.5,,,-850,550
+20-Sep,12:00,Wisconsin,Maryland,-7.5,43.5,,,-320,260
+20-Sep,12:00,Army,North Texas,-1.5,52.5,,,-110,-110
+20-Sep,12:00,TCU,SMU,-7,63.5,,,-245,205
+20-Sep,12:00,Utah,Texas Tech,-3.5,57.5,,,-175,150
+20-Sep,12:00,Miami (OH),UNLV,3.5,49.5,,,145,-170
+20-Sep,12:45,Tennessee,UAB,-36.5,,,,-5000,2500
+20-Sep,15:00,Oregon,Oregon State,-35.5,,,,-5000,2500
+20-Sep,15:30,Oklahoma,Auburn,-6.5,48.5,,,-240,200
+20-Sep,15:30,UConn,Ball State,-20.5,52.5,,,-1400,750
+20-Sep,15:30,Liberty,James Madison,10,49.5,,,290,-380
+20-Sep,15:30,Florida State,Kent State,-43.5,55.5,,,-5000,2500
+20-Sep,15:30,Nebraska,Michigan,1.5,44.5,,,105,-125
+20-Sep,15:30,Notre Dame,Purdue,-26.5,52.5,,,-5000,1300
+20-Sep,15:30,Western Michigan,Toledo,14.5,50.5,,,430,-625
+20-Sep,15:30,Buffalo,Troy,-6,42.5,,,-230,190
+20-Sep,15:30,Ole Miss,Tulane,-12.5,60.5,,,-470,345
+20-Sep,15:30,Eastern Michigan,Louisiana,3.5,52.5,,,140,-165
+20-Sep,15:30,UCF,North Carolina,-6.5,49.5,,,-240,200
+20-Sep,16:00,Duke,NC State,-2.5,59,,,-130,110
+20-Sep,16:15,Mississippi State,Northern Illinois,-21.5,49.5,,,-1900,900
+20-Sep,16:30,Georgia Tech,Temple,-24.5,52.5,,,-2500,1000
+20-Sep,18:00,Kennesaw State,Arkansas State,6.5,54.5,,,210,-250
+20-Sep,18:00,Florida International,Delaware,-4.5,54.5,,,-200,170
+20-Sep,18:00,Kansas,West Virginia,-11.5,55.5,,,-460,340
+20-Sep,19:00,Air Force,Boise State,9.5,51.5,,,275,-350
+20-Sep,19:00,South Alabama,Coastal Carolina,-14.5,51.5,,,-625,430
+20-Sep,19:00,Middle Tennessee,Marshall,3,46.5,,,115,-135
+20-Sep,19:00,Western Kentucky,Nevada,-10,54.5,,,-430,320
+20-Sep,19:00,Missouri,South Carolina,-13.5,46.5,,,-550,390
+20-Sep,19:30,Baylor,Arizona State,-2.5,59.5,,,-130,110
+20-Sep,19:30,East Carolina,BYU,6.5,48.5,,,195,-235
+20-Sep,19:30,Miami,Florida,-7.5,52.5,,,-290,240
+20-Sep,19:30,Vanderbilt,Georgia State,-26.5,53.5,,,-5000,1300
+20-Sep,19:30,Indiana,Illinois,-4.5,52.5,,,-210,175
+20-Sep,19:30,Virginia,Stanford,-15.5,48.5,,,-800,525
+20-Sep,19:30,Louisiana Tech,Southern Miss,-2.5,51.5,,,-145,125
+20-Sep,19:30,Washington State,Washington,20.5,52.5,,,750,-1400
+20-Sep,20:00,Texas,Sam Houston,-40.5,51.5,,,-5000,2500
+20-Sep,21:00,UTEP,UL Monroe,-4.5,47.5,,,-220,180
+20-Sep,21:30,Colorado State,UTSA,4,59.5,,,160,-185
+20-Sep,22:15,Colorado,Wyoming,-13.5,44.5,,,-550,390
+20-Sep,22:30,San Diego State,California,12.5,48.5,,,370,-510
+20-Sep,23:00,USC,Michigan State,-15.5,55.5,,,-700,475
+20-Sep,23:59,Hawaii,Fresno State,3.5,47.5,,,145,-170
