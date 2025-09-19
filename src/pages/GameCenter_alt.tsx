@@ -1,6 +1,4 @@
-// src/pages/GameCenter.tsx
 import { useEffect, useMemo, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
 import * as Papa from "papaparse";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -41,22 +39,6 @@ const P_URL = Object.assign(
   import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: true })
 ) as Record<string, string>;
 
-// --- book lines (week-level games CSV) ---
-const G_RAW = Object.assign(
-    {},
-    // covers: week1/week_1_games.csv, week2/week_2_games.csv, etc.
-    import.meta.glob("../data/**/week*_games*.csv", { as: "raw", eager: true }),
-    // optional: also match generic names like games.csv if you ever use them
-    import.meta.glob("../data/**/games*.csv", { as: "raw", eager: true })
-  ) as Record<string, string>;
-  
-  const G_URL = Object.assign(
-    {},
-    import.meta.glob("../data/**/week*_games*.csv", { as: "url", eager: true }),
-    import.meta.glob("../data/**/games*.csv", { as: "url", eager: true })
-  ) as Record<string, string>;
-  
-
 type FileInfo = { path: string; week: string; file: string; raw?: string; url?: string };
 
 function normSlashes(p: string) { return p.replace(/\\/g, "/"); }
@@ -78,54 +60,6 @@ function buildFiles(raw: Record<string,string>, url: Record<string,string>): Fil
 }
 const scoreFilesAll = buildFiles(S_RAW, S_URL);
 const playerFilesAll = buildFiles(P_RAW, P_URL);
-const gameLineFilesAll = buildFiles(G_RAW, G_URL);
-
-
-
-/* --------------------- Team logo lookup (from src/assets/team_info.csv) --------------------- */
-const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
-const teamInfoRaw = Object.values(TEAM_INFO_RAW)[0] ?? "";
-
-const LOGO_MAP: Record<string, string> = {};
-
-function normTeamKey(t: string) {
-  return t
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/\bst\.\b/g, "state")
-    .replace(/[^a-z0-9]+/g, "");
-}
-function fixLogoUrl(u?: string) {
-  if (!u) return undefined;
-  let s = u.trim();
-  if (!s) return undefined;
-  if (s.startsWith("//")) s = "https:" + s;
-  if (s.startsWith("http://")) s = "https://" + s.slice(7);
-  return s;
-}
-function firstLogoFromCell(cell?: string) {
-  if (!cell) return undefined;
-  const parts = String(cell).split(/[|,;\s]+/).filter(Boolean);
-  for (const p of parts) {
-    const fixed = fixLogoUrl(p);
-    if (fixed?.startsWith("https://")) return fixed;
-  }
-  return undefined;
-}
-if (teamInfoRaw) {
-  const parsed = Papa.parse(teamInfoRaw, { header: true, skipEmptyLines: true });
-  for (const row of (parsed.data as any[])) {
-    if (!row) continue;
-    const name = row.Team ?? row.team ?? row.School ?? row.school ?? row.Name ?? row.name;
-    const key = name ? normTeamKey(String(name)) : "";
-    if (!key) continue;
-    const logo = firstLogoFromCell(row.Logos ?? row.logo ?? row.Logo ?? row.logos);
-    if (logo) LOGO_MAP[key] = logo;
-  }
-}
-function getTeamLogo(name: string) {
-  return LOGO_MAP[normTeamKey(name)];
-}
 
 /* --------------------- Types & helpers --------------------- */
 interface SimRow { team: string; opp: string; pts: number; opp_pts: number; }
@@ -137,11 +71,10 @@ type Metric = "spread" | "total" | "teamLeft" | "teamRight";
 function sortedKey(a: string, b: string) {
   return [a, b].sort((x, y) => x.localeCompare(y)).join("__");
 }
-function niceGameTitle(g: GameData) { return `${g.teamA} vs ${g.teamB}`; }
 
-type HistBin = { bin: string; count: number; start: number; end: number };
+type HistBin_1 = { bin: string; count: number; start: number; end: number };
 
-function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: number }): HistBin[] {
+function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: number }): HistBin_1[] {
   if (!values.length) return [];
   const v = values.slice().sort((a,b)=>a-b);
   const n = v.length, min = v[0], max = v[n-1];
@@ -246,48 +179,12 @@ function summaryStats(values: number[]) {
   const p95 = v[Math.floor(0.95*(n-1))];
   return { n, mean, median, p05, p25, p75, p95 };
 }
-
-function findBinLabelForValue(hist: HistBin[], x: number) {
+type HistBin_2 = { bin: string; count: number; start: number; end: number };
+function findBinLabelForValue(hist: HistBin_2[], x: number) {
   for (const h of hist) if (x>=h.start && x<h.end) return h.bin;
   if (hist.length && x===hist[hist.length-1].end) return hist[hist.length-1].bin;
   return undefined;
 }
-
-function metricLabel(metric: Metric, g: GameData, teamOrder: 0|1) {
-  const L = teamOrder===0 ? g.teamA : g.teamB;
-  const R = teamOrder===0 ? g.teamB : g.teamA;
-  switch (metric) {
-    case "spread": return `Spread (${R} − ${L})`;
-    case "total":  return `Total (${L} + ${R})`;
-    case "teamLeft":  return `${L} Team Total`;
-    case "teamRight": return `${R} Team Total`;
-  }
-}
-function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
-  const A = g.rowsA.map(r=>r.pts);
-  const B = g.rowsA.map(r=>r.opp_pts);
-  const left  = teamOrder===0 ? A : B;
-  const right = teamOrder===0 ? B : A;
-
-  if (metric==="teamLeft")  return left;
-  if (metric==="teamRight") return right;
-  if (metric==="total")     return left.map((x,i)=>x+right[i]);
-  return right.map((x,i)=>x-left[i]);
-}
-
-/** convert probability (0..1) to American odds (e.g. -150, +120) */
-function probToAmerican(pRaw: number): number {
-    // clamp to avoid 0/1 infinities
-    const p = Math.min(0.999999, Math.max(0.000001, pRaw));
-    if (p > 0.5) return -Math.round((p / (1 - p)) * 100);
-    // p <= 0.5 => underdog -> positive odds
-    return Math.round(((1 - p) / p) * 100);
-  }
-  function fmtAmerican(p: number) {
-    const o = probToAmerican(p);
-    return o > 0 ? `+${o}` : `${o}`;
-  }
-  
 
 /* --------------------- Roles & stat canonicalization --------------------- */
 type Role = "QB" | "Rusher" | "Receiver";
@@ -314,8 +211,6 @@ const STAT_SYNONYMS: Record<string, string> = {
   rec_td: "rec_td", receiving_tds: "rec_td",
   receptions: "receptions", rec: "receptions", catches: "receptions",
 };
-
-const TD_MEAN_CANON = new Set(["pass_td", "rush_td", "rec_td"]);
 
 // pretty labels
 const CANON_LABEL: Record<string, string> = {
@@ -351,11 +246,6 @@ function aggregateCanon(stats: Record<string, number[]>) {
 
 function median(arr:number[]) { const s=[...arr].sort((a,b)=>a-b); const n=s.length; return n? (n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2):0; }
 
-function mean(arr: number[]) {
-    return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-  }
-  
-
 function canonicalRoleFromValueKey(statKey: string): Role | null {
   const canon = STAT_SYNONYMS[norm(statKey)];
   return canon ? (ROLE_BY_CANON[canon] ?? null) : null;
@@ -375,13 +265,21 @@ function normalizeRole(rawRole: any): Role | null {
 type PlayerMap = Record<string, Record<string, Partial<Record<Role, Record<string, number[]>>>>>;
 interface PlayerObs { team: string; player: string; role: Role | null; stat: string; value: number; }
 
+/* --------------------- URL helpers for embed mode --------------------- */
+function getSearchParam(name: string) {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get(name);
+}
+const EMBED_FLAG = getSearchParam("embed") === "1";
+const URL_WEEK = getSearchParam("week") || "";
+const URL_PAIR = getSearchParam("pair") || "";
+
 /* --------------------- Page --------------------- */
 export default function GameCenter() {
   // Build week lists from either scores or players (union)
   const weeks = useMemo(() => {
     const s = new Set<string>(scoreFilesAll.map(f=>f.week));
     for (const f of playerFilesAll) s.add(f.week);
-    for (const f of gameLineFilesAll) s.add(f.week);
     return Array.from(s).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
   }, []);
 
@@ -395,15 +293,13 @@ export default function GameCenter() {
     for (const f of playerFilesAll) (m[f.week] ||= []).push(f);
     return m;
   }, []);
-  const filesByWeekGameLines = useMemo(() => {
-    const m:Record<string,FileInfo[]> = {};
-    for (const f of gameLineFilesAll) (m[f.week] ||= []).push(f);
-    return m;
-  }, []);
-
-
 
   const [selectedWeek, setSelectedWeek] = useState(weeks[0] ?? "");
+  // honor ?week=
+  useEffect(() => {
+    if (URL_WEEK && weeks.includes(URL_WEEK)) setSelectedWeek(URL_WEEK);
+  }, [weeks]);
+
   const [loading, setLoading] = useState(false);
 
   // Games (from scores)
@@ -419,7 +315,7 @@ export default function GameCenter() {
   const [teamOrder, setTeamOrder] = useState<0|1>(0);
   const [bins, setBins] = useState<number|"auto">("auto");
 
-  // SEPARATE LINES
+  // separate lines
   const [teamLine, setTeamLine] = useState<string>("");       // team-level line
   const [playerLine, setPlayerLine] = useState<string>("");   // player-level line
 
@@ -428,21 +324,6 @@ export default function GameCenter() {
   const [detailPlayer, setDetailPlayer] = useState<string>("");
   const [detailRole, setDetailRole] = useState<Role>("QB");
   const [detailStat, setDetailStat] = useState<string>("");
-
-  type BookMap = Record<string, { leftSpread: number; total: number; rawA: string; rawB: string }>;
-  const [books, setBooks] = useState<BookMap>({});
-
-  const fmtSigned = (x: number) => (x > 0 ? `+${x}` : `${x}`);
-  const fmt1 = (x: number) => (Number.isInteger(x) ? `${x}` : x.toFixed(1));
-
-  function firstKey<T = any>(obj: any, keys: string[]): T | undefined {
-    for (const k of keys) {
-      const v = obj?.[k];
-      if (v !== undefined && v !== null && `${v}` !== "") return v as T;
-    }
-    return undefined;
-  }
-
 
   /* --------- Load both score + player CSVs for the selected week --------- */
   useEffect(() => {
@@ -558,58 +439,6 @@ export default function GameCenter() {
           )
         );
 
-                /* ---- book lines (spread/total) ---- */
-        const gFiles = filesByWeekGameLines[selectedWeek] ?? [];
-        const gameLineArrays = await Promise.all(
-        gFiles.map(
-            (item) =>
-            new Promise<any[]>((resolve, reject) => {
-                const parse = (text: string) =>
-                Papa.parse(text, {
-                    header: true,
-                    dynamicTyping: true,
-                    skipEmptyLines: true,
-                    complete: (res) => resolve(res.data as any[]),
-                    error: reject,
-                });
-                if (item.raw) parse(item.raw);
-                else if (item.url) fetch(item.url).then((r) => r.text()).then(parse).catch(reject);
-                else reject(new Error("No raw/url for " + item.path));
-            })
-        )
-        );
-
-        // Build a map: sorted pair -> {leftSpread, total}
-        const bookMap: BookMap = {};
-        for (const rows of gameLineArrays) {
-        for (const raw of rows) {
-            // Try common header names; adjust if your file uses different labels
-            const A = String(
-            firstKey(raw, ["Team A", "TeamA", "teamA", "team_a", "A", "Home", "home", "Left", "left", "Team"])
-            ?? ""
-            ).trim();
-            const B = String(
-            firstKey(raw, ["Team B", "TeamB", "teamB", "team_b", "B", "Away", "away", "Right", "right", "Opponent", "Opp", "opp"])
-            ?? ""
-            ).trim();
-
-            const spreadA = Number(
-            firstKey(raw, ["Spread", "spread", "A Spread", "a_spread", "teamA_spread", "Line", "line"])
-            );
-            const total = Number(firstKey(raw, ["Total", "total", "OU", "ou", "O/U", "o/u", "over_under"]));
-
-            if (!A || !B || !Number.isFinite(spreadA) || !Number.isFinite(total)) continue;
-
-            const key = sortedKey(A, B);
-            const [alphaLeft] = key.split("__");        // alphabetical left we show in the UI
-            const leftSpread = (A === alphaLeft) ? spreadA : -spreadA;
-
-            bookMap[key] = { leftSpread, total, rawA: A, rawB: B };
-        }
-        }
-        setBooks(bookMap);
-
-
         const pmap: PlayerMap = {};
         for (const arr of playerArrays) {
           for (const o of arr) {
@@ -625,15 +454,37 @@ export default function GameCenter() {
     load();
   }, [selectedWeek, filesByWeekScores, filesByWeekPlayers]);
 
+  // when games loaded, honor ?pair=
+  useEffect(() => {
+    if (URL_PAIR && games[URL_PAIR]) {
+      setSelectedKey(URL_PAIR);
+      setTeamOrder(0);
+    }
+  }, [games]);
+
   /* -------- Derived for team charts -------- */
   const selectedGame = selectedKey ? games[selectedKey] : null;
 
   const series = useMemo(
-    () => (selectedGame ? metricSeries(selectedGame, metric, teamOrder) : []),
+    () => {
+      if (!selectedGame) return [] as number[];
+      const A = selectedGame.rowsA.map(r=>r.pts);
+      const B = selectedGame.rowsA.map(r=>r.opp_pts);
+      const left  = teamOrder===0 ? A : B;
+      const right = teamOrder===0 ? B : A;
+
+      switch (metric) {
+        case "teamLeft": return left;
+        case "teamRight": return right;
+        case "total": return left.map((x,i)=>x+right[i]);
+        case "spread": default: return right.map((x,i)=>x-left[i]);
+      }
+    },
     [selectedGame, metric, teamOrder]
   );
+
   const hist = useMemo(() => {
-    if (!series.length) return [] as HistBin[];
+    if (!series.length) return [] as HistBin_1[];
     const opts:any = {}; if (bins!=="auto") opts.bins = Math.max(1, Number(bins));
     return computeHistogram(series, opts);
   }, [series, bins]);
@@ -658,10 +509,6 @@ export default function GameCenter() {
   const rightName = selectedGame ? (teamOrder===0 ? selectedGame.teamB : selectedGame.teamA) : "";
   const leftColor  = getTeamColors(leftName)?.primary  ?? "var(--brand)";
   const rightColor = getTeamColors(rightName)?.primary ?? "var(--accent)";
-
-  // NEW: compute logos for the two teams
-  const leftLogo  = leftName  ? getTeamLogo(leftName)  : undefined;
-  const rightLogo = rightName ? getTeamLogo(rightName) : undefined;
 
   const binColors = useMemo(() => {
     if (!hist.length || !selectedGame) return [] as string[];
@@ -722,7 +569,6 @@ export default function GameCenter() {
     const L = teamOrder===0 ? A : B;
     return median(L);
   }, [selectedGame, teamOrder]);
-
   const medRight = useMemo(() => {
     if (!selectedGame) return 0;
     const A = selectedGame.rowsA.map(r=>r.pts);
@@ -733,36 +579,43 @@ export default function GameCenter() {
 
   /* --------------------- UI --------------------- */
   return (
-    <div style={{ display:"grid", gap:24, gridTemplateColumns:"1fr", maxWidth:1200, margin:"0 auto" }}>
-      {/* Top controls */}
-      <section className="card" style={{ padding:16 }}>
-        <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Week</h2>
-        <div style={{ marginTop:8, display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
-          <select
-            value={selectedWeek}
-            onChange={(e)=>setSelectedWeek(e.target.value)}
-            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-          >
-            {weeks.map(w => <option key={w} value={w}>{w}</option>)}
-          </select>
-          <span style={{ fontSize:12, opacity:0.7 }}>{loading ? "Loading…" : "Ready"}</span>
-        </div>
-      </section>
+    <div
+      style={{
+        display:"grid",
+        gap:24,
+        gridTemplateColumns:"1fr",
+        maxWidth: EMBED_FLAG ? "unset" : 1200,
+        margin: EMBED_FLAG ? "0" : "0 auto"
+      }}
+    >
+      {/* Top controls: hide in embed */}
+      {!EMBED_FLAG && (
+        <section className="card" style={{ padding:16 }}>
+          <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Week</h2>
+          <div style={{ marginTop:8, display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
+            <select
+              value={selectedWeek}
+              onChange={(e)=>setSelectedWeek(e.target.value)}
+              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+            >
+              {weeks.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+            <span style={{ fontSize:12, opacity:0.7 }}>{loading ? "Loading…" : "Ready"}</span>
+          </div>
+        </section>
+      )}
 
-      {/* Find a game */}
-      <section className="card" style={{ padding:16 }}>
-        <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Find a game</h2>
-        <input
-          value={search}
-          onChange={(e)=>setSearch(e.target.value)}
-          placeholder="Search teams…"
-          style={{ marginTop:8, width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-        />
-        <div style={{ marginTop:12, maxHeight:220, overflow:"auto", display:"grid", gap:8 }}>
-          {filteredEntries.map(([key,g]) => {
-            const logoA = getTeamLogo(g.teamA);
-            const logoB = getTeamLogo(g.teamB);
-            return (
+      {!EMBED_FLAG && (
+        <section className="card" style={{ padding:16 }}>
+          <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Find a game</h2>
+          <input
+            value={search}
+            onChange={(e)=>setSearch(e.target.value)}
+            placeholder="Search teams…"
+            style={{ marginTop:8, width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+          />
+          <div style={{ marginTop:12, maxHeight:220, overflow:"auto", display:"grid", gap:8 }}>
+            {filteredEntries.map(([key,g]) => (
               <button
                 key={key}
                 onClick={()=>{ setSelectedKey(key); setTeamOrder(0); }}
@@ -770,55 +623,16 @@ export default function GameCenter() {
                   textAlign:"left", padding:"10px 12px", borderRadius:10,
                   border:`1px solid ${selectedKey===key ? "var(--brand)":"var(--border)"}`,
                   background: selectedKey===key ? "color-mix(in oklab, var(--brand) 10%, white)" : "var(--card)",
-                  cursor:"pointer",
-                  display:"grid",
-                  gridTemplateColumns:"1fr auto 1fr",
-                  alignItems:"center",
-                  gap:8
+                  cursor:"pointer"
                 }}
               >
-                <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
-                  {logoA && (
-                    <img
-                      src={logoA}
-                      alt={`${g.teamA} logo`}
-                      height={20}
-                      style={{ display:"block", objectFit:"contain" }}
-                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                    />
-                  )}
-                  <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.teamA}</div>
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.7 }}>
-                {books[key] ? (
-                    <>
-                    {" • "}
-                    <span>
-                        Book: {g.teamA} {fmtSigned(Number(fmt1(books[key].leftSpread)))}, Total {fmt1(books[key].total)}
-                    </span>
-                    {" • "}
-                    </>
-                ) : null}
-                </div>
-
-                <div style={{ display:"flex", alignItems:"center", gap:8, justifySelf:"end", minWidth:0 }}>
-                  <div style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g.teamB}</div>
-                  {logoB && (
-                    <img
-                      src={logoB}
-                      alt={`${g.teamB} logo`}
-                      height={20}
-                      style={{ display:"block", objectFit:"contain" }}
-                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                    />
-                  )}
-                </div>
+                <div style={{ fontWeight:600 }}>{g.teamA} vs {g.teamB}</div>
               </button>
-            );
-          })}
-          {!filteredEntries.length && <div style={{ opacity:.7 }}>No games.</div>}
-        </div>
-      </section>
+            ))}
+            {!filteredEntries.length && <div style={{ opacity:.7 }}>No games.</div>}
+          </div>
+        </section>
+      )}
 
       {/* Median team totals (scoreboard) */}
       <section className="card" style={{ padding:16 }}>
@@ -831,34 +645,18 @@ export default function GameCenter() {
             alignItems:"center", gap:16, background:"color-mix(in oklab, var(--brand) 6%, white)",
             borderRadius:12, padding:"12px 16px"
           }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, color:leftColor, minWidth:0 }}>
-              {leftLogo && (
-                <img
-                  src={leftLogo}
-                  alt={`${leftName} logo`}
-                  height={28}
-                  style={{ display:"block", objectFit:"contain" }}
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              )}
-              <div style={{ fontWeight:800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{leftName}</div>
+            <div style={{ display:"flex", alignItems:"center", gap:10, color:leftColor }}>
+              <i style={{ width:12, height:12, background:leftColor, borderRadius:999 }} />
+              <div style={{ fontWeight:800 }}>{leftName}</div>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", justifyItems:"center", gap:12 }}>
               <div style={{ fontWeight:800, fontSize:40, lineHeight:1, color:leftColor }}>{Math.round(medLeft)}</div>
               <div style={{ fontWeight:700, opacity:.75 }}>vs</div>
               <div style={{ fontWeight:800, fontSize:40, lineHeight:1, color:rightColor }}>{Math.round(medRight)}</div>
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"end", color:rightColor, minWidth:0 }}>
-              <div style={{ fontWeight:800, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{rightName}</div>
-              {rightLogo && (
-                <img
-                  src={rightLogo}
-                  alt={`${rightName} logo`}
-                  height={28}
-                  style={{ display:"block", objectFit:"contain" }}
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              )}
+            <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"end", color:rightColor }}>
+              <div style={{ fontWeight:800 }}>{rightName}</div>
+              <i style={{ width:12, height:12, background:rightColor, borderRadius:999 }} />
             </div>
           </div>
         )}
@@ -963,15 +761,9 @@ export default function GameCenter() {
             <div style={{ fontWeight:700, marginBottom:6, color:"var(--brand)" }}>Probability vs Line</div>
             {teamProb ? (
               <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:14 }}>
-                <span>
-                    <b>Under (Cover)</b>: {(teamProb.under*100).toFixed(1)}%
-                    <span style={{ opacity:.8 }}> ({fmtAmerican(teamProb.under)})</span>
-                    </span>
-                <span><b>At (Push)</b>: {(teamProb.at*100).toFixed(1)}%</span>
-                <span>
-                    <b>Over (No Cover)</b>: {(teamProb.over*100).toFixed(1)}%
-                    <span style={{ opacity:.8 }}> ({fmtAmerican(teamProb.over)})</span>
-                    </span>
+                <span><b>Under</b>: {(teamProb.under*100).toFixed(1)}%</span>
+                <span><b>At</b>: {(teamProb.at*100).toFixed(1)}%</span>
+                <span><b>Over</b>: {(teamProb.over*100).toFixed(1)}%</span>
               </div>
             ) : (
               <div style={{ opacity:.7, fontSize:14 }}>Enter a numeric line to see probabilities.</div>
@@ -990,7 +782,7 @@ export default function GameCenter() {
           <div style={{ marginTop: 8, opacity: 0.7 }}>Select a game.</div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 12 }}>
-            {[{ team: leftName, color: leftColor, logo: leftLogo }, { team: rightName, color: rightColor, logo: rightLogo }].map(({ team, color, logo }) => {
+            {[{ team: leftName, color: leftColor }, { team: rightName, color: rightColor }].map(({ team, color }) => {
               const renderGroup = (role: Role) => {
                 const cols = COLUMNS[role];
                 const names = teamPlayersByRole(team, role);
@@ -999,16 +791,6 @@ export default function GameCenter() {
                 return (
                   <div key={role} className="card" style={{ padding: 12, borderColor: "var(--border)", marginTop: 10 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      {/* team logo next to the team name in each role group */}
-                      {logo && (
-                        <img
-                          src={logo}
-                          alt={`${team} logo`}
-                          height={20}
-                          style={{ display:"block", objectFit:"contain" }}
-                          onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                        />
-                      )}
                       <i style={{ width: 10, height: 10, borderRadius: 999, background: color }} />
                       <div style={{ fontWeight: 800 }}>
                         {team} • {role === "QB" ? "QBs" : role === "Rusher" ? "Rushers" : "Receivers"}
@@ -1031,20 +813,11 @@ export default function GameCenter() {
                           {names.map((name) => {
                             const rawStats = (players[team]?.[name]?.[role]) || {};
                             const agg = aggregateCanon(rawStats);
-                            const val = (canon: string) => {
-                              const arr = agg[canon];
-                              if (!arr || !arr.length) return "—";
-                              if (TD_MEAN_CANON.has(canon)) {
-                                // Show average TDs (e.g., 1.3). Use toFixed(2) if you prefer two decimals.
-                                return mean(arr).toFixed(1);
-                              }
-                              // Everything else stays as median, rounded to whole numbers
-                              return Math.round(median(arr));
-                            };
-                            
+                            const val = (canon: string) =>
+                              agg[canon] && agg[canon].length ? Math.round(median(agg[canon])) : "—";
 
                             // default stat for detail panel for this role
-                            const defaultCanon = COLUMNS[role][0];
+                            const defaultCanon = cols[0];
                             const defaultRawKey =
                               Object.keys(rawStats).find((k) => STAT_SYNONYMS[norm(k)] === defaultCanon) ||
                               Object.keys(rawStats)[0] ||
@@ -1103,17 +876,7 @@ export default function GameCenter() {
       {detailTeam && detailPlayer && (
         <section className="card" style={{ padding:16 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)", display:"flex", alignItems:"center", gap:8 }}>
-              {/* team logo in the header too */}
-              {getTeamLogo(detailTeam) && (
-                <img
-                  src={getTeamLogo(detailTeam)!}
-                  alt={`${detailTeam} logo`}
-                  height={22}
-                  style={{ display:"block", objectFit:"contain" }}
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              )}
+            <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>
               {detailPlayer} — {detailTeam} • {detailRole}
             </h2>
             <button
@@ -1137,7 +900,12 @@ export default function GameCenter() {
               ))}
             </select>
             <span>Line:</span>
-            <NumberSpinner value={playerLine} onChange={setPlayerLine} step={0.5} />
+            <input
+              value={playerLine}
+              inputMode="decimal"
+              onChange={(e)=>setPlayerLine(e.target.value)}
+              style={{ width:120, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+            />
           </div>
 
           <PlayerChart
@@ -1161,7 +929,7 @@ function PlayerChart({
   team:string; player:string; role:Role; stat:string; values:number[]; line:string;
 }) {
   const color = getTeamColors(team)?.primary ?? "var(--brand)";
-  const hist = useMemo<HistBin[]>(() => {
+  const hist = useMemo<HistBin_2[]>(() => {
     if (!values.length) return [];
     return computeHistogram(values, { bins: 20 });
   }, [values]);
@@ -1214,15 +982,9 @@ function PlayerChart({
             <div style={{ fontWeight:700, marginBottom:6, color:"var(--brand)" }}>Probability vs Line</div>
             {prob ? (
               <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:14 }}>
-                <span>
-                    <b>Under</b>: {(prob.under*100).toFixed(1)}%
-                    <span style={{ opacity:.8 }}> ({fmtAmerican(prob.under)})</span>
-                    </span>
+                <span><b>Under</b>: {(prob.under*100).toFixed(1)}%</span>
                 <span><b>At</b>: {(prob.at*100).toFixed(1)}%</span>
-                <span>
-                    <b>Over</b>: {(prob.over*100).toFixed(1)}%
-                    <span style={{ opacity:.8 }}> ({fmtAmerican(prob.over)})</span>
-                    </span>
+                <span><b>Over</b>: {(prob.over*100).toFixed(1)}%</span>
               </div>
             ) : (
               <div style={{ opacity:.7, fontSize:14 }}>Enter a numeric line above to see probabilities.</div>

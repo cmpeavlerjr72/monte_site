@@ -1,5 +1,5 @@
 // src/pages/Scoreboard.tsx
-import { act, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as Papa from "papaparse";
 import { getTeamColors } from "../utils/teamColors";
 import {
@@ -62,94 +62,90 @@ const G_URL = Object.assign(
 
 /* ---------- file helpers ---------- */
 
-  // SAFE CSV loader: fetch text (if url), then Papa.parse(text)
-  async function parseCsvFromItemSafe<T = any>(
-    item: { url?: string; raw?: string },
-    papaOpts?: Papa.ParseConfig<T>
-  ): Promise<T[]> {
-    let text = "";
+// SAFE CSV loader: fetch text (if url), then Papa.parse(text) — Safari/iOS friendly
+async function parseCsvFromItemSafe<T = any>(
+  item: { url?: string; raw?: string },
+  papaOpts?: Papa.ParseConfig<T>
+): Promise<T[]> {
+  let text = "";
 
-    // Prefer URL if present; make absolute (Safari workers hate relative URLs)
-    if (item?.url && item.url.trim()) {
-      try {
-        const abs = new URL(item.url, window.location.href).toString();
-        const res = await fetch(abs, { cache: "no-store" });
-        text = await res.text();
-      } catch (e) {
-        console.warn("CSV fetch failed:", item?.url, e);
-      }
+  // Prefer URL if present; make absolute (Safari workers hate relative URLs)
+  if (item?.url && item.url.trim()) {
+    try {
+      const abs = new URL(item.url, window.location.href).toString();
+      const res = await fetch(abs, { cache: "no-store" });
+      text = await res.text();
+    } catch (e) {
+      console.warn("CSV fetch failed:", item?.url, e);
     }
+  }
 
-    // Fallback to raw (Vite raw import)
-    if (!text && item?.raw) text = item.raw;
-    if (!text) return [];
+  // Fallback to raw (Vite raw import)
+  if (!text && item?.raw) text = item.raw;
+  if (!text) return [];
 
-    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
-    return new Promise<T[]>((resolve, reject) => {
-      Papa.parse<T>(text, {
+  return new Promise<T[]>((resolve, reject) => {
+    Papa.parse<T>(text, {
+      header: true,
+      dynamicTyping: true,
+      skipEmptyLines: true,
+      // IMPORTANT for TS overloads: we are parsing a STRING, not remote → set download:false
+      download: false,
+      // Workers are fine for Chrome/Firefox; disable on Safari
+      worker: !isSafari,
+      ...(papaOpts as Papa.ParseConfig<T> | undefined),
+      complete: (res) => resolve(res.data as T[]),
+      error: reject,
+    } as Papa.ParseConfig<T>);
+  });
+}
+
+function parseCsvFromItem<T = any>(
+  item: { url?: string; raw?: string },
+  papaOpts?: Papa.ParseConfig
+): Promise<T[]> {
+  return new Promise<T[]>((resolve, reject) => {
+    if (item?.url && item.url.trim()) {
+      // URL path: use download + worker (fast, off main thread)
+      Papa.parse<T>(item.url, {
+        download: true,
+        worker: true,
         header: true,
         dynamicTyping: true,
         skipEmptyLines: true,
-        // IMPORTANT for TS overloads: we are parsing a STRING, not remote → set download:false
-        download: false,
-        // Workers are fine for Chrome/Firefox; disable on Safari
-        worker: !isSafari,
-        ...(papaOpts as Papa.ParseConfig<T> | undefined),
+        ...papaOpts,
         complete: (res) => resolve(res.data as T[]),
         error: reject,
-      } as Papa.ParseConfig<T>);
-    });
-  }
-
-
-
-  function parseCsvFromItem<T = any>(
-    item: { url?: string; raw?: string },
-    papaOpts?: Papa.ParseConfig
-  ): Promise<T[]> {
-    return new Promise<T[]>((resolve, reject) => {
-      if (item?.url && item.url.trim()) {
-        // URL path: use download + worker (fast, off main thread)
-        Papa.parse<T>(item.url, {
-          download: true,
-          worker: true,
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true,
-          ...papaOpts,
-          complete: (res) => resolve(res.data as T[]),
-          error: reject,
-        });
-      } else if (item?.raw) {
-        // Raw string path: NO download flag (it’s text, not a URL)
-        Papa.parse<T>(item.raw, {
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true,
-          ...papaOpts,
-          complete: (res) => resolve(res.data as T[]),
-          error: reject,
-        });
-      } else {
-        // Nothing to parse
-        resolve([]);
-      }
-    });
-  }
-
-
-// put near the top once
-function pickNum(row: any, keys: string[]): number | undefined {
-    for (const k of keys) {
-      const v = row[k];
-      if (v === "" || v == null) continue;
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
+      });
+    } else if (item?.raw) {
+      // Raw string path: NO download flag (it’s text, not a URL)
+      Papa.parse<T>(item.raw, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        ...papaOpts,
+        complete: (res) => resolve(res.data as T[]),
+        error: reject,
+      });
+    } else {
+      // Nothing to parse
+      resolve([]);
     }
-    return undefined;
+  });
+}
+
+// numeric picker
+function pickNum(row: any, keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = row[k];
+    if (v === "" || v == null) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
   }
-  
+  return undefined;
+}
 
 type FileInfo = { path: string; week: string; file: string; raw?: string; url?: string };
 const normPath = (s: string) => s.replace(/\\/g, "/");
@@ -472,7 +468,6 @@ export default function Scoreboard() {
 
   const [useMean, setUseMean] = useState(false); // false = show medians (current), true = show means
 
-
   useEffect(() => {
     if (!selectedWeek) { setGames({}); setMeta({}); setPlayers({}); return; }
 
@@ -494,8 +489,6 @@ export default function Scoreboard() {
               })) as SimRow[];
           })
         );
-        
-
 
         const map: GameMap = {};
         for (const rows of simArrays) {
@@ -521,8 +514,6 @@ export default function Scoreboard() {
         const metaArrays = await Promise.all(
           gFiles.map((item) => parseCsvFromItemSafe<any>(item))
         );
-        
-
 
         const m: GameMetaMap = {};
         for (const arr of metaArrays) {
@@ -532,10 +523,9 @@ export default function Scoreboard() {
             const b = String(row["Team B"] ?? row.team_b ?? row.teamB ?? row.B ?? row.Away ?? row.away ?? "").trim();
             if (!a || !b) continue;
 
-            // after (numbers)
+            // finals (numbers)
             const finalA = pickNum(row, ["Team A Score Actual","team_a_score_actual","TeamAScoreActual"]);
             const finalB = pickNum(row, ["Team B Score Actual","team_b_score_actual","TeamBScoreActual"]);
-
 
             const dateStr = row.Date ?? row.date ?? row["Game Date"] ?? row.game_date;
             const timeStr = row.Time ?? row.time ?? row.Kick ?? row.kick ?? row.Kickoff ?? row.kickoff;
@@ -576,9 +566,9 @@ export default function Scoreboard() {
               const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
               const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
               if (!team || !player) continue;
-        
+
               const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
-        
+
               const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
               const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
               if (statKey != null && valKey != null && isFinite(Number(valKey))) {
@@ -596,8 +586,6 @@ export default function Scoreboard() {
             return out;
           })
         );
-        
-
 
         const pmap: PlayerMap = {};
         for (const arr of playerArrays) {
@@ -622,8 +610,8 @@ export default function Scoreboard() {
       const Bvals = g.rowsA.map((r) => r.opp_pts);
       const medA = Math.round(median(Avals));
       const medB = Math.round(median(Bvals));
-      const meanA = Math.round(mean(Avals));   // NEW
-      const meanB = Math.round(mean(Bvals));   // NEW
+      const meanA = Math.round(mean(Avals));
+      const meanB = Math.round(mean(Bvals));
       const joined = meta[key];
 
       let simsA = medA, simsB = medB;
@@ -645,192 +633,177 @@ export default function Scoreboard() {
 
       let totalProb: number | undefined;
       if (joined?.total !== undefined) {
-      const t = joined.total;
-      const totals = g.rowsA.map(r => r.pts + r.opp_pts);
-      const n = totals.length;
-      if (n > 0) {
+        const t = joined.total;
+        const totals = g.rowsA.map(r => r.pts + r.opp_pts);
+        const n = totals.length;
+        if (n > 0) {
           const over = totals.filter(x => x > t).length / n;
           const under = totals.filter(x => x < t).length / n;
-          const pickedOver = (simsA + simsB) > t; // your pick logic for total
+          const pickedOver = (simsA + simsB) > t;
           totalProb = pickedOver ? over : under;
+        }
       }
-      }
 
-
-
-
-      // --- Spread probability at the BOOK line (Team A line) ---
+      // Spread probability at the book line (Team A line)
       let spreadProb: number | undefined;
       if (joined?.spread !== undefined) {
-      const s = joined.spread; // Team A line
-
-    // Orientation: Avals/Bvals must match book's Team A/B
-      const Avals = g.teamA === joined.teamA
+        const s = joined.spread; // Team A line
+        const Avals_oriented = g.teamA === joined.teamA
           ? g.rowsA.map(r => r.pts)
           : g.rowsA.map(r => r.opp_pts);
-      const Bvals = g.teamA === joined.teamA
+        const Bvals_oriented = g.teamA === joined.teamA
           ? g.rowsA.map(r => r.opp_pts)
           : g.rowsA.map(r => r.pts);
 
-    // P(Team A covers) = P(A + s > B)
-      let coverA = 0;
-      const n = Math.min(Avals.length, Bvals.length);
-      for (let i = 0; i < n; i++) {
-          if ((Avals[i] + s) > Bvals[i]) coverA++;
-      }
-      const pA = n ? coverA / n : undefined;
+        let coverA = 0;
+        const n = Math.min(Avals_oriented.length, Bvals_oriented.length);
+        for (let i = 0; i < n; i++) {
+          if ((Avals_oriented[i] + s) > Bvals_oriented[i]) coverA++;
+        }
+        const pA = n ? coverA / n : undefined;
 
-    // Which side did we pick? (same logic you used to set pickSpread)
-      const diff = (simsA + s) - simsB; // >0 means Team A covers
-      if (typeof pA === "number") {
-          spreadProb = diff > 0
-          ? pA                // picked Team A side
-          : 1 - pA;           // picked Team B side
+        const diff = (simsA + s) - simsB; // >0 means Team A covers
+        if (typeof pA === "number") {
+          spreadProb = diff > 0 ? pA : 1 - pA;
         }
       }
 
       let spreadResult: "win" | "loss" | "push" | undefined;
-    let totalResult:  "win" | "loss" | "push" | undefined;  // ← keep only this one
-    let dispFinalA: number | undefined;                     // ← hoist to outer scope
-    let dispFinalB: number | undefined;                     // ← hoist to outer scope
+      let totalResult:  "win" | "loss" | "push" | undefined;
+      let dispFinalA: number | undefined;
+      let dispFinalB: number | undefined;
 
-    if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
-    const fA = joined.finalA as number;
-    const fB = joined.finalB as number;
+      if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
+        const fA = joined.finalA as number;
+        const fB = joined.finalB as number;
 
-    // --- Spread grading (as you had) ---
-    if (Number.isFinite(joined.spread)) {
-        const s = joined.spread as number;
-        const diff = (simsA + s) - simsB;
-        const coverA = (fA + s) > fB ? 1 : (fA + s) < fB ? -1 : 0;
-        const pickedA = diff > 0;
-        if (coverA === 0) {
-        spreadResult = "push";
-        } else {
-        const pickedWins = (coverA > 0 && pickedA) || (coverA < 0 && !pickedA);
-        spreadResult = pickedWins ? "win" : "loss";
+        // spread grading vs our pick
+        if (Number.isFinite(joined.spread)) {
+          const s = joined.spread as number;
+          const diff = (simsA + s) - simsB;
+          const coverA = (fA + s) > fB ? 1 : (fA + s) < fB ? -1 : 0;
+          const pickedA = diff > 0;
+          if (coverA === 0) {
+            spreadResult = "push";
+          } else {
+            const pickedWins = (coverA > 0 && pickedA) || (coverA < 0 && !pickedA);
+            spreadResult = pickedWins ? "win" : "loss";
+          }
         }
+
+        // Finals aligned to the card’s display orientation
+        if (joined && g.teamA !== joined.teamA) {
+          dispFinalA = joined.finalB as number;
+          dispFinalB = joined.finalA as number;
+        } else {
+          dispFinalA = joined.finalA as number;
+          dispFinalB = joined.finalB as number;
+        }
+
+        // total grading vs our pick
+        if (Number.isFinite(joined.total)) {
+          const lineT     = joined.total as number;
+          const gameTotal = (joined.finalA as number) + (joined.finalB as number);
+          const predTotal = simsA + simsB;
+
+          const actualSide    = gameTotal > lineT ? "Over"  : gameTotal < lineT ? "Under" : "Push";
+          const predictedSide = predTotal > lineT ? "Over"  : predTotal < lineT ? "Under" : "Push";
+
+          totalResult = (actualSide === "Push" || predictedSide === "Push")
+            ? "push"
+            : (actualSide === predictedSide ? "win" : "loss");
+        }
+      }
+
+      out.push({
+        key,
+        teamA: g.teamA,
+        teamB: g.teamB,
+        medA, medB,
+        meanA, meanB,
+        kickoffLabel: joined?.kickoffLabel,
+        kickoffMs: joined?.kickoffMs,
+        pickSpread, pickTotal,
+        spreadProb, totalProb,
+        spreadResult, totalResult,
+        finalA: dispFinalA,
+        finalB: dispFinalB,
+      });
     }
 
-    // --- Finals aligned to the card’s alphabetical display orientation ---
-    if (joined && g.teamA !== joined.teamA) {
-        // book Team A == our teamB → flip for display
-        dispFinalA = joined.finalB as number;
-        dispFinalB = joined.finalA as number;
-    } else {
-        dispFinalA = joined.finalA as number;
-        dispFinalB = joined.finalB as number;
-    }
-
-    // --- Total grading (use the *outer* totalResult) ---
-    if (Number.isFinite(joined.total)) {
-        const lineT     = joined.total as number;
-        const gameTotal = (joined.finalA as number) + (joined.finalB as number);
-        const predTotal = simsA + simsB;
-
-        const actualSide    = gameTotal > lineT ? "Over"  : gameTotal < lineT ? "Under" : "Push";
-        const predictedSide = predTotal > lineT ? "Over"  : predTotal < lineT ? "Under" : "Push";
-
-        totalResult = (actualSide === "Push" || predictedSide === "Push")
-        ? "push"
-        : (actualSide === predictedSide ? "win" : "loss");
-    }
-    }
-
-    // ...then your out.push, now these names are in scope:
-    out.push({
-    key,
-    teamA: g.teamA,
-    teamB: g.teamB,
-    medA, medB,
-    meanA, meanB,
-    kickoffLabel: joined?.kickoffLabel,
-    kickoffMs: joined?.kickoffMs,
-    pickSpread, pickTotal,
-    spreadProb, totalProb,
-    spreadResult, totalResult,
-    finalA: dispFinalA,
-    finalB: dispFinalB,
-    });
-      
-    }
-    // Strict numeric sort by kickoff timestamp (date then time). Unknown -> bottom.
-// Strict numeric sort depending on selected mode
+    // sort
     out.sort((x, y) => {
-        if (sortBy === "kickoff") {
+      if (sortBy === "kickoff") {
         const ax = x.kickoffMs ?? Number.POSITIVE_INFINITY;
         const ay = y.kickoffMs ?? Number.POSITIVE_INFINITY;
         if (ax !== ay) return ax - ay;
         return x.teamA.localeCompare(y.teamA);
-        }
-        if (sortBy === "spread_conf") {
+      }
+      if (sortBy === "spread_conf") {
         const ax = (typeof x.spreadProb === "number") ? x.spreadProb : -1;
         const ay = (typeof y.spreadProb === "number") ? y.spreadProb : -1;
         if (ay !== ax) return ay - ax; // DESC
-        // tie-breaker: kickoff
         const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
         const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
         if (kx !== ky) return kx - ky;
         return x.teamA.localeCompare(y.teamA);
-        }
-        // total_conf
-        const ax = (typeof x.totalProb === "number") ? x.totalProb : -1;
-        const ay = (typeof y.totalProb === "number") ? y.totalProb : -1;
-        if (ay !== ax) return ay - ax;   // DESC
-        const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
-        const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
-        if (kx !== ky) return kx - ky;
-        return x.teamA.localeCompare(y.teamA);
+      }
+      // total_conf
+      const ax = (typeof x.totalProb === "number") ? x.totalProb : -1;
+      const ay = (typeof y.totalProb === "number") ? y.totalProb : -1;
+      if (ay !== ax) return ay - ax;   // DESC
+      const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
+      const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
+      if (kx !== ky) return kx - ky;
+      return x.teamA.localeCompare(y.teamA);
     });
-  
+
     return out;
-  }, [games, meta,sortBy]);
+  }, [games, meta, sortBy]);
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
       {/* Week selector */}
       <section className="card" style={{ padding: 12, marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--brand)" }}>Week</h2>
             <select
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+              value={selectedWeek}
+              onChange={(e) => setSelectedWeek(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
-                {weeks.map((w) => (<option key={w} value={w}>{w}</option>))}
+              {weeks.map((w) => (<option key={w} value={w}>{w}</option>))}
             </select>
 
-            
             <span style={{ fontSize: 12, opacity: 0.7 }}>
-                {loading ? "Loading…" : `Showing ${cards.length} game${cards.length === 1 ? "" : "s"}`}
+              {loading ? "Loading…" : `Showing ${cards.length} game${cards.length === 1 ? "" : "s"}`}
             </span>
-            </div>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <label style={{ fontSize: 12, color: "var(--muted)" }}>Sort by:</label>
             <select
-                value={sortBy}
-                onChange={(e)=>setSortBy(e.target.value as any)}
-                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+              value={sortBy}
+              onChange={(e)=>setSortBy(e.target.value as any)}
+              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
             >
-                <option value="kickoff">Kickoff time</option>
-                <option value="spread_conf">Spread confidence</option>
-                <option value="total_conf">Total confidence</option>
+              <option value="kickoff">Kickoff time</option>
+              <option value="spread_conf">Spread confidence</option>
+              <option value="total_conf">Total confidence</option>
             </select>
 
             <label style={{ fontSize: 12, color: "var(--muted)" }}>Score number:</label>
             <select
-                value={useMean ? "mean" : "median"}
-                onChange={(e)=>setUseMean(e.target.value === "mean")}
-                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+              value={useMean ? "mean" : "median"}
+              onChange={(e)=>setUseMean(e.target.value === "mean")}
+              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
             >
-                <option value="median">Median</option>
-                <option value="mean">Mean</option>
+              <option value="median">Median</option>
+              <option value="mean">Mean</option>
             </select>
-            </div>
+          </div>
         </div>
-        </section>
-
+      </section>
 
       {/* Cards grid */}
       <div
@@ -916,38 +889,35 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
 
   // pick the correct side colors under the current Orientation
   const leftColor  =
-  (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
+    (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
   const rightColor =
-  (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
+    (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
 
   // same coloring rule as GameCenter
   const binColors = useMemo(() => {
-  if (!hist.length) return [] as string[];
+    if (!hist.length) return [] as string[];
 
-  if (metric === "spread") {
-    // pivot around 0 because spread is (Right − Left)
-    return hist.map(h => {
-      const mid = (h.start + h.end) / 2;
-      if (mid < 0) return leftColor;
-      if (mid > 0) return rightColor;
-      return "var(--border)";
-    });
-  }
+    if (metric === "spread") {
+      // pivot around 0 because spread is (Right − Left)
+      return hist.map(h => {
+        const mid = (h.start + h.end) / 2;
+        if (mid < 0) return leftColor;
+        if (mid > 0) return rightColor;
+        return "var(--border)";
+      });
+    }
 
-  if (metric === "total") {
-    // pivot around the distribution median (use your computed qScore.med)
-    const med = qScore?.med ?? 0;
-    return hist.map(h => ((h.start + h.end) / 2) < med ? leftColor : rightColor);
-  }
+    if (metric === "total") {
+      // pivot around the distribution median (use your computed qScore.med)
+      const med = qScore?.med ?? 0;
+      return hist.map(h => ((h.start + h.end) / 2) < med ? leftColor : rightColor);
+    }
 
-  if (metric === "teamLeft")  return hist.map(() => leftColor);
-  if (metric === "teamRight") return hist.map(() => rightColor);
+    if (metric === "teamLeft")  return hist.map(() => leftColor);
+    if (metric === "teamRight") return hist.map(() => rightColor);
 
-  return hist.map(() => "var(--brand)");
+    return hist.map(() => "var(--brand)");
   }, [hist, metric, leftColor, rightColor, qScore?.med]);
-
-
-
 
   /* ----- PLAYER PANEL STATE ----- */
   const [pTeam, setPTeam] = useState<string>(card.teamA);
@@ -1013,9 +983,8 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
         <span>{card.kickoffLabel ?? "TBD"}</span>
       </div>
 
-      {/* teams + scores */}
-        {/* teams + scores (stacked with Projected / Actual) */}
-        {(() => {
+      {/* teams + scores (stacked with Projected / Actual) */}
+      {(() => {
         const projA = useMean ? card.meanA : card.medA;
         const projB = useMean ? card.meanB : card.medB;
 
@@ -1023,15 +992,15 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
         const hasFinalB = Number.isFinite(card.finalB);
 
         return (
-            <div
+          <div
             style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0,1fr) 90px 90px",
-                rowGap: 6,
-                columnGap: 8,
-                alignItems: "center",
+              display: "grid",
+              gridTemplateColumns: "minmax(0,1fr) 90px 90px",
+              rowGap: 6,
+              columnGap: 8,
+              alignItems: "center",
             }}
-            >
+          >
             {/* header */}
             <div />
             <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Projected</div>
@@ -1039,43 +1008,42 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
 
             {/* Team B (top) */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                {bLogo ? (
+              {bLogo ? (
                 <img src={bLogo} alt={`${card.teamB} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
-                ) : (
+              ) : (
                 <div style={{ width: 24, height: 24, borderRadius: 6, background: bColors?.primary ?? "var(--accent)" }} />
-                )}
-                <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              )}
+              <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamB}
-                </div>
+              </div>
             </div>
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: bColors?.primary ?? "var(--text)" }}>
-                {projB}
+              {projB}
             </div>
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
-                {hasFinalB ? card.finalB : "–"}
+              {hasFinalB ? card.finalB : "–"}
             </div>
 
             {/* Team A (bottom) */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                {aLogo ? (
+              {aLogo ? (
                 <img src={aLogo} alt={`${card.teamA} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
-                ) : (
+              ) : (
                 <div style={{ width: 24, height: 24, borderRadius: 6, background: aColors?.primary ?? "var(--brand)" }} />
-                )}
-                <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              )}
+              <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamA}
-                </div>
+              </div>
             </div>
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: aColors?.primary ?? "var(--text)" }}>
-                {projA}
+              {projA}
             </div>
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
-                {hasFinalA ? card.finalA : "–"}
+              {hasFinalA ? card.finalA : "–"}
             </div>
-            </div>
+          </div>
         );
-        })()}
-
+      })()}
 
       {/* picks row */}
       {(card.pickSpread || card.pickTotal) && (
@@ -1090,7 +1058,6 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.totalResult), border: "1px solid var(--border)" }}>
               Total: Pick • {card.pickTotal}
               {typeof card.totalProb === "number" ? ` (${(card.totalProb * 100).toFixed(1)}%)` : ""}
-              
             </span>
           )}
         </div>
@@ -1139,11 +1106,7 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             </div>
           </div>
 
-          
-
           <div style={{ height: 180, marginTop: 6 }}>
-
-            
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
                 <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
@@ -1173,12 +1136,11 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
                   <ReferenceLine x={lineBinLabel} ifOverflow="extendDomain" stroke="var(--accent)" strokeDasharray="4 4"
                     label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }} />
                 )}
-              <Bar dataKey="count" name="Frequency">
-                {hist.map((_, i) => (
-                  <Cell key={i} fill={binColors[i]} />
-                ))}
-              </Bar>
-
+                <Bar dataKey="count" name="Frequency">
+                  {hist.map((_, i) => (
+                    <Cell key={i} fill={binColors[i]} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>

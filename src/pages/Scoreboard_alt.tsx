@@ -8,13 +8,15 @@ import {
 } from "recharts";
 
 /* ---------- discover score CSVs (sims) ---------- */
-const RAW = Object.assign(
-  {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "raw", eager: true }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "raw", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "raw", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "raw", eager: true })
-) as Record<string, string>;
+// const RAW = Object.assign(
+//   {},
+//   import.meta.glob("../data/**/scores/*.csv",     { as: "raw", eager: true }),
+//   import.meta.glob("../data/**/scores/*.csv.csv", { as: "raw", eager: true }),
+//   import.meta.glob("../data/**/scores/*.CSV",     { as: "raw", eager: true }),
+//   import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "raw", eager: true })
+// ) as Record<string, string>;
+
+const RAW = {} as Record<string,string>;
 
 const URLS = Object.assign(
   {},
@@ -25,13 +27,15 @@ const URLS = Object.assign(
 ) as Record<string, string>;
 
 /* ---------- discover players CSVs ---------- */
-const P_RAW = Object.assign(
-  {},
-  import.meta.glob("../data/**/players/*.csv",     { as: "raw", eager: true }),
-  import.meta.glob("../data/**/players/*.csv.csv", { as: "raw", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV",     { as: "raw", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "raw", eager: true })
-) as Record<string, string>;
+// const P_RAW = Object.assign(
+//   {},
+//   import.meta.glob("../data/**/players/*.csv",     { as: "raw", eager: true }),
+//   import.meta.glob("../data/**/players/*.csv.csv", { as: "raw", eager: true }),
+//   import.meta.glob("../data/**/players/*.CSV",     { as: "raw", eager: true }),
+//   import.meta.glob("../data/**/players/*.CSV.CSV", { as: "raw", eager: true })
+// ) as Record<string, string>;
+
+const P_RAW = {} as Record<string, string>;
 
 const P_URL = Object.assign(
   {},
@@ -42,11 +46,13 @@ const P_URL = Object.assign(
 ) as Record<string, string>;
 
 /* ---------- discover week games CSVs (date/time, spreads, totals) ---------- */
-const G_RAW = Object.assign(
-  {},
-  import.meta.glob("../data/**/week*_games*.csv", { as: "raw", eager: true }),
-  import.meta.glob("../data/**/games*.csv",       { as: "raw", eager: true }) // optional fallback
-) as Record<string, string>;
+// const G_RAW = Object.assign(
+//   {},
+//   import.meta.glob("../data/**/week*_games*.csv", { as: "raw", eager: true }),
+//   import.meta.glob("../data/**/games*.csv",       { as: "raw", eager: true }) // optional fallback
+// ) as Record<string, string>;
+
+const G_RAW = {} as Record<string, string>;
 
 const G_URL = Object.assign(
   {},
@@ -55,6 +61,83 @@ const G_URL = Object.assign(
 ) as Record<string, string>;
 
 /* ---------- file helpers ---------- */
+
+  // SAFE CSV loader: fetch text (if url), then Papa.parse(text)
+  async function parseCsvFromItemSafe<T = any>(
+    item: { url?: string; raw?: string },
+    papaOpts?: Papa.ParseConfig<T>
+  ): Promise<T[]> {
+    let text = "";
+
+    // Prefer URL if present; make absolute (Safari workers hate relative URLs)
+    if (item?.url && item.url.trim()) {
+      try {
+        const abs = new URL(item.url, window.location.href).toString();
+        const res = await fetch(abs, { cache: "no-store" });
+        text = await res.text();
+      } catch (e) {
+        console.warn("CSV fetch failed:", item?.url, e);
+      }
+    }
+
+    // Fallback to raw (Vite raw import)
+    if (!text && item?.raw) text = item.raw;
+    if (!text) return [];
+
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+    return new Promise<T[]>((resolve, reject) => {
+      Papa.parse<T>(text, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        // IMPORTANT for TS overloads: we are parsing a STRING, not remote → set download:false
+        download: false,
+        // Workers are fine for Chrome/Firefox; disable on Safari
+        worker: !isSafari,
+        ...(papaOpts as Papa.ParseConfig<T> | undefined),
+        complete: (res) => resolve(res.data as T[]),
+        error: reject,
+      } as Papa.ParseConfig<T>);
+    });
+  }
+
+
+
+  function parseCsvFromItem<T = any>(
+    item: { url?: string; raw?: string },
+    papaOpts?: Papa.ParseConfig
+  ): Promise<T[]> {
+    return new Promise<T[]>((resolve, reject) => {
+      if (item?.url && item.url.trim()) {
+        // URL path: use download + worker (fast, off main thread)
+        Papa.parse<T>(item.url, {
+          download: true,
+          worker: true,
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true,
+          ...papaOpts,
+          complete: (res) => resolve(res.data as T[]),
+          error: reject,
+        });
+      } else if (item?.raw) {
+        // Raw string path: NO download flag (it’s text, not a URL)
+        Papa.parse<T>(item.raw, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true,
+          ...papaOpts,
+          complete: (res) => resolve(res.data as T[]),
+          error: reject,
+        });
+      } else {
+        // Nothing to parse
+        resolve([]);
+      }
+    });
+  }
+
 
 // put near the top once
 function pickNum(row: any, keys: string[]): number | undefined {
@@ -397,30 +480,22 @@ export default function Scoreboard() {
       setLoading(true);
       try {
         /* ---- sims ---- */
-        const sFiles = scoreFilesAll.filter((f) => f.week === selectedWeek);
+        const sFiles = scoreFilesAll.filter(f => f.week === selectedWeek);
         const simArrays = await Promise.all(
-          sFiles.map(
-            (item) =>
-              new Promise<SimRow[]>((resolve, reject) => {
-                const parse = (text: string) =>
-                  Papa.parse(text, {
-                    header: true, dynamicTyping: true, skipEmptyLines: true,
-                    complete: (res) => {
-                      try {
-                        const rows = (res.data as any[])
-                          .filter((r) => r && r.team != null && r.opp != null && r.pts != null && r.opp_pts != null)
-                          .map((r) => ({ team: String(r.team), opp: String(r.opp), pts: Number(r.pts), opp_pts: Number(r.opp_pts) })) as SimRow[];
-                        resolve(rows);
-                      } catch (e) { reject(e); }
-                    },
-                    error: reject,
-                  });
-                if (item.raw) parse(item.raw);
-                else if (item.url) fetch(item.url).then((r) => r.text()).then(parse).catch(reject);
-                else reject(new Error("No raw/url for " + item.path));
-              })
-          )
+          sFiles.map(async (item) => {
+            const rows = await parseCsvFromItemSafe<any>(item);
+            return rows
+              .filter((r: any) => r && r.team != null && r.opp != null && r.pts != null && r.opp_pts != null)
+              .map((r: any) => ({
+                team: String(r.team),
+                opp: String(r.opp),
+                pts: Number(r.pts),
+                opp_pts: Number(r.opp_pts),
+              })) as SimRow[];
+          })
         );
+        
+
 
         const map: GameMap = {};
         for (const rows of simArrays) {
@@ -442,19 +517,12 @@ export default function Scoreboard() {
         setGames(map);
 
         /* ---- week games (date/time + book lines) ---- */
-        const gFiles = gamesFilesAll.filter((f) => f.week === selectedWeek);
+        const gFiles = gamesFilesAll.filter(f => f.week === selectedWeek);
         const metaArrays = await Promise.all(
-          gFiles.map(
-            (item) =>
-              new Promise<any[]>((resolve, reject) => {
-                const parse = (text: string) =>
-                  Papa.parse(text, { header: true, dynamicTyping: true, skipEmptyLines: true, complete: (res) => resolve(res.data as any[]), error: reject });
-                if (item.raw) parse(item.raw);
-                else if (item.url) fetch(item.url).then((r) => r.text()).then(parse).catch(reject);
-                else resolve([]);
-              })
-          )
+          gFiles.map((item) => parseCsvFromItemSafe<any>(item))
         );
+        
+
 
         const m: GameMetaMap = {};
         for (const arr of metaArrays) {
@@ -492,59 +560,44 @@ export default function Scoreboard() {
         setMeta(m);
 
         /* ---- players (per role) ---- */
-        const pFiles = playerFilesAll.filter((f) => f.week === selectedWeek);
+        const pFiles = playerFilesAll.filter(f => f.week === selectedWeek);
         const playerArrays = await Promise.all(
-          pFiles.map(
-            (item) =>
-              new Promise<PlayerObs[]>((resolve, reject) => {
-                const parse = (text: string) =>
-                  Papa.parse(text, {
-                    header: true, dynamicTyping: true, skipEmptyLines: true,
-                    complete: (res) => {
-                      try {
-                        const out: PlayerObs[] = [];
-                        const metaKeys = new Set([
-                          "team","Team","school","School",
-                          "player","Player","name","Name",
-                          "opp","Opp",
-                          "role","Role","position","Position","pos","Pos",
-                          "stat","Stat","metric","Metric","category","Category","value","Value","amount","Amount","val","Val"
-                        ]);
-                        for (const raw of res.data as any[]) {
-                          if (!raw) continue;
-                          const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
-                          const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
-                          if (!team || !player) continue;
-
-                          const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
-
-                          const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
-                          const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
-                          if (statKey != null && valKey != null && isFinite(Number(valKey))) {
-                            const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
-                            if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
-                            continue;
-                          }
-                          for (const k of Object.keys(raw)) {
-                            if (metaKeys.has(k)) continue;
-                            const v = Number(raw[k]);
-                            if (!Number.isFinite(v)) continue;
-                            const r = roleFromField ?? canonicalRoleFromValueKey(k);
-                            if (!r) continue;
-                            out.push({ team, player, role: r, stat: k, value: v });
-                          }
-                        }
-                        resolve(out);
-                      } catch (e) { reject(e); }
-                    },
-                    error: reject,
-                  });
-                if (item.raw) parse(item.raw);
-                else if (item.url) fetch(item.url).then(r=>r.text()).then(parse).catch(reject);
-                else resolve([]);
-              })
-          )
+          pFiles.map(async (item) => {
+            const data = await parseCsvFromItemSafe<any>(item);
+            const out: PlayerObs[] = [];
+            const metaKeys = new Set([
+              "team","Team","school","School","player","Player","name","Name",
+              "opp","Opp","role","Role","position","Position","pos","Pos",
+              "stat","Stat","metric","Metric","category","Category",
+              "value","Value","amount","Amount","val","Val",
+            ]);
+            for (const raw of data) {
+              if (!raw) continue;
+              const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
+              const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
+              if (!team || !player) continue;
+        
+              const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
+        
+              const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
+              const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
+              if (statKey != null && valKey != null && isFinite(Number(valKey))) {
+                const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
+                if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
+                continue;
+              }
+              for (const k of Object.keys(raw)) {
+                if (metaKeys.has(k)) continue;
+                const v = Number(raw[k]); if (!Number.isFinite(v)) continue;
+                const r = roleFromField ?? canonicalRoleFromValueKey(k); if (!r) continue;
+                out.push({ team, player, role: r, stat: k, value: v });
+              }
+            }
+            return out;
+          })
         );
+        
+
 
         const pmap: PlayerMap = {};
         for (const arr of playerArrays) {
@@ -861,6 +914,41 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
   }, [series, teamLine]);
   const lineBinLabel = useMemo(() => (teamProb && hist.length ? findBinLabelForValue(hist, teamProb.line) : undefined), [teamProb, hist]);
 
+  // pick the correct side colors under the current Orientation
+  const leftColor  =
+  (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
+  const rightColor =
+  (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
+
+  // same coloring rule as GameCenter
+  const binColors = useMemo(() => {
+  if (!hist.length) return [] as string[];
+
+  if (metric === "spread") {
+    // pivot around 0 because spread is (Right − Left)
+    return hist.map(h => {
+      const mid = (h.start + h.end) / 2;
+      if (mid < 0) return leftColor;
+      if (mid > 0) return rightColor;
+      return "var(--border)";
+    });
+  }
+
+  if (metric === "total") {
+    // pivot around the distribution median (use your computed qScore.med)
+    const med = qScore?.med ?? 0;
+    return hist.map(h => ((h.start + h.end) / 2) < med ? leftColor : rightColor);
+  }
+
+  if (metric === "teamLeft")  return hist.map(() => leftColor);
+  if (metric === "teamRight") return hist.map(() => rightColor);
+
+  return hist.map(() => "var(--brand)");
+  }, [hist, metric, leftColor, rightColor, qScore?.med]);
+
+
+
+
   /* ----- PLAYER PANEL STATE ----- */
   const [pTeam, setPTeam] = useState<string>(card.teamA);
   const [pRole, setPRole] = useState<Role>("QB");
@@ -915,6 +1003,8 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
       style={{
         padding: 12, borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)",
         display: "grid", gridTemplateRows: "auto auto auto", gap: 8,
+        contentVisibility: "auto",
+        containIntrinsicSize: "300px"
       }}
     >
       {/* header */}
@@ -1049,7 +1139,11 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             </div>
           </div>
 
+          
+
           <div style={{ height: 180, marginTop: 6 }}>
+
+            
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
                 <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
@@ -1079,9 +1173,12 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
                   <ReferenceLine x={lineBinLabel} ifOverflow="extendDomain" stroke="var(--accent)" strokeDasharray="4 4"
                     label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }} />
                 )}
-                <Bar dataKey="count" name="Frequency">
-                  {hist.map((_,i)=><Cell key={i} fill={i < hist.length/2 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--accent)")} />)}
-                </Bar>
+              <Bar dataKey="count" name="Frequency">
+                {hist.map((_, i) => (
+                  <Cell key={i} fill={binColors[i]} />
+                ))}
+              </Bar>
+
               </BarChart>
             </ResponsiveContainer>
           </div>

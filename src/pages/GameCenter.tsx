@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+// src/pages/GameCenter.tsx
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Papa from "papaparse";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  Legend, CartesianGrid, ReferenceLine, Cell,
+  CartesianGrid, ReferenceLine, Cell,
 } from "recharts";
 import { getTeamColors } from "../utils/teamColors";
 
 /* --------------------- CSV discovery (scores + players) --------------------- */
-// scores
+// NOTE: We import URLs (preferred) and allow raws (fallback) to support local dev and static hosting.
 const S_RAW = Object.assign(
   {},
   import.meta.glob("../data/**/scores/*.csv",     { as: "raw", eager: true }),
@@ -23,7 +24,6 @@ const S_URL = Object.assign(
   import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: true })
 ) as Record<string, string>;
 
-// players
 const P_RAW = Object.assign(
   {},
   import.meta.glob("../data/**/players/*.csv",     { as: "raw", eager: true }),
@@ -61,20 +61,77 @@ function buildFiles(raw: Record<string,string>, url: Record<string,string>): Fil
 const scoreFilesAll = buildFiles(S_RAW, S_URL);
 const playerFilesAll = buildFiles(P_RAW, P_URL);
 
+/* --------------------- iPhone/Safari-safe CSV utilities --------------------- */
+// 1) Safe CSV loader: prefer URL → fetch text; fallback to raw. Disable Papa worker on Safari.
+async function parseCsvFromItemSafe<T = any>(
+  item: { url?: string; raw?: string },
+  papaOpts?: Papa.ParseConfig<T>,
+  signal?: AbortSignal
+): Promise<T[]> {
+  let text = "";
+  if (signal?.aborted) return [];
+  // Prefer URL if present; make absolute (Safari hates worker+relative URLs)
+  if (item?.url && item.url.trim()) {
+    try {
+      const abs = new URL(item.url, window.location.href).toString();
+      const res = await fetch(abs, { cache: "no-store", signal });
+      text = await res.text();
+    } catch (e) {
+      if ((e as any)?.name !== "AbortError") console.warn("CSV fetch failed:", item?.url, e);
+    }
+  }
+  // Fallback to raw
+  if (!text && item?.raw) text = item.raw;
+  if (!text) return [];
+
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+  return new Promise<T[]>((resolve, reject) => {
+    Papa.parse<T>(text, {
+      header: true,
+      dynamicTyping: true,
+      skipEmptyLines: true,
+      download: false,       // parsing a STRING
+      worker: !isSafari,     // workers off on Safari/iOS
+      ...(papaOpts as Papa.ParseConfig<T> | undefined),
+      complete: (res) => resolve((res.data as T[]) ?? []),
+      error: reject,
+    } as Papa.ParseConfig<T>);
+  });
+}
+
+// 2) Small concurrency limiter (throttle parallel fetch/parse)
+async function pAllLimit<I, O>(
+  items: I[],
+  limit: number,
+  worker: (i: I, idx: number) => Promise<O>
+): Promise<O[]> {
+  const out: O[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length || 1)) }).map(async () => {
+      while (true) {
+        const i = next++;
+        if (i >= items.length) break;
+        out[i] = await worker(items[i], i);
+      }
+    })
+  );
+  return out;
+}
+
 /* --------------------- Types & helpers --------------------- */
 interface SimRow { team: string; opp: string; pts: number; opp_pts: number; }
 interface GameData { teamA: string; teamB: string; rowsA: SimRow[]; } // normalized to A vs B
 type GameMap = Record<string, GameData>;
-
 type Metric = "spread" | "total" | "teamLeft" | "teamRight";
 
 function sortedKey(a: string, b: string) {
   return [a, b].sort((x, y) => x.localeCompare(y)).join("__");
 }
 
-type HistBin_1 = { bin: string; count: number; start: number; end: number };
-
-function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: number }): HistBin_1[] {
+type HistBin = { bin: string; count: number; start: number; end: number };
+function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: number }): HistBin[] {
   if (!values.length) return [];
   const v = values.slice().sort((a,b)=>a-b);
   const n = v.length, min = v[0], max = v[n-1];
@@ -102,71 +159,6 @@ function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: n
   });
 }
 
-function NumberSpinner({
-  value,
-  onChange,
-  step = 0.5,
-  min,
-  max,
-  width = 140,
-  placeholder,
-}: {
-  value: string;
-  onChange: (s: string) => void;
-  step?: number;
-  min?: number;
-  max?: number;
-  width?: number;
-  placeholder?: string;
-}) {
-  const toNum = (s: string) => (s.trim() === "" ? NaN : Number(s));
-  const clamp = (n: number) =>
-    Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n));
-
-  const bump = (dir: -1 | 1) => {
-    const curr = toNum(value);
-    const base = Number.isFinite(curr) ? curr : 0;
-    const next = clamp(base + dir * step);
-    onChange(next.toFixed(1));
-  };
-
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <button
-        type="button"
-        onClick={() => bump(-1)}
-        style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
-      >
-        −
-      </button>
-      <input
-        type="number"
-        step={step}
-        min={min}
-        max={max}
-        value={value}
-        placeholder={placeholder}
-        inputMode="decimal"
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          width,
-          padding: "6px 10px",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-        }}
-      />
-      <button
-        type="button"
-        onClick={() => bump(1)}
-        style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}
-      >
-        +
-      </button>
-    </div>
-  );
-}
-
 function summaryStats(values: number[]) {
   if (!values.length) return null as null | Record<string, number>;
   const v = values.slice().sort((a,b)=>a-b);
@@ -179,19 +171,32 @@ function summaryStats(values: number[]) {
   const p95 = v[Math.floor(0.95*(n-1))];
   return { n, mean, median, p05, p25, p75, p95 };
 }
-type HistBin_2 = { bin: string; count: number; start: number; end: number };
-function findBinLabelForValue(hist: HistBin_2[], x: number) {
+
+function findBinLabelForValue(hist: HistBin[], x: number) {
   for (const h of hist) if (x>=h.start && x<h.end) return h.bin;
   if (hist.length && x===hist[hist.length-1].end) return hist[hist.length-1].bin;
   return undefined;
 }
 
-/* --------------------- Roles & stat canonicalization --------------------- */
+function americanOdds(prob: number): string {
+  if (!(prob > 0 && prob < 1)) return "—";
+  if (prob === 0.5) return "+100";
+  if (prob > 0.5) {
+    const val = Math.round((-prob / (1 - prob)) * 100);
+    return `${val}`; // already negative
+  }
+  const val = Math.round(((1 - prob) / prob) * 100);
+  return `+${val}`;
+}
+
+/* --------------------- Players: roles & canonical stats --------------------- */
 type Role = "QB" | "Rusher" | "Receiver";
+type PlayerMap = Record<string, Record<string, Partial<Record<Role, Record<string, number[]>>>>>;
+
+interface PlayerObs { team: string; player: string; role: Role | null; stat: string; value: number; }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
-// canonical stat keys
 const STAT_SYNONYMS: Record<string, string> = {
   // QB
   pass_yds: "pass_yds", pass_yards: "pass_yds", passing_yards: "pass_yds", py: "pass_yds", passyards: "pass_yds",
@@ -211,72 +216,72 @@ const STAT_SYNONYMS: Record<string, string> = {
   rec_td: "rec_td", receiving_tds: "rec_td",
   receptions: "receptions", rec: "receptions", catches: "receptions",
 };
-
-// pretty labels
 const CANON_LABEL: Record<string, string> = {
   pass_yds: "Pass Yds", pass_td: "Pass TD", ints: "INT",
   pass_att: "Pass Att", pass_cmp: "Pass Cmp", sacks: "Sacks",
   rush_yds: "Rush Yds", rush_td: "Rush TD", rush_att: "Rush Att",
   rec_yds: "Rec Yds", rec_td: "Rec TD", receptions: "Receptions",
 };
-
-// canonical stat -> canonical role
 const ROLE_BY_CANON: Record<string, Role> = {
   pass_yds: "QB", pass_td: "QB", ints: "QB", pass_att: "QB", pass_cmp: "QB", sacks: "QB",
   rush_yds: "Rusher", rush_td: "Rusher", rush_att: "Rusher",
   rec_yds: "Receiver", rec_td: "Receiver", receptions: "Receiver",
 };
-
-// columns per role (display order)
-const COLUMNS: Record<Role, string[]> = {
-  QB: ["pass_yds", "pass_td", "ints", "pass_att", "pass_cmp", "sacks"],
-  Rusher: ["rush_yds", "rush_td", "rush_att"],
-  Receiver: ["rec_yds", "rec_td", "receptions"],
-};
-
-function aggregateCanon(stats: Record<string, number[]>) {
-  const agg: Record<string, number[]> = {};
-  for (const k of Object.keys(stats)) {
-    const c = STAT_SYNONYMS[norm(k)];
-    if (!c) continue;
-    (agg[c] ||= []).push(...stats[k]);
-  }
-  return agg;
-}
-
-function median(arr:number[]) { const s=[...arr].sort((a,b)=>a-b); const n=s.length; return n? (n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2):0; }
-
 function canonicalRoleFromValueKey(statKey: string): Role | null {
   const canon = STAT_SYNONYMS[norm(statKey)];
   return canon ? (ROLE_BY_CANON[canon] ?? null) : null;
 }
-
 function normalizeRole(rawRole: any): Role | null {
   if (rawRole == null) return null;
-  const r = String(rawRole).toLowerCase().trim();
+  const r = String(rawRole).toLowerCase().trim().replace(/\s+/g, "_");
   if (["qb","quarterback"].includes(r)) return "QB";
-  if (["rb","hb","fb","running back","running_back","runningback","rusher"].includes(r.replace(/\s+/g,"_"))) return "Rusher";
-  if (["wr","te","receiver","wide receiver","wide_receiver","tight end","tight_end"].includes(r.replace(/\s+/g,"_"))) return "Receiver";
+  if (["rb","hb","fb","running_back","runningback","rusher"].includes(r)) return "Rusher";
+  if (["wr","te","receiver","wide_receiver","tight_end"].includes(r)) return "Receiver";
   return null;
 }
 
-/* --------------------- Players data model --------------------- */
-// team -> player -> role -> stat -> values[]
-type PlayerMap = Record<string, Record<string, Partial<Record<Role, Record<string, number[]>>>>>;
-interface PlayerObs { team: string; player: string; role: Role | null; stat: string; value: number; }
+/* --------------------- Small inputs --------------------- */
+function NumberSpinner({
+  value, onChange, step = 0.5, min, max, width = 120, placeholder,
+}: {
+  value: string; onChange: (s: string) => void; step?: number; min?: number; max?: number; width?: number; placeholder?: string;
+}) {
+  const toNum = (s: string) => (s.trim() === "" ? NaN : Number(s));
+  const clamp = (n: number) => Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n));
+  const bump = (dir: -1 | 1) => {
+    const curr = toNum(value); const base = Number.isFinite(curr) ? curr : 0;
+    const next = clamp(base + dir * step); onChange(next.toFixed(1));
+  };
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <button type="button" onClick={() => bump(-1)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>−</button>
+      <input
+        type="number"
+        step={step}
+        min={min}
+        max={max}
+        value={value}
+        placeholder={placeholder}
+        inputMode="decimal"
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+      />
+      <button type="button" onClick={() => bump(1)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>+</button>
+    </div>
+  );
+}
 
 /* --------------------- URL helpers for embed mode --------------------- */
 function getSearchParam(name: string) {
   if (typeof window === "undefined") return null;
   return new URLSearchParams(window.location.search).get(name);
 }
-const EMBED_FLAG = getSearchParam("embed") === "1";
 const URL_WEEK = getSearchParam("week") || "";
 const URL_PAIR = getSearchParam("pair") || "";
 
 /* --------------------- Page --------------------- */
 export default function GameCenter() {
-  // Build week lists from either scores or players (union)
+  // Build week list from union of scores + players
   const weeks = useMemo(() => {
     const s = new Set<string>(scoreFilesAll.map(f=>f.week));
     for (const f of playerFilesAll) s.add(f.week);
@@ -295,7 +300,6 @@ export default function GameCenter() {
   }, []);
 
   const [selectedWeek, setSelectedWeek] = useState(weeks[0] ?? "");
-  // honor ?week=
   useEffect(() => {
     if (URL_WEEK && weeks.includes(URL_WEEK)) setSelectedWeek(URL_WEEK);
   }, [weeks]);
@@ -315,46 +319,37 @@ export default function GameCenter() {
   const [teamOrder, setTeamOrder] = useState<0|1>(0);
   const [bins, setBins] = useState<number|"auto">("auto");
 
-  // separate lines
-  const [teamLine, setTeamLine] = useState<string>("");       // team-level line
-  const [playerLine, setPlayerLine] = useState<string>("");   // player-level line
+  // Lines
+  const [teamLine, setTeamLine] = useState<string>("");
+  const [playerLine, setPlayerLine] = useState<string>("");
 
-  // Player detail
+  // Player detail controls
   const [detailTeam, setDetailTeam] = useState<string>("");
   const [detailPlayer, setDetailPlayer] = useState<string>("");
   const [detailRole, setDetailRole] = useState<Role>("QB");
   const [detailStat, setDetailStat] = useState<string>("");
 
+  // Abort support
+  const abortRef = useRef<AbortController | null>(null);
+
   /* --------- Load both score + player CSVs for the selected week --------- */
   useEffect(() => {
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let alive = true;
+
     async function load() {
       setLoading(true);
       try {
-        /* ---- scores ---- */
+        // ---- scores ----
         const sFiles = filesByWeekScores[selectedWeek] ?? [];
-        const scoreArrays = await Promise.all(
-          sFiles.map(
-            (item) =>
-              new Promise<SimRow[]>((resolve, reject) => {
-                const parse = (text: string) =>
-                  Papa.parse(text, {
-                    header: true, dynamicTyping: true, skipEmptyLines: true,
-                    complete: (res) => {
-                      try {
-                        const rows = (res.data as any[])
-                          .filter(r => r && r.team!=null && r.opp!=null && r.pts!=null && r.opp_pts!=null)
-                          .map(r => ({ team:String(r.team), opp:String(r.opp), pts:Number(r.pts), opp_pts:Number(r.opp_pts) })) as SimRow[];
-                        resolve(rows);
-                      } catch (e) { reject(e); }
-                    },
-                    error: reject,
-                  });
-                if (item.raw) parse(item.raw);
-                else if (item.url) fetch(item.url).then(r=>r.text()).then(parse).catch(reject);
-                else reject(new Error("No raw/url for "+item.path));
-              })
-          )
-        );
+        const scoreArrays = await pAllLimit(sFiles, 3, async (item) => {
+          const data = await parseCsvFromItemSafe<any>(item, undefined, ac.signal);
+          return (data as any[])
+            .filter(r => r && r.team!=null && r.opp!=null && r.pts!=null && r.opp_pts!=null)
+            .map(r => ({ team:String(r.team), opp:String(r.opp), pts:Number(r.pts), opp_pts:Number(r.opp_pts) })) as SimRow[];
+        });
 
         const gameMap: GameMap = {};
         for (const rows of scoreArrays) {
@@ -368,76 +363,61 @@ export default function GameCenter() {
             const normalized = arr
               .map(r => r.team===A && r.opp===B
                 ? { team:A, opp:B, pts:r.pts, opp_pts:r.opp_pts }
-                : r.team===B && r.opp===A
-                ? { team:A, opp:B, pts:r.opp_pts, opp_pts:r.pts }
-                : null)
+                : { team:A, opp:B, pts:r.opp_pts, opp_pts:r.pts })
               .filter(Boolean) as SimRow[];
             (gameMap[pair] ||= { teamA:A, teamB:B, rowsA:[] }).rowsA.push(...normalized);
           }
         }
+        if (!alive) return;
         setGames(gameMap);
-        setSelectedKey(Object.keys(gameMap)[0] ?? null);
+
+        // Select default or honor ?pair=
+        const defaultKey = URL_PAIR && gameMap[URL_PAIR] ? URL_PAIR : Object.keys(gameMap)[0] ?? null;
+        setSelectedKey(defaultKey);
         setTeamOrder(0);
 
-        /* ---- players (per role) ---- */
+        // ---- players ----
         const pFiles = filesByWeekPlayers[selectedWeek] ?? [];
-        const playerArrays = await Promise.all(
-          pFiles.map(
-            (item) =>
-              new Promise<PlayerObs[]>((resolve, reject) => {
-                const parse = (text: string) =>
-                  Papa.parse(text, {
-                    header: true, dynamicTyping: true, skipEmptyLines: true,
-                    complete: (res) => {
-                      try {
-                        const out: PlayerObs[] = [];
-                        const metaKeys = new Set([
-                          "team","Team","school","School",
-                          "player","Player","name","Name",
-                          "opp","Opp",
-                          "role","Role","position","Position","pos","Pos",
-                          "stat","Stat","metric","Metric","category","Category","value","Value","amount","Amount","val","Val"
-                        ]);
+        const playerArrays = await pAllLimit(pFiles, 3, async (item) => {
+          const data = await parseCsvFromItemSafe<any>(item, undefined, ac.signal);
+          const out: PlayerObs[] = [];
+          const metaKeys = new Set([
+            "team","Team","school","School",
+            "player","Player","name","Name",
+            "opp","Opp",
+            "role","Role","position","Position","pos","Pos",
+            "stat","Stat","metric","Metric","category","Category","value","Value","amount","Amount","val","Val"
+          ]);
 
-                        for (const raw of res.data as any[]) {
-                          if (!raw) continue;
-                          const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
-                          const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
-                          if (!team || !player) continue;
+          for (const raw of data as any[]) {
+            if (!raw) continue;
+            const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
+            const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
+            if (!team || !player) continue;
 
-                          // determine role
-                          const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
+            const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
 
-                          // long format
-                          const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
-                          const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
-                          if (statKey != null && valKey != null && isFinite(Number(valKey))) {
-                            const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
-                            if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
-                            continue;
-                          }
+            // long format
+            const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
+            const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
+            if (statKey != null && valKey != null && isFinite(Number(valKey))) {
+              const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
+              if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
+              continue;
+            }
 
-                          // wide format; use role column if present; else infer per stat
-                          for (const k of Object.keys(raw)) {
-                            if (metaKeys.has(k)) continue;
-                            const v = Number(raw[k]);
-                            if (!Number.isFinite(v)) continue;
-                            const r = roleFromField ?? canonicalRoleFromValueKey(k);
-                            if (!r) continue;
-                            out.push({ team, player, role: r, stat: k, value: v });
-                          }
-                        }
-                        resolve(out);
-                      } catch (e) { reject(e); }
-                    },
-                    error: reject,
-                  });
-                if (item.raw) parse(item.raw);
-                else if (item.url) fetch(item.url).then(r=>r.text()).then(parse).catch(reject);
-                else reject(new Error("No raw/url for "+item.path));
-              })
-          )
-        );
+            // wide format
+            for (const k of Object.keys(raw)) {
+              if (metaKeys.has(k)) continue;
+              const v = Number(raw[k]);
+              if (!Number.isFinite(v)) continue;
+              const r = roleFromField ?? canonicalRoleFromValueKey(k);
+              if (!r) continue;
+              out.push({ team, player, role: r, stat: k, value: v });
+            }
+          }
+          return out;
+        });
 
         const pmap: PlayerMap = {};
         for (const arr of playerArrays) {
@@ -446,109 +426,114 @@ export default function GameCenter() {
             ((((pmap[o.team] ||= {})[o.player] ||= {})[o.role] ||= {})[o.stat] ||= []).push(o.value);
           }
         }
+        if (!alive) return;
         setPlayers(pmap);
+
+        // Initialize Player detail defaults from selected game
+        const g = defaultKey ? gameMap[defaultKey] : undefined;
+        const defaultTeam = g ? g.teamA : Object.keys(pmap)[0] ?? "";
+        setDetailTeam(defaultTeam);
+        const playersOnTeam = Object.keys(pmap[defaultTeam] || {}).sort();
+        setDetailPlayer(playersOnTeam[0] ?? "");
+        setDetailRole("QB");
+        setDetailStat("");
+        setTeamLine("");
+        setPlayerLine("");
+
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     }
-    load();
-  }, [selectedWeek, filesByWeekScores, filesByWeekPlayers]);
 
-  // when games loaded, honor ?pair=
-  useEffect(() => {
-    if (URL_PAIR && games[URL_PAIR]) {
-      setSelectedKey(URL_PAIR);
-      setTeamOrder(0);
-    }
-  }, [games]);
+    if (selectedWeek) load();
+    return () => { alive = false; ac.abort(); };
+  }, [selectedWeek, filesByWeekScores, filesByWeekPlayers]);
 
   /* -------- Derived for team charts -------- */
   const selectedGame = selectedKey ? games[selectedKey] : null;
 
-  const series = useMemo(
-    () => {
-      if (!selectedGame) return [] as number[];
-      const A = selectedGame.rowsA.map(r=>r.pts);
-      const B = selectedGame.rowsA.map(r=>r.opp_pts);
-      const left  = teamOrder===0 ? A : B;
-      const right = teamOrder===0 ? B : A;
+  const series = useMemo(() => {
+    if (!selectedGame) return [] as number[];
+    const A = selectedGame.rowsA.map(r=>r.pts);
+    const B = selectedGame.rowsA.map(r=>r.opp_pts);
+    const left  = teamOrder===0 ? A : B;
+    const right = teamOrder===0 ? B : A;
 
-      switch (metric) {
-        case "teamLeft": return left;
-        case "teamRight": return right;
-        case "total": return left.map((x,i)=>x+right[i]);
-        case "spread": default: return right.map((x,i)=>x-left[i]);
-      }
-    },
-    [selectedGame, metric, teamOrder]
-  );
+    switch (metric) {
+      case "spread":    return left.map((x,i)=> x - right[i]); // left minus right
+      case "total":     return left.map((x,i)=> x + right[i]);
+      case "teamLeft":  return left;
+      case "teamRight": return right;
+    }
+  }, [selectedGame, teamOrder, metric]);
 
   const hist = useMemo(() => {
-    if (!series.length) return [] as HistBin_1[];
-    const opts:any = {}; if (bins!=="auto") opts.bins = Math.max(1, Number(bins));
-    return computeHistogram(series, opts);
+    if (!series.length) return [] as HistBin[];
+    const binsNum = bins === "auto" ? undefined : Number(bins);
+    return computeHistogram(series, binsNum ? { bins: binsNum } : undefined);
   }, [series, bins]);
+
   const stats = useMemo(() => summaryStats(series), [series]);
 
-  // TEAM probability uses teamLine
+  const teams = selectedGame ? [selectedGame.teamA, selectedGame.teamB] : ["—","—"];
+  const leftTeam = teams[teamOrder===0?0:1];
+  const rightTeam = teams[teamOrder===0?1:0];
+  const leftColor  = getTeamColors(leftTeam)?.primary  ?? "var(--brand)";
+  const rightColor = getTeamColors(rightTeam)?.primary ?? "var(--accent)";
+
+  // Team line probability vs distribution
   const teamProb = useMemo(() => {
-    if (!series.length) return null;
-    const L = Number(teamLine);
-    if (!Number.isFinite(L)) return null;
-    let u = 0, a = 0, o = 0;
-    for (const x of series) {
-      if (Math.abs(x - L) < 1e-9) a++;
-      else if (x < L) u++;
-      else o++;
-    }
+    if (!series.length) return null as null | { under:number; at:number; over:number; line:number };
+    const L = Number(teamLine); if (!Number.isFinite(L)) return null;
+    let u=0,a=0,o=0; for (const x of series) { if (Math.abs(x-L)<1e-9) a++; else if (x<L) u++; else o++; }
     const n = series.length;
-    return { under: u / n, at: a / n, over: o / n, line: L };
+    return { under:u/n, at:a/n, over:o/n, line:L };
   }, [series, teamLine]);
+  const teamLineBin = useMemo(() => (teamProb && hist.length ? findBinLabelForValue(hist, teamProb.line) : undefined), [teamProb, hist]);
 
-  const leftName  = selectedGame ? (teamOrder===0 ? selectedGame.teamA : selectedGame.teamB) : "";
-  const rightName = selectedGame ? (teamOrder===0 ? selectedGame.teamB : selectedGame.teamA) : "";
-  const leftColor  = getTeamColors(leftName)?.primary  ?? "var(--brand)";
-  const rightColor = getTeamColors(rightName)?.primary ?? "var(--accent)";
-
+  // Dynamic bar colors (nice for spread left/right)
   const binColors = useMemo(() => {
-    if (!hist.length || !selectedGame) return [] as string[];
-    if (metric==="spread") {
+    if (!hist.length) return [] as string[];
+    if (metric === "spread") {
       return hist.map(h => {
-        const mid = (h.start+h.end)/2;
-        if (mid<0) return leftColor;
-        if (mid>0) return rightColor;
+        const mid = (h.start + h.end) / 2;
+        if (mid < 0) return rightColor; // right covers (right - left > 0) → for spread we used (left-right), so <0 favors right
+        if (mid > 0) return leftColor;
         return "var(--border)";
       });
     }
-    if (metric==="total") {
+    if (metric === "total") {
       const med = stats?.median ?? 0;
-      return hist.map(h => ((h.start+h.end)/2) < med ? leftColor : rightColor);
+      return hist.map(h => ((h.start + h.end) / 2) < med ? leftColor : rightColor);
     }
-    if (metric==="teamLeft")  return hist.map(()=>leftColor);
-    if (metric==="teamRight") return hist.map(()=>rightColor);
-    return hist.map(()=> "var(--brand)");
-  }, [hist, selectedGame, metric, leftColor, rightColor, stats?.median]);
+    if (metric === "teamLeft")  return hist.map(() => leftColor);
+    if (metric === "teamRight") return hist.map(() => rightColor);
+    return hist.map(() => "var(--brand)");
+  }, [hist, metric, leftColor, rightColor, stats?.median]);
 
-  const lineBinLabel = useMemo(
-    () => (teamProb && hist.length ? findBinLabelForValue(hist, teamProb.line) : undefined),
-    [teamProb, hist]
-  );
-
-  const filteredEntries = useMemo(() => {
-    const entries = Object.entries(games) as [string, GameData][];
-    if (!search.trim()) return entries;
-    const q = search.toLowerCase();
-    return entries.filter(([_,g]) => g.teamA.toLowerCase().includes(q) || g.teamB.toLowerCase().includes(q));
-  }, [games, search]);
-
-  /* -------- Helpers for player boxscore -------- */
+  /* -------- Derived for player chart -------- */
   const teamPlayersByRole = (team: string, role: Role) =>
-    Object.keys(players[team] || {})
-      .filter(p => !!players[team]?.[p]?.[role])
-      .sort();
-
-  const playerStatsForRole = (team: string, player: string, role: Role) =>
+    Object.keys(players[team] || {}).filter(p => !!players[team]?.[p]?.[role]).sort();
+  const statsFor = (team: string, player: string, role: Role) =>
     Object.keys(players[team]?.[player]?.[role] || {}).sort();
+
+  // Keep dependent selections sane when team/role/player changes
+  const defaultPlayer = useMemo(() => teamPlayersByRole(detailTeam, detailRole)[0] || "", [detailTeam, detailRole, players]);
+  useEffect(()=>{ setDetailPlayer((p)=> p && players[detailTeam]?.[p]?.[detailRole] ? p : defaultPlayer); }, [defaultPlayer, detailTeam, detailRole, players]);
+
+  const defaultStat = useMemo(() => statsFor(detailTeam, detailPlayer, detailRole)[0] || "", [detailTeam, detailPlayer, detailRole, players]);
+  useEffect(()=>{ setDetailStat((s)=> s && players[detailTeam]?.[detailPlayer]?.[detailRole]?.[s] ? s : defaultStat); }, [defaultStat, detailTeam, detailPlayer, detailRole, players]);
+
+  const pValues = players[detailTeam]?.[detailPlayer]?.[detailRole]?.[detailStat] || [];
+  const pHist = useMemo(() => computeHistogram(pValues, { bins: 20 }), [pValues]);
+
+  const pProb = useMemo(() => {
+    if (!pValues.length) return null as null | { under:number; at:number; over:number; line:number };
+    const L = Number(playerLine); if (!Number.isFinite(L)) return null;
+    let u=0,a=0,o=0; for (const x of pValues) { if (Math.abs(x-L)<1e-9) a++; else if (x<L) u++; else o++; }
+    const n = pValues.length; return { under:u/n, at:a/n, over:o/n, line:L };
+  }, [pValues, playerLine]);
+  const pLineBin = useMemo(() => (pProb && pHist.length ? findBinLabelForValue(pHist, pProb.line) : undefined), [pProb, pHist]);
 
   const pretty = (s: string) => {
     const key = norm(s);
@@ -561,437 +546,235 @@ export default function GameCenter() {
     return back[STAT_SYNONYMS[key] ?? key] ?? s;
   };
 
-  // Median team totals (scoreboard style)
-  const medLeft  = useMemo(() => {
-    if (!selectedGame) return 0;
-    const A = selectedGame.rowsA.map(r=>r.pts);
-    const B = selectedGame.rowsA.map(r=>r.opp_pts);
-    const L = teamOrder===0 ? A : B;
-    return median(L);
-  }, [selectedGame, teamOrder]);
-  const medRight = useMemo(() => {
-    if (!selectedGame) return 0;
-    const A = selectedGame.rowsA.map(r=>r.pts);
-    const B = selectedGame.rowsA.map(r=>r.opp_pts);
-    const R = teamOrder===0 ? B : A;
-    return median(R);
-  }, [selectedGame, teamOrder]);
-
-  /* --------------------- UI --------------------- */
   return (
-    <div
-      style={{
-        display:"grid",
-        gap:24,
-        gridTemplateColumns:"1fr",
-        maxWidth: EMBED_FLAG ? "unset" : 1200,
-        margin: EMBED_FLAG ? "0" : "0 auto"
-      }}
-    >
-      {/* Top controls: hide in embed */}
-      {!EMBED_FLAG && (
-        <section className="card" style={{ padding:16 }}>
-          <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Week</h2>
-          <div style={{ marginTop:8, display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
-            <select
-              value={selectedWeek}
-              onChange={(e)=>setSelectedWeek(e.target.value)}
-              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-            >
-              {weeks.map(w => <option key={w} value={w}>{w}</option>)}
-            </select>
-            <span style={{ fontSize:12, opacity:0.7 }}>{loading ? "Loading…" : "Ready"}</span>
-          </div>
-        </section>
-      )}
+    <div key={selectedWeek} style={{ display: "grid", gap: 16 }}>
+      {/* Top controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <label>
+          Week:&nbsp;
+          <select
+            value={selectedWeek}
+            onChange={(e) => { setSelectedWeek(e.target.value); (e.target as HTMLSelectElement).blur(); }}
+            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+          >
+            {weeks.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </label>
+        <span style={{ opacity: 0.7 }}>{loading ? "Loading…" : `${Object.keys(games).length} games`}</span>
+        <input
+          placeholder="Search team…"
+          value={search}
+          onChange={(e)=>setSearch(e.target.value)}
+          style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+        />
+      </div>
 
-      {!EMBED_FLAG && (
-        <section className="card" style={{ padding:16 }}>
-          <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Find a game</h2>
-          <input
-            value={search}
-            onChange={(e)=>setSearch(e.target.value)}
-            placeholder="Search teams…"
-            style={{ marginTop:8, width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-          />
-          <div style={{ marginTop:12, maxHeight:220, overflow:"auto", display:"grid", gap:8 }}>
-            {filteredEntries.map(([key,g]) => (
-              <button
-                key={key}
-                onClick={()=>{ setSelectedKey(key); setTeamOrder(0); }}
-                style={{
-                  textAlign:"left", padding:"10px 12px", borderRadius:10,
-                  border:`1px solid ${selectedKey===key ? "var(--brand)":"var(--border)"}`,
-                  background: selectedKey===key ? "color-mix(in oklab, var(--brand) 10%, white)" : "var(--card)",
-                  cursor:"pointer"
-                }}
-              >
-                <div style={{ fontWeight:600 }}>{g.teamA} vs {g.teamB}</div>
-              </button>
-            ))}
-            {!filteredEntries.length && <div style={{ opacity:.7 }}>No games.</div>}
-          </div>
-        </section>
-      )}
-
-      {/* Median team totals (scoreboard) */}
-      <section className="card" style={{ padding:16 }}>
-        <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Median Team Totals</h2>
-        {!selectedGame ? (
-          <div style={{ marginTop:8, opacity:.7 }}>Select a game.</div>
-        ) : (
-          <div style={{
-            marginTop:12, display:"grid", gridTemplateColumns:"1fr auto 1fr",
-            alignItems:"center", gap:16, background:"color-mix(in oklab, var(--brand) 6%, white)",
-            borderRadius:12, padding:"12px 16px"
-          }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, color:leftColor }}>
-              <i style={{ width:12, height:12, background:leftColor, borderRadius:999 }} />
-              <div style={{ fontWeight:800 }}>{leftName}</div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr auto 1fr", alignItems:"center", justifyItems:"center", gap:12 }}>
-              <div style={{ fontWeight:800, fontSize:40, lineHeight:1, color:leftColor }}>{Math.round(medLeft)}</div>
-              <div style={{ fontWeight:700, opacity:.75 }}>vs</div>
-              <div style={{ fontWeight:800, fontSize:40, lineHeight:1, color:rightColor }}>{Math.round(medRight)}</div>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:10, justifyContent:"end", color:rightColor }}>
-              <div style={{ fontWeight:800 }}>{rightName}</div>
-              <i style={{ width:12, height:12, background:rightColor, borderRadius:999 }} />
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Metric & options */}
-      <section className="card" style={{ padding:16 }}>
-        <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>Custom Spread / Totals</h2>
-
-        <div style={{ marginTop:8, display:"grid", gridTemplateColumns:"repeat(4, minmax(0,1fr))", gap:8 }}>
-          {(["spread","total","teamLeft","teamRight"] as Metric[]).map(m => (
-            <button
-              key={m}
-              onClick={()=>setMetric(m)}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(220px, 280px) 1fr",
+          gap: 16,
+          alignItems: "start",
+        }}
+      >
+        {/* Left list */}
+        <div
+          className="card"
+          style={{
+            border: "1px solid var(--border)", borderRadius: 12, padding: 8, background: "var(--card)",
+            maxHeight: 520, overflow: "auto", contentVisibility:"auto", containIntrinsicSize: "300px",
+          }}
+        >
+          {Object.entries(games)
+            .filter(([key,g]) => key.toLowerCase().includes(search.toLowerCase())
+              || g.teamA.toLowerCase().includes(search.toLowerCase())
+              || g.teamB.toLowerCase().includes(search.toLowerCase()))
+            .map(([key,g]) => (
+            <div
+              key={key}
+              onClick={() => { setSelectedKey(key); setTeamOrder(0); }}
               style={{
-                padding:"8px 10px", borderRadius:10,
-                border:`1px solid ${metric===m ? "var(--brand)" : "var(--border)"}`,
-                background: metric===m ? "var(--brand)" : "var(--card)",
-                color: metric===m ? "var(--brand-contrast)" : "var(--text)"
+                padding: 8, borderRadius: 8, cursor: "pointer",
+                background: selectedKey===key ? "color-mix(in oklab, var(--brand) 12%, white)" : "transparent",
               }}
             >
-              {m==="spread" ? "Spread" : m==="total" ? "Total" : m==="teamLeft" ? "Left team total" : "Right team total"}
-            </button>
+              <strong>{g.teamA}</strong> vs <strong>{g.teamB}</strong>
+            </div>
           ))}
         </div>
 
-        <div style={{ marginTop:10, display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
-          <div>
-            <span style={{ marginRight:8 }}>Orientation:</span>
-            <button
-              disabled={!selectedGame}
-              onClick={()=>setTeamOrder(prev=>prev===0?1:0)}
-              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-            >
-              {selectedGame ? (teamOrder===0 ? `${selectedGame.teamA} vs ${selectedGame.teamB}` : `${selectedGame.teamB} vs ${selectedGame.teamA}`) : "—"}
-            </button>
-          </div>
+        {/* Right side: charts */}
+        <div style={{ display: "grid", gap: 16 }}>
+          {/* Team distribution card */}
+          <article
+            className="card"
+            style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--card)" }}
+          >
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <select
+                value={metric}
+                onChange={(e)=>setMetric(e.target.value as Metric)}
+                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+              >
+                <option value="spread">Spread ({leftTeam} − {rightTeam})</option>
+                <option value="total">Total</option>
+                <option value="teamLeft">{leftTeam} total</option>
+                <option value="teamRight">{rightTeam} total</option>
+              </select>
+              <button
+                type="button"
+                onClick={()=>setTeamOrder(teamOrder===0?1:0)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)" }}
+              >
+                Flip Sides ({rightTeam} ⇄ {leftTeam})
+              </button>
+              <label style={{ marginLeft: 4 }}>
+                Bins:&nbsp;
+                <select
+                  value={String(bins)}
+                  onChange={(e)=>setBins(e.target.value==="auto"?"auto":Number(e.target.value))}
+                  style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="20">20</option>
+                  <option value="30">30</option>
+                  <option value="40">40</option>
+                </select>
+              </label>
 
-          <div>
-            <span style={{ marginRight:8 }}>Bins:</span>
-            <select
-              value={String(bins)}
-              onChange={(e)=>setBins(e.target.value==="auto" ? "auto" : Number(e.target.value))}
-              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-            >
-              <option value="auto">Auto</option>
-              <option value="10">10</option><option value="20">20</option>
-              <option value="30">30</option><option value="40">40</option><option value="50">50</option>
-            </select>
-          </div>
+              {/* Line control (optional) */}
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginLeft:"auto" }}>
+                <span style={{ fontSize:12, color:"var(--muted)" }}>Line:</span>
+                <NumberSpinner
+                  value={teamLine}
+                  onChange={setTeamLine}
+                  step={0.5}
+                  placeholder={metric==="spread" ? "-6.5" : "55.5"}
+                />
+              </div>
+            </div>
 
-          <div>
-            <span style={{ marginRight:8 }}>Line:</span>
-            <NumberSpinner
-              value={teamLine}
-              onChange={setTeamLine}
-              step={0.5}
-              placeholder={metric === "spread" ? "e.g., -6.5" : "e.g., 55.5"}
-            />
-          </div>
-        </div>
-
-        <div style={{ marginTop:12 }}>
-          {!selectedGame || !hist.length ? (
-            <div style={{ height:300, display:"grid", placeItems:"center", opacity:.6 }}>Select a game to see chart.</div>
-          ) : (
-            <div style={{ height:300 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={hist} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
-                  <CartesianGrid stroke="var(--border)" strokeOpacity={0.4} />
-                  <XAxis dataKey="bin" angle={-30} textAnchor="end" interval={0} height={50} />
-                  <YAxis allowDecimals={false} />
+            <div style={{ height: 360, marginTop: 8 }}>
+              <ResponsiveContainer>
+                <BarChart data={hist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
+                  <CartesianGrid vertical={false} stroke="var(--border)" strokeOpacity={0.25} />
+                  <XAxis dataKey="bin" minTickGap={12} tick={{ fontSize: 12 }} />
+                  <YAxis allowDecimals={false} width={28} tick={{ fontSize: 12 }} />
                   <Tooltip
                     contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12 }}
                     labelStyle={{ color:"var(--muted)" }}
                     itemStyle={{ color:"var(--text)" }}
-                    formatter={(v:any)=>[v,"Count"]}
                   />
-                  <Legend />
-                  {teamProb && lineBinLabel && (
+                  {/* 0 line only helps when the Y axis can be negative; our chart is frequency. Keep a neutral baseline via color. */}
+                  {teamProb && teamLineBin && (
                     <ReferenceLine
-                      x={lineBinLabel}
+                      x={teamLineBin}
                       ifOverflow="extendDomain"
                       stroke="var(--accent)"
                       strokeDasharray="4 4"
-                      label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:12, fill:"var(--accent)" }}
+                      label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }}
                     />
                   )}
                   <Bar dataKey="count" name="Frequency">
-                    {hist.map((_,i)=><Cell key={i} fill={binColors[i]} />)}
+                    {hist.map((_, i) => <Cell key={i} fill={binColors[i]} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          )}
 
-          <div style={{ marginTop:10, fontSize:12, color:"var(--muted)" }}>
-            Spread uses <b>Right − Left</b> under the current Orientation.
-          </div>
-
-          <div className="card" style={{ marginTop:12, padding:12 }}>
-            <div style={{ fontWeight:700, marginBottom:6, color:"var(--brand)" }}>Probability vs Line</div>
-            {teamProb ? (
-              <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:14 }}>
-                <span><b>Under</b>: {(teamProb.under*100).toFixed(1)}%</span>
-                <span><b>At</b>: {(teamProb.at*100).toFixed(1)}%</span>
-                <span><b>Over</b>: {(teamProb.over*100).toFixed(1)}%</span>
+            {!!stats && (
+              <div style={{ marginTop: 8, opacity: 0.85, fontSize: 13 }}>
+                n={stats.n} • mean {stats.mean.toFixed(2)} • med {stats.median.toFixed(2)} • 5–95% {stats.p05.toFixed(1)}–{stats.p95.toFixed(1)}
               </div>
-            ) : (
-              <div style={{ opacity:.7, fontSize:14 }}>Enter a numeric line to see probabilities.</div>
             )}
-          </div>
-        </div>
-      </section>
 
-      {/* Boxscore: grouped by role with per-stat medians (role-filtered) */}
-      <section className="card" style={{ padding: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--brand)" }}>
-          Boxscore (Median by Player)
-        </h2>
+            {teamProb && (
+              <div className="card" style={{ marginTop:8, padding:8, fontSize:13 }}>
+                <b>Probability vs Line</b>
+                <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:4 }}>
+                  <span><b>Under</b>: {(teamProb.under*100).toFixed(1)}% ({americanOdds(teamProb.under)})</span>
+                  <span><b>At</b>: {(teamProb.at*100).toFixed(1)}%</span>
+                  <span><b>Over</b>: {(teamProb.over*100).toFixed(1)}% ({americanOdds(teamProb.over)})</span>
+                </div>
+              </div>
+            )}
+          </article>
 
-        {!selectedGame ? (
-          <div style={{ marginTop: 8, opacity: 0.7 }}>Select a game.</div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 12 }}>
-            {[{ team: leftName, color: leftColor }, { team: rightName, color: rightColor }].map(({ team, color }) => {
-              const renderGroup = (role: Role) => {
-                const cols = COLUMNS[role];
-                const names = teamPlayersByRole(team, role);
-                if (!names.length) return null;
+          {/* Player distribution card */}
+          <article
+            className="card"
+            style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--card)", contentVisibility:"auto", containIntrinsicSize:"360px" }}
+          >
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4, minmax(0,1fr))", gap:8 }}>
+              <select value={detailTeam} onChange={e=>setDetailTeam(e.target.value)}
+                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+                {selectedGame ? [selectedGame.teamA, selectedGame.teamB].map(t=> <option key={t} value={t}>{t}</option>) :
+                 Object.keys(players).sort().map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <select value={detailRole} onChange={e=>setDetailRole(e.target.value as Role)}
+                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+                <option>QB</option><option>Rusher</option><option>Receiver</option>
+              </select>
+              <select value={detailPlayer} onChange={e=>setDetailPlayer(e.target.value)}
+                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+                {teamPlayersByRole(detailTeam, detailRole).map(n=> <option key={n} value={n}>{n}</option>)}
+              </select>
+              <select value={detailStat} onChange={e=>setDetailStat(e.target.value)}
+                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+                {statsFor(detailTeam, detailPlayer, detailRole).map(s=> <option key={s} value={s}>{CANON_LABEL[STAT_SYNONYMS[norm(s)] ?? norm(s)] ?? s}</option>)}
+              </select>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:12, color:"var(--muted)" }}>Line:</span>
+                <NumberSpinner value={playerLine} onChange={setPlayerLine} step={0.5} />
+              </div>
+            </div>
 
-                return (
-                  <div key={role} className="card" style={{ padding: 12, borderColor: "var(--border)", marginTop: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <i style={{ width: 10, height: 10, borderRadius: 999, background: color }} />
-                      <div style={{ fontWeight: 800 }}>
-                        {team} • {role === "QB" ? "QBs" : role === "Rusher" ? "Rushers" : "Receivers"}
-                      </div>
-                    </div>
+            {!pValues.length ? (
+              <div style={{ height:180, display:"grid", placeItems:"center", opacity:.7, marginTop:6 }}>No data for selection.</div>
+            ) : (
+              <>
+                <div style={{ height: 280, marginTop: 6 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={pHist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
+                      <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
+                      <XAxis dataKey="bin" minTickGap={12} tick={{ fontSize: 12 }} />
+                      <YAxis allowDecimals={false} width={28} tick={{ fontSize: 12 }} />
+                      <Tooltip
+                        contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12 }}
+                        labelStyle={{ color:"var(--muted)" }}
+                        itemStyle={{ color:"var(--text)" }}
+                      />
+                      {pProb && pLineBin && (
+                        <ReferenceLine
+                          x={pLineBin}
+                          ifOverflow="extendDomain"
+                          stroke="var(--accent)"
+                          strokeDasharray="4 4"
+                          label={{ value:`Line ${pProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }}
+                        />
+                      )}
+                      <Bar dataKey="count" name={`${detailPlayer} • ${CANON_LABEL[STAT_SYNONYMS[norm(detailStat)] ?? norm(detailStat)] ?? detailStat}`}>
+                        {pHist.map((_,i)=><Cell key={i} fill={getTeamColors(detailTeam)?.primary ?? "var(--brand)"} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
 
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-                        <thead>
-                          <tr>
-                            <th style={{ textAlign: "left", padding: "6px 8px" }}>Player</th>
-                            {cols.map((canon) => (
-                              <th key={canon} style={{ textAlign: "right", padding: "6px 8px", whiteSpace: "nowrap" }}>
-                                {CANON_LABEL[canon]}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {names.map((name) => {
-                            const rawStats = (players[team]?.[name]?.[role]) || {};
-                            const agg = aggregateCanon(rawStats);
-                            const val = (canon: string) =>
-                              agg[canon] && agg[canon].length ? Math.round(median(agg[canon])) : "—";
-
-                            // default stat for detail panel for this role
-                            const defaultCanon = cols[0];
-                            const defaultRawKey =
-                              Object.keys(rawStats).find((k) => STAT_SYNONYMS[norm(k)] === defaultCanon) ||
-                              Object.keys(rawStats)[0] ||
-                              "";
-
-                            return (
-                              <tr key={name} style={{ borderTop: "1px solid var(--border)" }}>
-                                <td style={{ padding: "6px 8px" }}>
-                                  <button
-                                    onClick={() => {
-                                      setDetailTeam(team);
-                                      setDetailPlayer(name);
-                                      setDetailRole(role);
-                                      setDetailStat(defaultRawKey);
-                                      setPlayerLine(""); // reset player line when opening a new player/role
-                                    }}
-                                    style={{
-                                      background: "transparent",
-                                      border: "none",
-                                      color: "var(--brand)",
-                                      fontWeight: 700,
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    {name}
-                                  </button>
-                                </td>
-                                {cols.map((canon) => (
-                                  <td key={canon} style={{ padding: "6px 8px", textAlign: "right" }}>
-                                    {val(canon)}
-                                  </td>
-                                ))}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                {pProb && (
+                  <div className="card" style={{ marginTop:6, padding:8, fontSize:13 }}>
+                    <b>Probability vs Line</b>
+                    <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:4 }}>
+                      <span><b>Under</b>: {(pProb.under*100).toFixed(1)}% ({americanOdds(pProb.under)})</span>
+                      <span><b>At</b>: {(pProb.at*100).toFixed(1)}%</span>
+                      <span><b>Over</b>: {(pProb.over*100).toFixed(1)}% ({americanOdds(pProb.over)})</span>
                     </div>
                   </div>
-                );
-              };
-
-              return (
-                <div key={team} className="card" style={{ padding: 12, borderColor: "var(--border)" }}>
-                  {renderGroup("QB")}
-                  {renderGroup("Rusher")}
-                  {renderGroup("Receiver")}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Player detail panel (hist + O/U) */}
-      {detailTeam && detailPlayer && (
-        <section className="card" style={{ padding:16 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <h2 style={{ margin:0, fontSize:18, fontWeight:800, color:"var(--brand)" }}>
-              {detailPlayer} — {detailTeam} • {detailRole}
-            </h2>
-            <button
-              onClick={()=>{ setDetailTeam(""); setDetailPlayer(""); setDetailStat(""); }}
-              className="btn"
-              style={{ background:"transparent", color:"var(--text)", border:"1px solid var(--border)" }}
-            >
-              Close
-            </button>
-          </div>
-
-          <div style={{ marginTop:8, display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
-            <span>Stat:</span>
-            <select
-              value={detailStat}
-              onChange={(e)=>setDetailStat(e.target.value)}
-              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-            >
-              {playerStatsForRole(detailTeam, detailPlayer, detailRole).map(s => (
-                <option key={s} value={s}>{pretty(s)}</option>
-              ))}
-            </select>
-            <span>Line:</span>
-            <input
-              value={playerLine}
-              inputMode="decimal"
-              onChange={(e)=>setPlayerLine(e.target.value)}
-              style={{ width:120, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-            />
-          </div>
-
-          <PlayerChart
-            team={detailTeam}
-            player={detailPlayer}
-            role={detailRole}
-            stat={detailStat}
-            values={(players[detailTeam]?.[detailPlayer]?.[detailRole]?.[detailStat]) || []}
-            line={playerLine}
-          />
-        </section>
-      )}
-    </div>
-  );
-}
-
-/* --------------------- Player chart component --------------------- */
-function PlayerChart({
-  team, player, role, stat, values, line,
-}: {
-  team:string; player:string; role:Role; stat:string; values:number[]; line:string;
-}) {
-  const color = getTeamColors(team)?.primary ?? "var(--brand)";
-  const hist = useMemo<HistBin_2[]>(() => {
-    if (!values.length) return [];
-    return computeHistogram(values, { bins: 20 });
-  }, [values]);
-
-  const prob = useMemo(() => {
-    if (!values.length) return null as null | { under:number; at:number; over:number; line:number };
-    const L = Number(line); if (!Number.isFinite(L)) return null;
-    const n = values.length; let u=0,a=0,o=0;
-    for (const x of values) { if (Math.abs(x-L)<1e-9) a++; else if (x<L) u++; else o++; }
-    return { under:u/n, at:a/n, over:o/n, line:L };
-  }, [values, line]);
-
-  const lbl = useMemo(()=> (prob && hist.length ? findBinLabelForValue(hist, prob.line) : undefined), [prob, hist]);
-
-  return (
-    <div style={{ marginTop:12 }}>
-      {!hist.length ? (
-        <div style={{ height:260, display:"grid", placeItems:"center", opacity:.7 }}>
-          No data for this stat.
-        </div>
-      ) : (
-        <>
-          <div style={{ height:260 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hist} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
-                <CartesianGrid stroke="var(--border)" strokeOpacity={0.4} />
-                <XAxis dataKey="bin" angle={-30} textAnchor="end" interval={0} height={50} />
-                <YAxis allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12 }}
-                  labelStyle={{ color:"var(--muted)" }}
-                  itemStyle={{ color:"var(--text)" }}
-                  formatter={(v:any)=>[v,"Count"]}
-                />
-                {prob && lbl && (
-                  <ReferenceLine
-                    x={lbl} ifOverflow="extendDomain"
-                    stroke="var(--accent)" strokeDasharray="4 4"
-                    label={{ value:`Line ${prob.line}`, position:"top", fontSize:12, fill:"var(--accent)" }}
-                  />
                 )}
-                <Bar dataKey="count" name={`${player} • ${role} • ${stat}`}>
-                  {hist.map((_,i)=><Cell key={i} fill={color} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="card" style={{ marginTop:12, padding:12 }}>
-            <div style={{ fontWeight:700, marginBottom:6, color:"var(--brand)" }}>Probability vs Line</div>
-            {prob ? (
-              <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:14 }}>
-                <span><b>Under</b>: {(prob.under*100).toFixed(1)}%</span>
-                <span><b>At</b>: {(prob.at*100).toFixed(1)}%</span>
-                <span><b>Over</b>: {(prob.over*100).toFixed(1)}%</span>
-              </div>
-            ) : (
-              <div style={{ opacity:.7, fontSize:14 }}>Enter a numeric line above to see probabilities.</div>
+              </>
             )}
-          </div>
-        </>
-      )}
+          </article>
+        </div>
+      </div>
     </div>
   );
 }

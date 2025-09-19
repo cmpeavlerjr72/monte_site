@@ -50,8 +50,6 @@ const weekFromPath = (p: string) =>
   normPath(p).match(/\/data\/([^/]+)\//i)?.[1].toLowerCase() ??
   "root";
 
-type BetFilter = "all" | "spread" | "total";
-
 function buildFiles(raw: Record<string, string>, urls: Record<string, string>): FileInfo[] {
   const paths = Array.from(new Set([...Object.keys(raw), ...Object.keys(urls)]));
   return paths
@@ -84,7 +82,6 @@ function pick<T = any>(row: any, keys: string[]): T | undefined {
   for (const k of keys) if (row[k] != null && row[k] !== "") return row[k] as T;
   return undefined;
 }
-// numbers only if actually present; otherwise undefined
 function pickNum(row: any, keys: string[]): number | undefined {
   for (const k of keys) {
     const v = row[k];
@@ -103,10 +100,8 @@ const MONTHS: Record<string, number> = {
 
 function parseMonthDay(input: string): { y?: number; m: number; d: number } | null {
   const s = input.trim();
-  // Remove weekday like "Fri," if present
   const noDow = s.replace(/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,\s*/i, "");
 
-  // "Sep 05" or "September 5"
   let m = noDow.match(/^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:,\s*(\d{4}))?$/i);
   if (m) {
     const mon = MONTHS[m[1].toLowerCase()];
@@ -114,14 +109,12 @@ function parseMonthDay(input: string): { y?: number; m: number; d: number } | nu
     if (mon && day) return { y, m: mon, d: day };
   }
 
-  // "5-Sep" or "05-Sep-2025"
   m = noDow.match(/^(\d{1,2})-(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*(?:-(\d{4}))?$/i);
   if (m) {
     const day = Number(m[1]); const mon = MONTHS[m[2].toLowerCase()]; const y = m[3] ? Number(m[3]) : undefined;
     if (mon && day) return { y, m: mon, d: day };
   }
 
-  // "9/5" or "09/05/2025"
   m = noDow.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/i);
   if (m) {
     const mon = Number(m[1]); const day = Number(m[2]);
@@ -129,7 +122,6 @@ function parseMonthDay(input: string): { y?: number; m: number; d: number } | nu
     if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) return { y, m: mon, d: day };
   }
 
-  // ISO
   m = noDow.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m) return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
 
@@ -139,7 +131,6 @@ function parseMonthDay(input: string): { y?: number; m: number; d: number } | nu
 function parseTime(input: string | undefined): { h: number; min: number } | null {
   if (!input) return null;
   const s = String(input).trim();
-  // "7:30 PM" / "7 PM"
   let m = s.match(/^(\d{1,2})(?::(\d{2}))?\s*([AP]M)?$/i);
   if (m) {
     let h = Number(m[1]); const min = m[2] ? Number(m[2]) : 0; const ampm = m[3]?.toUpperCase();
@@ -147,7 +138,6 @@ function parseTime(input: string | undefined): { h: number; min: number } | null
     if (ampm === "AM" && h === 12) h = 0;
     return { h, min };
   }
-  // "19:05"
   m = s.match(/^(\d{1,2}):(\d{2})$/);
   if (m) return { h: Number(m[1]), min: Number(m[2]) };
   return null;
@@ -171,30 +161,16 @@ function kickoffMsFrom(row: any) {
   return undefined;
 }
 
-function formatKick(ms?: number) {
-  if (!Number.isFinite(ms)) return "TBD";
-  const dt = new Date(ms!);
-  // No weekday (per your request)
-  return dt
-    .toLocaleString("en-US", {
-      timeZone: "America/New_York",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    })
-    .replace(",", " •");
-}
-
 /* ---------- Page ---------- */
 type PickRow = {
   week: string; weekNum: number;
   kickoffMs?: number;
   key: string;
   market: "spread" | "total";
-  pickText: string;                // what we picked, e.g., "Team A -3.5" / "Over 51.5"
+  pickText: string;                // "Team A -3.5" / "Over 51.5"
   result: "W" | "L" | "P";
   units: number;                   // +1, -1.1, or 0
+  confidence?: number;             // 0..1 probability of our picked side
 };
 
 export default function Results() {
@@ -205,12 +181,11 @@ export default function Results() {
 
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<PickRow[]>([]);
-  const [betFilter, setBetFilter] = useState<BetFilter>("all");
-  const filteredRows = useMemo(
-    () => rows.filter(r => (betFilter === "all" ? true : r.market === betFilter)),
-    [rows, betFilter]
-  );
-  
+
+  // NEW: filters
+  const [marketFilter, setMarketFilter] = useState<"all"|"spread"|"total">("all");
+  const [confMin, setConfMin] = useState<number>(0);    // percent
+  const [confMax, setConfMax] = useState<number>(100);  // percent
 
   useEffect(() => {
     async function loadAll() {
@@ -267,7 +242,7 @@ export default function Results() {
           simsByWeek[w] = gm;
         }
 
-        // 2) Load all game meta (lines + date/time + actual scores)
+        // 2) Load all game meta (lines + date/time + actual scores) and grade
         const allRows: PickRow[] = [];
         for (const w of weeks) {
           const gFiles = gamesFilesAll.filter((f) => f.week === w);
@@ -303,19 +278,17 @@ export default function Results() {
 
               const key = sortedKey(teamA_meta, teamB_meta);
               const sim = gm[key];
-              if (!sim) continue; // no sims -> we can't form a pick
+              if (!sim) continue; // no sims -> skip
 
               // Sims medians in alphabetical orientation
               const medA_alpha = median(sim.rowsA.map((r) => r.pts));
               const medB_alpha = median(sim.rowsA.map((r) => r.opp_pts));
 
-              // If file's Team A equals sim.teamA -> keep; else flip
+              // Align to file's Team A orientation
               let simsA = medA_alpha;
               let simsB = medB_alpha;
-              if (sim.teamA !== teamA_meta) {
-                simsA = medB_alpha;
-                simsB = medA_alpha;
-              }
+              const bookAisSimsA = (sim.teamA === teamA_meta);
+              if (!bookAisSimsA) { simsA = medB_alpha; simsB = medA_alpha; }
 
               const spread = pickNum(row, ["Spread", "spread", "Line", "line"]);
               const total  = pickNum(row, ["OU", "O/U", "Total", "total"]);
@@ -325,27 +298,41 @@ export default function Results() {
 
               const hasFinals = Number.isFinite(finalA) && Number.isFinite(finalB);
 
-              // --- Spread pick & grade ---
+              // --- Spread: compute pick, confidence, and grade ---
               if (Number.isFinite(spread)) {
-                const s = spread as number; // Team A line
-                // Our pick: Team A if simsA + s > simsB else Team B with opposite number
+                const s = spread as number;
+
+                // confidence via sims: P(Team A covers) = P(A + s > B) in book orientation
+                const AvalsBook = bookAisSimsA
+                  ? sim.rowsA.map(r => r.pts)
+                  : sim.rowsA.map(r => r.opp_pts);
+                const BvalsBook = bookAisSimsA
+                  ? sim.rowsA.map(r => r.opp_pts)
+                  : sim.rowsA.map(r => r.pts);
+                let coverA = 0;
+                const nPairs = Math.min(AvalsBook.length, BvalsBook.length);
+                for (let i = 0; i < nPairs; i++) if ((AvalsBook[i] + s) > BvalsBook[i]) coverA++;
+                const pA = nPairs ? coverA / nPairs : undefined;
+
+                // pick text
                 const diff = (simsA + s) - simsB;
                 const pickSpread = diff > 0
                   ? `${teamA_meta} ${s > 0 ? `+${s}` : `${s}`}`
                   : `${teamB_meta} ${(-s) > 0 ? `+${-s}` : `${-s}`}`;
 
+                // chosen-side confidence
+                const confidence = typeof pA === "number" ? (diff > 0 ? pA : 1 - pA) : undefined;
+
                 if (hasFinals) {
-                  // Who covered in reality?
-                  const coverDiff = (finalA! + s) - finalB!;
+                  const fA = finalA as number;
+                  const fB = finalB as number;
+                  const coverDiff = (fA + s) - fB;
+
                   let result: "W" | "L" | "P";
                   if (Math.abs(coverDiff) < 1e-9) result = "P";
-                  else if (coverDiff > 0) {
-                    // Team A covered
-                    result = pickSpread.startsWith(teamA_meta) ? "W" : "L";
-                  } else {
-                    // Team B covered
-                    result = pickSpread.startsWith(teamB_meta) ? "W" : "L";
-                  }
+                  else if (coverDiff > 0) result = pickSpread.startsWith(teamA_meta) ? "W" : "L";
+                  else result = pickSpread.startsWith(teamB_meta) ? "W" : "L";
+
                   const units = result === "W" ? 1 : result === "L" ? -1.1 : 0;
                   allRows.push({
                     week: w, weekNum: parseInt(w.replace(/[^0-9]/g, "") || "0", 10),
@@ -353,21 +340,32 @@ export default function Results() {
                     market: "spread",
                     pickText: pickSpread,
                     result, units,
+                    confidence,
                   });
                 }
               }
 
-              // --- Total pick & grade ---
+              // --- Total: compute pick, confidence, and grade ---
               if (Number.isFinite(total)) {
                 const t = total as number;
                 const predTotal = simsA + simsB;
                 const pickTotal = predTotal > t ? `Over ${t}` : `Under ${t}`;
 
+                // confidence via sims totals
+                const totals = sim.rowsA.map(r => r.pts + r.opp_pts);
+                let overCount = 0;
+                for (const x of totals) if (x > t) overCount++;
+                const pOver = totals.length ? overCount / totals.length : undefined;
+                const confidence = typeof pOver === "number"
+                  ? (pickTotal.startsWith("Over") ? pOver : 1 - pOver)
+                  : undefined;
+
                 if (hasFinals) {
-                  const gameTotal = finalA! + finalB!;
+                  const fA = finalA as number;
+                  const fB = finalB as number;
                   let result: "W" | "L" | "P";
-                  if (Math.abs(gameTotal - t) < 1e-9) result = "P";
-                  else if (gameTotal > t) result = pickTotal.startsWith("Over") ? "W" : "L";
+                  if (Math.abs(fA + fB - t) < 1e-9) result = "P";
+                  else if (fA + fB > t) result = pickTotal.startsWith("Over") ? "W" : "L";
                   else result = pickTotal.startsWith("Under") ? "W" : "L";
 
                   const units = result === "W" ? 1 : result === "L" ? -1.1 : 0;
@@ -377,6 +375,7 @@ export default function Results() {
                     market: "total",
                     pickText: pickTotal,
                     result, units,
+                    confidence,
                   });
                 }
               }
@@ -392,9 +391,20 @@ export default function Results() {
     loadAll();
   }, [weeks]);
 
-  /* ---------- Build cumulative series + per-week splits ---------- */
+  /* ---------- Apply filters (market + confidence range) ---------- */
+  const filteredRows = useMemo(() => {
+    const min = Math.max(0, Math.min(100, confMin));
+    const max = Math.max(min, Math.min(100, confMax));
+    return rows.filter(r => {
+      if (marketFilter !== "all" && r.market !== marketFilter) return false;
+      if (typeof r.confidence !== "number") return false; // should always exist, but be safe
+      const pc = r.confidence * 100;
+      return pc >= min && pc <= max;
+    });
+  }, [rows, marketFilter, confMin, confMax]);
+
+  /* ---------- Build cumulative series + per-week splits (filtered) ---------- */
   const { unitsSeries, overall, byWeek, dividers } = useMemo(() => {
-    // Sort graded picks by (weekNum asc, then kickoffMs asc, then key)
     const graded = [...filteredRows].sort((a, b) => {
       if (a.weekNum !== b.weekNum) return a.weekNum - b.weekNum;
       const ax = a.kickoffMs ?? Number.POSITIVE_INFINITY;
@@ -402,12 +412,12 @@ export default function Results() {
       if (ax !== bx) return ax - bx;
       return a.key.localeCompare(b.key);
     });
-  
+
     const perWeek: Record<string, { W: number; L: number; P: number; units: number }> = {};
     let running = 0;
     const series: { idx: number; units: number }[] = [];
     const weekStartIdx: { idx: number; label: string }[] = [];
-  
+
     let lastWeek = "";
     graded.forEach((p, i) => {
       if (p.week !== lastWeek) {
@@ -415,60 +425,90 @@ export default function Results() {
         lastWeek = p.week;
       }
       if (!perWeek[p.week]) perWeek[p.week] = { W: 0, L: 0, P: 0, units: 0 };
-  
+
       if (p.result === "W") { perWeek[p.week].W += 1; running += 1; perWeek[p.week].units += 1; }
       else if (p.result === "L") { perWeek[p.week].L += 1; running -= 1.1; perWeek[p.week].units -= 1.1; }
       else { perWeek[p.week].P += 1; }
-  
+
       series.push({ idx: i + 1, units: Number(running.toFixed(2)) });
     });
-  
-    const W = graded.filter(p => p.result === "W").length;
-    const L = graded.filter(p => p.result === "L").length;
-    const P = graded.filter(p => p.result === "P").length;
+
+    const W = graded.filter((p) => p.result === "W").length;
+    const L = graded.filter((p) => p.result === "L").length;
+    const P = graded.filter((p) => p.result === "P").length;
+    // Profit in units using to-win-1 at -110 grading
     const profit = Number((W * 1 - L * 1.1).toFixed(2));
-  
+
+    // Bets used for %/risk exclude pushes
+    const gradedBets = W + L;
+
+    // Win % (exclude pushes)
+    const win_pct = gradedBets ? Number(((W / gradedBets) * 100).toFixed(1)) : 0;
+
+    // Total units risked (1.1 per graded bet)
+    const risk = Number((1.1 * gradedBets).toFixed(2));
+
+    // Return on Risk (as a percent)
+    const ror = risk ? Number(((profit / risk) * 100).toFixed(1)) : 0;
+
     return {
-      unitsSeries: series,
-      overall: { W, L, P, profit },
-      byWeek: perWeek,
-      dividers: weekStartIdx,
+    unitsSeries: series,
+    overall: { W, L, P, profit, win_pct, risk, ror },
+    byWeek: perWeek,
+    dividers: weekStartIdx,
     };
   }, [filteredRows]);
-  
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-        <section className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 16, alignItems: "baseline", flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0, fontWeight: 800, fontSize: 20 }}>Results</h2>
-            <span style={{ fontSize: 14, opacity: 0.8 }}>
+          <h2 style={{ margin: 0, fontWeight: 800, fontSize: 20 }}>Results</h2>
+          <span style={{ fontSize: 14, opacity: 0.8 }}>
             {loading ? "Loading…" : `Graded picks: ${filteredRows.length}`}
-            </span>
+          </span>
+        </div>
 
-            {/* bet-type filter */}
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-            <label style={{ fontSize: 12, opacity: 0.7 }}>Show:</label>
-            <select
-                value={betFilter}
-                onChange={(e) => setBetFilter(e.target.value as BetFilter)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-            >
-                <option value="all">All bets</option>
-                <option value="spread">Spread</option>
-                <option value="total">Total</option>
-            </select>
-            </div>
+        {/* Filters */}
+        <div style={{ marginTop: 10, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <label style={{ fontSize: 13, color: "var(--muted)" }}>Market:</label>
+          <select
+            value={marketFilter}
+            onChange={(e) => setMarketFilter(e.target.value as any)}
+            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+          >
+            <option value="all">All bets</option>
+            <option value="spread">Spread</option>
+            <option value="total">Total</option>
+          </select>
+
+          <label style={{ marginLeft: 8, fontSize: 13, color: "var(--muted)" }}>Confidence %:</label>
+          <input
+            type="number" min={0} max={100} step={1}
+            value={confMin}
+            onChange={(e)=>setConfMin(Number(e.target.value))}
+            style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+          />
+          <span style={{ fontSize: 14 }}>to</span>
+          <input
+            type="number" min={0} max={100} step={1}
+            value={confMax}
+            onChange={(e)=>setConfMax(Number(e.target.value))}
+            style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+          />
         </div>
 
         <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
             <span><b>Record:</b> {overall.W}-{overall.L}-{overall.P}</span>
             <span><b>Profit:</b> {overall.profit.toFixed(2)}u</span>
+            <span><b>Win%:</b> {overall.win_pct.toFixed(1)}%</span>
+            {/* <span><b>Risked:</b> {overall.risk.toFixed(2)}u</span> */}
+            <span><b>RoR:</b> {overall.ror.toFixed(1)}%</span>
         </div>
-        </section>
 
+      </section>
 
-      {/* Cumulative Units Chart */}
+      {/* Cumulative Units Chart (filtered) */}
       <section className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Cumulative Units (by pick order)</div>
         <div style={{ height: 260 }}>
@@ -482,7 +522,6 @@ export default function Results() {
                 labelFormatter={(l) => `Pick #${l}`}
                 contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10 }}
               />
-              {/* Week dividers */}
               {dividers.map((d, i) => (
                 <ReferenceLine
                   key={i}
@@ -498,7 +537,7 @@ export default function Results() {
         </div>
       </section>
 
-      {/* Week-by-week summary */}
+      {/* Week-by-week summary (filtered) */}
       <section className="card" style={{ padding: 12 }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Week-by-Week</div>
         <div style={{ display: "grid", gap: 8 }}>
@@ -508,7 +547,7 @@ export default function Results() {
               const nb = parseInt(b[0].replace(/[^0-9]/g, "") || "0", 10);
               return na - nb;
             })
-            .map(([wk, rec], idx, arr) => (
+            .map(([wk, rec], idx) => (
               <div key={wk} style={{ padding: "8px 0", borderTop: idx === 0 ? "none" : "1px solid var(--border)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                   <div style={{ fontWeight: 700 }}>{wk}</div>
@@ -523,7 +562,7 @@ export default function Results() {
                 </div>
               </div>
             ))}
-          {!Object.keys(byWeek).length && <div style={{ opacity: 0.7 }}>No graded games yet.</div>}
+          {!Object.keys(byWeek).length && <div style={{ opacity: 0.7 }}>No graded games in this filter.</div>}
         </div>
       </section>
     </div>
