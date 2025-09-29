@@ -2,14 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import * as Papa from "papaparse";
 import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ReferenceLine,
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis,
+  Tooltip, CartesianGrid, ReferenceLine,
 } from "recharts";
 
 /* ---------- Discover sim CSVs (sims under scores/) ---------- */
@@ -41,6 +35,10 @@ const G_URL = Object.assign(
   import.meta.glob("../data/**/week*_games*.csv", { as: "url", eager: true }),
   import.meta.glob("../data/**/games*.csv",       { as: "url", eager: true })
 ) as Record<string, string>;
+
+/* ---------- Load team & conference dictionary from assets ---------- */
+const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
+const teamInfoCsvText = Object.values(TEAM_INFO_RAW)[0] || "";
 
 /* ---------- Shared helpers ---------- */
 type FileInfo = { path: string; week: string; file: string; raw?: string; url?: string };
@@ -90,8 +88,8 @@ async function parseCsvFromItemSafe<T = any>(
       header: true,
       dynamicTyping: true,
       skipEmptyLines: true,
-      download: false,    // parsing a string
-      worker: !isSafari,  // avoid iOS worker crashes
+      download: false,
+      worker: !isSafari,
       complete: (res) => resolve(res.data as T[]),
       error: reject,
     } as Papa.ParseConfig<T>);
@@ -217,9 +215,7 @@ function kickoffMsFrom(row: any) {
 
 /* ---------- EV helpers ---------- */
 const SPREAD_TOTAL_POS_EV_THRESHOLD = 0.525; // 52.5% at -110
-
 function impliedProbFromAmerican(odds: number): number {
-  // e.g., -150 => 150/(150+100) = 0.6 ; +140 => 100/(140+100) = 0.4167
   if (odds < 0) { const a = Math.abs(odds); return a / (a + 100); }
   const b = Math.abs(odds);
   return 100 / (b + 100);
@@ -242,6 +238,12 @@ type PickRow = {
   isUnderdogPick?: boolean;        // for spread OR ML
   isPositiveEV?: boolean;          // computed per bet
   stakeRisk?: number;              // units risked for this graded bet
+
+  // who played + their conferences (filled from team_info.csv if needed)
+  teamA: string;
+  teamB: string;
+  confA?: string;
+  confB?: string;
 };
 
 type MarketFilter = "all" | "spread" | "total" | "ml";
@@ -257,13 +259,72 @@ export default function Results() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<PickRow[]>([]);
 
+  // NEW: team-info state
+  const [teamToConf, setTeamToConf] = useState<Record<string, string>>({});
+  const [allTeams, setAllTeams] = useState<string[]>([]);
+  const [allConfs, setAllConfs] = useState<string[]>([]);
+
   // Filters
   const [marketFilter, setMarketFilter] = useState<MarketFilter>("all");
   const [pickFilter, setPickFilter] = useState<PickFilter>("all");
   const [evFilter, setEvFilter] = useState<EVFilter>("all");
-  const [confMin, setConfMin] = useState<number>(0);    // percent
-  const [confMax, setConfMax] = useState<number>(100);  // percent
+  const [confMin, setConfMin] = useState<number>(0);
+  const [confMax, setConfMax] = useState<number>(100);
 
+  // Team + Conference filters (options now come from team_info.csv)
+  const [teamFilter, setTeamFilter] = useState<string>("all");
+  const [confFilter, setConfFilter] = useState<string>("all");
+
+  /* ---------- Parse team_info.csv once ---------- */
+  useEffect(() => {
+    if (!teamInfoCsvText) return;
+    const parsed = Papa.parse<Record<string, any>>(teamInfoCsvText, {
+      header: true,
+      dynamicTyping: false,
+      skipEmptyLines: true,
+    });
+    const t2c: Record<string, string> = {};
+    const teamSet = new Set<string>();
+    const confSet = new Set<string>();
+
+    const teamKeys = ["team", "Team", "school", "School", "name", "Name"];
+    const confKeys = ["conference", "Conference", "conf", "Conf"];
+
+    for (const r of parsed.data || []) {
+      if (!r) continue;
+      const team = pick<string>(r, teamKeys)?.trim();
+      const conf = pick<string>(r, confKeys)?.trim();
+      if (!team) continue;
+      teamSet.add(team);
+      if (conf) {
+        confSet.add(conf);
+        t2c[team.toLowerCase()] = conf;            // exact
+        t2c[team.replace(/\s+/g, "").toLowerCase()] = conf; // no-space fallback
+      }
+
+      // Optional: support short names / aliases if present
+      const alias = (r["short_name"] ?? r["Short Name"] ?? r["alias"] ?? r["Alias"])?.toString().trim();
+      if (alias && conf) {
+        teamSet.add(alias);
+        t2c[alias.toLowerCase()] = conf;
+        t2c[alias.replace(/\s+/g, "").toLowerCase()] = conf;
+      }
+    }
+
+    setTeamToConf(t2c);
+    setAllTeams(Array.from(teamSet).sort((a, b) => a.localeCompare(b)));
+    setAllConfs(Array.from(confSet).sort((a, b) => a.localeCompare(b)));
+  }, []);
+
+  /* ---------- Helpers that use the team-info map ---------- */
+  const confOf = (team: string | undefined) => {
+    if (!team) return undefined;
+    const k1 = team.toLowerCase();
+    const k2 = team.replace(/\s+/g, "").toLowerCase();
+    return teamToConf[k1] ?? teamToConf[k2] ?? undefined;
+  };
+
+  /* ---------- Load + grade as before, but backfill conferences from team-info ---------- */
   useEffect(() => {
     const ac = new AbortController();
     let alive = true;
@@ -271,7 +332,7 @@ export default function Results() {
     async function loadAll() {
       setLoading(true);
       try {
-        // 1) Load all sims into a map by week -> GameMap
+        // sims by week
         const simsByWeek: Record<string, GameMap> = {};
         for (const w of weeks) {
           const sFiles = scoreFilesAll.filter((f) => f.week === w);
@@ -307,7 +368,7 @@ export default function Results() {
           simsByWeek[w] = gm;
         }
 
-        // 2) Load all game meta (lines + date/time + actual scores + ML) and grade
+        // meta + grading
         const allRows: PickRow[] = [];
         for (const w of weeks) {
           const gFiles = gamesFilesAll.filter((f) => f.week === w);
@@ -328,17 +389,33 @@ export default function Results() {
               ).trim();
               if (!teamA_meta || !teamB_meta) continue;
 
+              // try to read confs from the game CSV...
+              let confA = String(
+                pick<string>(row, [
+                  "Team A Conf","team_a_conf","confA","ConfA","A Conf",
+                  "home_conf","Home Conf","HomeConf","Team A Conference","team_a_conference"
+                ]) ?? ""
+              ).trim() || undefined;
+
+              let confB = String(
+                pick<string>(row, [
+                  "Team B Conf","team_b_conf","confB","ConfB","B Conf",
+                  "away_conf","Away Conf","AwayConf","Team B Conference","team_b_conference"
+                ]) ?? ""
+              ).trim() || undefined;
+
+              // ...but if missing, backfill from team_info.csv
+              if (!confA) confA = confOf(teamA_meta);
+              if (!confB) confB = confOf(teamB_meta);
+
               const key = sortedKey(teamA_meta, teamB_meta);
               const sim = gm[key];
-              if (!sim) continue; // no sims -> skip
+              if (!sim) continue;
 
-              // Sims medians in alphabetical orientation (used for spread/total baseline)
+              // sims medians in file orientation
               const medA_alpha = median(sim.rowsA.map((r) => r.pts));
               const medB_alpha = median(sim.rowsA.map((r) => r.opp_pts));
-
-              // Align to file's Team A orientation for spread/total
-              let simsA = medA_alpha;
-              let simsB = medB_alpha;
+              let simsA = medA_alpha, simsB = medB_alpha;
               const bookAisSimsA = (sim.teamA === teamA_meta);
               if (!bookAisSimsA) { simsA = medB_alpha; simsB = medA_alpha; }
 
@@ -347,18 +424,13 @@ export default function Results() {
               const finalA = pickNum(row, ["Team A Score Actual", "team_a_score_actual", "TeamAScoreActual"]);
               const finalB = pickNum(row, ["Team B Score Actual", "team_b_score_actual", "TeamBScoreActual"]);
               const kickoffMs = kickoffMsFrom(row);
-
-              // ML odds
               const mlA = pickNum(row, ["TeamAML","team_a_ml","TeamA_ML","teamAML"]);
               const mlB = pickNum(row, ["TeamBML","team_b_ml","TeamB_ML","teamBML"]);
-
               const hasFinals = Number.isFinite(finalA) && Number.isFinite(finalB);
 
-              /* ---------- Spread: pick + confidence + EV + grade ---------- */
+              /* ---------- Spread ---------- */
               if (Number.isFinite(spread)) {
                 const s = spread as number;
-
-                // P(Team A covers) in book orientation
                 const AvalsBook = bookAisSimsA
                   ? sim.rowsA.map(r => r.pts)
                   : sim.rowsA.map(r => r.opp_pts);
@@ -369,33 +441,24 @@ export default function Results() {
                 const nPairs = Math.min(AvalsBook.length, BvalsBook.length);
                 for (let i = 0; i < nPairs; i++) if ((AvalsBook[i] + s) > BvalsBook[i]) coverA++;
                 const pA = nPairs ? coverA / nPairs : undefined;
-
                 const diff = (simsA + s) - simsB;
                 const pickSpread = diff > 0
                   ? `${teamA_meta} ${s > 0 ? `+${s}` : `${s}`}`
                   : `${teamB_meta} ${(-s) > 0 ? `+${-s}` : `${-s}`}`;
-
                 const confidence = typeof pA === "number" ? (diff > 0 ? pA : 1 - pA) : undefined;
-
-                // favorite / dog (for filtering)
                 const favoriteSide: "A" | "B" | null = s < 0 ? "A" : s > 0 ? "B" : null;
                 const pickedSide: "A" | "B" = diff > 0 ? "A" : "B";
                 const isFavoritePick = favoriteSide ? (pickedSide === favoriteSide) : false;
                 const isUnderdogPick = favoriteSide ? (pickedSide !== favoriteSide) : false;
-
-                // Positive EV at -110 threshold
                 const isPositiveEV = typeof confidence === "number" && confidence > SPREAD_TOTAL_POS_EV_THRESHOLD;
 
                 if (hasFinals) {
-                  const fA = finalA as number;
-                  const fB = finalB as number;
+                  const fA = finalA as number, fB = finalB as number;
                   const coverDiff = (fA + s) - fB;
-
                   let result: "W" | "L" | "P";
                   if (Math.abs(coverDiff) < 1e-9) result = "P";
                   else if (coverDiff > 0) result = pickSpread.startsWith(teamA_meta) ? "W" : "L";
                   else result = pickSpread.startsWith(teamB_meta) ? "W" : "L";
-
                   const units = result === "W" ? 1 : result === "L" ? -1.1 : 0;
                   const stakeRisk = result === "P" ? 0 : 1.1;
 
@@ -409,17 +472,16 @@ export default function Results() {
                     isFavoritePick,
                     isUnderdogPick,
                     isPositiveEV,
+                    teamA: teamA_meta, teamB: teamB_meta, confA, confB,
                   });
                 }
               }
 
-              /* ---------- Total: pick + confidence + EV + grade ---------- */
+              /* ---------- Total ---------- */
               if (Number.isFinite(total)) {
                 const t = total as number;
                 const predTotal = simsA + simsB;
                 const pickTotal = predTotal > t ? `Over ${t}` : `Under ${t}`;
-
-                // confidence via sims totals
                 const totals = sim.rowsA.map(r => r.pts + r.opp_pts);
                 let overCount = 0;
                 for (const x of totals) if (x > t) overCount++;
@@ -427,21 +489,16 @@ export default function Results() {
                 const confidence = typeof pOver === "number"
                   ? (pickTotal.startsWith("Over") ? pOver : 1 - pOver)
                   : undefined;
-
                 const isOverPick = pickTotal.startsWith("Over");
                 const isUnderPick = !isOverPick;
-
-                // Positive EV at -110 threshold
                 const isPositiveEV = typeof confidence === "number" && confidence > SPREAD_TOTAL_POS_EV_THRESHOLD;
 
                 if (hasFinals) {
-                  const fA = finalA as number;
-                  const fB = finalB as number;
+                  const fA = finalA as number, fB = finalB as number;
                   let result: "W" | "L" | "P";
                   if (Math.abs(fA + fB - t) < 1e-9) result = "P";
                   else if (fA + fB > t) result = isOverPick ? "W" : "L";
                   else result = isUnderPick ? "W" : "L";
-
                   const units = result === "W" ? 1 : result === "L" ? -1.1 : 0;
                   const stakeRisk = result === "P" ? 0 : 1.1;
 
@@ -455,48 +512,39 @@ export default function Results() {
                     isOverPick,
                     isUnderPick,
                     isPositiveEV,
+                    teamA: teamA_meta, teamB: teamB_meta, confA, confB,
                   });
                 }
               }
 
-              /* ---------- Moneyline: pick by OUTRIGHT WIN PROB ONLY + EV ---------- */
+              /* ---------- Moneyline ---------- */
               if (Number.isFinite(mlA) && Number.isFinite(mlB)) {
-                // Simulated outright win probabilities, oriented to file A/B
                 const AvalsBook = bookAisSimsA
                   ? sim.rowsA.map(r => r.pts)
                   : sim.rowsA.map(r => r.opp_pts);
                 const BvalsBook = bookAisSimsA
                   ? sim.rowsA.map(r => r.opp_pts)
                   : sim.rowsA.map(r => r.pts);
-
                 let aWins = 0;
                 const nPairs = Math.min(AvalsBook.length, BvalsBook.length);
                 for (let i = 0; i < nPairs; i++) if (AvalsBook[i] > BvalsBook[i]) aWins++;
                 const pA = nPairs ? aWins / nPairs : 0.5;
                 const pB = 1 - pA;
-
-                // Pick the side with HIGHER WIN PROBABILITY
                 const pickA = pA >= pB;
                 const pickTeam = pickA ? teamA_meta : teamB_meta;
                 const pickOdds = pickA ? (mlA as number) : (mlB as number);
                 const confidence = pickA ? pA : pB;
-
-                // EV check: simulator P(win) vs implied prob from ML
                 const implied = impliedProbFromAmerican(pickOdds);
                 const isPositiveEV = confidence > implied;
-
-                // Staking: favorite risk=|odds|/100 to win 1; dog risk=1 to win odds/100
                 const isFav = pickOdds < 0;
                 const stakeRisk = isFav ? Math.abs(pickOdds) / 100 : 1;
                 const winPayout = isFav ? 1 : pickOdds / 100;
-
                 const isFavoritePick = isFav;
                 const isUnderdogPick = !isFav;
                 const pickText = `${pickTeam} ML ${pickOdds > 0 ? `+${pickOdds}` : `${pickOdds}`}`;
 
                 if (hasFinals) {
-                  const fA = finalA as number;
-                  const fB = finalB as number;
+                  const fA = finalA as number, fB = finalB as number;
                   const pickedWon = pickA ? (fA > fB) : (fB > fA);
                   const result: "W" | "L" = pickedWon ? "W" : "L";
                   const units = pickedWon ? winPayout : -stakeRisk;
@@ -511,6 +559,7 @@ export default function Results() {
                     isFavoritePick,
                     isUnderdogPick,
                     isPositiveEV,
+                    teamA: teamA_meta, teamB: teamB_meta, confA, confB,
                   });
                 }
               }
@@ -527,25 +576,35 @@ export default function Results() {
 
     loadAll();
     return () => { alive = false; ac.abort(); };
-  }, [weeks]);
+  }, [weeks, teamToConf]); // re-grade if dictionary changes
 
-  /* ---------- Apply filters (market + pick type + EV + confidence) ---------- */
+  /* ---------- Filter options sourced from team_info.csv ---------- */
+  const teamOptions = allTeams;
+  const confOptions = allConfs;
+
+  /* ---------- Apply filters (market + pick type + EV + confidence + team/conf) ---------- */
   const filteredRows = useMemo(() => {
     const min = Math.max(0, Math.min(100, confMin));
     const max = Math.max(min, Math.min(100, confMax));
-    return rows.filter(r => {
-      // Market
-      if (marketFilter !== "all" && r.market !== marketFilter) return false;
 
-      // Confidence window
+    const teamMatch = (r: PickRow) =>
+      teamFilter === "all" ||
+      r.teamA.toLowerCase() === teamFilter.toLowerCase() ||
+      r.teamB.toLowerCase() === teamFilter.toLowerCase();
+
+    const confMatch = (r: PickRow) =>
+      confFilter === "all" ||
+      (r.confA && r.confA.toLowerCase() === confFilter.toLowerCase()) ||
+      (r.confB && r.confB.toLowerCase() === confFilter.toLowerCase());
+
+    return rows.filter(r => {
+      if (!teamMatch(r) || !confMatch(r)) return false;
+      if (marketFilter !== "all" && r.market !== marketFilter) return false;
       if (typeof r.confidence !== "number") return false;
       const pc = r.confidence * 100;
       if (!(pc >= min && pc <= max)) return false;
-
-      // EV filter
       if (evFilter === "positive" && !r.isPositiveEV) return false;
 
-      // Pick-type filter (contextual)
       switch (pickFilter) {
         case "all":       return true;
         case "over":      return r.market === "total"  && !!r.isOverPick;
@@ -554,7 +613,7 @@ export default function Results() {
         case "underdog":  return (r.market === "spread" || r.market === "ml") && !!r.isUnderdogPick;
       }
     });
-  }, [rows, marketFilter, pickFilter, evFilter, confMin, confMax]);
+  }, [rows, marketFilter, pickFilter, evFilter, confMin, confMax, teamFilter, confFilter]);
 
   /* ---------- Build cumulative series + per-week splits (filtered) ---------- */
   const { unitsSeries, overall, byWeek, dividers } = useMemo(() => {
@@ -611,27 +670,11 @@ export default function Results() {
   const pickTypeOptions = useMemo(() => {
     const base = [{ value: "all", label: "All picks" }];
     if (marketFilter === "total") {
-      return [
-        ...base,
-        { value: "over", label: "Over only" },
-        { value: "under", label: "Under only" },
-      ];
+      return [...base, { value: "over", label: "Over only" }, { value: "under", label: "Under only" }];
     }
-    if (marketFilter === "spread") {
-      return [
-        ...base,
-        { value: "favorite", label: "Favorite only" },
-        { value: "underdog", label: "Underdog only" },
-      ];
+    if (marketFilter === "spread" || marketFilter === "ml") {
+      return [...base, { value: "favorite", label: "Favorites only" }, { value: "underdog", label: "Underdogs only" }];
     }
-    if (marketFilter === "ml") {
-      return [
-        ...base,
-        { value: "favorite", label: "ML favorites only" },
-        { value: "underdog", label: "ML underdogs only" },
-      ];
-    }
-    // market = all
     return base;
   }, [marketFilter]);
 
@@ -646,57 +689,92 @@ export default function Results() {
         </div>
 
         {/* Filters */}
-        <div style={{ marginTop: 10, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <label style={{ fontSize: 13, color: "var(--muted)" }}>Market:</label>
-          <select
-            value={marketFilter}
-            onChange={(e) => { setMarketFilter(e.target.value as MarketFilter); setPickFilter("all"); }}
-            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-          >
-            <option value="all">All bets</option>
-            <option value="spread">Spread</option>
-            <option value="total">Total</option>
-            <option value="ml">Moneyline</option>
-          </select>
+        <div style={{ marginTop: 10, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", alignItems: "center" }}>
+          {/* Market */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, color: "var(--muted)" }}>Market:</label>
+            <select
+              value={marketFilter}
+              onChange={(e) => { setMarketFilter(e.target.value as MarketFilter); setPickFilter("all"); }}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              <option value="all">All bets</option>
+              <option value="spread">Spread</option>
+              <option value="total">Total</option>
+              <option value="ml">Moneyline</option>
+            </select>
+          </div>
 
-          {/* Pick type (contextual) */}
-          <label style={{ fontSize: 13, color: "var(--muted)" }}>Pick type:</label>
-          <select
-            value={pickFilter}
-            onChange={(e) => setPickFilter(e.target.value as PickFilter)}
-            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-          >
-            {pickTypeOptions.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+          {/* Pick type */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, color: "var(--muted)" }}>Pick type:</label>
+            <select
+              value={pickFilter}
+              onChange={(e) => setPickFilter(e.target.value as PickFilter)}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              {pickTypeOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
 
-          {/* EV filter */}
-          <label style={{ fontSize: 13, color: "var(--muted)" }}>EV:</label>
-          <select
-            value={evFilter}
-            onChange={(e) => setEvFilter(e.target.value as EVFilter)}
-            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-          >
-            <option value="all">All bets</option>
-            <option value="positive">Positive EV only</option>
-          </select>
+          {/* EV */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, color: "var(--muted)" }}>EV:</label>
+            <select
+              value={evFilter}
+              onChange={(e) => setEvFilter(e.target.value as EVFilter)}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              <option value="all">All bets</option>
+              <option value="positive">Positive EV only</option>
+            </select>
+          </div>
+
+          {/* Team filter (from team_info.csv) */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, color: "var(--muted)" }}>Team:</label>
+            <select
+              value={teamFilter}
+              onChange={(e)=>setTeamFilter(e.target.value)}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              <option value="all">All teams</option>
+              {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+
+          {/* Conference filter (from team_info.csv) */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, color: "var(--muted)" }}>Conference:</label>
+            <select
+              value={confFilter}
+              onChange={(e)=>setConfFilter(e.target.value)}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              <option value="all">All conferences</option>
+              {confOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
 
           {/* Confidence range */}
-          <label style={{ marginLeft: 8, fontSize: 13, color: "var(--muted)" }}>Confidence %:</label>
-          <input
-            type="number" min={0} max={100} step={1}
-            value={confMin}
-            onChange={(e)=>setConfMin(Number(e.target.value))}
-            style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-          />
-          <span style={{ fontSize: 14 }}>to</span>
-          <input
-            type="number" min={0} max={100} step={1}
-            value={confMax}
-            onChange={(e)=>setConfMax(Number(e.target.value))}
-            style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-          />
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <label style={{ fontSize: 13, color: "var(--muted)" }}>Confidence %:</label>
+            <input
+              type="number" min={0} max={100} step={1}
+              value={confMin}
+              onChange={(e)=>setConfMin(Number(e.target.value))}
+              style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            />
+            <span style={{ fontSize: 14 }}>to</span>
+            <input
+              type="number" min={0} max={100} step={1}
+              value={confMax}
+              onChange={(e)=>setConfMax(Number(e.target.value))}
+              style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            />
+          </div>
         </div>
 
         <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>

@@ -60,6 +60,7 @@ const G_URL = Object.assign(
   import.meta.glob("../data/**/games*.csv",       { as: "url", eager: true })
 ) as Record<string, string>;
 
+
 /* ---------- file helpers ---------- */
 
 // SAFE CSV loader: fetch text (if url), then Papa.parse(text) — Safari/iOS friendly
@@ -170,7 +171,7 @@ const scoreFilesAll = buildFiles(RAW, URLS);
 const gamesFilesAll = buildFiles(G_RAW, G_URL);
 const playerFilesAll = buildFiles(P_RAW, P_URL);
 
-/* --------------------- Team logo lookup --------------------- */
+/* --------------------- Team logo & conference lookup --------------------- */
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
 const teamInfoRaw = Object.values(TEAM_INFO_RAW)[0] ?? "";
 const LOGO_MAP: Record<string, string> = {};
@@ -315,7 +316,7 @@ function parseTime(input?: string): { h:number; min:number } | null {
     let h = Number(m[1]);
     const min = m[2] ? Number(m[2]) : 0;
     const ampm = m[4]?.toUpperCase();
-    if (ampm === "PM" && h < 12) h += 12;
+       if (ampm === "PM" && h < 12) h += 12;
     if (ampm === "AM" && h === 12) h = 0;
     return { h, min };
   }
@@ -447,7 +448,7 @@ function NumberSpinner({
       <input type="number" step={step} min={min} max={max} value={value} placeholder={placeholder}
         inputMode="decimal" onChange={(e) => onChange(e.target.value)}
         style={{ width, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }} />
-      <button type="button" onClick={() => bump(1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>+</button>
+      <button type="button" onClick={() => bump(1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background:"var(--card)" }}>+</button>
     </div>
   );
 }
@@ -471,6 +472,49 @@ export default function Scoreboard() {
   const [sortBy, setSortBy] = useState<SortBy>("kickoff");
 
   const [useMean, setUseMean] = useState(false); // false = show medians (current), true = show means
+
+  // ---- Conference dictionary + filter (from team_info.csv) ----
+  const [teamToConf, setTeamToConf] = useState<Record<string, string>>({});
+  const [confOptions, setConfOptions] = useState<string[]>([]);
+  const [confFilter, setConfFilter] = useState<string>("all");
+
+  useEffect(() => {
+    if (!teamInfoRaw) return;
+    const parsed = Papa.parse<Record<string, any>>(teamInfoRaw, {
+      header: true,
+      dynamicTyping: false,
+      skipEmptyLines: true,
+    });
+    const t2c: Record<string, string> = {};
+    const confSet = new Set<string>();
+
+    const teamKeys = ["team","Team","school","School","name","Name"];
+    const confKeys = ["conference","Conference","conf","Conf"];
+
+    for (const r of parsed.data || []) {
+      if (!r) continue;
+      const name = teamKeys.map(k=>r[k]).find(v => v != null && String(v).trim()!=="");
+      const conf = confKeys.map(k=>r[k]).find(v => v != null && String(v).trim()!=="");
+      if (!name) continue;
+      const teamName = String(name).trim();
+      const c = conf ? String(conf).trim() : "";
+      if (c) {
+        confSet.add(c);
+        t2c[normTeamKey(teamName)] = c;
+        t2c[normTeamKey(teamName.replace(/\s+/g,""))] = c;
+      }
+      const alias = r["short_name"] ?? r["Short Name"] ?? r["alias"] ?? r["Alias"];
+      if (alias && c) {
+        const a = String(alias).trim();
+        t2c[normTeamKey(a)] = c;
+        t2c[normTeamKey(a.replace(/\s+/g,""))] = c;
+      }
+    }
+    setTeamToConf(t2c);
+    setConfOptions(Array.from(confSet).sort((a,b)=>a.localeCompare(b)));
+  }, []);
+
+  const confOf = (team?: string) => (team ? teamToConf[normTeamKey(team)] ?? teamToConf[normTeamKey(team.replace(/\s+/g,""))] : undefined);
 
   useEffect(() => {
     if (!selectedWeek) { setGames({}); setMeta({}); setPlayers({}); return; }
@@ -810,6 +854,12 @@ export default function Scoreboard() {
     return out;
   }, [games, meta, sortBy]);
 
+  // Apply conference filter (game shows if either team is in selected conference)
+  const filteredCards = useMemo(() => {
+    if (confFilter === "all") return cards;
+    return cards.filter(c => (confOf(c.teamA) === confFilter) || (confOf(c.teamB) === confFilter));
+  }, [cards, confFilter, teamToConf]);
+
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
       {/* Week selector */}
@@ -826,10 +876,21 @@ export default function Scoreboard() {
             </select>
 
             <span style={{ fontSize: 12, opacity: 0.7 }}>
-              {loading ? "Loading…" : `Showing ${cards.length} game${cards.length === 1 ? "" : "s"}`}
+              {loading ? "Loading…" : `Showing ${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}`}
             </span>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            {/* NEW: Conference filter */}
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Conference:</label>
+            <select
+              value={confFilter}
+              onChange={(e)=>setConfFilter(e.target.value)}
+              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+            >
+              <option value="all">All conferences</option>
+              {confOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+
             <label style={{ fontSize: 12, color: "var(--muted)" }}>Sort by:</label>
             <select
               value={sortBy}
@@ -863,7 +924,7 @@ export default function Scoreboard() {
           alignItems: "stretch",
         }}
       >
-        {cards.map((c) => (
+        {filteredCards.map((c) => (
           <GameCard
             key={c.key}
             card={c}
