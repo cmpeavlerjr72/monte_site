@@ -249,6 +249,7 @@ type PickRow = {
 type MarketFilter = "all" | "spread" | "total" | "ml";
 type PickFilter = "all" | "over" | "under" | "favorite" | "underdog";
 type EVFilter = "all" | "positive";
+type GameTypeFilter = "all" | "conference" | "nonconference";
 
 export default function Results() {
   const weeks = useMemo(() => {
@@ -274,6 +275,9 @@ export default function Results() {
   // Team + Conference filters (options now come from team_info.csv)
   const [teamFilter, setTeamFilter] = useState<string>("all");
   const [confFilter, setConfFilter] = useState<string>("all");
+
+  // NEW: Game type filter (All / Conference / Non-conference)
+  const [gameType, setGameType] = useState<GameTypeFilter>("all");
 
   /* ---------- Parse team_info.csv once ---------- */
   useEffect(() => {
@@ -543,7 +547,7 @@ export default function Results() {
                 const isUnderdogPick = !isFav;
                 const pickText = `${pickTeam} ML ${pickOdds > 0 ? `+${pickOdds}` : `${pickOdds}`}`;
 
-                if (hasFinals) {
+                if (Number.isFinite(finalA) && Number.isFinite(finalB)) {
                   const fA = finalA as number, fB = finalB as number;
                   const pickedWon = pickA ? (fA > fB) : (fB > fA);
                   const result: "W" | "L" = pickedWon ? "W" : "L";
@@ -582,7 +586,7 @@ export default function Results() {
   const teamOptions = allTeams;
   const confOptions = allConfs;
 
-  /* ---------- Apply filters (market + pick type + EV + confidence + team/conf) ---------- */
+  /* ---------- Apply filters (market + pick type + EV + confidence + team/conf + game type) ---------- */
   const filteredRows = useMemo(() => {
     const min = Math.max(0, Math.min(100, confMin));
     const max = Math.max(min, Math.min(100, confMax));
@@ -597,8 +601,18 @@ export default function Results() {
       (r.confA && r.confA.toLowerCase() === confFilter.toLowerCase()) ||
       (r.confB && r.confB.toLowerCase() === confFilter.toLowerCase());
 
+    const gameTypeMatch = (r: PickRow) => {
+      if (gameType === "all") return true;
+      const a = (r.confA ?? confOf(r.teamA))?.toLowerCase();
+      const b = (r.confB ?? confOf(r.teamB))?.toLowerCase();
+      if (!a || !b) return false; // if we can't classify, exclude from conf/nonconf buckets
+      if (gameType === "conference") return a === b;
+      // "nonconference"
+      return a !== b;
+    };
+
     return rows.filter(r => {
-      if (!teamMatch(r) || !confMatch(r)) return false;
+      if (!teamMatch(r) || !confMatch(r) || !gameTypeMatch(r)) return false;
       if (marketFilter !== "all" && r.market !== marketFilter) return false;
       if (typeof r.confidence !== "number") return false;
       const pc = r.confidence * 100;
@@ -613,7 +627,7 @@ export default function Results() {
         case "underdog":  return (r.market === "spread" || r.market === "ml") && !!r.isUnderdogPick;
       }
     });
-  }, [rows, marketFilter, pickFilter, evFilter, confMin, confMax, teamFilter, confFilter]);
+  }, [rows, marketFilter, pickFilter, evFilter, confMin, confMax, teamFilter, confFilter, gameType, teamToConf]);
 
   /* ---------- Build cumulative series + per-week splits (filtered) ---------- */
   const { unitsSeries, overall, byWeek, dividers } = useMemo(() => {
@@ -755,6 +769,20 @@ export default function Results() {
             >
               <option value="all">All conferences</option>
               {confOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {/* NEW: Game type filter (All / Conference / Non-conference) */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: 13, color: "var(--muted)" }}>Game type:</label>
+            <select
+              value={gameType}
+              onChange={(e)=>setGameType(e.target.value as GameTypeFilter)}
+              style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              <option value="all">All games</option>
+              <option value="conference">Conference games</option>
+              <option value="nonconference">Non-conference games</option>
             </select>
           </div>
 
