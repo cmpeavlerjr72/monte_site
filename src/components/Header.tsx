@@ -18,6 +18,7 @@ export default function Header() {
           <Link to="/game">Detailed Player</Link>
           <Link to="/scoreboard">Scoreboard</Link>
           <Link to='/results'>Results</Link>
+          <Link to='/trends'>Best Bets</Link>
         </nav>
       </div>
     </header>

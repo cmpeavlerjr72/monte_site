@@ -222,7 +222,7 @@ function impliedProbFromAmerican(odds: number): number {
 }
 
 /* ---------- Page ---------- */
-type PickRow = {
+export type PickRow = {
   week: string; weekNum: number;
   kickoffMs?: number;
   key: string;
