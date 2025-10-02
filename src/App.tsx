@@ -10,6 +10,9 @@ import GameCenter from "./pages/GameCenter"
 import Scoreboard from "./pages/Scoreboard"
 import Results from "./pages/Results";
 import Trends from "./pages/Trends"
+import BestBets from "./pages/BestBets";
+import CLVPage from "./pages/CLV";
+import TrendsCLV from "./pages/Trends_CLV";
 
 
 export default function App() {
@@ -25,6 +28,9 @@ export default function App() {
           <Route path="/scoreboard" element={<Scoreboard />} />
           <Route path='/results' element={<Results/>}/>
           <Route path='/trends' element={<Trends/>}/>
+          <Route path='/bestbets' element={<BestBets/>}/>
+          <Route path='/clv' element={<CLVPage/>}/>
+          <Route path='/clvtrends' element={<TrendsCLV/>}/>
         </Routes>
       </main>
     </div>

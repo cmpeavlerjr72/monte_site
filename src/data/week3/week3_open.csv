@@ -1,0 +1,71 @@
+﻿Id,HomeTeam,HomeScore,AwayTeam,AwayScore,FormattedSpread,LineProvider,OverUnder,Spread,OpeningSpread,OpeningOverUnder,HomeMoneyline,AwayMoneyline
+401752699,LSU,20,Florida,10,LSU -5.0,Bovada,47,-5,-9.5,50.5,-360,280
+401752705,Tennessee,41,Georgia,44,Georgia -3.5,Bovada,50.5,3.5,6.5,50.5,150,-210
+401754623,Georgia Tech,24,Clemson,21,Clemson -3.0,Bovada,51,3,6.5,52.5,175,-210
+401754638,West Virginia,31,Pittsburgh,24,Pittsburgh -7.0,Bovada,55,7,4.5,58,175,-210
+401752707,Notre Dame,40,Texas A&M,41,Notre Dame -6.5,Bovada,50,-6.5,-6.5,48.5,-240,200
+401752836,Indiana,73,Indiana State,0,Indiana -47.5,Bovada,60,-47.5,-48.5,59.5,,
+401756893,Houston,36,Colorado,20,Houston -4.0,Bovada,45,-4,-4.5,43.5,-185,160
+401756888,Arizona,23,Kansas State,17,Kansas State -1.5,Bovada,55.5,1.5,,54.5,-110,-110
+401754531,Wake Forest,24,NC State,34,NC State -7.0,Bovada,53,7,7,54.5,225,-275
+401752837,UCLA,10,New Mexico,35,UCLA -15.5,Bovada,53,-15.5,-15,53,-700,475
+401752831,Northwestern,14,Oregon,34,Oregon -26.5,Bovada,50.5,26.5,28,51.5,1300,-6500
+401754534,Tulane,34,Duke,27,Tulane -1.5,Bovada,52.5,-1.5,-2.5,52.5,-150,130
+401752703,Temple,3,Oklahoma,42,Oklahoma -23.5,Bovada,51,23.5,24.5,51.5,1100,-3300
+401761608,Troy,7,Memphis,28,Memphis -4.5,Bovada,51,4.5,6.5,51.5,190,-230
+401752696,Alabama,38,Wisconsin,14,Alabama -19.5,Bovada,45,-19.5,-20,47,-1500,775
+401754532,Syracuse,66,Colgate,24,Syracuse -36.5,Bovada,64,-36.5,-37.5,66.5,,
+401752938,Texas Tech,45,Oregon State,14,Texas Tech -24.0,Bovada,61.5,-24,-24,60.5,-2800,1100
+401752949,North Texas,59,Washington State,10,North Texas -6.5,Bovada,57.5,-6.5,-5.5,58,-210,175
+401754536,Virginia Tech,26,Old Dominion,45,Virginia Tech -5.5,Bovada,51,-5.5,-8,50.5,-300,250
+401752832,Purdue,17,USC,33,USC -20.5,Bovada,59,20.5,21,58,850,-1800
+401752835,Penn State,52,Villanova,6,Penn State -47.5,Bovada,56.5,-47.5,-48.5,55.5,,
+401752830,Iowa,47,Massachusetts,7,Iowa -35.0,Bovada,44,-35,-33.5,44.5,,
+401752704,South Carolina,7,Vanderbilt,31,South Carolina -3.0,Bovada,48.5,-3,-5.5,47.5,-220,180
+401756895,Wyoming,6,Utah,31,Utah -24.5,Bovada,47,24.5,22.5,48,1000,-2200
+401762465,Tulsa,23,Navy,42,Navy -13.5,Bovada,52,13.5,14.5,54,450,-650
+401752838,Maryland,44,Towson,17,Maryland -28.5,Bovada,52.5,-28.5,-29.5,50.5,-10000,1600
+401754535,Miami,49,South Florida,12,Miami -18.0,Bovada,56.5,-18,-16,54.5,-800,525
+401762817,Kent State,28,Buffalo,31,Buffalo -24.0,Bovada,48.5,24,23,49,1100,-2800
+401752839,Michigan,63,Central Michigan,3,Michigan -28.0,Bovada,43,-28,-27.5,42.5,-4000,1200
+401757168,Delaware,44,UConn,41,UConn -8.0,Bovada,52.5,8,10,51.5,285,-370
+401752697,Auburn,31,South Alabama,15,Auburn -26.0,Bovada,56,-26,-26,53.5,-4000,1200
+401754615,Missouri State,10,SMU,28,SMU -28.5,Bovada,61,28.5,28,61.5,1300,-5000
+401756890,Arkansas State,16,Iowa State,24,Iowa State -21.5,Bovada,56,21.5,21,55.5,800,-1600
+401761607,Southern Miss,38,App State,22,App State -3.0,Bovada,56.5,3,1,51.5,-105,-115
+401754639,North Carolina,41,Richmond,6,North Carolina -24.5,Bovada,48,-24.5,-21.5,46.5,-2800,1100
+401757257,Louisiana Tech,49,New Mexico State,14,Louisiana Tech -10.0,Bovada,43,-10,-10,42.5,-410,305
+401752702,Missouri,52,Louisiana,10,Missouri -27.5,Bovada,47.5,-27.5,-24.5,48,-4000,1200
+401756891,Baylor,42,Samford,7,Baylor -52.0,Bovada,64.5,-52,-48.5,59.5,,
+401752698,Kentucky,48,Eastern Michigan,23,Kentucky -27.0,Bovada,49.5,-27,-25.5,46.5,-4000,1200
+401752700,Ole Miss,41,Arkansas,35,Ole Miss -3.5,Bovada,60.5,-3.5,-8.5,63.5,-350,275
+401752840,California,27,Minnesota,14,Minnesota -3.0,Bovada,40.5,3,2.5,44,105,-125
+401754619,Virginia,55,William & Mary,16,Virginia -31.0,Bovada,53.5,-31,-26.5,51.5,-5000,1300
+401752706,Texas,27,UTEP,10,Texas -39.5,Bovada,52,-39.5,-41.5,51,,
+401760368,Utah State,49,Air Force,30,Air Force -4.5,Bovada,51.5,4.5,3.5,51.5,155,-180
+401757258,Nevada,13,Middle Tennessee,14,Nevada -9.0,Bovada,50,-9,-8.5,46.5,-350,275
+401752828,Nebraska,59,Houston Christian,7,Nebraska -48.5,Bovada,59,-48.5,-42.5,54.5,,
+401757256,Bowling Green,23,Liberty,13,Liberty -5.5,Bovada,51.5,5.5,6.5,51,200,-240
+401757233,Florida International,38,Florida Atlantic,28,Florida International -2.0,Bovada,56.5,-2,-1.5,57,-125,105
+401752827,Ohio State,37,Ohio,9,Ohio State -28.0,Bovada,49,-28,-33.5,53.5,-20000,1700
+401757234,Georgia Southern,41,Jacksonville State,34,Georgia Southern -3.0,Bovada,59,-3,-3.5,56.5,-175,150
+401752829,Illinois,38,Western Michigan,0,Illinois -27.5,Bovada,51,-27.5,-28,51.5,-7500,1400
+401756889,Arizona State,34,Texas State,15,Arizona State -18.5,Bovada,61.5,-18.5,-14.5,59.5,-650,450
+401754533,Stanford,30,Boston College,20,Boston College -14.0,Bovada,44.5,14,10.5,44.5,335,-450
+401761604,Coastal Carolina,0,East Carolina,38,East Carolina -7.0,Bovada,58,7,6,55.5,205,-245
+401762818,Ball State,34,New Hampshire,29,Ball State -3.0,Bovada,46.5,-3,-3,48,-145,125
+401762463,UAB,31,Akron,28,UAB -12.0,Bovada,59,-12,-11.5,52.5,-470,345
+401756892,Cincinnati,70,Northwestern State,0,Cincinnati -48.5,Bovada,55.5,-48.5,-46.5,53.5,,
+401762464,Charlotte,42,Monmouth,35,Charlotte -2.5,Bovada,66,-2.5,-3.5,67.5,-175,150
+401762466,Rice,38,Prairie View A&M,17,Rice -28.0,Bovada,48,-28,-29.5,48.5,-10000,1600
+401756894,TCU,42,Abilene Christian,21,TCU -42.0,Bovada,60.5,-42,-37.5,56.5,,
+401760369,Fresno State,56,Southern,7,Fresno State -38.5,Bovada,51,-38.5,-35.5,48.5,,
+401760370,Hawai'i,23,Portland State,3,Hawai'i -37.5,Bovada,54.5,-37.5,-38,53.5,,
+401752834,Michigan State,41,Youngstown State,24,Michigan State -23.5,Bovada,55,-23.5,-23.5,52.5,-2800,1100
+401752833,Rutgers,60,Norfolk State,10,Rutgers -44.5,Bovada,56,-44.5,-44,51.5,,
+401762467,UTSA,48,Incarnate Word,20,UTSA -21.0,Bovada,62,-21,-17.5,61.5,-850,550
+401762819,Toledo,60,Morgan State,0,Toledo -34.0,Bovada,54.5,-34,-33.5,53.5,,
+401761606,Marshall,38,Eastern Kentucky,7,Marshall -15.0,Bovada,49,-15,-14,50.5,-550,390
+401757235,Kennesaw State,27,Merrimack,13,Kennesaw State -17.0,Bovada,44.5,-17,-10.5,44.5,-400,300
+401761605,Georgia State,37,Murray State,21,Georgia State -32.0,Bovada,63.5,-32,-28.5,63.5,-7500,1400
+401752701,Mississippi State,63,Alcorn State,0,Mississippi State -43.0,Bovada,55.5,-43,-39.5,52.5,,

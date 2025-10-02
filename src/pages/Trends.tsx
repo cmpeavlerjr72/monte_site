@@ -1097,7 +1097,7 @@ function buildCandidateSlices(confs: string[]): TrendSlice[] {
     };
   
     const confBands: Array<[number, number]> = [
-      [53, 60], [60, 70], [70, 80], [80, 90], [90, 101],
+      [53, 60], [60, 65],[66,69], [70, 75],[76,80], [80, 90], [90, 101],
     ];
   
     const gameTypes: TrendSlice["gameType"][] = ["conference", "nonconference"];
