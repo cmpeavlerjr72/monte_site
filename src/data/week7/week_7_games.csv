@@ -24,34 +24,34 @@
 11-Oct,14:30,Kent State,UMass,-2.5,49.5,42,6,-141,113
 11-Oct,15:30,UNLV,Air Force,-7,68.5,51,48,-232,190
 11-Oct,15:30,Georgia State,App State,3,56.5,20,41,125,-148
-11-Oct,15:30,Western Michigan,Ball State,-9.5,43.5,,,-362,283
-11-Oct,15:30,Oregon,Indiana,-7.5,54.5,,,-327,258
-11-Oct,15:30,Colorado,Iowa State,4.5,52.5,,,151,-182
+11-Oct,15:30,Western Michigan,Ball State,-9.5,43.5,42,0,-362,283
+11-Oct,15:30,Oregon,Indiana,-7.5,54.5,20,30,-327,258
+11-Oct,15:30,Colorado,Iowa State,4.5,52.5,24,17,151,-182
 11-Oct,15:30,Notre Dame,NC State,-22.5,62.5,36,7,-1786,968
 11-Oct,15:30,Maryland,Nebraska,5.5,47.5,31,34,178,-215
 11-Oct,15:30,Penn State,Northwestern,-21.5,48.5,21,22,-2000,1038
 11-Oct,15:30,Marshall,Old Dominion,14,55.5,48,24,420,-571
 11-Oct,15:30,Texas,Oklahoma,-3,42.5,23,6,-145,121
-11-Oct,15:30,Kansas State,TCU,1.5,57.5,,,-102,-118
+11-Oct,15:30,Kansas State,TCU,1.5,57.5,41,28,-102,-118
 11-Oct,15:30,Georgia Tech,Virginia Tech,-14.5,55.5,35,20,-719,505
-11-Oct,15:30,Oregon State,Wake Forest,2.5,52.5,,,113,-134
-11-Oct,16:00,Temple,Navy,8.5,52.5,,,246,-315
-11-Oct,16:15,Tennessee,Arkansas,-13.5,69.5,,,-538,400
-11-Oct,18:00,Florida Atlantic,UAB,-5,70.5,,,-201,166
-11-Oct,19:00,Texas A&M,Florida,-7.5,46.5,,,-305,242
-11-Oct,19:00,Wisconsin,Iowa,3.5,37.5,,,151,-181
-11-Oct,19:00,Coastal Carolina,UL Monroe,2.5,43.5,,,108,-128
-11-Oct,19:00,Wyoming,San José State,2.5,49.5,,,113,-134
-11-Oct,19:30,Boston College,Clemson,13.5,53.5,,,438,-613
-11-Oct,19:30,Texas Tech,Kansas,-14.5,60.5,,,-694,490
-11-Oct,19:30,USC,Michigan,-2.5,56.5,,,-125,105
-11-Oct,19:30,Minnesota,Purdue,-9.5,51.5,,,-379,294
-11-Oct,19:30,UTSA,Rice,-12.5,49.5,,,-495,371
-11-Oct,19:30,Auburn,Georgia,3.5,46.5,,,140,-167
-11-Oct,19:45,LSU,South Carolina,-9.5,43.5,,,-379,298
-11-Oct,20:00,Arizona,BYU,2.5,47.5,,,107,-127
-11-Oct,20:00,Texas State,Troy,-10.5,54.5,,,-368,293
-11-Oct,21:45,Boise State,New Mexico,-16.5,60.5,,,-741,513
-11-Oct,20:15,Utah,Arizona State,-5.5,48.5,,,-190,159
-11-Oct,20:30,Nevada,San Diego State,6.5,41.5,,,199,-244
-11-Oct,23:59,Hawaii,Utah State,-1.5,58.5,,,-122,102
+11-Oct,15:30,Oregon State,Wake Forest,2.5,52.5,14,39,113,-134
+11-Oct,16:00,Temple,Navy,8.5,52.5,31,32,246,-315
+11-Oct,16:15,Tennessee,Arkansas,-13.5,69.5,34,31,-538,400
+11-Oct,18:00,Florida Atlantic,UAB,-5,70.5,53,33,-201,166
+11-Oct,19:00,Texas A&M,Florida,-7.5,46.5,34,17,-305,242
+11-Oct,19:00,Wisconsin,Iowa,3.5,37.5,0,37,151,-181
+11-Oct,19:00,Coastal Carolina,UL Monroe,2.5,43.5,23,8,108,-128
+11-Oct,19:00,Wyoming,San José State,2.5,49.5,35,28,113,-134
+11-Oct,19:30,Boston College,Clemson,13.5,53.5,10,41,438,-613
+11-Oct,19:30,Texas Tech,Kansas,-14.5,60.5,42,17,-694,490
+11-Oct,19:30,USC,Michigan,-2.5,56.5,31,13,-125,105
+11-Oct,19:30,Minnesota,Purdue,-9.5,51.5,27,20,-379,294
+11-Oct,19:30,UTSA,Rice,-12.5,49.5,61,13,-495,371
+11-Oct,19:30,Auburn,Georgia,3.5,46.5,10,20,140,-167
+11-Oct,19:45,LSU,South Carolina,-9.5,43.5,20,10,-379,298
+11-Oct,20:00,Arizona,BYU,2.5,47.5,27,33,107,-127
+11-Oct,20:00,Texas State,Troy,-10.5,54.5,41,48,-368,293
+11-Oct,21:45,Boise State,New Mexico,-16.5,60.5,41,25,-741,513
+11-Oct,20:15,Utah,Arizona State,-5.5,48.5,42,10,-190,159
+11-Oct,20:30,Nevada,San Diego State,6.5,41.5,10,44,199,-244
+11-Oct,23:59,Hawaii,Utah State,-1.5,58.5,44,26,-122,102
