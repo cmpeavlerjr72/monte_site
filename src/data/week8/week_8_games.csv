@@ -1,57 +1,60 @@
 ﻿date,time,Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual,TeamAML,TeamBML
-10/14/2025,19:00,Liberty,New Mexico State,-10.5,46.5,,,,
-10/14/2025,19:30,South Alabama,Arkansas State,-7,60.5,,,,
-10/14/2025,20:00,Western Kentucky,Florida International,-7.5,57.5,,,,
-15-Oct,19:00,Jacksonville State,Delaware,2.5,57.5,,,,
-15-Oct,19:00,Sam Houston,UTEP,2.5,47.5,,,,
-16-Oct,19:00,Miami,Louisville,-13.5,53.5,,,,
-16-Oct,20:00,Minnesota,Nebraska,6.5,46.5,,,,
-16-Oct,21:00,Utah State,San José State,-4,64.5,,,,
-16-Oct,22:30,California,North Carolina,-10.5,47.5,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
+10/14/2025,19:00,Liberty,New Mexico State,-10.5,46.5,,,-426,330
+14-Oct,19:30,South Alabama,Arkansas State,-7,59.5,,,-267,216
+14-Oct,20:00,Western Kentucky,Florida International,-7.5,57.5,,,-311,248
+15-Oct,19:00,Jacksonville State,Delaware,2.5,57.5,,,123,-145
+15-Oct,19:00,Sam Houston,UTEP,3,47.5,,,123,-146
+16-Oct,19:30,East Carolina,Tulsa,-16.5,54.5,,,-752,523
+17-Oct,19:00,Miami,Louisville,-13.5,53.5,,,-549,406
+17-Oct,20:00,Minnesota,Nebraska,7.5,46.5,,,246,-308
+17-Oct,21:00,Utah State,San José State,-4,64.5,,,-187,156
+17-Oct,22:30,California,North Carolina,-10.5,47.5,,,-420,322
+18-Oct,12:00,Houston,Arizona,-2.5,47.5,,,-123,103
+18-Oct,12:00,Tulane,Army,-10,45.5,,,-350,275
+18-Oct,12:00,TCU,Baylor,-3,66.5,,,-146,122
+18-Oct,12:00,Bowling Green,Central Michigan,-5.5,43.5,,,-207,171
+18-Oct,12:00,Miami (OH),Eastern Michigan,-13.5,48.5,,,-521,390
+18-Oct,12:00,Duke,Georgia Tech,-3,60.5,,,-152,128
+18-Oct,12:00,Vanderbilt,LSU,-2.5,49.5,,,-139,117
+18-Oct,12:00,Boston College,UConn,-1.5,57.5,,,-119,-101
+18-Oct,12:00,Michigan,Washington,-5.5,50.5,,,-204,169
+18-Oct,12:45,South Carolina,Oklahoma,4.5,43.5,,,162,-195
+18-Oct,13:00,UCF,West Virginia,-7,48.5,,,-278,224
+18-Oct,14:00,Toledo,Kent State,-25.5,51.5,,,-3846,1383
+18-Oct,14:30,Massachusetts,Buffalo,16.5,43.5,,,591,-885
+18-Oct,15:00,Northwestern,Purdue,-3,48.5,,,-163,137
+18-Oct,15:00,UL Monroe,Troy,6,46.5,,,185,-224
+18-Oct,15:30,Ball State,Akron,-1.5,42.5,,,-117,-103
+18-Oct,15:30,App State,Coastal Carolina,-10.5,50.5,,,-431,33
+18-Oct,15:30,Indiana,Michigan State,-26.5,52.5,,,-4545,1550
+18-Oct,15:30,Georgia,Ole Miss,-6.5,54.5,,,-246,200
+18-Oct,15:30,Ohio,Northern Illinois,-11.5,42.5,,,-483,365
+18-Oct,15:30,James Madison,Old Dominion,-2.5,47.5,,,-128,107
+18-Oct,15:30,Wisconsin,Ohio State,27.5,41.5,,,1933,-6250
+18-Oct,15:30,Clemson,SMU,-9.5,55.5,,,-346,271
+18-Oct,15:30,Charlotte,Temple,10.5,47.5,,,331,-433
+18-Oct,15:30,Arkansas,Texas A&M,7.5,62.5,,,238,-299
+18-Oct,15:30,North Texas,UTSA,-4.5,67.5,,,-194,161
+18-Oct,15:30,Marshall,Texas State,2.5,65.5,,,114,-136
+18-Oct,15:30,Boise State,UNLV,-10.5,63.5,,,-405,314
+18-Oct,15:30,Air Force,Wyoming,-5.5,58.5,,,-212,175
+18-Oct,16:00,UAB,Memphis,21.5,63.5,,,940,-1754
+18-Oct,16:00,Arizona State,Texas Tech,11.5,48.5,,,330,-429
+18-Oct,16:15,Florida,Mississippi State,-10,52.5,,,-379,297
+18-Oct,17:00,Louisiana,Southern Miss,4,54.5,,,148,-177
+18-Oct,18:30,Rutgers,Oregon,17.5,60.5,,,603,-919
+18-Oct,18:30,Virginia,Washington State,-17.5,56.5,,,-885,593
+18-Oct,19:00,Georgia Southern,Georgia State,-7,59.5,,,-264,213
+18-Oct,19:00,Colorado State,Hawaii,-1.5,54.5,,,-120,100
+18-Oct,19:00,UCLA,Maryland,-3,51.5,,,-154,130
+18-Oct,19:00,Iowa,Penn State,-3.5,38.5,,,-161,135
+18-Oct,19:00,Kentucky,Texas,11.5,42.5,,,355,-465
+18-Oct,19:30,South Florida,Florida Atlantic,-21.5,73.5,,,-1923,1017
+18-Oct,19:30,Syracuse,Pittsburgh,11.5,56.5,,,321,-417
+18-Oct,19:30,Alabama,Tennessee,-8.5,59.5,,,-329,260
+18-Oct,19:30,Notre Dame,USC,-7.5,61.5,,,-313,250
+18-Oct,19:45,Auburn,Missouri,-1.5,43.5,,,-109,-110
+18-Oct,20:00,Oklahoma State,Cincinnati,22.5,57.5,,,1050,-2041
+18-Oct,20:00,BYU,Utah,3.5,47.5,,,138,-165
+18-Oct,21:45,New Mexico,Nevada,-10.5,48.5,,,-408,315
+18-Oct,22:30,Stanford,Florida State,17.5,54.5,,,623,-962
