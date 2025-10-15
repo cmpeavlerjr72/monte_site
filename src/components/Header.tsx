@@ -1,37 +1,46 @@
 // src/components/Header.tsx
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import logoLight from "../assets/mvpeav-logo-light.png";
 
 export default function Header() {
   const { pathname } = useLocation();
-  const [menuOpen, setMenuOpen] = useState(false);
-
   const inCFB = pathname.startsWith("/cfb");
   const inCBB = pathname.startsWith("/cbb");
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const dropRef = useRef<HTMLDivElement | null>(null);
 
-  const closeMenu = () => setMenuOpen(false);
+  // Close on outside click
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      const t = e.target as Node;
+      if (!btnRef.current || !dropRef.current) return;
+      if (!btnRef.current.contains(t) && !dropRef.current.contains(t)) setOpen(false);
+    }
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  // Close on route change
+  useEffect(() => setOpen(false), [pathname]);
 
   return (
     <header className="site-header" data-role="header">
-      <div className="inner">
+      <div className="inner header-inner">
         {/* Brand */}
         <Link to="/" className="brand" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
           <img src={logoLight} alt="MVPeav" height={40} />
           <span style={{ fontWeight: 800, letterSpacing: 1, color: "var(--brand-contrast)" }}>MVPEAV</span>
         </Link>
 
-        {/* Sport pills (stay visible on mobile) */}
+        {/* Sport pills (always visible) */}
         <div className="tabbar">
-          <NavLink to="/cfb" className={({ isActive }) => `tab${isActive || inCFB ? " active" : ""}`} aria-current={inCFB ? "page" : undefined}>
-            CFB
-          </NavLink>
-          <NavLink to="/cbb" className={({ isActive }) => `tab${isActive || inCBB ? " active" : ""}`} aria-current={inCBB ? "page" : undefined}>
-            CBB
-          </NavLink>
+          <NavLink to="/cfb" className={({ isActive }) => `tab${isActive || inCFB ? " active" : ""}`} aria-current={inCFB ? "page" : undefined}>CFB</NavLink>
+          <NavLink to="/cbb" className={({ isActive }) => `tab${isActive || inCBB ? " active" : ""}`} aria-current={inCBB ? "page" : undefined}>CBB</NavLink>
         </div>
 
-        {/* Desktop nav (hidden on mobile) */}
+        {/* Desktop inline nav */}
         <nav className="primary-nav">
           <NavLink to="/cfb/game">Detailed Player</NavLink>
           <NavLink to="/cfb/scoreboard">Scoreboard</NavLink>
@@ -39,34 +48,29 @@ export default function Header() {
           <NavLink to="/cfb/trends-clv">Trends</NavLink>
         </nav>
 
-        {/* Mobile hamburger (shown on mobile only) */}
-        <button
-          className="hamburger-btn"
-          aria-label="Open menu"
-          aria-expanded={menuOpen}
-          aria-controls="mobile-drawer"
-          onClick={() => setMenuOpen(v => !v)}
-        >
-          <span className="hamburger-lines" />
-        </button>
-      </div>
+        {/* Mobile hamburger → dropdown */}
+        <div className="menu-wrap">
+          <button
+            ref={btnRef}
+            className="menu-trigger"
+            aria-haspopup="true"
+            aria-expanded={open}
+            aria-controls="header-menu"
+            onClick={() => setOpen(v => !v)}
+          >
+            <span className="menu-icon" />
+          </button>
 
-      {/* Mobile drawer */}
-      <div
-        id="mobile-drawer"
-        className={`mobile-drawer${menuOpen ? " open" : ""}`}
-        onClick={closeMenu}
-      >
-        <div className="mobile-drawer-panel" onClick={e => e.stopPropagation()}>
-          <div className="mobile-drawer-header">
-            <span>Navigate</span>
-            <button className="drawer-close" aria-label="Close menu" onClick={closeMenu}>×</button>
-          </div>
-          <div className="mobile-drawer-links">
-            <NavLink to="/cfb/game" onClick={closeMenu}>Detailed Player</NavLink>
-            <NavLink to="/cfb/scoreboard" onClick={closeMenu}>Scoreboard</NavLink>
-            <NavLink to="/cfb/results" onClick={closeMenu}>Results</NavLink>
-            <NavLink to="/cfb/trends-clv" onClick={closeMenu}>Trends</NavLink>
+          <div
+            id="header-menu"
+            ref={dropRef}
+            className={`menu-dropdown${open ? " open" : ""}`}
+            role="menu"
+          >
+            <NavLink to="/cfb/game" role="menuitem">Detailed Player</NavLink>
+            <NavLink to="/cfb/scoreboard" role="menuitem">Scoreboard</NavLink>
+            <NavLink to="/cfb/results" role="menuitem">Results</NavLink>
+            <NavLink to="/cfb/trends-clv" role="menuitem">Trends</NavLink>
           </div>
         </div>
       </div>
