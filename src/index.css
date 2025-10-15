@@ -28,7 +28,107 @@ a { color: inherit; text-decoration: none; }
     }
   }
 
-  /* --- Responsive base --- */
+  /* --- New Part --- */
+
+  /* ---- Stop horizontal scrolling sitewide ---- */
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Some components use 100vw (which includes scrollbar width on mobile) — clamp it */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+.full-bleed,
+[data-role="header"],
+.site-header {
+  width: 100%;          /* avoid 100vw on mobile */
+}
+
+/* ---- Header styling & bleed ---- */
+.site-header,
+[data-role="header"] {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;             /* ensures full-width color on overscroll */
+  z-index: 1000;
+  background: var(--brand, #0b63f6);
+  color: var(--brand-contrast, #fff);
+  /* Prevent internal children from forcing overflow */
+  overflow: hidden;
+}
+
+.site-header .inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;         /* critical in flex parents to prevent overflow */
+}
+
+/* ---- Tab bar: readable on blue, scrollable on small screens ---- */
+.tabbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;           /* allow swipe on phones */
+  white-space: nowrap;        /* keep tabs on one line */
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 0;
+  margin: 0 -12px;            /* let tabs edge-to-edge */
+  padding-left: 12px;         /* restore left padding */
+  scrollbar-width: none;      /* Firefox */
+}
+.tabbar::-webkit-scrollbar {
+  display: none;              /* WebKit */
+}
+
+/* subtle fade at right edge to hint overflow */
+.tabbar-mask {
+  position: relative;
+}
+.tabbar-mask::after {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, rgba(0,0,0,0.08));
+}
+
+/* Tabs readable on blue header */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: var(--brand-contrast, #fff);           /* <-- readable on blue */
+  background: color-mix(in oklab, #ffffff 12%, transparent);
+  border: 1px solid color-mix(in oklab, #ffffff 20%, transparent);
+}
+.tab[aria-current="page"],
+.tab.active {
+  background: #fff;
+  color: var(--brand, #0b63f6);
+  border-color: transparent;
+}
+
+/* Prevent child grids/cards from forcing right-scroll on mobile */
+.card,
+section,
+div {
+  min-width: 0;
+}
+
 
 
   
