@@ -13,6 +13,10 @@ import Results from "./pages/Results";
 import TrendsCLV from "./pages/Trends_CLV";
 import GameCenter from "./pages/GameCenter";
 
+// CBB Pages
+
+import CBB_Sims from "./pages/CBB_sims";
+
 // New pages
 import HubHome from "./pages/HubHome";
 import CBBComingSoon from "./pages/CBBComingSoon";
@@ -43,7 +47,7 @@ export default function App() {
 
           {/* CBB placeholder */}
           <Route path="/cbb" element={<CBBComingSoon />} />
-
+          <Route path="/cbb/scoreboard" element={<CBB_Sims />} />
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
