@@ -7,9 +7,6 @@ export default function Header() {
   const { pathname } = useLocation();
   const inCFB = pathname.startsWith("/cfb");
   const inCBB = pathname.startsWith("/cbb");
-  // Use current sport for all header links; default to CFB on non-sport routes
-  const basePath = inCBB ? "/cbb" : "/cfb";
-
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const dropRef = useRef<HTMLDivElement | null>(null);
@@ -32,44 +29,26 @@ export default function Header() {
     <header className="site-header" data-role="header">
       <div className="inner header-inner">
         {/* Brand */}
-        <Link
-          to="/"
-          className="brand"
-          style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}
-        >
+        <Link to="/" className="brand" style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}>
           <img src={logoLight} alt="MVPeav" height={40} />
-          <span style={{ fontWeight: 800, letterSpacing: 1, color: "var(--brand-contrast)" }}>
-            MVPEAV
-          </span>
+          <span style={{ fontWeight: 800, letterSpacing: 1, color: "var(--brand-contrast)" }}>MVPEAV</span>
         </Link>
 
         {/* Sport pills (always visible) */}
         <div className="tabbar">
-          <NavLink
-            to="/cfb"
-            className={({ isActive }) => `tab${isActive || inCFB ? " active" : ""}`}
-            aria-current={inCFB ? "page" : undefined}
-          >
-            CFB
-          </NavLink>
-          <NavLink
-            to="/cbb"
-            className={({ isActive }) => `tab${isActive || inCBB ? " active" : ""}`}
-            aria-current={inCBB ? "page" : undefined}
-          >
-            CBB
-          </NavLink>
+          <NavLink to="/cfb" className={({ isActive }) => `tab${isActive || inCFB ? " active" : ""}`} aria-current={inCFB ? "page" : undefined}>CFB</NavLink>
+          <NavLink to="/cbb" className={({ isActive }) => `tab${isActive || inCBB ? " active" : ""}`} aria-current={inCBB ? "page" : undefined}>CBB</NavLink>
         </div>
 
-        {/* Desktop inline nav (uses active sport basePath) */}
+        {/* Desktop inline nav */}
         <nav className="primary-nav">
-          <NavLink to={`${basePath}/game`}>Detailed Player</NavLink>
-          <NavLink to={`${basePath}/scoreboard`}>Scoreboard</NavLink>
-          <NavLink to={`${basePath}/results`}>Results</NavLink>
-          <NavLink to={`${basePath}/trends-clv`}>Trends</NavLink>
+          <NavLink to="/cfb/game">Detailed Player</NavLink>
+          <NavLink to="/cfb/scoreboard">Scoreboard</NavLink>
+          <NavLink to="/cfb/results">Results</NavLink>
+          <NavLink to="/cfb/trends-clv">Trends</NavLink>
         </nav>
 
-        {/* Mobile hamburger → dropdown (also uses basePath) */}
+        {/* Mobile hamburger → dropdown */}
         <div className="menu-wrap">
           <button
             ref={btnRef}
@@ -88,10 +67,10 @@ export default function Header() {
             className={`menu-dropdown${open ? " open" : ""}`}
             role="menu"
           >
-            <NavLink to={`${basePath}/game`} role="menuitem">Detailed Player</NavLink>
-            <NavLink to={`${basePath}/scoreboard`} role="menuitem">Scoreboard</NavLink>
-            <NavLink to={`${basePath}/results`} role="menuitem">Results</NavLink>
-            <NavLink to={`${basePath}/trends-clv`} role="menuitem">Trends</NavLink>
+            <NavLink to="/cfb/game" role="menuitem">Detailed Player</NavLink>
+            <NavLink to="/cfb/scoreboard" role="menuitem">Scoreboard</NavLink>
+            <NavLink to="/cfb/results" role="menuitem">Results</NavLink>
+            <NavLink to="/cfb/trends-clv" role="menuitem">Trends</NavLink>
           </div>
         </div>
       </div>

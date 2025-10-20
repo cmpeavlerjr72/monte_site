@@ -242,7 +242,7 @@ export default function CBBSims() {
       }
       if (!aborted) {
         setLoading(false);
-        setError("Could not load index.json for that date.");
+        setError("No scores yet for this date, try another date (Season starts 11/3)");
       }
     }
     loadIndex();
@@ -342,7 +342,7 @@ export default function CBBSims() {
             onChange={(e) => setDate(e.target.value)}
             style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
           />
-          <button
+          {/* <button
             onClick={() => setDebug((d) => !d)}
             style={{
               padding: "6px 10px",
@@ -353,7 +353,7 @@ export default function CBBSims() {
             }}
           >
             {debug ? "Debug: On" : "Debug: Off"}
-          </button>
+          </button> */}
 
           <button
             onClick={() => setLogoMode((m) => (m === "primary" ? "alt" : "primary"))}

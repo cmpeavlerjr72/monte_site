@@ -5,14 +5,14 @@ export default function CBBComingSoon() {
   return (
     <main style={{ maxWidth: 900, margin: "24px auto" }}>
       <section className="card" style={{ padding: 18 }}>
-        <h1 style={{ margin: 0, fontWeight: 900, fontSize: 26 }}>CBB — Coming Soon</h1>
+        <h1 style={{ margin: 0, fontWeight: 900, fontSize: 26 }}>CBB — Beta</h1>
         <p style={{ marginTop: 8, color: "var(--muted)" }}>
-          We’re wiring in team-level models and a scoreboard similar to CFB. Stay tuned!
+          Feel free to play around with what is active (CBB Scoreboard Page). Continue to check back as there will be plenty of updates to come!
         </p>
 
         <div style={{ marginTop: 16 }}>
           <Link
-            to="/cfb"
+            to="/cbb/scoreboard"
             style={{
               display: "inline-block",
               padding: "8px 12px",
@@ -23,7 +23,7 @@ export default function CBBComingSoon() {
               fontWeight: 700,
             }}
           >
-            ← Back to CFB
+            ← Check out Scoreboard
           </Link>
         </div>
       </section>
