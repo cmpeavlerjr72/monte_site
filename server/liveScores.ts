@@ -5,6 +5,8 @@ import AbortController from "abort-controller";
 import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
+import compression from "compression";
+
 
 // ---------- Express basic ----------
 const app = express();
@@ -119,6 +121,23 @@ app.get("/api/live", async (req: Request, res: Response) => {
     if (!clients.some((c) => c.date === date)) POLL_KEYS.delete(date);
   });
 });
+
+// Gzip all responses except the SSE stream at /api/live
+app.use(
+    compression({
+      level: 6,          // good tradeoff (1-9)
+      threshold: 1024,   // only compress payloads > 1KB
+      filter: (req, res) => {
+        // Skip SSE (Server-Sent Events) to avoid buffering
+        const isSSE =
+          req.path?.startsWith("/api/live") ||
+          req.headers.accept?.includes("text/event-stream");
+        if (isSSE) return false;
+        return compression.filter(req, res);
+      },
+    })
+  );
+  
 
 function sseSend(res: Response, data: any) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
