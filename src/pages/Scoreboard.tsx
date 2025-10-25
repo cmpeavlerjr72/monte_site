@@ -40,28 +40,63 @@ const pairKey = (a?: string, b?: string) => {
   return [aa, bb].sort().join("::");
 };
 
+// function mapEspnToLiveGames(payload: any): LiveGame[] {
+//   const events = payload?.events ?? [];
+//   return events.map((e: any) => {
+//     const st = e?.status?.type;
+//     const state = (st?.state ?? "unknown").toLowerCase();
+//     const comp = e?.competitions?.[0];
+//     const away = comp?.competitors?.find((c: any) => c.homeAway === "away");
+//     const home = comp?.competitors?.find((c: any) => c.homeAway === "home");
+//     const period = comp?.status?.period ?? e?.status?.period;
+//     const clock = comp?.status?.displayClock ?? e?.status?.displayClock;
+
+//     let statusText = st?.shortDetail || st?.description || st?.name || "";
+//     if (state === "in") statusText = `Q${period ?? "-"} ${clock ?? ""}`.trim();
+
+//     return {
+//       id: String(e?.id ?? Math.random()),
+//       state: /final/i.test(statusText) ? "final" : (state as any),
+//       awayTeam: away?.team?.shortDisplayName ?? away?.team?.displayName,
+//       homeTeam: home?.team?.shortDisplayName ?? home?.team?.displayName,
+//       awayScore: away?.score ? Number(away.score) : undefined,
+//       homeScore: home?.score ? Number(home.score) : undefined,
+//       statusText,
+//     };
+//   });
+// }
+
 function mapEspnToLiveGames(payload: any): LiveGame[] {
   const events = payload?.events ?? [];
   return events.map((e: any) => {
-    const st = e?.status?.type;
-    const state = (st?.state ?? "unknown").toLowerCase();
+    const type = e?.status?.type ?? e?.competitions?.[0]?.status?.type ?? {};
     const comp = e?.competitions?.[0];
     const away = comp?.competitors?.find((c: any) => c.homeAway === "away");
     const home = comp?.competitors?.find((c: any) => c.homeAway === "home");
-    const period = comp?.status?.period ?? e?.status?.period;
-    const clock = comp?.status?.displayClock ?? e?.status?.displayClock;
 
-    let statusText = st?.shortDetail || st?.description || st?.name || "";
+    const period = comp?.status?.period ?? e?.status?.period;
+    const clock  = comp?.status?.displayClock ?? e?.status?.displayClock;
+
+    // Robust state
+    let state = String(type.state || "").toLowerCase();     // 'pre' | 'in' | 'post'
+    const name  = String(type.name || "").toUpperCase();    // e.g. 'STATUS_FINAL'
+    const done  = Boolean(type.completed);
+
+    if (done || name.includes("FINAL") || state === "post") state = "final";
+
+    // Pill text
+    let statusText = type?.shortDetail || type?.detail || type?.description || "";
     if (state === "in") statusText = `Q${period ?? "-"} ${clock ?? ""}`.trim();
+    if (state === "final" && !statusText) statusText = "Final";
 
     return {
       id: String(e?.id ?? Math.random()),
-      state: /final/i.test(statusText) ? "final" : (state as any),
+      state: (state as any),
+      statusText,
       awayTeam: away?.team?.shortDisplayName ?? away?.team?.displayName,
       homeTeam: home?.team?.shortDisplayName ?? home?.team?.displayName,
       awayScore: away?.score ? Number(away.score) : undefined,
       homeScore: home?.score ? Number(home.score) : undefined,
-      statusText,
     };
   });
 }
@@ -332,6 +367,7 @@ type CardGame = {
   liveStatusText?: string; // e.g., "Q3 05:32"
   liveA?: number;          // Team A current score
   liveB?: number;          // Team B current score
+
 };
 
 const median = (arr: number[]) => {
@@ -777,6 +813,10 @@ export default function Scoreboard() {
       // inside map over your games:
       const { lg, inProgress, aScore, bScore, statusText } = getCardLive(g);
 
+      const dbHasFinals =
+        joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB);
+      const liveIsFinal = (lg?.state === "final");
+      const isFinal = !inProgress && (dbHasFinals || liveIsFinal);
 
       let simsA = medA, simsB = medB;
       if (joined && g.teamA !== joined.teamA) { simsA = medB; simsB = medA; }
