@@ -82,10 +82,10 @@ const RAW = {} as Record<string,string>;
 
 const URLS = Object.assign(
   {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: true })
+  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: false }),
+  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: false })
 ) as Record<string, string>;
 
 /* ---------- discover players CSVs ---------- */
@@ -101,10 +101,10 @@ const P_RAW = {} as Record<string, string>;
 
 const P_URL = Object.assign(
   {},
-  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: true })
+  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: false }),
+  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: false })
 ) as Record<string, string>;
 
 /* ---------- discover week games CSVs (date/time, spreads, totals) ---------- */
@@ -125,6 +125,19 @@ const G_URL = Object.assign(
 
 /* ---------- file helpers ---------- */
 
+// Vite glob with { as: 'url', eager: false } returns a function that resolves to a string URL.
+// This helper normalizes: string | (() => Promise<string>) | { url: string } | { urlImporter: fn }
+async function resolveUrl(input: unknown): Promise<string> {
+  if (!input) return "";
+  if (typeof input === "string") return input;
+  if (typeof (input as any).url === "string") return (input as any).url;
+  if (typeof input === "function") return await (input as () => Promise<string>)();
+  if (typeof (input as any).urlImporter === "function") {
+    return await (input as any).urlImporter();
+  }
+  return "";
+}
+
 // SAFE CSV loader: fetch text (if url), then Papa.parse(text) — Safari/iOS friendly
 async function parseCsvFromItemSafe<T = any>(
   item: { url?: string; raw?: string },
@@ -133,10 +146,14 @@ async function parseCsvFromItemSafe<T = any>(
   let text = "";
 
   // Prefer URL if present; make absolute (Safari workers hate relative URLs)
-  if (item?.url && item.url.trim()) {
+  if (item?.url) {
     try {
-      const abs = new URL(item.url, window.location.href).toString();
-      const res = await fetch(abs, { cache: "no-store" });
+      // const abs = new URL(item.url, window.location.href).toString();
+      // const res = await fetch(abs, { cache: "force-cache" });
+      const urlStr = await resolveUrl((item as any)?.url ?? item);
+      if (!urlStr) throw new Error("Missing CSV URL");
+      const abs = new URL(urlStr, window.location.origin).toString();
+      const res = await fetch(abs, { cache: "force-cache" }); // allow browser caching
       text = await res.text();
     } catch (e) {
       console.warn("CSV fetch failed:", item?.url, e);
