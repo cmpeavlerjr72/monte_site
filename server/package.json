@@ -3,8 +3,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/liveScores.js",
-    "postinstall": "cd .. && npm ci && npm run build"
+    "start": "node dist/liveScores.js"
   },
   "dependencies": {
     "abort-controller": "^3.0.0",
