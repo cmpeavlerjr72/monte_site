@@ -7,6 +7,103 @@ import {
   Tooltip, CartesianGrid, ReferenceLine, Cell,
 } from "recharts";
 
+import { useLiveScoreboard } from "../lib/useLiveScoreboard";
+
+// const todayET = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).replace(/-/g, "");
+
+// const scoreboard = useLiveScoreboard(todayET);
+// const events = scoreboard?.events ?? [];
+
+// --- LIVE helpers ---
+// --- LIVE helpers ---
+type LiveGame = {
+  id: string;
+  state: "pre" | "in" | "post" | "final" | "unknown";
+  awayTeam?: string;
+  homeTeam?: string;
+  awayScore?: number;
+  homeScore?: number;
+  statusText: string; // e.g., "Q3 05:32", "Final", "12:00 PM"
+};
+
+const clean = (s?: string) =>
+  (s ?? "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/\bst\.?\b/g, "state")       // <-- normalize St./St to 'state'
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const pairKey = (a?: string, b?: string) => {
+  const aa = clean(a), bb = clean(b);
+  return [aa, bb].sort().join("::");
+};
+
+// function mapEspnToLiveGames(payload: any): LiveGame[] {
+//   const events = payload?.events ?? [];
+//   return events.map((e: any) => {
+//     const st = e?.status?.type;
+//     const state = (st?.state ?? "unknown").toLowerCase();
+//     const comp = e?.competitions?.[0];
+//     const away = comp?.competitors?.find((c: any) => c.homeAway === "away");
+//     const home = comp?.competitors?.find((c: any) => c.homeAway === "home");
+//     const period = comp?.status?.period ?? e?.status?.period;
+//     const clock = comp?.status?.displayClock ?? e?.status?.displayClock;
+
+//     let statusText = st?.shortDetail || st?.description || st?.name || "";
+//     if (state === "in") statusText = `Q${period ?? "-"} ${clock ?? ""}`.trim();
+
+//     return {
+//       id: String(e?.id ?? Math.random()),
+//       state: /final/i.test(statusText) ? "final" : (state as any),
+//       awayTeam: away?.team?.shortDisplayName ?? away?.team?.displayName,
+//       homeTeam: home?.team?.shortDisplayName ?? home?.team?.displayName,
+//       awayScore: away?.score ? Number(away.score) : undefined,
+//       homeScore: home?.score ? Number(home.score) : undefined,
+//       statusText,
+//     };
+//   });
+// }
+
+function mapEspnToLiveGames(payload: any): LiveGame[] {
+  const events = payload?.events ?? [];
+  return events.map((e: any) => {
+    const type = e?.status?.type ?? e?.competitions?.[0]?.status?.type ?? {};
+    const comp = e?.competitions?.[0];
+    const away = comp?.competitors?.find((c: any) => c.homeAway === "away");
+    const home = comp?.competitors?.find((c: any) => c.homeAway === "home");
+
+    const period = comp?.status?.period ?? e?.status?.period;
+    const clock  = comp?.status?.displayClock ?? e?.status?.displayClock;
+
+    // Robust state
+    let state = String(type.state || "").toLowerCase();     // 'pre' | 'in' | 'post'
+    const name  = String(type.name || "").toUpperCase();    // e.g. 'STATUS_FINAL'
+    const done  = Boolean(type.completed);
+
+    if (done || name.includes("FINAL") || state === "post") state = "final";
+
+    // Pill text
+    let statusText = type?.shortDetail || type?.detail || type?.description || "";
+    if (state === "in") statusText = `Q${period ?? "-"} ${clock ?? ""}`.trim();
+    if (state === "final" && !statusText) statusText = "Final";
+
+    return {
+      id: String(e?.id ?? Math.random()),
+      state: (state as any),
+      statusText,
+      awayTeam: away?.team?.shortDisplayName ?? away?.team?.displayName,
+      homeTeam: home?.team?.shortDisplayName ?? home?.team?.displayName,
+      awayScore: away?.score ? Number(away.score) : undefined,
+      homeScore: home?.score ? Number(home.score) : undefined,
+    };
+  });
+}
+
+
+
+
 /* ---------- discover score CSVs (sims) ---------- */
 // const RAW = Object.assign(
 //   {},
@@ -20,10 +117,10 @@ const RAW = {} as Record<string,string>;
 
 const URLS = Object.assign(
   {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: true })
+  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: false }),
+  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: false })
 ) as Record<string, string>;
 
 /* ---------- discover players CSVs ---------- */
@@ -39,10 +136,10 @@ const P_RAW = {} as Record<string, string>;
 
 const P_URL = Object.assign(
   {},
-  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: true })
+  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: false }),
+  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: false }),
+  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: false })
 ) as Record<string, string>;
 
 /* ---------- discover week games CSVs (date/time, spreads, totals) ---------- */
@@ -61,8 +158,20 @@ const G_URL = Object.assign(
 ) as Record<string, string>;
 
 
-
 /* ---------- file helpers ---------- */
+
+// Vite glob with { as: 'url', eager: false } returns a function that resolves to a string URL.
+// This helper normalizes: string | (() => Promise<string>) | { url: string } | { urlImporter: fn }
+async function resolveUrl(input: unknown): Promise<string> {
+  if (!input) return "";
+  if (typeof input === "string") return input;
+  if (typeof (input as any).url === "string") return (input as any).url;
+  if (typeof input === "function") return await (input as () => Promise<string>)();
+  if (typeof (input as any).urlImporter === "function") {
+    return await (input as any).urlImporter();
+  }
+  return "";
+}
 
 // SAFE CSV loader: fetch text (if url), then Papa.parse(text) — Safari/iOS friendly
 async function parseCsvFromItemSafe<T = any>(
@@ -72,10 +181,14 @@ async function parseCsvFromItemSafe<T = any>(
   let text = "";
 
   // Prefer URL if present; make absolute (Safari workers hate relative URLs)
-  if (item?.url && item.url.trim()) {
+  if (item?.url) {
     try {
-      const abs = new URL(item.url, window.location.href).toString();
-      const res = await fetch(abs, { cache: "no-store" });
+      // const abs = new URL(item.url, window.location.href).toString();
+      // const res = await fetch(abs, { cache: "force-cache" });
+      const urlStr = await resolveUrl((item as any)?.url ?? item);
+      if (!urlStr) throw new Error("Missing CSV URL");
+      const abs = new URL(urlStr, window.location.origin).toString();
+      const res = await fetch(abs, { cache: "force-cache" }); // allow browser caching
       text = await res.text();
     } catch (e) {
       console.warn("CSV fetch failed:", item?.url, e);
@@ -172,7 +285,7 @@ const scoreFilesAll = buildFiles(RAW, URLS);
 const gamesFilesAll = buildFiles(G_RAW, G_URL);
 const playerFilesAll = buildFiles(P_RAW, P_URL);
 
-/* --------------------- Team logo lookup --------------------- */
+/* --------------------- Team logo & conference lookup --------------------- */
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
 const teamInfoRaw = Object.values(TEAM_INFO_RAW)[0] ?? "";
 const LOGO_MAP: Record<string, string> = {};
@@ -250,6 +363,11 @@ type CardGame = {
   mlPickProb?: number;   // 0..1 win probability for that team
   mlFair?: string;       // American odds string from that prob (e.g. -165 / +145)
   mlResult?: "win" | "loss" | "push";
+  liveInProgress?: boolean;
+  liveStatusText?: string; // e.g., "Q3 05:32"
+  liveA?: number;          // Team A current score
+  liveB?: number;          // Team B current score
+
 };
 
 const median = (arr: number[]) => {
@@ -317,7 +435,7 @@ function parseTime(input?: string): { h:number; min:number } | null {
     let h = Number(m[1]);
     const min = m[2] ? Number(m[2]) : 0;
     const ampm = m[4]?.toUpperCase();
-    if (ampm === "PM" && h < 12) h += 12;
+       if (ampm === "PM" && h < 12) h += 12;
     if (ampm === "AM" && h === 12) h = 0;
     return { h, min };
   }
@@ -449,7 +567,7 @@ function NumberSpinner({
       <input type="number" step={step} min={min} max={max} value={value} placeholder={placeholder}
         inputMode="decimal" onChange={(e) => onChange(e.target.value)}
         style={{ width, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }} />
-      <button type="button" onClick={() => bump(1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>+</button>
+      <button type="button" onClick={() => bump(1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background:"var(--card)" }}>+</button>
     </div>
   );
 }
@@ -473,6 +591,79 @@ export default function Scoreboard() {
   const [sortBy, setSortBy] = useState<SortBy>("kickoff");
 
   const [useMean, setUseMean] = useState(false); // false = show medians (current), true = show means
+
+  // ---- Conference dictionary + filter (from team_info.csv) ----
+  const [teamToConf, setTeamToConf] = useState<Record<string, string>>({});
+  const [confOptions, setConfOptions] = useState<string[]>([]);
+  const [confFilter, setConfFilter] = useState<string>("all");
+
+    // ---- LIVE SCOREBOARD (must be inside component) ----
+  const todayET = new Date()
+    .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+    .replace(/-/g, "");
+  const livePayload = useLiveScoreboard(todayET);
+  // add:
+  const liveGames: LiveGame[] = livePayload ? mapEspnToLiveGames(livePayload) : [];
+  const liveMap = new Map<string, LiveGame>();
+  for (const g of liveGames) {
+    liveMap.set(pairKey(g.awayTeam, g.homeTeam), g);
+  }
+
+  // helper to pull “current vs actual” for one of your cards
+  function getCardLive(game: { teamA: string; teamB: string }) {
+    const lg = liveMap.get(pairKey(game.teamA, game.teamB));
+    const inProgress = lg?.state === "in";
+
+    // Figure out which ESPN side is A/B
+    let aScore = undefined, bScore = undefined;
+    if (lg) {
+      const aMatchesAway = clean(game.teamA) === clean(lg.awayTeam);
+      aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
+      bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
+    }
+    return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
+  }
+
+
+
+
+  useEffect(() => {
+    if (!teamInfoRaw) return;
+    const parsed = Papa.parse<Record<string, any>>(teamInfoRaw, {
+      header: true,
+      dynamicTyping: false,
+      skipEmptyLines: true,
+    });
+    const t2c: Record<string, string> = {};
+    const confSet = new Set<string>();
+
+    const teamKeys = ["team","Team","school","School","name","Name"];
+    const confKeys = ["conference","Conference","conf","Conf"];
+
+    for (const r of parsed.data || []) {
+      if (!r) continue;
+      const name = teamKeys.map(k=>r[k]).find(v => v != null && String(v).trim()!=="");
+      const conf = confKeys.map(k=>r[k]).find(v => v != null && String(v).trim()!=="");
+      if (!name) continue;
+      const teamName = String(name).trim();
+      const c = conf ? String(conf).trim() : "";
+      if (c) {
+        confSet.add(c);
+        t2c[normTeamKey(teamName)] = c;
+        t2c[normTeamKey(teamName.replace(/\s+/g,""))] = c;
+      }
+      const alias = r["short_name"] ?? r["Short Name"] ?? r["alias"] ?? r["Alias"];
+      if (alias && c) {
+        const a = String(alias).trim();
+        t2c[normTeamKey(a)] = c;
+        t2c[normTeamKey(a.replace(/\s+/g,""))] = c;
+      }
+    }
+    setTeamToConf(t2c);
+    setConfOptions(Array.from(confSet).sort((a,b)=>a.localeCompare(b)));
+  }, []);
+
+  const confOf = (team?: string) => (team ? teamToConf[normTeamKey(team)] ?? teamToConf[normTeamKey(team.replace(/\s+/g,""))] : undefined);
 
   useEffect(() => {
     if (!selectedWeek) { setGames({}); setMeta({}); setPlayers({}); return; }
@@ -619,6 +810,13 @@ export default function Scoreboard() {
       const meanA = Math.round(mean(Avals));
       const meanB = Math.round(mean(Bvals));
       const joined = meta[key];
+      // inside map over your games:
+      const { lg, inProgress, aScore, bScore, statusText } = getCardLive(g);
+
+      const dbHasFinals =
+        joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB);
+      const liveIsFinal = (lg?.state === "final");
+      const isFinal = !inProgress && (dbHasFinals || liveIsFinal);
 
       let simsA = medA, simsB = medB;
       if (joined && g.teamA !== joined.teamA) { simsA = medB; simsB = medA; }
@@ -779,6 +977,10 @@ export default function Scoreboard() {
         mlPickProb,
         mlFair,
         mlResult,
+        liveInProgress: inProgress,
+        liveStatusText: statusText,
+        liveA: aScore,
+        liveB: bScore,
       });
     }
 
@@ -812,6 +1014,12 @@ export default function Scoreboard() {
     return out;
   }, [games, meta, sortBy]);
 
+  // Apply conference filter (game shows if either team is in selected conference)
+  const filteredCards = useMemo(() => {
+    if (confFilter === "all") return cards;
+    return cards.filter(c => (confOf(c.teamA) === confFilter) || (confOf(c.teamB) === confFilter));
+  }, [cards, confFilter, teamToConf]);
+
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
       {/* Week selector */}
@@ -828,10 +1036,21 @@ export default function Scoreboard() {
             </select>
 
             <span style={{ fontSize: 12, opacity: 0.7 }}>
-              {loading ? "Loading…" : `Showing ${cards.length} game${cards.length === 1 ? "" : "s"}`}
+              {loading ? "Loading…" : `Showing ${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}`}
             </span>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            {/* NEW: Conference filter */}
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Conference:</label>
+            <select
+              value={confFilter}
+              onChange={(e)=>setConfFilter(e.target.value)}
+              style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
+            >
+              <option value="all">All conferences</option>
+              {confOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+
             <label style={{ fontSize: 12, color: "var(--muted)" }}>Sort by:</label>
             <select
               value={sortBy}
@@ -865,7 +1084,7 @@ export default function Scoreboard() {
           alignItems: "stretch",
         }}
       >
-        {cards.map((c) => (
+        {filteredCards.map((c) => (
           <GameCard
             key={c.key}
             card={c}
@@ -1021,17 +1240,42 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
   return (
     <article
       className="card"
-      style={{
-        padding: 12, borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)",
-        display: "grid", gridTemplateRows: "auto auto auto", gap: 8,
-        contentVisibility: "auto",
-        containIntrinsicSize: "300px"
-      }}
+      // style={{
+      //   padding: 12, borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)",
+      //   display: "grid", gridTemplateRows: "auto auto auto", gap: 8,
+      //   contentVisibility: "auto",
+      //   containIntrinsicSize: "300px"
+      // }}
+        style={{
+          padding: 12,
+          borderRadius: 12,
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          boxShadow: card.liveInProgress ? "0 0 0 1px #fecaca" : undefined, // soft red outline when live
+          display: "grid",
+          gridTemplateRows: "auto auto auto",
+          gap: 8,
+          contentVisibility: "auto",
+          containIntrinsicSize: "300px"
+        }}
+      
     >
       {/* header */}
-      <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between" }}>
-        <span>week</span>
-        <span>{card.kickoffLabel ?? "TBD"}</span>
+      <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {card.liveInProgress && (
+            <span style={{
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: "#dc2626",   // red-600
+              color: "white",
+              fontWeight: 600
+            }}>
+              {card.liveStatusText || "In Progress"}
+            </span>
+          )}
+          <span>{card.kickoffLabel ?? "TBD"}</span>
+        </span>
       </div>
 
       {/* teams + scores (stacked with Projected / Actual) */}
@@ -1055,7 +1299,9 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             {/* header */}
             <div />
             <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Projected</div>
-            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Actual</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
+              {card.liveInProgress ? "Current" : "Actual"}
+            </div>
 
             {/* Team B (top) */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
@@ -1071,8 +1317,13 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: bColors?.primary ?? "var(--text)" }}>
               {projB}
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+            {/* <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
               {hasFinalB ? card.finalB : "–"}
+            </div> */}
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+              {card.liveInProgress
+                ? (Number.isFinite(card.liveB) ? card.liveB : "–")
+                : (Number.isFinite(card.finalB) ? card.finalB : "–")}
             </div>
 
             {/* Team A (bottom) */}
@@ -1089,9 +1340,15 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: aColors?.primary ?? "var(--text)" }}>
               {projA}
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+            {/* <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
               {hasFinalA ? card.finalA : "–"}
+            </div> */}
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+              {card.liveInProgress
+                ? (Number.isFinite(card.liveA) ? card.liveA : "–")
+                : (Number.isFinite(card.finalA) ? card.finalA : "–")}
             </div>
+
           </div>
         );
       })()}

@@ -1,72 +1,11 @@
 // src/pages/Scoreboard.tsx
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as Papa from "papaparse";
 import { getTeamColors } from "../utils/teamColors";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   Tooltip, CartesianGrid, ReferenceLine, Cell,
 } from "recharts";
-
-import { useLiveScoreboard } from "../lib/useLiveScoreboard";
-
-type LiveGame = {
-  id: string;
-  state: "pre" | "in" | "post" | "final" | "unknown";
-  awayTeam?: string;
-  homeTeam?: string;
-  awayScore?: number;
-  homeScore?: number;
-  statusText: string;
-};
-
-const clean = (s?: string) =>
-  (s ?? "")
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/\bst\.?\b/g, "state")
-    .replace(/[^a-z0-9 ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const pairKey = (a?: string, b?: string) => {
-  const aa = clean(a), bb = clean(b);
-  return [aa, bb].sort().join("::");
-};
-
-function mapEspnToLiveGames(payload: any): LiveGame[] {
-  const events = payload?.events ?? [];
-  return events.map((e: any) => {
-    const type = e?.status?.type ?? e?.competitions?.[0]?.status?.type ?? {};
-    const comp = e?.competitions?.[0];
-    const away = comp?.competitors?.find((c: any) => c.homeAway === "away");
-    const home = comp?.competitors?.find((c: any) => c.homeAway === "home");
-
-    const period = comp?.status?.period ?? e?.status?.period;
-    const clock  = comp?.status?.displayClock ?? e?.status?.displayClock;
-
-    // Robust state
-    let state = String(type.state || "").toLowerCase();     // 'pre' | 'in' | 'post'
-    const name  = String(type.name || "").toUpperCase();    // e.g. 'STATUS_FINAL'
-    const done  = Boolean(type.completed);
-    if (done || name.includes("FINAL") || state === "post") state = "final";
-
-    // Pill text
-    let statusText = type?.shortDetail || type?.detail || type?.description || "";
-    if (state === "in") statusText = `Q${period ?? "-"} ${clock ?? ""}`.trim();
-    if (state === "final" && !statusText) statusText = "Final";
-
-    return {
-      id: String(e?.id ?? Math.random()),
-      state: (state as any),
-      statusText,
-      awayTeam: away?.team?.shortDisplayName ?? away?.team?.displayName,
-      homeTeam: home?.team?.shortDisplayName ?? home?.team?.displayName,
-      awayScore: away?.score ? Number(away.score) : undefined,
-      homeScore: home?.score ? Number(home.score) : undefined,
-    };
-  });
-}
-
 
 /* ---------- discover score CSVs (sims) ---------- */
 // const RAW = Object.assign(
@@ -310,11 +249,6 @@ type CardGame = {
   mlPickProb?: number;   // 0..1 win probability for that team
   mlFair?: string;       // American odds string from that prob (e.g. -165 / +145)
   mlResult?: "win" | "loss" | "push";
-  scoreSource?: "CSV_FINALS" | "LIVE" | "UPCOMING";
-  liveInProgress?: boolean;
-  liveStatusText?: string;
-  liveA?: number;
-  liveB?: number;
 };
 
 const median = (arr: number[]) => {
@@ -521,46 +455,6 @@ function NumberSpinner({
 
 /* --------------------- page --------------------- */
 export default function Scoreboard() {
-
-  // --- LIVE: inside Scoreboard() component, just above the cards useMemo ---
-  const todayET = useMemo(
-    () =>
-      new Date()
-        .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
-        .replace(/-/g, ""),
-    []
-  );
-
-  // call the hook safely INSIDE a component
-  const livePayload = useLiveScoreboard(todayET);
-
-  // normalize and index the live games
-  const liveGames: LiveGame[] = useMemo(
-    () => (livePayload ? mapEspnToLiveGames(livePayload) : []),
-    [livePayload]
-  );
-
-  const liveMap = useMemo(() => {
-    const m = new Map<string, LiveGame>();
-    for (const g of liveGames) m.set(pairKey(g.awayTeam, g.homeTeam), g);
-    return m;
-  }, [liveGames]);
-
-  const getCardLive = useCallback(
-    (game: { teamA: string; teamB: string }) => {
-      const lg = liveMap.get(pairKey(game.teamA, game.teamB));
-      const inProgress = lg?.state === "in";
-      let aScore: number | undefined, bScore: number | undefined;
-      if (lg) {
-        const aMatchesAway = clean(game.teamA) === clean(lg.awayTeam);
-        aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
-        bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
-      }
-      return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
-    },
-    [liveMap]
-  );
-
   // derive weeks
   const weeks = useMemo(() => {
     const s = new Set<string>([...scoreFilesAll, ...gamesFilesAll, ...playerFilesAll].map((f) => f.week));
@@ -863,136 +757,52 @@ export default function Scoreboard() {
       }
 
 
-      // let spreadResult: "win" | "loss" | "push" | undefined;
-      // let totalResult:  "win" | "loss" | "push" | undefined;
-      // let dispFinalA: number | undefined;
-      // let dispFinalB: number | undefined;
-
-      // if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
-      //   const fA = joined.finalA as number;
-      //   const fB = joined.finalB as number;
-
-      //   // spread grading vs our pick
-      //   if (Number.isFinite(joined.spread)) {
-      //     const s = joined.spread as number;
-      //     const diff = (simsA + s) - simsB;
-      //     const coverA = (fA + s) > fB ? 1 : (fA + s) < fB ? -1 : 0;
-      //     const pickedA = diff > 0;
-      //     if (coverA === 0) {
-      //       spreadResult = "push";
-      //     } else {
-      //       const pickedWins = (coverA > 0 && pickedA) || (coverA < 0 && !pickedA);
-      //       spreadResult = pickedWins ? "win" : "loss";
-      //     }
-      //   }
-
-      //   // Finals aligned to the card’s display orientation
-      //   // if (joined && g.teamA !== joined.teamA) {
-      //   //   dispFinalA = joined.finalB as number;
-      //   //   dispFinalB = joined.finalA as number;
-      //   // } else {
-      //   //   dispFinalA = joined.finalA as number;
-      //   //   dispFinalB = joined.finalB as number;
-      //   // }
-
-        
-
-      //   // total grading vs our pick
-      //   if (Number.isFinite(joined.total)) {
-      //     const lineT     = joined.total as number;
-      //     const gameTotal = (joined.finalA as number) + (joined.finalB as number);
-      //     const predTotal = simsA + simsB;
-
-      //     const actualSide    = gameTotal > lineT ? "Over"  : gameTotal < lineT ? "Under" : "Push";
-      //     const predictedSide = predTotal > lineT ? "Over"  : predTotal < lineT ? "Under" : "Push";
-
-      //     totalResult = (actualSide === "Push" || predictedSide === "Push")
-      //       ? "push"
-      //       : (actualSide === predictedSide ? "win" : "loss");
-      //   }
-      // }
-      // pull live for this card
-      const { lg, inProgress, aScore, bScore, statusText } = getCardLive(g);
-
-      // CSV finals present?
-      const csvHasFinals = joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB);
-
-      // sims orientation (book vs display)
-      // let simsA = medA, simsB = medB;
-      const flipped = Boolean(joined && g.teamA !== joined.teamA);
-      if (flipped) { simsA = medB; simsB = medA; }
-
-      // --- picks (your existing code above for pickSpread/pickTotal/spreadProb/ml etc.) stays as-is ---
-
-      let dispFinalA: number | undefined;
-      let dispFinalB: number | undefined;
-      let scoreSource: "CSV_FINALS" | "LIVE" | "UPCOMING" = "UPCOMING";
-
-      // 1) CSV finals (use & grade)
-      if (csvHasFinals) {
-        dispFinalA = flipped ? (joined!.finalB as number) : (joined!.finalA as number);
-        dispFinalB = flipped ? (joined!.finalA as number) : (joined!.finalB as number);
-        scoreSource = "CSV_FINALS";
-      } else {
-        // 2) otherwise: live if present (show only; no grading)
-        const liveHasScores = Number.isFinite(aScore) && Number.isFinite(bScore);
-        if (liveHasScores) {
-          dispFinalA = aScore as number;
-          dispFinalB = bScore as number;
-          scoreSource = "LIVE";
-        } else {
-          // 3) upcoming: no scores
-          dispFinalA = undefined;
-          dispFinalB = undefined;
-          scoreSource = "UPCOMING";
-        }
-      }
-
-      // --- grading: ONLY when csv finals exist ---
       let spreadResult: "win" | "loss" | "push" | undefined;
       let totalResult:  "win" | "loss" | "push" | undefined;
-      // let mlResult:     "win" | "loss" | "push" | undefined;
+      let dispFinalA: number | undefined;
+      let dispFinalB: number | undefined;
 
-      if (csvHasFinals) {
-        const fA_book = joined!.finalA as number;
-        const fB_book = joined!.finalB as number;
+      if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
+        const fA = joined.finalA as number;
+        const fB = joined.finalB as number;
 
-        if (Number.isFinite(joined?.spread)) {
-          const s = joined!.spread as number;
-          const coverA = (fA_book + s) > fB_book ? 1 : (fA_book + s) < fB_book ? -1 : 0;
-          const pickedA = ((simsA + s) - simsB) > 0; // sims already aligned via `flipped`
-          spreadResult = coverA === 0 ? "push" : ((coverA > 0 && pickedA) || (coverA < 0 && !pickedA)) ? "win" : "loss";
+        // spread grading vs our pick
+        if (Number.isFinite(joined.spread)) {
+          const s = joined.spread as number;
+          const diff = (simsA + s) - simsB;
+          const coverA = (fA + s) > fB ? 1 : (fA + s) < fB ? -1 : 0;
+          const pickedA = diff > 0;
+          if (coverA === 0) {
+            spreadResult = "push";
+          } else {
+            const pickedWins = (coverA > 0 && pickedA) || (coverA < 0 && !pickedA);
+            spreadResult = pickedWins ? "win" : "loss";
+          }
         }
 
-        if (Number.isFinite(joined?.total)) {
-          const lineT     = joined!.total as number;
-          const gameTotal = fA_book + fB_book;
+        // Finals aligned to the card’s display orientation
+        if (joined && g.teamA !== joined.teamA) {
+          dispFinalA = joined.finalB as number;
+          dispFinalB = joined.finalA as number;
+        } else {
+          dispFinalA = joined.finalA as number;
+          dispFinalB = joined.finalB as number;
+        }
+
+        // total grading vs our pick
+        if (Number.isFinite(joined.total)) {
+          const lineT     = joined.total as number;
+          const gameTotal = (joined.finalA as number) + (joined.finalB as number);
           const predTotal = simsA + simsB;
+
           const actualSide    = gameTotal > lineT ? "Over"  : gameTotal < lineT ? "Under" : "Push";
           const predictedSide = predTotal > lineT ? "Over"  : predTotal < lineT ? "Under" : "Push";
+
           totalResult = (actualSide === "Push" || predictedSide === "Push")
             ? "push"
             : (actualSide === predictedSide ? "win" : "loss");
         }
-
-        if (typeof mlPickTeam === "string") {
-          if (fA_book === fB_book) mlResult = "push";
-          else {
-            const actualWinnerInBook = fA_book > fB_book ? joined!.teamA : joined!.teamB;
-            mlResult = (actualWinnerInBook === mlPickTeam) ? "win" : "loss";
-          }
-        }
       }
-
-      // --- DEBUG: one compact line per card ---
-      console.debug("SCORE DECISION", {
-        week: selectedWeek,
-        teams: `${g.teamA} vs ${g.teamB}`,
-        source: scoreSource,
-        csv: joined ? { A: joined.finalA, B: joined.finalB } : null,
-        live: { state: lg?.state, a: aScore, b: bScore, status: statusText },
-        flipped
-      });
 
       out.push({
         key,
@@ -1011,11 +821,6 @@ export default function Scoreboard() {
         mlPickProb,
         mlFair,
         mlResult,
-        scoreSource,
-        liveInProgress: inProgress,
-        liveStatusText: statusText,
-        liveA: aScore,
-        liveB: bScore,
       });
     }
 
@@ -1146,28 +951,6 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
   if (metric==="total")     return left.map((x,i)=>x+right[i]);
   return right.map((x,i)=>x-left[i]);
 }
-
-// inside component, below state/hooks
-// const todayET = new Date()
-//   .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
-//   .replace(/-/g, "");
-// const livePayload = useLiveScoreboard(todayET);
-// const liveGames: LiveGame[] = livePayload ? mapEspnToLiveGames(livePayload) : [];
-// const liveMap = new Map<string, LiveGame>();
-// for (const g of liveGames) liveMap.set(pairKey(g.awayTeam, g.homeTeam), g);
-
-// function getCardLive(game: { teamA: string; teamB: string }) {
-//   const lg = liveMap.get(pairKey(game.teamA, game.teamB));
-//   const inProgress = lg?.state === "in";
-//   let aScore: number | undefined, bScore: number | undefined;
-//   if (lg) {
-//     const aMatchesAway = clean(game.teamA) === clean(lg.awayTeam);
-//     aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
-//     bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
-//   }
-//   return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
-// }
-
 
 function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gdata: GameData; players: PlayerMap; useMean?: boolean }) {
   const aColors = getTeamColors(card.teamA);
@@ -1331,10 +1114,7 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             {/* header */}
             <div />
             <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Projected</div>
-            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
-              {card.scoreSource === "LIVE" ? "Current" : "Actual"}
-            </div>
-
+            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Actual</div>
 
             {/* Team B (top) */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
