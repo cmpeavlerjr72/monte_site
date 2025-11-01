@@ -1,13 +1,13 @@
 ﻿date,time,Team A,Team B,Team A Score Actual,Team B Score Actual,OU,Spread,TeamAML,TeamBML
 28-Oct,20:00,Texas State,James Madison,20,52,58.5,6,187,-226
 28-Oct,20:00,Kennesaw State,UTEP,33,20,50.5,-9.5,-352,280
-29-Oct,19:30,Middle Tennessee,Jacksonville State,,,54.5,6.5,181,-219
-29-Oct,20:00,Missouri State,Florida International,,,51.5,-3.5,-177,148
-30-Oct,19:30,Coastal Carolina,Marshall,,,54.5,4,145,-174
-30-Oct,19:30,UTSA,Tulane,,,55.5,3.5,149,-179
-31-Oct,19:00,Rice,Memphis,,,49.5,14.5,437,-602
-31-Oct,19:30,Syracuse,North Carolina,,,46.5,-1.5,-124,104
-31-Oct,20:00,Louisiana Tech,Sam Houston,,,50.5,-16.5,-763,525
+29-Oct,19:30,Middle Tennessee,Jacksonville State,21,24,54.5,6.5,181,-219
+29-Oct,20:00,Missouri State,Florida International,28,21,51.5,-3.5,-177,148
+30-Oct,19:30,Coastal Carolina,Marshall,27,44,54.5,4,145,-174
+30-Oct,19:30,UTSA,Tulane,48,26,55.5,3.5,149,-179
+31-Oct,19:00,Rice,Memphis,14,38,49.5,14.5,437,-602
+31-Oct,19:30,Syracuse,North Carolina,10,24,46.5,-1.5,-124,104
+31-Oct,20:00,Louisiana Tech,Sam Houston,55,14,50.5,-16.5,-763,525
 1-Nov,12:00,Bowling Green,Buffalo,,,43.5,-1.5,-127,106
 1-Nov,12:00,UConn,UAB,,,64.5,-11.5,-405,313
 1-Nov,12:00,Ohio State,Penn State,,,43.5,-20.5,-2041,1043
