@@ -60,6 +60,50 @@ type Priors = {
   targets?: Record<string, PriTarget>;
 };
 
+type MarketEval = {
+  moneyline?: {
+    A?: { wins?: number; prob?: number; fair_american?: number };
+    B?: { wins?: number; prob?: number; fair_american?: number };
+    ties?: number;
+  };
+  spread?: {
+    A?: { line?: number; covers?: number; pushes?: number; prob_cover?: number; fair_american?: number };
+    B?: { line?: number; covers?: number; pushes?: number; prob_cover?: number; fair_american?: number };
+  };
+  total?: {
+    line?: number;
+    over?: { wins?: number; pushes?: number; prob?: number; fair_american?: number };
+    under?: { wins?: number; pushes?: number; prob?: number; fair_american?: number };
+  };
+};
+
+type OddsBlock = {
+  book?: string | null;
+  source?: string | null;
+  start_utc?: string | null;        // duplicate, sometimes included in odds; we still prefer top-level start_utc
+  matched_home_side?: "A" | "B" | "a" | "b" | null;
+
+  home_ml?: number | null;
+  away_ml?: number | null;
+
+  home_spread?: number | null;
+  home_spread_price?: number | null;
+  away_spread?: number | null;
+  away_spread_price?: number | null;
+
+  total?: number | null;
+  over_price?: number | null;
+  under_price?: number | null;
+};
+
+type FairBlock = {
+  A_ml?: number;
+  B_ml?: number;
+  A_spread?: { line: number; odds: number } | null;
+  B_spread?: { line: number; odds: number } | null;
+  total?: { line: number; over: number; under: number } | null;
+};
+
 type GameRow = {
   aLogoPrimary?: string | null;
   aLogoAlt?: string | null;
@@ -90,6 +134,12 @@ type GameRow = {
 
   // optional compact sims path (added by index)
   compactPath?: string;
+
+  startUtc?: string;
+  odds?: OddsBlock | null;
+  fair?: FairBlock | null;
+
+  marketEval?: MarketEval | null;
 };
 
 type Card = GameRow & {
@@ -98,9 +148,50 @@ type Card = GameRow & {
   mlTeam?: "A" | "B";
   mlProb?: number;
   mlFair?: string;
+
+  // derived for display
+  tipEtLabel?: string;
+
+  aSpreadLine?: string;   // e.g., "-7"
+  aSpreadPrice?: number | null; // -110
+  bSpreadLine?: string;   // e.g., "+7"
+  bSpreadPrice?: number | null;
+
+  totalLine?: number | null;
+  overPrice?: number | null;
+  underPrice?: number | null;
+
+  aMl?: number | null;    // Team A ML
+  bMl?: number | null;    // Team B ML
+
+    // NEW: single-side “picks” built from market_eval
+  pickSpread?: { teamSide: "A" | "B"; teamName: string; line: number; fairAm?: number; prob?: number };
+  pickTotal?: { side: "Over" | "Under"; line: number; fairAm?: number; prob?: number };
+  pickML?: { teamSide: "A" | "B"; teamName: string; fairAm?: number; prob?: number };
+
+  evSpread?: number;
+  evTotal?: number;
+  evML?: number;
 };
 
 /* ---------------- helpers ---------------- */
+
+// American ↔ EV helpers
+const americanToNet = (odds: number) => (odds >= 0 ? odds / 100 : 100 / Math.abs(odds));
+// EV per 1u stake: win prob * net_payout - lose prob * 1
+const expectedValue = (p?: number, american?: number | null) => {
+  if (!Number.isFinite(p as number) || !Number.isFinite(american as number)) return undefined;
+  const net = americanToNet(american as number);
+  return (p as number) * net - (1 - (p as number));
+};
+const fmtEV = (x?: number) => (x == null ? "" : ` · EV ${(x >= 0 ? "+" : "")}${x.toFixed(2)}u`);
+
+const fmtAmerican = (n?: number | null) =>
+  n == null || !Number.isFinite(n) ? "—" : n > 0 ? `+${Math.round(n)}` : `${Math.round(n)}`;
+
+const fmtPct = (p?: number) =>
+  p == null || !Number.isFinite(p) ? "—" : `${Math.round(p * 100)}%`;
+
 function computeAB(total?: number, margin?: number) {
   if (!Number.isFinite(total as number) || !Number.isFinite(margin as number)) return { A: undefined, B: undefined };
   const T = total as number, M = margin as number;
@@ -118,6 +209,20 @@ function inferCompactPath(summaryPath?: string) {
   const s = summaryPath.replace(/\/+$/, "");
   return s.replace(/\/summary\.json$/i, "/sims_compact.json");
 }
+
+function toEtLabel(iso?: string | null) {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(d) + " ET";
+}
+
 
 type HistBin = { bin: string; start: number; end: number; count: number };
 function computeHistogram(values: number[], bins?: number): HistBin[] {
@@ -174,6 +279,9 @@ export default function CBBSims() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<GameRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  type SortKey = "time" | "ev_spread" | "ev_total" | "ev_ml";
+  const [sortKey, setSortKey] = useState<SortKey>("time");
+
 
   const indexUrls = useMemo(() => {
     const base = DATASET_ROOT.replace(/\/+$/, "");
@@ -269,6 +377,18 @@ export default function CBBSims() {
               const res = await fetch(sUrl, { cache: "no-store" });
               if (res.ok) {
                 const s = await res.json();
+
+                // new: start_utc
+                const startUtc = pickStrLoose(s, ["start_utc", "startUtc"]);
+
+                // new: odds (kept as is; we’ll normalize later)
+                const odds: OddsBlock | null = s?.odds ?? null;
+
+                // new: fair odds/lines (optional)
+                const fair: FairBlock | null = s?.fair ?? null;
+
+                const marketEval: MarketEval | null = s?.market_eval ?? null; // NEW
+
                 out = {
                   ...out,
                   pA: pickNumLoose(s, ["A_win_prob", "win_prob_A", "pA", "p_a", "P_A", "probA", "prob_a", "pawin"]),
@@ -282,6 +402,11 @@ export default function CBBSims() {
                   updated: pickStrLoose(s, ["updated", "timestamp", "ts"]),
                   finalA: pickNumLoose(s, ["finalA", "final_a", "final_home"]),
                   finalB: pickNumLoose(s, ["finalB", "final_b", "final_away"]),
+
+                  startUtc,
+                  odds,
+                  fair,
+                  marketEval
                 };
               }
             } catch {}
@@ -327,10 +452,168 @@ export default function CBBSims() {
         }
         const mlFair = Number.isFinite(mlProb as number) ? americanOdds(mlProb as number) : "—";
 
-        return { ...r, projA, projB, mlTeam, mlProb, mlFair };
+        // tip time (ET)
+        const tipEtLabel = toEtLabel(r.startUtc ?? r.odds?.start_utc ?? null);
+
+        // market pills from market_eval (fair odds), with sensible fallbacks
+        let aSpreadLine: string | undefined;
+        let bSpreadLine: string | undefined;
+        let aSpreadPrice: number | null = null;
+        let bSpreadPrice: number | null = null;
+        let totalLine: number | null = null;
+        let overPrice: number | null = null;
+        let underPrice: number | null = null;
+        let aMl: number | null = null;
+        let bMl: number | null = null;
+
+        // --- decide single-side picks from market_eval when available
+        let pickSpread: Card["pickSpread"] | undefined;
+        let pickTotal: Card["pickTotal"] | undefined;
+        let pickML: Card["pickML"] | undefined;
+
+        let evSpread: number | undefined;
+        let evTotal: number | undefined;
+        let evML: number | undefined;
+
+        if (r.marketEval) {
+          // ML pick
+          const pAml = r.marketEval.moneyline?.A?.prob;
+          const pBml = r.marketEval.moneyline?.B?.prob;
+          if (Number.isFinite(pAml as number) || Number.isFinite(pBml as number)) {
+            const aProb = (pAml as number) ?? 0;
+            const bProb = (pBml as number) ?? 0;
+            if (aProb >= bProb) {
+              pickML = { teamSide: "A", teamName: r.teamA, fairAm: r.marketEval.moneyline?.A?.fair_american, prob: aProb };
+            } else {
+              pickML = { teamSide: "B", teamName: r.teamB, fairAm: r.marketEval.moneyline?.B?.fair_american, prob: bProb };
+            }
+          }
+
+          // Spread pick (compare prob_cover)
+          const aCover = r.marketEval.spread?.A?.prob_cover;
+          const bCover = r.marketEval.spread?.B?.prob_cover;
+          const aLine0 = r.marketEval.spread?.A?.line;
+          const bLine0 = r.marketEval.spread?.B?.line;
+          if ((Number.isFinite(aCover as number) && Number.isFinite(aLine0 as number)) ||
+              (Number.isFinite(bCover as number) && Number.isFinite(bLine0 as number))) {
+            const aC = (aCover as number) ?? 0;
+            const bC = (bCover as number) ?? 0;
+            if (aC >= bC && Number.isFinite(aLine0 as number)) {
+              pickSpread = { teamSide: "A", teamName: r.teamA, line: aLine0 as number, fairAm: r.marketEval.spread?.A?.fair_american, prob: aC };
+            } else if (Number.isFinite(bLine0 as number)) {
+              pickSpread = { teamSide: "B", teamName: r.teamB, line: bLine0 as number, fairAm: r.marketEval.spread?.B?.fair_american, prob: bC };
+            }
+          }
+
+          // Total pick (Over vs Under)
+          const overP = r.marketEval.total?.over?.prob;
+          const underP = r.marketEval.total?.under?.prob;
+          const tLine = r.marketEval.total?.line;
+          if (Number.isFinite(tLine as number) && (Number.isFinite(overP as number) || Number.isFinite(underP as number))) {
+            const o = (overP as number) ?? 0;
+            const u = (underP as number) ?? 0;
+            if (o >= u) {
+              pickTotal = { side: "Over", line: tLine as number, fairAm: r.marketEval.total?.over?.fair_american, prob: o };
+            } else {
+              pickTotal = { side: "Under", line: tLine as number, fairAm: r.marketEval.total?.under?.fair_american, prob: u };
+            }
+          }
+          // --- offered prices from the book (for EV)
+          const matched = (r.odds?.matched_home_side || "A").toString().toUpperCase() as "A" | "B";
+          const homeIsA = matched === "A";
+
+          // ML offered odds for A/B
+          const offeredMlA = homeIsA ? r.odds?.home_ml : r.odds?.away_ml;
+          const offeredMlB = homeIsA ? r.odds?.away_ml : r.odds?.home_ml;
+
+          // Spread offered price for A/B (use book’s vig at that side)
+          const offeredSpreadPriceA = homeIsA ? r.odds?.home_spread_price : r.odds?.away_spread_price;
+          const offeredSpreadPriceB = homeIsA ? r.odds?.away_spread_price : r.odds?.home_spread_price;
+
+          // Total offered (Over/Under)
+          const offeredOver = r.odds?.over_price;
+          const offeredUnder = r.odds?.under_price;
+
+          // --- EVs for selected sides
+          let evML: number | undefined;
+          if (pickML) {
+            const offered = pickML.teamSide === "A" ? offeredMlA : offeredMlB;
+            evML = expectedValue(pickML.prob, offered ?? undefined);
+          }
+
+          let evSpread: number | undefined;
+          if (pickSpread) {
+            const offered =
+              pickSpread.teamSide === "A" ? offeredSpreadPriceA : offeredSpreadPriceB;
+            evSpread = expectedValue(pickSpread.prob, offered ?? undefined);
+          }
+
+          let evTotal: number | undefined;
+          if (pickTotal) {
+            const offered = pickTotal.side === "Over" ? offeredOver : offeredUnder;
+            evTotal = expectedValue(pickTotal.prob, offered ?? undefined);
+          }
+        }
+
+        return {
+          ...r,
+          projA, projB, mlTeam, mlProb, mlFair,
+          tipEtLabel,
+          // legacy fields you already set above…
+          aSpreadLine, bSpreadLine, aSpreadPrice, bSpreadPrice,
+          totalLine, overPrice, underPrice,
+          aMl, bMl,
+
+          // NEW
+          pickSpread,
+          pickTotal,
+          pickML,
+
+          evSpread, evTotal, evML,
+
+        } as Card;
       })
-      .sort((x, y) => x.teamA.localeCompare(y.teamA));
-  }, [rows]);
+
+      .sort((a, b) => {
+      const getStartTs = (r: Card) => {
+        const s = r.startUtc ?? r.odds?.start_utc ?? "";
+        const t = Date.parse(s);
+        return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY; // TBD to end
+      };
+      const evOrLow = (x?: number) => (Number.isFinite(x as number) ? (x as number) : -Infinity);
+
+      switch (sortKey) {
+        case "ev_spread": {
+          const da = evOrLow(a.evSpread), db = evOrLow(b.evSpread);
+          if (db !== da) return db - da;              // best EV first
+          const ta = getStartTs(a), tb = getStartTs(b);
+          if (ta !== tb) return ta - tb;              // earlier as tiebreak
+          return a.teamA.localeCompare(b.teamA);
+        }
+        case "ev_total": {
+          const da = evOrLow(a.evTotal), db = evOrLow(b.evTotal);
+          if (db !== da) return db - da;
+          const ta = getStartTs(a), tb = getStartTs(b);
+          if (ta !== tb) return ta - tb;
+          return a.teamA.localeCompare(b.teamA);
+        }
+        case "ev_ml": {
+          const da = evOrLow(a.evML), db = evOrLow(b.evML);
+          if (db !== da) return db - da;
+          const ta = getStartTs(a), tb = getStartTs(b);
+          if (ta !== tb) return ta - tb;
+          return a.teamA.localeCompare(b.teamA);
+        }
+        case "time":
+        default: {
+          const ta = getStartTs(a), tb = getStartTs(b);
+          if (ta !== tb) return ta - tb;              // earlier first; TBD last
+          return a.teamA.localeCompare(b.teamA);
+        }
+      }
+    });
+}, [rows, sortKey]);
+
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: 16 }}>
@@ -367,6 +650,21 @@ export default function CBBSims() {
           </span>
         </div>
 
+        <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "8px 0" }}>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>Sort:</span>
+          <select
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as SortKey)}
+            style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border)" }}
+          >
+            <option value="time">Tip Time</option>
+            <option value="ev_spread">Spread EV</option>
+            <option value="ev_total">Total EV</option>
+            <option value="ev_ml">ML EV</option>
+          </select>
+        </div>
+
+
         {debug && (
           <div style={{ marginTop: 8, fontSize: 12 }}>
             <b>Index URL (tries in order):</b>
@@ -378,6 +676,8 @@ export default function CBBSims() {
               ))}
             </div>
           </div>
+
+          
         )}
       </section>
 
@@ -617,10 +917,11 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
         gap: 8,
       }}
     >
+      {/* header */}
       <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between" }}>
-        <span>sim day</span>
-        <span>{card.updated ? new Date(card.updated).toLocaleString() : ""}</span>
+        <span>{card.tipEtLabel ?? "TBD"}</span>
       </div>
+
 
       <div
         style={{
@@ -664,19 +965,111 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
         <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>{hasFinalB ? card.finalB : "—"}</div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-        <span
-          style={{
-            fontSize: 12,
-            padding: "4px 8px",
-            borderRadius: 999,
-            background: pillBg,
-            border: "1px solid var(--border)",
-          }}
-        >
-          ML: Pick • {mlTeamName} {Number.isFinite(card.mlProb as number) ? `(${(card.mlProb as number * 100).toFixed(1)}%)` : ""} • Fair {card.mlFair}
-        </span>
-      </div>
+      {/* market pills (single-side picks from sims) */}
+      {(card.pickSpread || card.pickTotal || card.pickML) && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+          {card.pickSpread && (
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              Spread: {card.pickSpread.teamName}{" "}
+              {card.pickSpread.line > 0 ? `+${card.pickSpread.line}` : `${card.pickSpread.line}`}{" "}
+              ({fmtAmerican(card.pickSpread.fairAm)} · {fmtPct(card.pickSpread.prob)})
+            </span>
+          )}
+
+          {card.pickTotal && (
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              Total: {card.pickTotal.side} {card.pickTotal.line}{" "}
+              ({fmtAmerican(card.pickTotal.fairAm)} · {fmtPct(card.pickTotal.prob)})
+            </span>
+          )}
+
+          {card.pickML && (
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              ML: {card.pickML.teamName} ({fmtAmerican(card.pickML.fairAm)} · {fmtPct(card.pickML.prob)})
+            </span>
+          )}
+        </div>
+      )}
+
+
+      {/* market pills (book data)
+      {(card.aSpreadLine || card.totalLine || (card.aMl != null && card.bMl != null)) && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+          {card.aSpreadLine && card.bSpreadLine && (
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              Spread: {card.teamA} {card.aSpreadLine}
+              {Number.isFinite(card.aSpreadPrice as number) ? ` (${card.aSpreadPrice})` : ""}
+              {" • "}
+              {card.teamB} {card.bSpreadLine}
+              {Number.isFinite(card.bSpreadPrice as number) ? ` (${card.bSpreadPrice})` : ""}
+            </span>
+          )}
+
+          {Number.isFinite(card.totalLine as number) && (
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              Total: {card.totalLine}
+              {Number.isFinite(card.overPrice as number) || Number.isFinite(card.underPrice as number)
+                ? ` (Over ${card.overPrice ?? "—"} / Under ${card.underPrice ?? "—"})`
+                : ""}
+            </span>
+          )}
+
+          {(card.aMl != null && card.bMl != null) && (
+            <span
+              style={{
+                fontSize: 12,
+                padding: "4px 8px",
+                borderRadius: 999,
+                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              ML: {card.teamA} {card.aMl > 0 ? `+${card.aMl}` : card.aMl} • {card.teamB} {card.bMl > 0 ? `+${card.bMl}` : card.bMl}
+            </span>
+          )}
+        </div>
+      )} */}
+
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
         <button
