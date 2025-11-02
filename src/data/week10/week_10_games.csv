@@ -3,48 +3,48 @@
 28-Oct,20:00,Kennesaw State,UTEP,33,20,50.5,-9.5,-352,280
 29-Oct,19:30,Middle Tennessee,Jacksonville State,21,24,54.5,6.5,181,-219
 29-Oct,20:00,Missouri State,Florida International,28,21,51.5,-3.5,-177,148
-30-Oct,19:30,Coastal Carolina,Marshall,27,44,54.5,4,145,-174
+30-Oct,19:30,Coastal Carolina,Marshall,44,27,54.5,4,145,-174
 30-Oct,19:30,UTSA,Tulane,48,26,55.5,3.5,149,-179
 31-Oct,19:00,Rice,Memphis,14,38,49.5,14.5,437,-602
 31-Oct,19:30,Syracuse,North Carolina,10,24,46.5,-1.5,-124,104
 31-Oct,20:00,Louisiana Tech,Sam Houston,55,14,50.5,-16.5,-763,525
-1-Nov,12:00,Bowling Green,Buffalo,,,43.5,-1.5,-127,106
-1-Nov,12:00,UConn,UAB,,,64.5,-11.5,-405,313
-1-Nov,12:00,Ohio State,Penn State,,,43.5,-20.5,-2041,1043
-1-Nov,12:00,SMU,Miami,,,50.5,10.5,320,-415
-1-Nov,12:00,Clemson,Duke,,,55.5,-3.5,-148,124
-1-Nov,12:00,Houston,West Virginia,,,49.5,-14.5,-662,470
-1-Nov,12:00,Illinois,Rutgers,,,63.5,-12.5,-467,355
-1-Nov,12:00,North Texas,Navy,,,64.5,-6.5,-208,172
-1-Nov,12:00,Texas,Vanderbilt,,,45.5,-2.5,-146,123
-1-Nov,12:00,Air Force,Army,,,49.5,-1.5,-109,-110
-1-Nov,12:00,Baylor,UCF,,,60.5,-4.5,-184,153
-1-Nov,13:00,Iowa State,Arizona State,,,50.5,-4,-169,141
-1-Nov,14:00,Temple,East Carolina,,,57.5,4.5,157,-189
-1-Nov,15:30,Florida,Georgia,,,50.5,7.5,248,-312
+1-Nov,12:00,Bowling Green,Buffalo,3,28,43.5,-1.5,-127,106
+1-Nov,12:00,UConn,UAB,38,19,64.5,-11.5,-405,313
+1-Nov,12:00,Ohio State,Penn State,38,14,43.5,-20.5,-2041,1043
+1-Nov,12:00,SMU,Miami,26,20,50.5,10.5,320,-415
+1-Nov,12:00,Clemson,Duke,45,46,55.5,-3.5,-148,124
+1-Nov,12:00,Houston,West Virginia,35,45,49.5,-14.5,-662,470
+1-Nov,12:00,Illinois,Rutgers,35,13,63.5,-12.5,-467,355
+1-Nov,12:00,North Texas,Navy,31,17,64.5,-6.5,-208,172
+1-Nov,12:00,Texas,Vanderbilt,34,31,45.5,-2.5,-146,123
+1-Nov,12:00,Air Force,Army,17,20,49.5,-1.5,-109,-110
+1-Nov,12:00,Baylor,UCF,30,3,60.5,-4.5,-184,153
+1-Nov,13:00,Iowa State,Arizona State,19,24,50.5,-4,-169,141
+1-Nov,14:00,Temple,East Carolina,14,45,57.5,4.5,157,-189
+1-Nov,15:30,Florida,Georgia,20,24,50.5,7.5,248,-312
 1-Nov,19:30,NC State,Georgia Tech,,,57.5,6.5,192,-236
-1-Nov,15:00,Virginia Tech,Louisville,,,53.5,10,296,-376
-1-Nov,15:00,UNLV,New Mexico,,,62.5,-5.5,-214,176
-1-Nov,15:30,Boston College,Notre Dame,,,57.5,28.5,2000,-7143
-1-Nov,15:30,South Alabama,Louisiana,,,54.5,-4.5,-185,153
-1-Nov,15:30,Liberty,Delaware,,,51.5,-3.5,-168,141
-1-Nov,15:30,Kansas State,Texas Tech,,,52.5,7.5,244,-307
-1-Nov,15:30,UL Monroe,Old Dominion,,,53.5,16.5,591,-885
-1-Nov,15:30,Boise State,Fresno State,,,50.5,-17.5,-1010,648
-1-Nov,15:30,Maryland,Indiana,,,51.5,21.5,990,-1887
-1-Nov,15:30,Minnesota,Michigan State,,,44.5,-3.5,-161,135
-1-Nov,15:30,Western Kentucky,New Mexico State,,,53.5,-9.5,-346,271
-1-Nov,15:30,Stanford,Pittsburgh,,,51.5,14,419,-578
-1-Nov,15:45,California,Virginia,,,54.5,4.5,159,-192
-1-Nov,16:00,Western Michigan,Central Michigan,,,40.5,-4.5,-193,160
-1-Nov,16:00,Arkansas,Mississippi State,,,67.5,-4.5,-192,159
-1-Nov,16:00,Kansas,Oklahoma State,,,57.5,-24.5,-2381,1133
-1-Nov,19:00,Ole Miss,South Carolina,,,54.5,-12.5,-481,360
-1-Nov,19:00,Colorado,Arizona,,,52.5,4.5,168,-202
-1-Nov,19:00,Michigan,Purdue,,,51.5,-21,-2083,1053
-1-Nov,19:00,San Diego State,Wyoming,,,42.4,-11.5,-457,349
-1-Nov,19:30,Auburn,Kentucky,,,47.5,-10,-385,300
-1-Nov,19:30,Florida State,Wake Forest,,,50.5,-7.5,-300,241
+1-Nov,15:00,Virginia Tech,Louisville,28,16,53.5,10,296,-376
+1-Nov,15:00,UNLV,New Mexico,35,40,62.5,-5.5,-214,176
+1-Nov,15:30,Boston College,Notre Dame,10,25,57.5,28.5,2000,-7143
+1-Nov,15:30,South Alabama,Louisiana,22,31,54.5,-4.5,-185,153
+1-Nov,15:30,Liberty,Delaware,59,30,51.5,-3.5,-168,141
+1-Nov,15:30,Kansas State,Texas Tech,20,43,52.5,7.5,244,-307
+1-Nov,15:30,UL Monroe,Old Dominion,6,31,53.5,16.5,591,-885
+1-Nov,15:30,Boise State,Fresno State,7,30,50.5,-17.5,-1010,648
+1-Nov,15:30,Maryland,Indiana,10,55,51.5,21.5,990,-1887
+1-Nov,15:30,Minnesota,Michigan State,23,20,44.5,-3.5,-161,135
+1-Nov,15:30,Western Kentucky,New Mexico State,35,16,53.5,-9.5,-346,271
+1-Nov,15:30,Stanford,Pittsburgh,20,35,51.5,14,419,-578
+1-Nov,15:45,California,Virginia,21,31,54.5,4.5,159,-192
+1-Nov,16:00,Western Michigan,Central Michigan,24,21,40.5,-4.5,-193,160
+1-Nov,16:00,Arkansas,Mississippi State,35,38,67.5,-4.5,-192,159
+1-Nov,16:00,Kansas,Oklahoma State,38,21,57.5,-24.5,-2381,1133
+1-Nov,19:00,Ole Miss,South Carolina,30,14,54.5,-12.5,-481,360
+1-Nov,19:00,Colorado,Arizona,17,52,52.5,4.5,168,-202
+1-Nov,19:00,Michigan,Purdue,21,16,51.5,-21,-2083,1053
+1-Nov,19:00,San Diego State,Wyoming,24,7,42.4,-11.5,-457,349
+1-Nov,19:30,Auburn,Kentucky,3,10,47.5,-10,-385,300
+1-Nov,19:30,Florida State,Wake Forest,42,7,50.5,-7.5,-300,241
 1-Nov,19:30,Tennessee,Oklahoma,,,56.5,-3.5,-162,136
 1-Nov,19:30,Nebraska,USC,,,58.5,7,207,-256
 1-Nov,19:30,Oregon State,Washington State,,,49.5,3.5,153,-184
