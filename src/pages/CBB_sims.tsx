@@ -140,6 +140,8 @@ type GameRow = {
   fair?: FairBlock | null;
 
   marketEval?: MarketEval | null;
+
+  whySummary?: string;
 };
 
 type Card = GameRow & {
@@ -172,6 +174,8 @@ type Card = GameRow & {
   evSpread?: number;
   evTotal?: number;
   evML?: number;
+
+  whySummary?: string;
 };
 
 /* ---------------- helpers ---------------- */
@@ -377,6 +381,12 @@ export default function CBBSims() {
               const res = await fetch(sUrl, { cache: "no-store" });
               if (res.ok) {
                 const s = await res.json();
+                // NEW: WHY text from summary.json (support both "why_summary" and "why")
+                const whySummary =
+                  (typeof s?.why_summary === "string" && s.why_summary.trim()) ||
+                  (typeof s?.why === "string" && s.why.trim()) ||
+                  null;
+
 
                 // new: start_utc
                 const startUtc = pickStrLoose(s, ["start_utc", "startUtc"]);
@@ -388,6 +398,7 @@ export default function CBBSims() {
                 const fair: FairBlock | null = s?.fair ?? null;
 
                 const marketEval: MarketEval | null = s?.market_eval ?? null; // NEW
+
 
                 out = {
                   ...out,
@@ -406,7 +417,8 @@ export default function CBBSims() {
                   startUtc,
                   odds,
                   fair,
-                  marketEval
+                  marketEval,
+                  whySummary,
                 };
               }
             } catch {}
@@ -1351,6 +1363,12 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
 function buildWhyParagraph(L: Card): Array<{ key?: string; phrase: string; z?: number; sign?: number }> {
   const out: Array<{ key?: string; phrase: string; z?: number; sign?: number }> = [];
 
+  // NEW: if summary.json already gave us a ready-to-show WHY paragraph, use that.
+  if (typeof L.whySummary === "string" && L.whySummary.trim()) {
+    return [{ key: "why", phrase: L.whySummary.trim() }];
+  }
+
+  // --- existing fallback logic using priors / medians ---
   if (L.priors?.targets) {
     for (const [k, t] of Object.entries(L.priors.targets)) {
       const A = t.A?.mu, B = t.B?.mu;
@@ -1371,10 +1389,11 @@ function buildWhyParagraph(L: Card): Array<{ key?: string; phrase: string; z?: n
     const mag = Math.abs(z);
     const magTxt = mag >= 2 ? "a strong" : mag >= 1 ? "a clear" : "a slight";
     const phrase =
-      `Model projects ${sign >= 0 ? L.teamA : L.teamB} with ${magTxt} edge on the scoreboard (median margin ${Number(L.medMargin ?? 0).toFixed(1)}).`;
+      `Model projects ${sign >= 0 ? L.teamA : L.teamB} with ${magTxt} scoreboard edge (median margin ${Number(L.medMargin ?? 0).toFixed(1)}).`;
     out.push({ key: "margin", z: Math.abs(z), sign, phrase });
   }
 
   out.sort((a, b) => (b.z ?? 0) - (a.z ?? 0));
   return out;
 }
+
