@@ -214,6 +214,13 @@ function inferCompactPath(summaryPath?: string) {
   return s.replace(/\/summary\.json$/i, "/sims_compact.json");
 }
 
+function inferFinalPath(summaryPath?: string) {
+  if (!summaryPath) return undefined;
+  const s = summaryPath.replace(/\/+$/, "");
+  return s.replace(/\/summary\.json$/i, "/final.json");
+}
+
+
 function toEtLabel(iso?: string | null) {
   if (!iso) return undefined;
   const d = new Date(iso);
@@ -424,6 +431,73 @@ export default function CBBSims() {
             } catch {}
           }
 
+          // finals (optional): from final.json next to summary.json
+          try {
+            const finPath = r.summaryPath ? inferFinalPath(r.summaryPath) : undefined;
+            if (finPath) {
+              const fUrl = `${base}/${finPath.replace(/^\/+/, "")}`;
+              const fres = await fetch(fUrl, { cache: "no-store" });
+              if (fres.ok) {
+                const F = await fres.json();
+
+                // Only accept "final" games
+                const isFinal = F?.status === 1 || F?.status === "1" || F?.state === "final";
+                if (isFinal) {
+                  // Map home/away to A/B using matched_home_side if present; otherwise fall back by name
+                  let A_final: number | undefined, B_final: number | undefined;
+
+                  const mh = (F?.odds?.matched_home_side ?? F?.matched_home_side ?? "").toString().toUpperCase();
+                  const homeScore = Number(
+                      F?.scores?.home ??
+                      F?.game?.home?.score ??
+                      F?.home_score ??
+                      F?.final_home
+                    );
+                    const awayScore = Number(
+                      F?.scores?.away ??
+                      F?.game?.away?.score ??
+                      F?.away_score ??
+                      F?.final_away
+                    );
+                  if (Number.isFinite(homeScore) && Number.isFinite(awayScore)) {
+                    if (mh === "A") {
+                      A_final = homeScore; B_final = awayScore;
+                    } else if (mh === "B") {
+                      A_final = awayScore; B_final = homeScore;
+                    } else {
+                      // name fallback if mapping flag is missing
+                      const Aname = r.teamA?.toLowerCase?.() ?? "";
+                      const Bname = r.teamB?.toLowerCase?.() ?? "";
+                      const homeName = String(
+                        F?.matched_with?.home ??
+                        F?.home_team ??
+                        (typeof F?.game?.home === "string" ? F.game.home : F?.game?.home?.name) ??
+                        ""
+                      ).toLowerCase();
+
+                      const awayName = String(
+                        F?.matched_with?.away ??
+                        F?.away_team ??
+                        (typeof F?.game?.away === "string" ? F.game.away : F?.game?.away?.name) ??
+                        ""
+                      ).toLowerCase();
+                      if (homeName && Aname && homeName.includes(Aname)) {
+                        A_final = homeScore; B_final = awayScore;
+                      } else if (awayName && Aname && awayName.includes(Aname)) {
+                        A_final = awayScore; B_final = homeScore;
+                      }
+                    }
+                  }
+
+                  if (Number.isFinite(A_final as number) && Number.isFinite(B_final as number)) {
+                    out = { ...out, finalA: A_final as number, finalB: B_final as number };
+                  }
+                }
+              }
+            }
+          } catch {}
+
+
           // priors
           if (r.priorsPath) {
             try {
@@ -626,6 +700,67 @@ export default function CBBSims() {
     });
 }, [rows, sortKey]);
 
+// --- Compute daily records for completed games
+type PickKind = "spread" | "total" | "ml";
+function gradeOutcome(card: any, kind: PickKind): "W" | "L" | "P" | null {
+  const aF = card.finalA, bF = card.finalB;
+  if (!Number.isFinite(aF as number) || !Number.isFinite(bF as number)) return null;
+
+  if (kind === "ml" && card.pickML) {
+    const pickA = card.pickML.teamSide === "A";
+    const aWon = (aF as number) > (bF as number);
+    const bWon = (bF as number) > (aF as number);
+    if (!aWon && !bWon) return "P";
+    return pickA ? (aWon ? "W" : "L") : (bWon ? "W" : "L");
+  }
+
+  if (kind === "spread" && card.pickSpread) {
+    const line = Number(card.pickSpread.line);
+    if (!Number.isFinite(line)) return null;
+    if (card.pickSpread.teamSide === "A") {
+      const adjA = (aF as number) + line;
+      if (adjA === (bF as number)) return "P";
+      return adjA > (bF as number) ? "W" : "L";
+    } else {
+      const adjB = (bF as number) + line;
+      if (adjB === (aF as number)) return "P";
+      return adjB > (aF as number) ? "W" : "L";
+    }
+  }
+
+  if (kind === "total" && card.pickTotal) {
+    const t = (aF as number) + (bF as number);
+    const line = Number(card.pickTotal.line);
+    if (!Number.isFinite(line)) return null;
+    if (t === line) return "P";
+    return card.pickTotal.side === "Over"
+      ? (t > line ? "W" : "L")
+      : (t < line ? "W" : "L");
+  }
+
+  return null;
+}
+
+function computeRecord(kind: PickKind) {
+  let w = 0, l = 0, p = 0, n = 0;
+  for (const c of cards) {
+    const g = gradeOutcome(c, kind);
+    if (!g) continue;
+    n++;
+    if (g === "W") w++;
+    else if (g === "L") l++;
+    else p++;
+  }
+  const pct = n ? (w + 0.5 * p) / n : 0;
+  return { w, l, p, n, pct };
+}
+
+const recSpread = computeRecord("spread");
+const recTotal = computeRecord("total");
+const recML = computeRecord("ml");
+const fmtPct1 = (x: number) => (x * 100).toFixed(1) + "%";
+
+
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: 16 }}>
@@ -676,6 +811,29 @@ export default function CBBSims() {
           </select>
         </div>
 
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ opacity: 0.75 }}>Record:</span>
+
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--muted-bg, #f1f5f9)", border: "1px solid var(--border)" }}>
+            <strong style={{ marginRight: 6 }}>Spread</strong>
+            {recSpread.w}-{recSpread.l}-{recSpread.p}
+            {recSpread.n ? ` (${fmtPct1(recSpread.pct)})` : ""}
+          </span>
+
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--muted-bg, #f1f5f9)", border: "1px solid var(--border)" }}>
+            <strong style={{ marginRight: 6 }}>Total</strong>
+            {recTotal.w}-{recTotal.l}-{recTotal.p}
+            {recTotal.n ? ` (${fmtPct1(recTotal.pct)})` : ""}
+          </span>
+
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--muted-bg, #f1f5f9)", border: "1px solid var(--border)" }}>
+            <strong style={{ marginRight: 6 }}>ML</strong>
+            {recML.w}-{recML.l}-{recML.p}
+            {recML.n ? ` (${fmtPct1(recML.pct)})` : ""}
+          </span>
+        </div>
+
+
 
         {debug && (
           <div style={{ marginTop: 8, fontSize: 12 }}>
@@ -722,6 +880,89 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
   const hasFinalB = Number.isFinite(card.finalB as number);
   const mlTeamName = card.mlTeam === "A" ? card.teamA : card.mlTeam === "B" ? card.teamB : "—";
   const pillBg = "color-mix(in oklab, var(--brand) 12%, white)";
+  // Helpers to grade picks vs final
+function pillColor(kind: "spread" | "total" | "ml"): string | undefined {
+  const aF = card.finalA, bF = card.finalB;
+  if (!Number.isFinite(aF as number) || !Number.isFinite(bF as number)) return undefined; // no final yet
+
+  // gray for push
+  const gray = "var(--muted-bg, #f1f5f9)";
+  const green = "rgba(16,185,129,0.18)"; // emerald-ish
+  const red   = "rgba(239,68,68,0.18)";  // red-ish
+
+  if (kind === "ml" && card.pickML) {
+    const pickA = card.pickML.teamSide === "A";
+    const won = pickA ? (aF as number) > (bF as number) : (bF as number) > (aF as number);
+    return won ? green : red;
+  }
+
+  if (kind === "spread" && card.pickSpread) {
+    const line = Number(card.pickSpread.line);
+    if (!Number.isFinite(line)) return undefined;
+    if (card.pickSpread.teamSide === "A") {
+      const adjA = (aF as number) + line;
+      if (adjA === (bF as number)) return gray;          // push
+      return adjA > (bF as number) ? green : red;        // cover vs not
+    } else {
+      const adjB = (bF as number) + line;
+      if (adjB === (aF as number)) return gray;
+      return adjB > (aF as number) ? green : red;
+    }
+  }
+
+  if (kind === "total" && card.pickTotal) {
+    const t = (aF as number) + (bF as number);
+    const line = Number(card.pickTotal.line);
+    if (!Number.isFinite(line)) return undefined;
+    if (t === line) return gray;                         // push
+    return card.pickTotal.side === "Over"
+      ? (t > line ? green : red)
+      : (t < line ? green : red);
+  }
+
+  return undefined;
+}
+
+type PickKind = "spread" | "total" | "ml";
+function gradeOutcome(card: any, kind: PickKind): "W" | "L" | "P" | null {
+  const aF = card.finalA, bF = card.finalB;
+  if (!Number.isFinite(aF as number) || !Number.isFinite(bF as number)) return null;
+
+  if (kind === "ml" && card.pickML) {
+    const pickA = card.pickML.teamSide === "A";
+    const aWon = (aF as number) > (bF as number);
+    const bWon = (bF as number) > (aF as number);
+    if (!aWon && !bWon) return "P";
+    return pickA ? (aWon ? "W" : "L") : (bWon ? "W" : "L");
+  }
+
+  if (kind === "spread" && card.pickSpread) {
+    const line = Number(card.pickSpread.line);
+    if (!Number.isFinite(line)) return null;
+    if (card.pickSpread.teamSide === "A") {
+      const adjA = (aF as number) + line;
+      if (adjA === (bF as number)) return "P";
+      return adjA > (bF as number) ? "W" : "L";
+    } else {
+      const adjB = (bF as number) + line;
+      if (adjB === (aF as number)) return "P";
+      return adjB > (aF as number) ? "W" : "L";
+    }
+  }
+
+  if (kind === "total" && card.pickTotal) {
+    const t = (aF as number) + (bF as number);
+    const line = Number(card.pickTotal.line);
+    if (!Number.isFinite(line)) return null;
+    if (t === line) return "P";
+    return card.pickTotal.side === "Over" ? (t > line ? "W" : "L")
+                                          : (t < line ? "W" : "L");
+  }
+
+  return null;
+}
+
+
 
   const whyText = buildWhyParagraph(card);
 
@@ -986,7 +1227,7 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
                 fontSize: 12,
                 padding: "4px 8px",
                 borderRadius: 999,
-                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                background: pillColor("spread") ?? pillBg,
                 border: "1px solid var(--border)",
               }}
             >
@@ -1002,7 +1243,7 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
                 fontSize: 12,
                 padding: "4px 8px",
                 borderRadius: 999,
-                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                background: pillColor("total") ?? pillBg,
                 border: "1px solid var(--border)",
               }}
             >
@@ -1017,7 +1258,7 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
                 fontSize: 12,
                 padding: "4px 8px",
                 borderRadius: 999,
-                background: "color-mix(in oklab, var(--brand) 12%, white)",
+                background: pillColor("ml") ?? pillBg,
                 border: "1px solid var(--border)",
               }}
             >
