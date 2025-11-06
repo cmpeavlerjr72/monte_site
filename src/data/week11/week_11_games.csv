@@ -1,6 +1,6 @@
 ﻿date,time,Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual,TeamAML,TeamBML
 4-Nov,19:00,Ohio,Miami(OH),-2.5,49.5,24,20,-144,121
-4-Nov,19:00,Akron,UMass,-10.5,50.5,10,44,-455,343
+4-Nov,19:00,Akron,UMass,-10.5,50.5,44,10,-455,343
 5-Nov,19:00,Ball State,Kent State,-1.5,46.5,17,13,-125,104
 5-Nov,19:00,Toledo,Northern Illinois,-14.5,42.5,42,3,-704,500
 6-Nov,19:30,App State,Georgia Southern,-6.5,62.5,,,-234,190
@@ -50,4 +50,5 @@
 8-Nov,21:30,Colorado State,UNLV,4.5,62.5,,,161,-195
 8-Nov,22:00,Oregon State,Sam Houston,-19.5,53.5,,,-1408,788
 8-Nov,23:00,Hawaii,San Diego State,7,50.5,,,215,-267
+
 
