@@ -18,10 +18,12 @@ import ComboTrend from "./pages/combo_trend";
 // CBB Pages
 
 import CBB_Sims from "./pages/CBB_sims";
+import ResultsCBB from "./pages/ResultsCBB";
 
 // New pages
 import HubHome from "./pages/HubHome";
 import CBBComingSoon from "./pages/CBBComingSoon";
+
 
 export default function App() {
   return (
@@ -52,6 +54,7 @@ export default function App() {
           {/* CBB placeholder */}
           <Route path="/cbb" element={<CBBComingSoon />} />
           <Route path="/cbb/scoreboard" element={<CBB_Sims />} />
+          <Route path="/cbb/results" element={<ResultsCBB />} />          
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
