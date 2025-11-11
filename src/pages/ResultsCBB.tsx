@@ -1,3 +1,4 @@
+// ResultsCBB_alt.tsx
 import { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
@@ -18,9 +19,11 @@ const SEASON_PREFIX = "2026";
 
 /* ---------- TYPES ---------- */
 type Market = "ml" | "spread" | "total";
-type ProfitMap = { spread: number; total: number; ml: number };
 
+/** Base win/loss/push container */
 type Counts = { wins: number; losses: number; pushes: number; graded: number };
+
+type ProfitMap = { spread: number; total: number; ml: number };
 type RecordMap = { spread: Counts; total: Counts; ml: Counts };
 
 type DailyAgg = {
@@ -38,31 +41,85 @@ type Bucket = {
   profit_units?: number;
 };
 
+type FavDogML = {
+  favorite?: Bucket;
+  underdog?: Bucket;
+  pos_ev_favorite?: Bucket;
+  pos_ev_underdog?: Bucket;
+};
+
+type OverUnderTotals = {
+  over?: Bucket;
+  under?: Bucket;
+  pos_ev_over?: Bucket;
+  pos_ev_under?: Bucket;
+};
+
+type FavoriteUnderdogAgg = {
+  ml?: FavDogML;
+  spread?: FavDogML;
+  total?: OverUnderTotals;
+};
+
 type DailyJson = {
   date: string;
-  aggregate?: Partial<Record<Market, Bucket>>;
-  aggregate_pos_ev_by_market?: Partial<
-    Record<Market, Partial<Record<Market, Bucket>>>
+  counts?: { games_total?: number };
+
+  /* Classic aggregates */
+  aggregate?: {
+    spread?: Bucket;
+    total?: Bucket;
+    ml?: Bucket;
+  };
+
+  /* +EV fallbacks by market (existing results behavior) */
+  aggregate_pos_ev_any?: Bucket;
+  aggregate_pos_ev_by_market?: {
+    spread?: Record<string, Bucket>;
+    total?: Record<string, Bucket>;
+    ml?: Record<string, Bucket>;
+  };
+
+  /* Favorite/Underdog split aggregates */
+  aggregate_favorite_underdog?: FavoriteUnderdogAgg;
+
+  /* --------- TEAM TOTALS (NEW) --------- */
+  team_totals_meta?: {
+    default_price?: number;
+    push_rule?: string;
+  };
+
+  // Per-game diagnostic info (optional)
+  team_totals_per_game?: Record<
+    string,
+    {
+      favorite_side?: "A" | "B";
+      predicted_cover_side?: "favorite" | "underdog";
+      implied_lines?: Record<"A" | "B", number>;
+      sim_over_prob?: Record<"A" | "B", number>;
+      nsims?: number;
+    }
   >;
-  aggregate_favorite_underdog?: {
-    ml?: {
-      favorite?: Bucket;
-      underdog?: Bucket;
-      pos_ev_favorite?: Bucket;
-      pos_ev_underdog?: Bucket;
-    };
-    spread?: {
-      favorite?: Bucket;
-      underdog?: Bucket;
-      pos_ev_favorite?: Bucket;
-      pos_ev_underdog?: Bucket;
-    };
-    total?: {
-      over?: Bucket;
-      under?: Bucket;
-      pos_ev_over?: Bucket;
-      pos_ev_under?: Bucket;
-    };
+
+  // Overall aggregate
+  aggregate_team_totals_overall?: Bucket;
+
+  // By role+side (no correlation)
+  aggregate_team_totals_by_role?: Record<
+    "favorite_over" | "favorite_under" | "underdog_over" | "underdog_under",
+    Bucket
+  >;
+
+  // Correlated splits based on predicted cover
+  aggregate_team_totals_correlated?: {
+    predicted_underdog_cover?: Record<
+      "fav_under" | "fav_over" | "dog_under" | "dog_over",
+      Bucket
+    >;
+    predicted_favorite_cover?: Record<
+      "fav_under" | "fav_over" | "dog_under" | "dog_over",
+      Bucket
+    >;
   };
 };
 
@@ -93,7 +150,7 @@ const fmtUnits = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
 const fmtX = (ymd: string) =>
   fromYMD(ymd).toLocaleDateString(undefined, { month: "short", day: "2-digit" });
 
-/* ---- Counts helpers (type-safe) ---- */
+/* ---- Counts helpers ---- */
 const toCounts = (c?: Partial<Counts>): Counts => ({
   wins: c?.wins ?? 0,
   losses: c?.losses ?? 0,
@@ -101,16 +158,13 @@ const toCounts = (c?: Partial<Counts>): Counts => ({
   graded: c?.graded ?? 0,
 });
 const emptyC: Counts = { wins: 0, losses: 0, pushes: 0, graded: 0 };
-const addCounts = (a?: Partial<Counts>, b?: Partial<Counts>): Counts =>
-  toCounts({
-    wins: (a?.wins ?? 0) + (b?.wins ?? 0),
-    losses: (a?.losses ?? 0) + (b?.losses ?? 0),
-    pushes: (a?.pushes ?? 0) + (b?.pushes ?? 0),
-    graded: (a?.graded ?? 0) + (b?.graded ?? 0),
-  });
-
-/* Convert a results Bucket => Counts */
-const countsFromBucket = (b?: Bucket): Counts =>
+const addCounts = (a: Counts, b: Counts): Counts => ({
+  wins: a.wins + b.wins,
+  losses: a.losses + b.losses,
+  pushes: a.pushes + b.pushes,
+  graded: a.graded + b.graded,
+});
+const countsFromBucket = (b?: Bucket | null): Counts =>
   toCounts({
     wins: b?.wins ?? 0,
     losses: b?.losses ?? 0,
@@ -118,30 +172,10 @@ const countsFromBucket = (b?: Bucket): Counts =>
     graded: b?.bets_graded ?? 0,
   });
 
-/* ---------- FILTER STATE ---------- */
+/* ---------- FAVORITE/UNDERDOG split helpers (classic markets) ---------- */
 type Side3 = "all" | "favorite" | "underdog";
 type TotSide3 = "all" | "over" | "under";
 
-type FilterState = {
-  // market on/off
-  useML: boolean;
-  useSpread: boolean;
-  useTotal: boolean;
-
-  // ML side & ev
-  mlSide: Side3;
-  mlEV: boolean;
-
-  // Spread side & ev
-  spSide: Side3;
-  spEV: boolean;
-
-  // Total side & ev
-  totSide: TotSide3;
-  totEV: boolean;
-};
-
-/* ---------- PROFIT + RECORD EXTRACTORS ---------- */
 function profitAggregate(J: DailyJson, m: Market): number {
   return J.aggregate?.[m]?.profit_units ?? 0;
 }
@@ -157,14 +191,14 @@ function evFallbackProfit(J: DailyJson, m: Market): number {
 function evFallbackRecord(J: DailyJson, m: Market): Counts {
   const inner = J.aggregate_pos_ev_by_market?.[m];
   if (!inner) return emptyC;
-  return Object.values(inner).reduce(
-    (acc, v) => addCounts(acc, countsFromBucket(v)),
-    emptyC
-  );
+  return Object.values(inner).reduce((acc, v) => addCounts(acc, countsFromBucket(v)), emptyC);
 }
 
-/* AFD helpers */
-function mlProfitRecord(J: DailyJson, side: Side3, ev: boolean): { profit: number | null; rec: Counts | null } {
+function mlProfitRecord(
+  J: DailyJson,
+  side: Side3,
+  ev: boolean
+): { profit: number | null; rec: Counts | null } {
   const src = J.aggregate_favorite_underdog?.ml;
   if (!src) return { profit: null, rec: null };
   if (side === "all") {
@@ -186,7 +220,11 @@ function mlProfitRecord(J: DailyJson, side: Side3, ev: boolean): { profit: numbe
   };
 }
 
-function spProfitRecord(J: DailyJson, side: Side3, ev: boolean): { profit: number | null; rec: Counts | null } {
+function spProfitRecord(
+  J: DailyJson,
+  side: Side3,
+  ev: boolean
+): { profit: number | null; rec: Counts | null } {
   const src = J.aggregate_favorite_underdog?.spread;
   if (!src) return { profit: null, rec: null };
   if (side === "all") {
@@ -208,7 +246,11 @@ function spProfitRecord(J: DailyJson, side: Side3, ev: boolean): { profit: numbe
   };
 }
 
-function totProfitRecord(J: DailyJson, side: TotSide3, ev: boolean): { profit: number | null; rec: Counts | null } {
+function totProfitRecord(
+  J: DailyJson,
+  side: TotSide3,
+  ev: boolean
+): { profit: number | null; rec: Counts | null } {
   const src = J.aggregate_favorite_underdog?.total;
   if (!src) return { profit: null, rec: null };
   if (side === "all") {
@@ -230,42 +272,126 @@ function totProfitRecord(J: DailyJson, side: TotSide3, ev: boolean): { profit: n
   };
 }
 
-function extractProfitAndRecord(J: DailyJson, fs: FilterState): { profit: ProfitMap; rec: RecordMap } {
-  // ML
-  const mlAFD = mlProfitRecord(J, fs.mlSide, fs.mlEV);
-  const mlProfit =
-    mlAFD.profit ??
-    (fs.mlEV && fs.mlSide === "all" ? evFallbackProfit(J, "ml") : profitAggregate(J, "ml"));
-  const mlRec =
-    mlAFD.rec ??
-    (fs.mlEV && fs.mlSide === "all" ? evFallbackRecord(J, "ml") : recordAggregate(J, "ml"));
+/* ---------- TEAM TOTALS helpers (Role/Side + Correlation) ---------- */
+type TTCorrelation = "none" | "predicted_underdog_cover" | "predicted_favorite_cover";
+type TTRole = "all" | "favorite" | "underdog";
+type TTOUSide = "all" | "over" | "under";
 
-  // Spread
-  const spAFD = spProfitRecord(J, fs.spSide, fs.spEV);
-  const spProfit =
-    spAFD.profit ??
-    (fs.spEV && fs.spSide === "all" ? evFallbackProfit(J, "spread") : profitAggregate(J, "spread"));
-  const spRec =
-    spAFD.rec ??
-    (fs.spEV && fs.spSide === "all" ? evFallbackRecord(J, "spread") : recordAggregate(J, "spread"));
+function ttProfitRecord(
+  J: DailyJson,
+  role: TTRole,
+  ou: TTOUSide,
+  correlation: TTCorrelation
+): { profit: number; rec: Counts } {
+  const zero = { profit: 0, rec: emptyC };
 
-  // Total
-  const totAFD = totProfitRecord(J, fs.totSide, fs.totEV);
-  const totProfit =
-    totAFD.profit ??
-    (fs.totEV && fs.totSide === "all" ? evFallbackProfit(J, "total") : profitAggregate(J, "total"));
-  const totRec =
-    totAFD.rec ??
-    (fs.totEV && fs.totSide === "all" ? evFallbackRecord(J, "total") : recordAggregate(J, "total"));
+  // Correlated branch: map Role+O/U to fav_over/fav_under/dog_over/dog_under
+  if (correlation !== "none") {
+    const src = J.aggregate_team_totals_correlated?.[correlation];
+    if (!src) return zero;
 
-  return {
-    profit: { ml: mlProfit, spread: spProfit, total: totProfit },
-    rec: { ml: mlRec, spread: spRec, total: totRec },
+    const keyFor = (
+      r: TTRole,
+      s: TTOUSide
+    ): Array<"fav_under" | "fav_over" | "dog_under" | "dog_over"> => {
+      if (r === "all" && s === "all") return ["fav_over", "fav_under", "dog_over", "dog_under"];
+      if (r === "all" && s === "over") return ["fav_over", "dog_over"];
+      if (r === "all" && s === "under") return ["fav_under", "dog_under"];
+      if (r === "favorite" && s === "all") return ["fav_over", "fav_under"];
+      if (r === "underdog" && s === "all") return ["dog_over", "dog_under"];
+      const single =
+        r === "favorite" ? (s === "over" ? "fav_over" : "fav_under") : s === "over" ? "dog_over" : "dog_under";
+      return [single];
+    };
+
+    const keys = keyFor(role, ou);
+    const profit = keys.reduce((acc, k) => acc + (src[k]?.profit_units ?? 0), 0);
+    const rec = keys.map((k) => countsFromBucket(src[k])).reduce((acc, c) => addCounts(acc, c), emptyC);
+    return { profit, rec };
+  }
+
+  // Non-correlated branch
+  if (role === "all" && ou === "all") {
+    const b = J.aggregate_team_totals_overall;
+    return { profit: b?.profit_units ?? 0, rec: countsFromBucket(b) };
+  }
+
+  const byRole = J.aggregate_team_totals_by_role;
+  if (!byRole) return zero;
+
+  const keyMap: Record<
+    string,
+    Array<"favorite_over" | "favorite_under" | "underdog_over" | "underdog_under">
+  > = {
+    "all_over": ["favorite_over", "underdog_over"],
+    "all_under": ["favorite_under", "underdog_under"],
+    "favorite_all": ["favorite_over", "favorite_under"],
+    "underdog_all": ["underdog_over", "underdog_under"],
+    "favorite_over": ["favorite_over"],
+    "favorite_under": ["favorite_under"],
+    "underdog_over": ["underdog_over"],
+    "underdog_under": ["underdog_under"],
   };
+
+  const key =
+    role === "all" && ou !== "all"
+      ? `all_${ou}`
+      : role !== "all" && ou === "all"
+      ? `${role}_all`
+      : `${role}_${ou}`;
+
+  const keys = keyMap[key] ?? [];
+  const profit = keys.reduce((acc, k) => acc + (byRole[k]?.profit_units ?? 0), 0);
+  const rec = keys.map((k) => countsFromBucket(byRole[k])).reduce((acc, c) => addCounts(acc, c), emptyC);
+  return { profit, rec };
 }
 
+/* ---------- FILTER STATE ---------- */
+type FilterState = {
+  // classic markets toggles
+  useML: boolean;
+  useSpread: boolean;
+  useTotal: boolean;
+
+  // favorite/underdog filters
+  mlSide: Side3;
+  mlEV: boolean;
+
+  spSide: Side3;
+  spEV: boolean;
+
+  totSide: TotSide3;
+  totEV: boolean;
+
+  // team totals
+  useTeamTotals: boolean;
+  ttRole: TTRole;
+  ttSide: TTOUSide;
+  ttCorrelation: TTCorrelation;
+};
+
+const defaultFS: FilterState = {
+  useML: true,
+  useSpread: true,
+  useTotal: true,
+
+  mlSide: "all",
+  mlEV: false,
+
+  spSide: "all",
+  spEV: false,
+
+  totSide: "all",
+  totEV: false,
+
+  useTeamTotals: true,   // on by default; toggle off if you prefer
+  ttRole: "all",
+  ttSide: "all",
+  ttCorrelation: "none",
+};
+
 /* ---------- COMPONENT ---------- */
-export default function ResultsCBB() {
+export default function ResultsCBB_alt() {
   /* dates */
   const today = useMemo(() => toYMD(new Date()), []);
   const thirtyAgo = useMemo(() => toYMD(addDays(new Date(), -30)), []);
@@ -273,24 +399,13 @@ export default function ResultsCBB() {
   const [endDate, setEndDate] = useState(today);
 
   /* filters */
-  const [fs, setFs] = useState<FilterState>({
-    useML: true,
-    useSpread: true,
-    useTotal: true,
-
-    mlSide: "all",
-    mlEV: false,
-
-    spSide: "all",
-    spEV: false,
-
-    totSide: "all",
-    totEV: false,
-  });
+  const [fs, setFs] = useState<FilterState>(defaultFS);
 
   /* data */
   const [loading, setLoading] = useState(false);
-  const [days, setDays] = useState<DailyAgg[]>([]);
+  const [days, setDays] = useState<
+    (DailyAgg & { _sumProfit: number; _ttRec: Counts })[]
+  >([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -310,17 +425,108 @@ export default function ResultsCBB() {
               const res = await fetch(url, { cache: "no-store" });
               if (!res.ok) throw new Error(String(res.status));
               const J: DailyJson = await res.json();
-              const { profit, rec } = extractProfitAndRecord(J, fs);
-              return { date: J.date || d, profit_units: profit, record: rec } as DailyAgg;
+
+              // --- Build profit + records for this day based on filters ---
+              let profit_ml = 0;
+              let profit_sp = 0;
+              let profit_tot = 0;
+              let profit_tt = 0;
+
+              // ML
+              if (fs.useML) {
+                const result = mlProfitRecord(J, fs.mlSide, fs.mlEV);
+                if (result.profit === null) {
+                  // fallback to aggregate or +EV-any fallback
+                  profit_ml = fs.mlEV ? evFallbackProfit(J, "ml") : profitAggregate(J, "ml");
+                } else {
+                  profit_ml = result.profit ?? 0;
+                }
+              }
+
+              // Spread
+              if (fs.useSpread) {
+                const result = spProfitRecord(J, fs.spSide, fs.spEV);
+                if (result.profit === null) {
+                  profit_sp = fs.spEV ? evFallbackProfit(J, "spread") : profitAggregate(J, "spread");
+                } else {
+                  profit_sp = result.profit ?? 0;
+                }
+              }
+
+              // Total
+              if (fs.useTotal) {
+                const result = totProfitRecord(J, fs.totSide, fs.totEV);
+                if (result.profit === null) {
+                  profit_tot = fs.totEV ? evFallbackProfit(J, "total") : profitAggregate(J, "total");
+                } else {
+                  profit_tot = result.profit ?? 0;
+                }
+              }
+
+              // Team Totals
+              let ttRec = emptyC;
+              if (fs.useTeamTotals) {
+                const t = ttProfitRecord(J, fs.ttRole, fs.ttSide, fs.ttCorrelation);
+                profit_tt = t.profit;
+                ttRec = t.rec;
+              }
+
+              const profit_units: ProfitMap = {
+                spread: profit_sp,
+                total: profit_tot,
+                ml: profit_ml,
+              };
+
+              // Records for classic markets (for summary)
+              const mlRecResolved = (() => {
+                const r = mlProfitRecord(J, fs.mlSide, fs.mlEV).rec;
+                if (r) return r;
+                return fs.mlEV ? evFallbackRecord(J, "ml") : recordAggregate(J, "ml");
+              })();
+
+              const spRecResolved = (() => {
+                const r = spProfitRecord(J, fs.spSide, fs.spEV).rec;
+                if (r) return r;
+                return fs.spEV ? evFallbackRecord(J, "spread") : recordAggregate(J, "spread");
+              })();
+
+              const totRecResolved = (() => {
+                const r = totProfitRecord(J, fs.totSide, fs.totEV).rec;
+                if (r) return r;
+                return fs.totEV ? evFallbackRecord(J, "total") : recordAggregate(J, "total");
+              })();
+
+              const record: RecordMap = {
+                spread: spRecResolved,
+                total: totRecResolved,
+                ml: mlRecResolved,
+              };
+
+              const totalProfitForDay =
+                (fs.useML ? profit_ml : 0) +
+                (fs.useSpread ? profit_sp : 0) +
+                (fs.useTotal ? profit_tot : 0) +
+                (fs.useTeamTotals ? profit_tt : 0);
+
+              return {
+                date: J.date || d,
+                profit_units,
+                record,
+                _sumProfit: totalProfitForDay,
+                _ttRec: ttRec,
+              } as DailyAgg & { _sumProfit: number; _ttRec: Counts };
             } catch {
+              // <-- swallow missing/non-OK day and ignore it
               return null;
             }
           })
         );
 
-        const tidy = (fetched.filter(Boolean) as DailyAgg[]).sort((a, b) =>
-          a.date.localeCompare(b.date)
-        );
+        const tidy = (fetched.filter(Boolean) as (DailyAgg & {
+          _sumProfit: number;
+          _ttRec: Counts;
+        })[]).sort((a, b) => a.date.localeCompare(b.date));
+
         if (alive) setDays(tidy);
       } catch (e: any) {
         if (alive) setErr(e?.message || "Failed to load daily results.");
@@ -333,14 +539,11 @@ export default function ResultsCBB() {
     };
   }, [startDate, endDate, fs]);
 
-  /* candles (cumulative) */
+  /* ----- Build candles (alt visual style) and summary ----- */
   const candles = useMemo(() => {
     let running = 0;
     return days.map((d) => {
-      const dayProfit =
-        (fs.useSpread ? d.profit_units.spread : 0) +
-        (fs.useTotal ? d.profit_units.total : 0) +
-        (fs.useML ? d.profit_units.ml : 0);
+      const dayProfit = d._sumProfit;
 
       const open = running;
       const close = running + dayProfit;
@@ -352,18 +555,19 @@ export default function ResultsCBB() {
 
       return { date: d.date, open, close, up, base, body, change: dayProfit };
     });
-  }, [days, fs]);
+  }, [days]);
 
   const finalPnL = candles.length ? candles[candles.length - 1].close : 0;
 
-  /* per-market + overall records (respect market toggles) */
+  // Per-market + overall records (includes TT when enabled)
   const perMarket = useMemo(() => {
-    const sum = (picker: (r: RecordMap) => Counts) =>
-      days.reduce<Counts>((acc, d) => addCounts(acc, picker(d.record)), emptyC);
+    const sum = (picker: (d: (typeof days)[number]) => Counts) =>
+      days.reduce<Counts>((acc, d) => addCounts(acc, picker(d)), emptyC);
 
-    const ml = sum((r) => r.ml);
-    const sp = sum((r) => r.spread);
-    const tot = sum((r) => r.total);
+    const ml = fs.useML ? sum((d) => d.record.ml) : emptyC;
+    const sp = fs.useSpread ? sum((d) => d.record.spread) : emptyC;
+    const tot = fs.useTotal ? sum((d) => d.record.total) : emptyC;
+    const tt = fs.useTeamTotals ? sum((d) => d._ttRec) : emptyC;
 
     const winPct = (c: Counts) => {
       const denom = c.wins + c.losses;
@@ -371,24 +575,22 @@ export default function ResultsCBB() {
     };
 
     const overall = toCounts({
-      wins: (fs.useML ? ml.wins : 0) + (fs.useSpread ? sp.wins : 0) + (fs.useTotal ? tot.wins : 0),
-      losses:
-        (fs.useML ? ml.losses : 0) + (fs.useSpread ? sp.losses : 0) + (fs.useTotal ? tot.losses : 0),
-      pushes:
-        (fs.useML ? ml.pushes : 0) + (fs.useSpread ? sp.pushes : 0) + (fs.useTotal ? tot.pushes : 0),
-      graded:
-        (fs.useML ? ml.graded : 0) + (fs.useSpread ? sp.graded : 0) + (fs.useTotal ? tot.graded : 0),
+      wins: ml.wins + sp.wins + tot.wins + tt.wins,
+      losses: ml.losses + sp.losses + tot.losses + tt.losses,
+      pushes: ml.pushes + sp.pushes + tot.pushes + tt.pushes,
+      graded: ml.graded + sp.graded + tot.graded + tt.graded,
     });
 
     return {
       ml: { counts: ml, pct: winPct(ml) },
       spread: { counts: sp, pct: winPct(sp) },
       total: { counts: tot, pct: winPct(tot) },
+      teamTotals: { counts: tt, pct: winPct(tt) },
       overall: { counts: overall, pct: winPct(overall) },
     };
   }, [days, fs]);
 
-  /* y domain */
+  /* y domain (alt style) */
   const yStats = useMemo(() => {
     const vals = candles.flatMap((c) => [c.open, c.close]);
     const min = Math.min(0, ...vals);
@@ -441,7 +643,7 @@ export default function ResultsCBB() {
             />
           </div>
 
-          {/* Summary (now with per-market records) */}
+          {/* Summary (now with Team Totals) */}
           <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.9, textAlign: "right" }}>
             {loading ? (
               "Loading…"
@@ -461,6 +663,9 @@ export default function ResultsCBB() {
                 </div>
                 <div style={{ marginTop: 2, opacity: fs.useTotal ? 1 : 0.5 }}>
                   {recLine("Total", perMarket.total.counts, perMarket.total.pct)}
+                </div>
+                <div style={{ marginTop: 2, opacity: fs.useTeamTotals ? 1 : 0.5 }}>
+                  {recLine("Team Totals", perMarket.teamTotals.counts, perMarket.teamTotals.pct)}
                 </div>
               </>
             )}
@@ -495,6 +700,18 @@ export default function ResultsCBB() {
                 }
               />
               Total
+            </label>
+
+            {/* Team Totals toggle */}
+            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={fs.useTeamTotals}
+                onChange={(e) =>
+                  setFs((p) => ({ ...p, useTeamTotals: e.target.checked }))
+                }
+              />
+              Team Totals
             </label>
           </div>
           <div />
@@ -591,14 +808,75 @@ export default function ResultsCBB() {
               +EV
             </label>
           </div>
+
+          {/* Team Totals filters */}
+          {fs.useTeamTotals && (
+            <div
+              style={{
+                gridColumn: "1 / span 3",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 12,
+                alignItems: "center",
+              }}
+            >
+              <strong style={{ width: 110 }}>Team Totals:</strong>
+
+              {/* Role */}
+              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                Role:
+                <select
+                  value={fs.ttRole}
+                  onChange={(e) => setFs((p) => ({ ...p, ttRole: e.target.value as TTRole }))}
+                >
+                  <option value="all">All</option>
+                  <option value="favorite">Favorite</option>
+                  <option value="underdog">Underdog</option>
+                </select>
+              </label>
+
+              {/* Side */}
+              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                Side:
+                <select
+                  value={fs.ttSide}
+                  onChange={(e) => setFs((p) => ({ ...p, ttSide: e.target.value as TTOUSide }))}
+                >
+                  <option value="all">All</option>
+                  <option value="over">Over</option>
+                  <option value="under">Under</option>
+                </select>
+              </label>
+
+              {/* Correlation */}
+              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                Correlation:
+                <select
+                  value={fs.ttCorrelation}
+                  onChange={(e) =>
+                    setFs((p) => ({
+                      ...p,
+                      ttCorrelation: e.target.value as TTCorrelation,
+                    }))
+                  }
+                  title="When not 'None', Role & Side map to correlated keys: fav_over / fav_under / dog_over / dog_under"
+                >
+                  <option value="none">None</option>
+                  <option value="predicted_underdog_cover">Predicted Underdog Cover</option>
+                  <option value="predicted_favorite_cover">Predicted Favorite Cover</option>
+                </select>
+              </label>
+            </div>
+          )}
         </div>
       </section>
 
-      {/* Chart */}
+      {/* Chart (alt visual style) */}
       <section className="card" style={{ padding: 12 }}>
         {!candles.length && !loading && <div>No daily results in range.</div>}
+        {err && <div style={{ color: "crimson" }}>{err}</div>}
 
-        {!!candles.length && (
+        {!!candles.length && !err && (
           <div style={{ width: "100%", height: 480 }}>
             <ResponsiveContainer>
               <ComposedChart
