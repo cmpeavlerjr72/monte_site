@@ -1,9 +1,9 @@
 ﻿date,time,Team A,Team B,Spread,OU,Team A Score Actual,Team B Score Actual,TeamAML,TeamBML
-11/18/2025,19:00,Bowling Green,Akron,-3,46.5,,,-148,124
-18-Nov,19:00,Ohio,UMass,-33.5,53.5,,,-12500,2967
-18-Nov,19:00,Northern Illinois,Western Michigan,6.5,38.5,,,209,-259
-19-Nov,19:00,Kent State,Central Michigan,8.5,48.5,,,259,-325
-19-Nov,19:00,Buffalo,Miami (OH),1.5,39.5,,,-103,-117
+11/18/2025,19:00,Bowling Green,Akron,-3,46.5,19,16,-148,124
+18-Nov,19:00,Ohio,UMass,-33.5,53.5,42,14,-12500,2967
+18-Nov,19:00,Northern Illinois,Western Michigan,6.5,38.5,19,35,209,-259
+19-Nov,19:00,Kent State,Central Michigan,8.5,48.5,16,28,259,-325
+19-Nov,19:00,Buffalo,Miami (OH),1.5,39.5,20,37,-103,-117
 20-Nov,19:30,Arkansas State,Louisiana,-3,53.5,,,-143,120
 21-Nov,20:00,NC State,Florida State,4.5,61.5,,,171,-207
 21-Nov,22:30,UNLV,Hawaii,-3,64.5,,,-139,117
