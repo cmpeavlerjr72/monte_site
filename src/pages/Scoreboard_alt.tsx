@@ -1,5 +1,5 @@
 // src/pages/Scoreboard.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import * as Papa from "papaparse";
 import { getTeamColors } from "../utils/teamColors";
 import {
@@ -9,13 +9,6 @@ import {
 
 import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 
-// const todayET = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).replace(/-/g, "");
-
-// const scoreboard = useLiveScoreboard(todayET);
-// const events = scoreboard?.events ?? [];
-
-// --- LIVE helpers ---
-// --- LIVE helpers ---
 type LiveGame = {
   id: string;
   state: "pre" | "in" | "post" | "final" | "unknown";
@@ -23,14 +16,14 @@ type LiveGame = {
   homeTeam?: string;
   awayScore?: number;
   homeScore?: number;
-  statusText: string; // e.g., "Q3 05:32", "Final", "12:00 PM"
+  statusText: string;
 };
 
 const clean = (s?: string) =>
   (s ?? "")
     .toLowerCase()
     .replace(/&/g, "and")
-    .replace(/\bst\.?\b/g, "state")       // <-- normalize St./St to 'state'
+    .replace(/\bst\.?\b/g, "state")
     .replace(/[^a-z0-9 ]/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -39,32 +32,6 @@ const pairKey = (a?: string, b?: string) => {
   const aa = clean(a), bb = clean(b);
   return [aa, bb].sort().join("::");
 };
-
-// function mapEspnToLiveGames(payload: any): LiveGame[] {
-//   const events = payload?.events ?? [];
-//   return events.map((e: any) => {
-//     const st = e?.status?.type;
-//     const state = (st?.state ?? "unknown").toLowerCase();
-//     const comp = e?.competitions?.[0];
-//     const away = comp?.competitors?.find((c: any) => c.homeAway === "away");
-//     const home = comp?.competitors?.find((c: any) => c.homeAway === "home");
-//     const period = comp?.status?.period ?? e?.status?.period;
-//     const clock = comp?.status?.displayClock ?? e?.status?.displayClock;
-
-//     let statusText = st?.shortDetail || st?.description || st?.name || "";
-//     if (state === "in") statusText = `Q${period ?? "-"} ${clock ?? ""}`.trim();
-
-//     return {
-//       id: String(e?.id ?? Math.random()),
-//       state: /final/i.test(statusText) ? "final" : (state as any),
-//       awayTeam: away?.team?.shortDisplayName ?? away?.team?.displayName,
-//       homeTeam: home?.team?.shortDisplayName ?? home?.team?.displayName,
-//       awayScore: away?.score ? Number(away.score) : undefined,
-//       homeScore: home?.score ? Number(home.score) : undefined,
-//       statusText,
-//     };
-//   });
-// }
 
 function mapEspnToLiveGames(payload: any): LiveGame[] {
   const events = payload?.events ?? [];
@@ -81,7 +48,6 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
     let state = String(type.state || "").toLowerCase();     // 'pre' | 'in' | 'post'
     const name  = String(type.name || "").toUpperCase();    // e.g. 'STATUS_FINAL'
     const done  = Boolean(type.completed);
-
     if (done || name.includes("FINAL") || state === "post") state = "final";
 
     // Pill text
@@ -102,8 +68,6 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
 }
 
 
-
-
 /* ---------- discover score CSVs (sims) ---------- */
 // const RAW = Object.assign(
 //   {},
@@ -117,10 +81,10 @@ const RAW = {} as Record<string,string>;
 
 const URLS = Object.assign(
   {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: false }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: false }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: false }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: false })
+  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: true }),
+  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: true }),
+  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: true }),
+  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: true })
 ) as Record<string, string>;
 
 /* ---------- discover players CSVs ---------- */
@@ -136,10 +100,10 @@ const P_RAW = {} as Record<string, string>;
 
 const P_URL = Object.assign(
   {},
-  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: false }),
-  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: false }),
-  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: false }),
-  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: false })
+  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: true }),
+  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: true }),
+  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: true }),
+  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: true })
 ) as Record<string, string>;
 
 /* ---------- discover week games CSVs (date/time, spreads, totals) ---------- */
@@ -160,19 +124,6 @@ const G_URL = Object.assign(
 
 /* ---------- file helpers ---------- */
 
-// Vite glob with { as: 'url', eager: false } returns a function that resolves to a string URL.
-// This helper normalizes: string | (() => Promise<string>) | { url: string } | { urlImporter: fn }
-async function resolveUrl(input: unknown): Promise<string> {
-  if (!input) return "";
-  if (typeof input === "string") return input;
-  if (typeof (input as any).url === "string") return (input as any).url;
-  if (typeof input === "function") return await (input as () => Promise<string>)();
-  if (typeof (input as any).urlImporter === "function") {
-    return await (input as any).urlImporter();
-  }
-  return "";
-}
-
 // SAFE CSV loader: fetch text (if url), then Papa.parse(text) — Safari/iOS friendly
 async function parseCsvFromItemSafe<T = any>(
   item: { url?: string; raw?: string },
@@ -181,14 +132,10 @@ async function parseCsvFromItemSafe<T = any>(
   let text = "";
 
   // Prefer URL if present; make absolute (Safari workers hate relative URLs)
-  if (item?.url) {
+  if (item?.url && item.url.trim()) {
     try {
-      // const abs = new URL(item.url, window.location.href).toString();
-      // const res = await fetch(abs, { cache: "force-cache" });
-      const urlStr = await resolveUrl((item as any)?.url ?? item);
-      if (!urlStr) throw new Error("Missing CSV URL");
-      const abs = new URL(urlStr, window.location.origin).toString();
-      const res = await fetch(abs, { cache: "force-cache" }); // allow browser caching
+      const abs = new URL(item.url, window.location.href).toString();
+      const res = await fetch(abs, { cache: "no-store" });
       text = await res.text();
     } catch (e) {
       console.warn("CSV fetch failed:", item?.url, e);
@@ -363,11 +310,11 @@ type CardGame = {
   mlPickProb?: number;   // 0..1 win probability for that team
   mlFair?: string;       // American odds string from that prob (e.g. -165 / +145)
   mlResult?: "win" | "loss" | "push";
+  scoreSource?: "CSV_FINALS" | "LIVE" | "UPCOMING";
   liveInProgress?: boolean;
-  liveStatusText?: string; // e.g., "Q3 05:32"
-  liveA?: number;          // Team A current score
-  liveB?: number;          // Team B current score
-
+  liveStatusText?: string;
+  liveA?: number;
+  liveB?: number;
 };
 
 const median = (arr: number[]) => {
@@ -574,6 +521,46 @@ function NumberSpinner({
 
 /* --------------------- page --------------------- */
 export default function Scoreboard() {
+
+  // --- LIVE: inside Scoreboard() component, just above the cards useMemo ---
+  const todayET = useMemo(
+    () =>
+      new Date()
+        .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+        .replace(/-/g, ""),
+    []
+  );
+
+  // call the hook safely INSIDE a component
+  const livePayload = useLiveScoreboard(todayET);
+
+  // normalize and index the live games
+  const liveGames: LiveGame[] = useMemo(
+    () => (livePayload ? mapEspnToLiveGames(livePayload) : []),
+    [livePayload]
+  );
+
+  const liveMap = useMemo(() => {
+    const m = new Map<string, LiveGame>();
+    for (const g of liveGames) m.set(pairKey(g.awayTeam, g.homeTeam), g);
+    return m;
+  }, [liveGames]);
+
+  const getCardLive = useCallback(
+    (game: { teamA: string; teamB: string }) => {
+      const lg = liveMap.get(pairKey(game.teamA, game.teamB));
+      const inProgress = lg?.state === "in";
+      let aScore: number | undefined, bScore: number | undefined;
+      if (lg) {
+        const aMatchesAway = clean(game.teamA) === clean(lg.awayTeam);
+        aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
+        bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
+      }
+      return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
+    },
+    [liveMap]
+  );
+
   // derive weeks
   const weeks = useMemo(() => {
     const s = new Set<string>([...scoreFilesAll, ...gamesFilesAll, ...playerFilesAll].map((f) => f.week));
@@ -596,36 +583,6 @@ export default function Scoreboard() {
   const [teamToConf, setTeamToConf] = useState<Record<string, string>>({});
   const [confOptions, setConfOptions] = useState<string[]>([]);
   const [confFilter, setConfFilter] = useState<string>("all");
-
-    // ---- LIVE SCOREBOARD (must be inside component) ----
-  const todayET = new Date()
-    .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
-    .replace(/-/g, "");
-  const livePayload = useLiveScoreboard(todayET);
-  // add:
-  const liveGames: LiveGame[] = livePayload ? mapEspnToLiveGames(livePayload) : [];
-  const liveMap = new Map<string, LiveGame>();
-  for (const g of liveGames) {
-    liveMap.set(pairKey(g.awayTeam, g.homeTeam), g);
-  }
-
-  // helper to pull “current vs actual” for one of your cards
-  function getCardLive(game: { teamA: string; teamB: string }) {
-    const lg = liveMap.get(pairKey(game.teamA, game.teamB));
-    const inProgress = lg?.state === "in";
-
-    // Figure out which ESPN side is A/B
-    let aScore = undefined, bScore = undefined;
-    if (lg) {
-      const aMatchesAway = clean(game.teamA) === clean(lg.awayTeam);
-      aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
-      bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
-    }
-    return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
-  }
-
-
-
 
   useEffect(() => {
     if (!teamInfoRaw) return;
@@ -810,13 +767,6 @@ export default function Scoreboard() {
       const meanA = Math.round(mean(Avals));
       const meanB = Math.round(mean(Bvals));
       const joined = meta[key];
-      // inside map over your games:
-      const { lg, inProgress, aScore, bScore, statusText } = getCardLive(g);
-
-      const dbHasFinals =
-        joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB);
-      const liveIsFinal = (lg?.state === "final");
-      const isFinal = !inProgress && (dbHasFinals || liveIsFinal);
 
       let simsA = medA, simsB = medB;
       if (joined && g.teamA !== joined.teamA) { simsA = medB; simsB = medA; }
@@ -913,52 +863,136 @@ export default function Scoreboard() {
       }
 
 
-      let spreadResult: "win" | "loss" | "push" | undefined;
-      let totalResult:  "win" | "loss" | "push" | undefined;
+      // let spreadResult: "win" | "loss" | "push" | undefined;
+      // let totalResult:  "win" | "loss" | "push" | undefined;
+      // let dispFinalA: number | undefined;
+      // let dispFinalB: number | undefined;
+
+      // if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
+      //   const fA = joined.finalA as number;
+      //   const fB = joined.finalB as number;
+
+      //   // spread grading vs our pick
+      //   if (Number.isFinite(joined.spread)) {
+      //     const s = joined.spread as number;
+      //     const diff = (simsA + s) - simsB;
+      //     const coverA = (fA + s) > fB ? 1 : (fA + s) < fB ? -1 : 0;
+      //     const pickedA = diff > 0;
+      //     if (coverA === 0) {
+      //       spreadResult = "push";
+      //     } else {
+      //       const pickedWins = (coverA > 0 && pickedA) || (coverA < 0 && !pickedA);
+      //       spreadResult = pickedWins ? "win" : "loss";
+      //     }
+      //   }
+
+      //   // Finals aligned to the card’s display orientation
+      //   // if (joined && g.teamA !== joined.teamA) {
+      //   //   dispFinalA = joined.finalB as number;
+      //   //   dispFinalB = joined.finalA as number;
+      //   // } else {
+      //   //   dispFinalA = joined.finalA as number;
+      //   //   dispFinalB = joined.finalB as number;
+      //   // }
+
+        
+
+      //   // total grading vs our pick
+      //   if (Number.isFinite(joined.total)) {
+      //     const lineT     = joined.total as number;
+      //     const gameTotal = (joined.finalA as number) + (joined.finalB as number);
+      //     const predTotal = simsA + simsB;
+
+      //     const actualSide    = gameTotal > lineT ? "Over"  : gameTotal < lineT ? "Under" : "Push";
+      //     const predictedSide = predTotal > lineT ? "Over"  : predTotal < lineT ? "Under" : "Push";
+
+      //     totalResult = (actualSide === "Push" || predictedSide === "Push")
+      //       ? "push"
+      //       : (actualSide === predictedSide ? "win" : "loss");
+      //   }
+      // }
+      // pull live for this card
+      const { lg, inProgress, aScore, bScore, statusText } = getCardLive(g);
+
+      // CSV finals present?
+      const csvHasFinals = joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB);
+
+      // sims orientation (book vs display)
+      // let simsA = medA, simsB = medB;
+      const flipped = Boolean(joined && g.teamA !== joined.teamA);
+      if (flipped) { simsA = medB; simsB = medA; }
+
+      // --- picks (your existing code above for pickSpread/pickTotal/spreadProb/ml etc.) stays as-is ---
+
       let dispFinalA: number | undefined;
       let dispFinalB: number | undefined;
+      let scoreSource: "CSV_FINALS" | "LIVE" | "UPCOMING" = "UPCOMING";
 
-      if (joined && Number.isFinite(joined.finalA) && Number.isFinite(joined.finalB)) {
-        const fA = joined.finalA as number;
-        const fB = joined.finalB as number;
-
-        // spread grading vs our pick
-        if (Number.isFinite(joined.spread)) {
-          const s = joined.spread as number;
-          const diff = (simsA + s) - simsB;
-          const coverA = (fA + s) > fB ? 1 : (fA + s) < fB ? -1 : 0;
-          const pickedA = diff > 0;
-          if (coverA === 0) {
-            spreadResult = "push";
-          } else {
-            const pickedWins = (coverA > 0 && pickedA) || (coverA < 0 && !pickedA);
-            spreadResult = pickedWins ? "win" : "loss";
-          }
-        }
-
-        // Finals aligned to the card’s display orientation
-        if (joined && g.teamA !== joined.teamA) {
-          dispFinalA = joined.finalB as number;
-          dispFinalB = joined.finalA as number;
+      // 1) CSV finals (use & grade)
+      if (csvHasFinals) {
+        dispFinalA = flipped ? (joined!.finalB as number) : (joined!.finalA as number);
+        dispFinalB = flipped ? (joined!.finalA as number) : (joined!.finalB as number);
+        scoreSource = "CSV_FINALS";
+      } else {
+        // 2) otherwise: live if present (show only; no grading)
+        const liveHasScores = Number.isFinite(aScore) && Number.isFinite(bScore);
+        if (liveHasScores) {
+          dispFinalA = aScore as number;
+          dispFinalB = bScore as number;
+          scoreSource = "LIVE";
         } else {
-          dispFinalA = joined.finalA as number;
-          dispFinalB = joined.finalB as number;
+          // 3) upcoming: no scores
+          dispFinalA = undefined;
+          dispFinalB = undefined;
+          scoreSource = "UPCOMING";
+        }
+      }
+
+      // --- grading: ONLY when csv finals exist ---
+      let spreadResult: "win" | "loss" | "push" | undefined;
+      let totalResult:  "win" | "loss" | "push" | undefined;
+      // let mlResult:     "win" | "loss" | "push" | undefined;
+
+      if (csvHasFinals) {
+        const fA_book = joined!.finalA as number;
+        const fB_book = joined!.finalB as number;
+
+        if (Number.isFinite(joined?.spread)) {
+          const s = joined!.spread as number;
+          const coverA = (fA_book + s) > fB_book ? 1 : (fA_book + s) < fB_book ? -1 : 0;
+          const pickedA = ((simsA + s) - simsB) > 0; // sims already aligned via `flipped`
+          spreadResult = coverA === 0 ? "push" : ((coverA > 0 && pickedA) || (coverA < 0 && !pickedA)) ? "win" : "loss";
         }
 
-        // total grading vs our pick
-        if (Number.isFinite(joined.total)) {
-          const lineT     = joined.total as number;
-          const gameTotal = (joined.finalA as number) + (joined.finalB as number);
+        if (Number.isFinite(joined?.total)) {
+          const lineT     = joined!.total as number;
+          const gameTotal = fA_book + fB_book;
           const predTotal = simsA + simsB;
-
           const actualSide    = gameTotal > lineT ? "Over"  : gameTotal < lineT ? "Under" : "Push";
           const predictedSide = predTotal > lineT ? "Over"  : predTotal < lineT ? "Under" : "Push";
-
           totalResult = (actualSide === "Push" || predictedSide === "Push")
             ? "push"
             : (actualSide === predictedSide ? "win" : "loss");
         }
+
+        if (typeof mlPickTeam === "string") {
+          if (fA_book === fB_book) mlResult = "push";
+          else {
+            const actualWinnerInBook = fA_book > fB_book ? joined!.teamA : joined!.teamB;
+            mlResult = (actualWinnerInBook === mlPickTeam) ? "win" : "loss";
+          }
+        }
       }
+
+      // --- DEBUG: one compact line per card ---
+      console.debug("SCORE DECISION", {
+        week: selectedWeek,
+        teams: `${g.teamA} vs ${g.teamB}`,
+        source: scoreSource,
+        csv: joined ? { A: joined.finalA, B: joined.finalB } : null,
+        live: { state: lg?.state, a: aScore, b: bScore, status: statusText },
+        flipped
+      });
 
       out.push({
         key,
@@ -977,6 +1011,7 @@ export default function Scoreboard() {
         mlPickProb,
         mlFair,
         mlResult,
+        scoreSource,
         liveInProgress: inProgress,
         liveStatusText: statusText,
         liveA: aScore,
@@ -1112,6 +1147,28 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
   return right.map((x,i)=>x-left[i]);
 }
 
+// inside component, below state/hooks
+// const todayET = new Date()
+//   .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+//   .replace(/-/g, "");
+// const livePayload = useLiveScoreboard(todayET);
+// const liveGames: LiveGame[] = livePayload ? mapEspnToLiveGames(livePayload) : [];
+// const liveMap = new Map<string, LiveGame>();
+// for (const g of liveGames) liveMap.set(pairKey(g.awayTeam, g.homeTeam), g);
+
+// function getCardLive(game: { teamA: string; teamB: string }) {
+//   const lg = liveMap.get(pairKey(game.teamA, game.teamB));
+//   const inProgress = lg?.state === "in";
+//   let aScore: number | undefined, bScore: number | undefined;
+//   if (lg) {
+//     const aMatchesAway = clean(game.teamA) === clean(lg.awayTeam);
+//     aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
+//     bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
+//   }
+//   return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
+// }
+
+
 function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gdata: GameData; players: PlayerMap; useMean?: boolean }) {
   const aColors = getTeamColors(card.teamA);
   const bColors = getTeamColors(card.teamB);
@@ -1240,42 +1297,17 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
   return (
     <article
       className="card"
-      // style={{
-      //   padding: 12, borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)",
-      //   display: "grid", gridTemplateRows: "auto auto auto", gap: 8,
-      //   contentVisibility: "auto",
-      //   containIntrinsicSize: "300px"
-      // }}
-        style={{
-          padding: 12,
-          borderRadius: 12,
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          boxShadow: card.liveInProgress ? "0 0 0 1px #fecaca" : undefined, // soft red outline when live
-          display: "grid",
-          gridTemplateRows: "auto auto auto",
-          gap: 8,
-          contentVisibility: "auto",
-          containIntrinsicSize: "300px"
-        }}
-      
+      style={{
+        padding: 12, borderRadius: 12, border: "1px solid var(--border)", background: "var(--card)",
+        display: "grid", gridTemplateRows: "auto auto auto", gap: 8,
+        contentVisibility: "auto",
+        containIntrinsicSize: "300px"
+      }}
     >
       {/* header */}
-      <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          {card.liveInProgress && (
-            <span style={{
-              padding: "2px 8px",
-              borderRadius: 999,
-              background: "#dc2626",   // red-600
-              color: "white",
-              fontWeight: 600
-            }}>
-              {card.liveStatusText || "In Progress"}
-            </span>
-          )}
-          <span>{card.kickoffLabel ?? "TBD"}</span>
-        </span>
+      <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between" }}>
+        <span>week</span>
+        <span>{card.kickoffLabel ?? "TBD"}</span>
       </div>
 
       {/* teams + scores (stacked with Projected / Actual) */}
@@ -1300,8 +1332,9 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             <div />
             <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Projected</div>
             <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
-              {card.liveInProgress ? "Current" : "Actual"}
+              {card.scoreSource === "LIVE" ? "Current" : "Actual"}
             </div>
+
 
             {/* Team B (top) */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
@@ -1317,13 +1350,8 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: bColors?.primary ?? "var(--text)" }}>
               {projB}
             </div>
-            {/* <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
-              {hasFinalB ? card.finalB : "–"}
-            </div> */}
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
-              {card.liveInProgress
-                ? (Number.isFinite(card.liveB) ? card.liveB : "–")
-                : (Number.isFinite(card.finalB) ? card.finalB : "–")}
+              {hasFinalB ? card.finalB : "–"}
             </div>
 
             {/* Team A (bottom) */}
@@ -1340,15 +1368,9 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: aColors?.primary ?? "var(--text)" }}>
               {projA}
             </div>
-            {/* <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
-              {hasFinalA ? card.finalA : "–"}
-            </div> */}
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
-              {card.liveInProgress
-                ? (Number.isFinite(card.liveA) ? card.liveA : "–")
-                : (Number.isFinite(card.finalA) ? card.finalA : "–")}
+              {hasFinalA ? card.finalA : "–"}
             </div>
-
           </div>
         );
       })()}

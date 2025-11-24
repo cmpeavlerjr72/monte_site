@@ -532,7 +532,7 @@ export default function Scoreboard() {
   );
 
   // call the hook safely INSIDE a component
-  const livePayload = useLiveScoreboard(todayET);
+  const livePayload = useLiveScoreboard(todayET, "cfb");
 
   // normalize and index the live games
   const liveGames: LiveGame[] = useMemo(
