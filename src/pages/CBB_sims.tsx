@@ -24,6 +24,11 @@ type LiveGame = {
   statusText: string;
   period?: number;
   displayClock?: string;
+
+  liveTotal?: number;            // over/under line
+  liveSpread?: number;           // point spread (home side)
+  liveFavTeam?: string;          // team name of favorite (home/away)
+  liveBook?: string | null;      // provider name (Caesars, etc.)
 };
 
 function cleanTeamName(s?: string) {
@@ -53,6 +58,34 @@ function mapEspnToLiveGamesCbb(payload: any): LiveGame[] {
 
     const period = comp?.status?.period ?? e?.status?.period;
     const clock  = comp?.status?.displayClock ?? e?.status?.displayClock;
+
+        // 🔹 NEW: odds block from ESPN
+    const rawOdds = comp?.odds?.[0] ?? e?.odds?.[0] ?? null;
+
+        // ESPN usually has overUnder + spread, with provider info.
+    const liveTotal = rawOdds ? Number(rawOdds.overUnder ?? rawOdds.total) : undefined;
+    const liveSpread = rawOdds ? Number(rawOdds.spread ?? rawOdds.pointSpread) : undefined;
+    const liveBook = rawOdds?.provider?.name ?? rawOdds?.details ?? null;
+
+    let liveFavTeam: string | undefined;
+    if (rawOdds?.favorite) {
+      // some payloads include a "favorite" team id or name
+      const favId = String(rawOdds.favorite);
+      if (home?.team?.id && String(home.team.id) === favId) {
+        liveFavTeam = home?.team?.location ?? home?.team?.shortDisplayName ?? home?.team?.name;
+      } else if (away?.team?.id && String(away.team.id) === favId) {
+        liveFavTeam = away?.team?.location ?? away?.team?.shortDisplayName ?? away?.team?.name;
+      }
+    } else if (Number.isFinite(liveSpread)) {
+      // Fallback heuristic: in ESPN scoreboard, spread is usually from home POV
+      // Negative spread means home is favored.
+      if ((liveSpread as number) < 0) {
+        liveFavTeam = home?.team?.location ?? home?.team?.shortDisplayName ?? home?.team?.name;
+      } else if ((liveSpread as number) > 0) {
+        liveFavTeam = away?.team?.location ?? away?.team?.shortDisplayName ?? away?.team?.name;
+      }
+    }
+
 
     let state = String(type.state || "").toLowerCase();
     const name  = String(type.name || "").toUpperCase();
@@ -105,6 +138,12 @@ function mapEspnToLiveGamesCbb(payload: any): LiveGame[] {
       homeScore: Number.isFinite(homeScore) ? homeScore : undefined,
       period: Number.isFinite(Number(period)) ? Number(period) : undefined,
       displayClock: typeof clock === "string" ? clock : undefined,
+
+      // NEW live odds
+      liveTotal: Number.isFinite(liveTotal as number) ? (liveTotal as number) : undefined,
+      liveSpread: Number.isFinite(liveSpread as number) ? (liveSpread as number) : undefined,
+      liveFavTeam,
+      liveBook,
     };
   });
 }
@@ -306,9 +345,168 @@ type Card = GameRow & {
   liveScoreB?: number;
   liveElapsed?: number;
   liveTotalPace?: number;
+
+  liveTotalLine?: number;
+  liveSpreadLine?: number;
+  liveSpreadFavName?: string;
+  liveOddsBook?: string | null;
 };
 
 /* ---------------- helpers ---------------- */
+
+// --- Drop-in live spread estimator (A − B final margin) ---
+type LiveSpreadInput = {
+  scoreA: number;           // current
+  scoreB: number;           // current
+  elapsedSec: number;       // 0..2400
+  // If you already computed a projected total, pass it; otherwise we’ll infer a multiplier.
+  projectedTotal?: number;
+  priorTotal?: number;      // for inferring projectedTotal when missing
+  p25Total?: number;
+  p75Total?: number;
+
+  // Pregame/prior margin from sims (A − B), plus optional IQR band for clamps
+  priorMargin?: number;     // e.g., medMargin
+  p25Margin?: number;
+  p75Margin?: number;
+};
+
+export function projectLiveSpread({
+  scoreA, scoreB, elapsedSec,
+  projectedTotal, priorTotal, p25Total, p75Total,
+  priorMargin, p25Margin, p75Margin,
+}: LiveSpreadInput): number {
+  const REG = 40 * 60;
+  const t = Math.max(0, Math.min(REG, elapsedSec));
+  const liveA = scoreA || 0, liveB = scoreB || 0;
+  const liveTotalNow = Math.max(1, liveA + liveB); // avoid div/0
+  const liveMarginNow = liveA - liveB;
+
+  // 1) Get a sensible total multiplier to scale current margin to game-end.
+  //    Prefer caller's projected total; otherwise infer using the same total projector.
+  const projTotal =
+    Number.isFinite(projectedTotal as number)
+      ? (projectedTotal as number)
+      : projectLiveTotal({
+          scoreA, scoreB, elapsedSec: t,
+          priorTotal, p25Total, p75Total,
+        });
+  const multRaw = projTotal / liveTotalNow;
+  // Keep multiplier in a sane band to avoid explosive early-game swings.
+  const mult = Math.max(0.6, Math.min(2.2, multRaw));
+
+  // 2) Live-rate margin projection
+  const liveProj = liveMarginNow * mult;
+
+  // 3) Time-based blend with prior margin (same ramp as totals)
+  const minStart = 4 * 60;
+  const frac = t / REG;
+  const baseW = Math.max(0, frac - (minStart / REG)) / (1 - (minStart / REG));
+  const liveW = Math.min(0.82, 0.15 + 0.95 * baseW);
+
+  const prior = Number.isFinite(priorMargin as number) ? (priorMargin as number) : liveProj;
+  let proj = (1 - liveW) * prior + liveW * liveProj;
+
+  // 4) End-game nudges (very small, just to mimic ATS behavior)
+  const remaining = REG - t;
+  const leadSign = Math.sign(liveMarginNow || prior);
+  if (remaining <= 180) {
+    const absNow = Math.abs(liveMarginNow);
+    if (absNow <= 3) {
+      // ultra-tight late: late possessions & intentional fouls add volatility -> tiny pull toward 0
+      proj -= 0.4 * leadSign;
+    } else if (absNow >= 12) {
+      // comfy lead late: FT parade/empty possessions can stretch a bit
+      proj += 0.6 * leadSign;
+    }
+  } else if (remaining <= 360) {
+    const absNow = Math.abs(liveMarginNow);
+    if (absNow >= 14) proj += 0.3 * leadSign;
+    if (absNow <= 2)  proj -= 0.2 * leadSign;
+  }
+
+  // 5) Soft clamp to prior IQR (loosens as time passes)
+  const lo = Number.isFinite(p25Margin as number) ? (p25Margin as number) : (prior - 6);
+  const hi = Number.isFinite(p75Margin as number) ? (p75Margin as number) : (prior + 6);
+  const slack = 5 * frac;
+  proj = Math.max(lo - slack, Math.min(hi + slack, proj));
+
+  // Margins are effectively integers; keep one decimal for display smoothness
+  return Math.round(proj * 10) / 10;
+}
+
+
+// --- Drop-in live total estimator (college hoops, 40:00 reg) ---
+type LiveTotalInput = {
+  scoreA: number;      // current
+  scoreB: number;      // current
+  elapsedSec: number;  // seconds played in regulation (0..2400)
+  priorTotal?: number; // e.g., medTotal from sims
+  p25Total?: number;   // optional, from sims
+  p75Total?: number;   // optional, from sims
+};
+
+export function projectLiveTotal({
+  scoreA, scoreB, elapsedSec,
+  priorTotal, p25Total, p75Total,
+}: LiveTotalInput): number {
+  const REG = 40 * 60;                                   // 2400s regulation
+  const t = Math.max(0, Math.min(REG, elapsedSec));
+  const liveScore = (scoreA || 0) + (scoreB || 0);
+
+  // 1) Naive pace extrapolation (guard rails for very early game)
+  const minStart = 4 * 60;                                // ignore first 4:00 noise
+  const livePace = t > 15 ? (liveScore * (REG / t)) : (priorTotal ?? liveScore * (REG / Math.max(t, 1)));
+
+  // 2) Time-based blend weight: ramps up as game progresses, but caps < 1
+  //    -> slow ramp pre-4:00, ~50/50 by halftime, ~80% live by 36:00
+  const frac = t / REG;
+  const baseW = Math.max(0, frac - (minStart / REG)) / (1 - (minStart / REG)); // 0 until 4:00
+  const blendW = Math.min(0.82, 0.15 + 0.95 * baseW);     // cap live weight ~82%
+
+  // 3) Prior (pregame sims) fallback
+  const prior = Number.isFinite(priorTotal as number) ? (priorTotal as number) : livePace;
+
+  // 4) Late-game adjustment for fouls/garbage time
+  const remaining = REG - t;
+  const margin = Math.abs((scoreA || 0) - (scoreB || 0));
+  let endgameAdj = 0;
+  if (remaining <= 3 * 60) {
+    // Close game → more fouls + FT → small upward bias
+    if (margin <= 6) endgameAdj += 1.5;           // ~1–2 pts
+    // Blowout → running clock/subs → tiny downward bias
+    if (margin >= 15) endgameAdj -= 1.0;
+  } else if (remaining <= 6 * 60) {
+    if (margin <= 6) endgameAdj += 0.7;
+    if (margin >= 18) endgameAdj -= 0.7;
+  }
+
+  // 5) Simple OT tail: if very tight late, add a fraction of one OT
+  //    One college OT ≈ 5:00, typical combined points ~10–12
+  let otAdj = 0;
+  if (remaining <= 60) {
+    // crude OT probability proxy
+    const tight = margin <= 3 ? 0.15 : margin <= 5 ? 0.08 : 0.03;
+    otAdj = tight * 11; // 11 points expected in OT
+  } else if (remaining <= 120 && margin <= 4) {
+    otAdj = 0.05 * 11;
+  }
+
+  // 6) Blend + adjust
+  let proj = (1 - blendW) * prior + blendW * livePace;
+  proj += endgameAdj + otAdj;
+
+  // 7) Soft clamp to interquartile band (if provided) to avoid wild swings
+  const lo = p25Total ?? (prior - 8);
+  const hi = p75Total ?? (prior + 8);
+  // allow some leakage beyond band as game advances
+  const slack = 6 * frac; // grows from 0 to ~6
+  proj = Math.max(lo - slack, Math.min(hi + slack, proj));
+
+  // 8) Round to half-points like books frequently quote
+  return Math.round(proj * 2) / 2;
+}
+
 const fmtEV = (x?: number) => (x == null ? "" : ` · EV ${(x >= 0 ? "+" : "")}${x.toFixed(2)}u`);
 
 const toNum = (x: unknown): number | undefined => {
@@ -822,8 +1020,13 @@ export default function CBBSims() {
       let liveElapsed: number | undefined;
       let liveTotalPace: number | undefined;
 
+      let liveTotalLine: number | undefined;
+      let liveSpreadLine: number | undefined;
+      let liveSpreadFavName: string | undefined;
+      let liveOddsBook: string | null | undefined;
+
       const lg = liveMap.get(pairKey(r.teamA, r.teamB));
-      console.log("JOIN", r.teamA, r.teamB, "=>", !!lg, lg?.awayScore, lg?.homeScore);
+      // console.log("JOIN", r.teamA, r.teamB, "=>", !!lg, lg?.awayScore, lg?.homeScore);
 
       if (lg) {
         liveState = lg.state;
@@ -840,16 +1043,29 @@ export default function CBBSims() {
         const elapsed = computeElapsedSecondsCbb(lg);
         if (
           typeof elapsed === "number" &&
-          Number.isFinite(liveScoreA as number) &&
-          Number.isFinite(liveScoreB as number)
+          Number.isFinite(aScore as number) &&
+          Number.isFinite(bScore as number)
         ) {
-          const totalScore = (liveScoreA as number) + (liveScoreB as number);
-          if (totalScore > 0) {
-            const mult = CBB_REG_SECONDS / Math.max(elapsed, 1);
-            liveElapsed = elapsed;
-            liveTotalPace = totalScore * mult;
-          }
+          liveElapsed = elapsed;
+
+          // 🔁 NEW: blended live total forecast (replaces naive extrapolation)
+          liveTotalPace = projectLiveTotal({
+            scoreA: aScore as number,
+            scoreB: bScore as number,
+            elapsedSec: elapsed,
+            priorTotal: r.medTotal,     // from sims summary
+            p25Total:  r.p25Total,      // optional guard rails
+            p75Total:  r.p75Total,
+          });
         }
+
+
+        // NEW: copy over live lines from ESPN
+        liveTotalLine = lg.liveTotal;
+        liveSpreadLine = lg.liveSpread;
+        liveSpreadFavName = lg.liveFavTeam;
+        liveOddsBook = lg.liveBook ?? r.odds?.book ?? null;
+
       }
 
       return {
@@ -870,6 +1086,11 @@ export default function CBBSims() {
         liveScoreB,
         liveElapsed,
         liveTotalPace,
+
+        liveTotalLine,
+        liveSpreadLine,
+        liveSpreadFavName,
+        liveOddsBook,
       } as Card;
     });
 
@@ -884,7 +1105,27 @@ export default function CBBSims() {
       }
     };
 
+    const stateRank = (c: Card) => {
+      switch (c.liveState) {
+        case "in":
+          return 0;
+        case "pre":
+          return 1;
+        case "post":
+          return 2;
+        case "final":
+          return 3;
+        default:
+          return 4;
+      }
+    };
+
     return mapped.sort((a, b) => {
+
+      const ra = stateRank(a);
+      const rb = stateRank(b);
+      if (ra !== rb) return ra-rb;
+
       switch (sortKey) {
         case "ev_spread":
         case "ev_total":
@@ -1035,24 +1276,35 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
   const pillBg = "color-mix(in oklab, var(--brand) 12%, white)";
 
   const liveInProgress = card.liveState === "in";
-  const showLiveA = liveInProgress && Number.isFinite(card.liveScoreA as number);
-  const showLiveB = liveInProgress && Number.isFinite(card.liveScoreB as number);
+  const hasLiveA = Number.isFinite(card.liveScoreA as number);
+  const hasLiveB = Number.isFinite(card.liveScoreB as number);
 
-  const displayScoreA = showLiveA
-    ? (card.liveScoreA as number)
-    : hasFinalA
+  const displayScoreA = hasFinalA
     ? (card.finalA as number)
+    : hasLiveA
+    ? (card.liveScoreA as number)
     : undefined;
-  const displayScoreB = showLiveB
-    ? (card.liveScoreB as number)
-    : hasFinalB
+  const displayScoreB = hasFinalB
     ? (card.finalB as number)
+    : hasLiveB
+    ? (card.liveScoreB as number)
     : undefined;
 
   const hasPace =
     card.pickTotal &&
     Number.isFinite(card.liveTotalPace as number) &&
     card.liveState === "in";
+
+
+  const hasLiveTotal = Number.isFinite(card.liveTotalLine as number) && card.liveState === "in";
+  const hasLiveSpread = Number.isFinite(card.liveSpreadLine as number) && card.liveState === "in";
+
+  const liveSpreadSigned = card.liveSpreadLine as number | undefined;
+  const liveSpreadLabel =
+    liveSpreadSigned != null && Number.isFinite(liveSpreadSigned)
+      ? (liveSpreadSigned > 0 ? `+${liveSpreadSigned}` : `${liveSpreadSigned}`)
+      : undefined;
+
 
   // pill color based on result
   function pillColor(kind: "spread" | "total" | "ml"): string | undefined {
@@ -1125,37 +1377,40 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
   function getSpreadPaceInfo() {
     if (!card.pickSpread || card.liveState !== "in") return null;
     if (
-      !Number.isFinite(card.liveTotalPace as number) ||
       !Number.isFinite(card.liveScoreA as number) ||
-      !Number.isFinite(card.liveScoreB as number)
+      !Number.isFinite(card.liveScoreB as number) ||
+      !Number.isFinite(card.liveElapsed as number)
     ) {
       return null;
     }
 
-    const scoreA = card.liveScoreA as number;
-    const scoreB = card.liveScoreB as number;
-    const totalNow = scoreA + scoreB;
-    if (totalNow <= 0) return null;
+    // 🔁 NEW: projected final margin (A − B)
+    const projMarginA = projectLiveSpread({
+      scoreA: card.liveScoreA as number,
+      scoreB: card.liveScoreB as number,
+      elapsedSec: card.liveElapsed as number,
+      projectedTotal: card.liveTotalPace, // already computed total projection
+      priorTotal: card.medTotal,
+      p25Total: card.p25Total,
+      p75Total: card.p75Total,
 
-    // This is the same multiplier we used to get total pace:
-    // paceTotal = (scoreA + scoreB) * mult
-    const mult = (card.liveTotalPace as number) / totalNow;
-
-    // Projected final margin from team A's perspective
-    const paceMarginA = (scoreA - scoreB) * mult; // A − B at end
+      priorMargin: card.medMargin,
+      p25Margin: card.p25Margin,
+      p75Margin: card.p75Margin,
+    });
 
     const betIsA = card.pickSpread.teamSide === "A";
-    const paceMarginBet = betIsA ? paceMarginA : -paceMarginA; // margin from bet side POV
+    const paceMarginBet = betIsA ? projMarginA : -projMarginA;
 
     const line = card.pickSpread.line;
     if (!Number.isFinite(line as number)) return null;
 
-    // For the bet-side team, they cover if (marginBet > -line)
-    const coverThreshold = -line;
-    const coverDelta = paceMarginBet - coverThreshold; // >0 = ahead of cover, <0 = behind
+    // For the bet side, covering means (paceMarginBet + line) > 0
+    const coverDelta = paceMarginBet + (line as number);
 
     return { paceMarginBet, coverDelta };
   }
+
 
   const spreadPace = getSpreadPaceInfo();
 
@@ -1172,15 +1427,49 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
   const [statColumns, setStatColumns] = useState<string[]>([]);
   const [AStats, setAStats] = useState<Record<string, number[]>>({});
   const [BStats, setBStats] = useState<Record<string, number[]>>({});
-  const [statKey, setStatKey] = useState<string>("");
+  // const [statKey, setStatKey] = useState<string>("");
 
   // UI controls
   type Metric = "spread" | "total" | "teamA" | "teamB";
   const [metric, setMetric] = useState<Metric>("spread");
   const [bins, setBins] = useState<number | "auto">("auto");
-  const [enteredSpread, setEnteredSpread] = useState<string>("");
-  const [spreadSide, setSpreadSide] = useState<"A" | "B">("A");
+  // const [enteredSpread, setEnteredSpread] = useState<string>("");
+  // const [spreadSide, setSpreadSide] = useState<"A" | "B">("A");
   const [enteredTotal, setEnteredTotal] = useState<string>("");
+
+  const [statKey, setStatKey] = useState<string>("");
+
+  // Which side we're evaluating from for spread cover math
+  const [spreadSide, setSpreadSide] = useState<"A" | "B">("A");
+
+  // User-picked value (string from <select>)
+  const [enteredSpread, setEnteredSpread] = useState<string>("");
+
+  // Build half-point options –40.0 … +40.0
+  const spreadOptions = useMemo<string[]>(() => {
+    const opts: string[] = [];
+    for (let v = -40; v <= 40.0001; v += 0.5) opts.push(v.toFixed(1));
+    return opts;
+  }, []);
+
+  // Default to the card’s listed spread (flipped if user picks the other side)
+  const defaultSpread = useMemo<number>(() => {
+    const ps = card.pickSpread;
+    if (!ps) return 0;
+    const raw = ps.teamSide === spreadSide ? ps.line : -ps.line;
+    return Number((Math.round(raw * 2) / 2).toFixed(1)); // snap to .5
+  }, [card.pickSpread, spreadSide]);
+
+  // The actual value shown in the select; always matches an <option>
+  const spreadSelectValue = useMemo<string>(() => {
+    return enteredSpread !== "" ? enteredSpread : defaultSpread.toFixed(1);
+  }, [enteredSpread, defaultSpread]);
+
+  // Parsed numeric line used by cover% math / chart line
+  const lineValSpread = useMemo<number | undefined>(() => {
+    const n = parseFloat(spreadSelectValue);
+    return Number.isFinite(n) ? n : undefined;
+  }, [spreadSelectValue]);
 
   // lazy-load compact json on first open
   const loadedRef = useRef(false);
@@ -1254,27 +1543,16 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
 
   const q = useMemo(() => quantiles(series), [series]);
 
-  // Only show Q1 / Median / Q3 labels on the X axis (main chart)
+  // Distributions(): replace qTickInfo with a median-only version
   const qTickInfo = useMemo(() => {
-    if (!series.length || !hist.length)
-      return { ticks: [] as string[], fmt: (_: string) => "" };
-    const q1Label = findBinLabel(hist, q?.q1 as number);
+    if (!series.length || !hist.length) return { ticks: [] as string[], fmt: (_: string) => "" };
     const medLabel = findBinLabel(hist, q?.med as number);
-    const q3Label = findBinLabel(hist, q?.q3 as number);
-    const ticks = [q1Label, medLabel, q3Label].filter(Boolean) as string[];
-    const fmt = (label: string) => {
-      if (label === q1Label) return (q?.q1 ?? 0).toFixed(1);
-      if (label === medLabel) return (q?.med ?? 0).toFixed(1);
-      if (label === q3Label) return (q?.q3 ?? 0).toFixed(1);
-      return "";
-    };
+    const ticks = medLabel ? [medLabel] : [];
+    const fmt = (label: string) => (label === medLabel ? (q?.med ?? 0).toFixed(1) : "");
     return { ticks, fmt };
   }, [hist, q, series]);
 
-  const lineValSpread = useMemo(() => {
-    const s = parseFloat(enteredSpread);
-    return Number.isFinite(s) ? s : undefined;
-  }, [enteredSpread]);
+
   const lineValTotal = useMemo(() => {
     const t = parseFloat(enteredTotal);
     return Number.isFinite(t) ? t : undefined;
@@ -1386,7 +1664,7 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
       style={{
         padding: 12,
         borderRadius: 12,
-        border: liveInProgress ? "2px solid #ef4444" : "1px solid var(--border)",
+        border: liveInProgress ? "2px solid #0b63f6" : "1px solid var(--border)",
         background: "var(--surface)",
         display: "grid",
         gridTemplateRows: "auto auto auto",
@@ -1805,6 +2083,27 @@ function Distributions(props: {
   const [enteredTotal, setEnteredTotal] = useState<string>("");
   const [statKey, setStatKey] = useState<string>("");
 
+    // Build half-point options –40.0 … +40.0
+  const spreadOptions = useMemo<string[]>(() => {
+    const opts: string[] = [];
+    for (let v = -100; v <= 100.0001; v += 0.5) opts.push(v.toFixed(1));
+    return opts;
+  }, []);
+
+  // Default to the card’s listed spread (flipped if user picks the other side)
+  const defaultSpread = useMemo<number>(() => {
+    const ps = card.pickSpread;
+    if (!ps) return 0;
+    const raw = ps.teamSide === spreadSide ? ps.line : -ps.line;
+    return Number((Math.round(raw * 2) / 2).toFixed(1)); // snap to .5
+  }, [card.pickSpread, spreadSide]);
+
+  // The actual value shown in the select; always matches an <option>
+  const spreadSelectValue = useMemo<string>(() => {
+    return enteredSpread !== "" ? enteredSpread : defaultSpread.toFixed(1);
+  }, [enteredSpread, defaultSpread]);
+
+
   const series = useMemo(() => {
     if (metric === "spread") return Spreads;
     if (metric === "total") return Totals;
@@ -1836,9 +2135,9 @@ function Distributions(props: {
   }, [hist, q, series]);
 
   const lineValSpread = useMemo(() => {
-    const s = parseFloat(enteredSpread);
+    const s = parseFloat(spreadSelectValue);
     return Number.isFinite(s) ? s : undefined;
-  }, [enteredSpread]);
+  }, [spreadSelectValue]);
   const lineValTotal = useMemo(() => {
     const t = parseFloat(enteredTotal);
     return Number.isFinite(t) ? t : undefined;
@@ -1854,12 +2153,19 @@ function Distributions(props: {
     for (let i = 0; i < N; i++) {
       const a = Apts[i], b = Bpts[i];
       if (a == null || b == null) continue;
-      const margin = spreadSide === "A" ? (a - b) : (b - a);
-      if (margin > line) cover++;
-      else if (Math.abs(margin - line) < 1e-9) push++;
+
+      // Margin from the selected team’s POV
+      const margin = spreadSide === "A" ? a - b : b - a;
+
+      // Apply the handicap (e.g. +2, -4.5)
+      const adj = margin + line;
+
+      if (adj > 0) cover++;
+      else if (Math.abs(adj) < 1e-9) push++;
     }
     return { cover: pct(cover), push: pct(push), lose: pct(N - cover - push) };
   }, [lineValSpread, spreadSide, N, Apts, Bpts]);
+
 
   const totalResult = useMemo(() => {
     if (!Number.isFinite(lineValTotal as number) || !N) return null;
@@ -2021,14 +2327,21 @@ function Distributions(props: {
                   <option value="A">{card.teamA}</option>
                   <option value="B">{card.teamB}</option>
                 </select>
-                <input
-                  type="number"
-                  step={0.5}
-                  placeholder={spreadSide === "A" ? "-4.0" : "+4.0"}
-                  value={enteredSpread}
+                <select
+                  value={spreadSelectValue}
                   onChange={(e) => setEnteredSpread(e.target.value)}
-                  style={{ width: 100, padding: "6px 8px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-                />
+                  style={{ width: 100, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+                >
+                  {spreadOptions.map((opt: string) => {
+                    const v = parseFloat(opt);
+                    const label = v > 0 ? `+${opt}` : opt; // show "+" for positive
+                    return (
+                      <option key={opt} value={opt}>
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
                 {spreadResult && (
                   <div style={{ display: "flex", gap: 10, fontSize: 13 }}>
                     <span><b>Cover</b>: {spreadResult.cover.toFixed(1)}%</span>
