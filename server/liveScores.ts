@@ -40,6 +40,53 @@ const PORT = process.env.PORT || 8080;
 // Helpers
 // ----------------------------------------------------------------------------
 
+// liveScores.ts
+type IndexGame = {
+  game_id: string;
+  start_utc?: string;
+  A_espn?: { espn_id?: string };
+  B_espn?: { espn_id?: string };
+};
+
+type GameIndex = Record<string, IndexGame[]>; // key: "123-987" (sorted pair), value: possible matches (rarely >1)
+
+// Build a sorted pair key from two ESPN team IDs
+const pairKey = (a?: string, b?: string) => {
+  if (!a || !b) return '';
+  const [x, y] = [String(a), String(b)].sort();
+  return `${x}-${y}`;
+};
+
+// Build a lookup map from index.json contents
+export function buildIndexByEspnPair(indexGames: IndexGame[]): GameIndex {
+  const map: GameIndex = {};
+  for (const g of indexGames) {
+    const A = g.A_espn?.espn_id;
+    const B = g.B_espn?.espn_id;
+    if (A && B) {
+      const k = pairKey(A, B);
+      if (!k) continue;
+      (map[k] ||= []).push(g);
+    }
+  }
+  return map;
+}
+
+// Fallback: single-team key, to handle entries where one side lacks ESPN metadata
+const singleKey = (id?: string) => (id ? `t:${id}` : '');
+
+export function buildIndexBySingleTeam(indexGames: IndexGame[]): Record<string, IndexGame[]> {
+  const map: Record<string, IndexGame[]> = {};
+  for (const g of indexGames) {
+    const A = g.A_espn?.espn_id;
+    const B = g.B_espn?.espn_id;
+    if (A) (map[singleKey(A)] ||= []).push(g);
+    if (B) (map[singleKey(B)] ||= []).push(g);
+  }
+  return map;
+}
+
+
 function toSport(q: any): Sport {
   const s = String(q || "cfb").toLowerCase();
   return s === "cbb" ? "cbb" : "cfb";

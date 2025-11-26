@@ -1,176 +1,253 @@
+// server/liveScores.ts
 import express, { Request, Response } from "express";
 import cors from "cors";
-import fetch from "node-fetch";
+import fetch, { Response as FetchResponse } from "node-fetch";
 import AbortController from "abort-controller";
+import compression from "compression";
 import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
-import compression from "compression";
 
+type Sport = "cfb" | "cbb";
 
-// ---------- Express basic ----------
-const app = express();
-app.use(cors());
-const PORT = process.env.PORT || 8080;
-
-// ---------- Helpers ----------
-type CacheEntry = {
-  ts: number;          // ms
-  ttl: number;         // ms
-  hash: string;
-  payload: any;
-  liveCount: number;
-};
-const memCache = new Map<string, CacheEntry>();
-type Client = { id: string; res: Response; date: string };
-const clients: Client[] = [];
-const POLL_KEYS = new Set<string>();
-
-const jsonHash = (obj: any) =>
-  crypto.createHash("sha1").update(JSON.stringify(obj)).digest("hex");
-const now = () => Date.now();
-
-function espnUrl(dateYYYYMMDD: string, groups = "80") {
-  return `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=${groups}&dates=${dateYYYYMMDD}`;
+interface ScoreboardPayload {
+  // We don't care about the exact ESPN shape here; treat as any.
+  [key: string]: any;
 }
 
-function countLiveGames(payload: any): number {
+interface CacheEntry {
+  sport: Sport;
+  date: string;
+  payload: ScoreboardPayload;
+  fetchedAt: number;
+  liveCount: number;
+}
+
+interface LiveClient {
+  id: string;
+  res: Response;
+  sport: Sport;
+  date: string;
+}
+
+const app = express();
+app.use(cors());
+app.use(compression());
+
+const PORT = process.env.PORT || 8080;
+
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
+
+function toSport(q: any): Sport {
+  const s = String(q || "cfb").toLowerCase();
+  return s === "cbb" ? "cbb" : "cfb";
+}
+
+function espnUrl(sport: Sport, dateYYYYMMDD: string, groups?: string): string {
+  const d = String(dateYYYYMMDD).replace(/-/g, "");
+
+  if (sport === "cbb") {
+    const g = groups || "50"; // Men's D-I
+    const limit = 3000;
+    return `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
+  }
+
+  // Default: CFB
+  const g = groups || "80,81"; // FBS + FCS
+  const limit = 3000;
+  return `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
+}
+
+function countLiveGames(payload: ScoreboardPayload): number {
   try {
-    const events = payload?.events ?? [];
-    return events.filter((e: any) => e?.status?.type?.state === "in").length;
+    const events: any[] = payload?.events ?? [];
+    return events.filter((e) => e?.status?.type?.state === "in").length;
   } catch {
     return 0;
   }
 }
-function ttlFor(liveCount: number) {
+
+function ttlFor(liveCount: number): number {
+  // Shorter TTL when there are live games, longer when there aren't.
   return liveCount > 0 ? 20_000 : 120_000;
 }
-function currentETDate() {
+
+// ESPN date helper – returns YYYYMMDD in America/New_York
+function currentETDate(): string {
+  const now = new Date();
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   });
-  const p = fmt.formatToParts(new Date());
-  const y = p.find((x) => x.type === "year")!.value;
-  const m = p.find((x) => x.type === "month")!.value;
-  const d = p.find((x) => x.type === "day")!.value;
+  const parts = fmt.formatToParts(now);
+  const y = parts.find((p) => p.type === "year")?.value ?? "0000";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const d = parts.find((p) => p.type === "day")?.value ?? "01";
   return `${y}${m}${d}`;
 }
 
-// fetch with timeout (node-fetch v3)
-async function fetchJsonWithTimeout(url: string, ms = 10000) {
+async function fetchJsonWithTimeout(url: string, ms = 10_000): Promise<any> {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
+
   try {
-    const resp = await fetch(url, { signal: ctrl.signal });
-    if (!resp.ok) throw new Error(`ESPN ${resp.status}`);
+    const resp: FetchResponse = await fetch(url, {
+      signal: ctrl.signal as any,
+      headers: {
+        "cache-control": "no-cache",
+      },
+    });
+
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
     return await resp.json();
   } finally {
     clearTimeout(id);
   }
 }
 
-// Cache-on-read fetcher
-async function getScoreboard(date: string) {
-  const key = `espn:cfb:${date}`;
-  const cached = memCache.get(key);
-  if (cached && now() - cached.ts < cached.ttl) return cached.payload;
+// ----------------------------------------------------------------------------
+// Simple in-memory cache for scoreboard payloads
+// ----------------------------------------------------------------------------
 
-  const payload = await fetchJsonWithTimeout(espnUrl(date));
-  const hash = jsonHash(payload);
+const SCOREBOARD_CACHE = new Map<string, CacheEntry>();
+
+async function getScoreboard(
+  sport: Sport,
+  dateYYYYMMDD: string
+): Promise<ScoreboardPayload> {
+  const key = `${sport}:${dateYYYYMMDD}`;
+  const existing = SCOREBOARD_CACHE.get(key);
+  const now = Date.now();
+
+  if (existing) {
+    const age = now - existing.fetchedAt;
+    const ttl = ttlFor(existing.liveCount);
+    if (age < ttl) {
+      return existing.payload;
+    }
+  }
+
+  const url = espnUrl(sport, dateYYYYMMDD);
+  const payload = (await fetchJsonWithTimeout(url)) as ScoreboardPayload;
   const liveCount = countLiveGames(payload);
-  const ttl = ttlFor(liveCount);
-  memCache.set(key, { ts: now(), ttl, hash, payload, liveCount });
+
+  SCOREBOARD_CACHE.set(key, {
+    sport,
+    date: dateYYYYMMDD,
+    payload,
+    fetchedAt: now,
+    liveCount,
+  });
+
   return payload;
 }
 
-// ---------- REST (pull) ----------
-app.get("/api/scoreboard", async (req: Request, res: Response) => {
-  try {
-    const date = (req.query.date as string) || currentETDate();
-    const payload = await getScoreboard(date);
-    res.json({ date, payload, cached_at: new Date().toISOString() });
-  } catch (e: any) {
-    res.status(502).json({ error: e?.message ?? "Fetch failed" });
-  }
-});
+// ----------------------------------------------------------------------------
+// SSE helpers
+// ----------------------------------------------------------------------------
 
-// ---------- SSE (push) ----------
-app.get("/api/live", async (req: Request, res: Response) => {
-  const date = (req.query.date as string) || currentETDate();
-  res.set({
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-  res.flushHeaders();
-
-  const id = crypto.randomUUID();
-  const client: Client = { id, res, date };
-  clients.push(client);
-  POLL_KEYS.add(date);
-
-  try {
-    const snapshot = await getScoreboard(date);
-    sseSend(res, { type: "hello", date, payload: snapshot });
-  } catch { /* ignore */ }
-
-  req.on("close", () => {
-    const idx = clients.findIndex((c) => c.id === id);
-    if (idx >= 0) clients.splice(idx, 1);
-    if (!clients.some((c) => c.date === date)) POLL_KEYS.delete(date);
-  });
-});
-
-// Gzip all responses except the SSE stream at /api/live
-app.use(
-    compression({
-      level: 6,          // good tradeoff (1-9)
-      threshold: 1024,   // only compress payloads > 1KB
-      filter: (req, res) => {
-        // Skip SSE (Server-Sent Events) to avoid buffering
-        const isSSE =
-          req.path?.startsWith("/api/live") ||
-          req.headers.accept?.includes("text/event-stream");
-        if (isSSE) return false;
-        return compression.filter(req, res);
-      },
-    })
-  );
-  
-
-function sseSend(res: Response, data: any) {
+function sseSend(res: Response, data: any): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
-function broadcast(date: string, data: any) {
-  clients.filter((c) => c.date === date).forEach((c) => sseSend(c.res, data));
-}
 
-// Proactive refresher (optional but nice when clients are connected)
-setInterval(async () => {
-  for (const date of POLL_KEYS) {
-    try {
-      const key = `espn:cfb:${date}`;
-      const before = memCache.get(key);
-      const payload = await getScoreboard(date);
-      const after = memCache.get(key);
-      if (!before || (after && before.hash !== after.hash)) {
-        broadcast(date, { type: "scoreboard", date, payload });
-      }
-    } catch { /* retry next tick */ }
+const clients: LiveClient[] = [];
+
+// ----------------------------------------------------------------------------
+// REST: /api/scoreboard
+// ----------------------------------------------------------------------------
+
+app.get("/api/scoreboard", async (req: Request, res: Response) => {
+  try {
+    const sport = toSport(req.query.sport);
+    const date = (req.query.date as string) || currentETDate();
+
+    const payload = await getScoreboard(sport, date);
+    res.json({
+      sport,
+      date,
+      payload,
+      cached_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("GET /api/scoreboard error", err?.message || err);
+    res.status(500).json({ error: "failed_to_fetch_scoreboard" });
   }
-}, 5_000);
+});
 
-// ---------- Serve React build from /dist ----------
+// ----------------------------------------------------------------------------
+// SSE: /api/live
+// ----------------------------------------------------------------------------
+
+app.get("/api/live", async (req: Request, res: Response) => {
+  const sport = toSport(req.query.sport);
+  const date = (req.query.date as string) || currentETDate();
+  const key = `${sport}:${date}`;
+
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-store, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    Vary: "sport, date",
+  });
+  (res as any).flushHeaders?.();
+
+  const id = crypto.randomUUID();
+  const client: LiveClient = { id, res, sport, date };
+  clients.push(client);
+
+  // Send initial snapshot
+  try {
+    const snapshot = await getScoreboard(sport, date);
+    sseSend(res, { type: "hello", meta: { sport, date, key }, payload: snapshot });
+  } catch (err: any) {
+    console.error("SSE hello error", err?.message || err);
+  }
+
+  // Periodic polling loop per client
+  const intervalMs = 20_000;
+  const timer = setInterval(async () => {
+    try {
+      const payload = await getScoreboard(sport, date);
+      sseSend(res, { type: "tick", meta: { sport, date, key }, payload });
+    } catch (err: any) {
+      console.error("SSE tick error", err?.message || err);
+    }
+  }, intervalMs);
+
+  req.on("close", () => {
+    clearInterval(timer);
+    const idx = clients.findIndex((c) => c.id === id);
+    if (idx >= 0) {
+      clients.splice(idx, 1);
+    }
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Static React build
+// ----------------------------------------------------------------------------
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const staticDir = path.resolve(__dirname, "../../dist");
+
 app.use(express.static(staticDir));
+
 app.get("*", (_req: Request, res: Response) => {
   res.sendFile(path.join(staticDir, "index.html"));
 });
 
-// ---------- Start ----------
+// ----------------------------------------------------------------------------
+// Start
+// ----------------------------------------------------------------------------
+
 app.listen(PORT, () => {
   console.log(`liveScores listening on :${PORT}`);
 });

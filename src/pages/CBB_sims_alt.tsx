@@ -353,6 +353,160 @@ type Card = GameRow & {
 };
 
 /* ---------------- helpers ---------------- */
+
+// --- Drop-in live spread estimator (A − B final margin) ---
+type LiveSpreadInput = {
+  scoreA: number;           // current
+  scoreB: number;           // current
+  elapsedSec: number;       // 0..2400
+  // If you already computed a projected total, pass it; otherwise we’ll infer a multiplier.
+  projectedTotal?: number;
+  priorTotal?: number;      // for inferring projectedTotal when missing
+  p25Total?: number;
+  p75Total?: number;
+
+  // Pregame/prior margin from sims (A − B), plus optional IQR band for clamps
+  priorMargin?: number;     // e.g., medMargin
+  p25Margin?: number;
+  p75Margin?: number;
+};
+
+export function projectLiveSpread({
+  scoreA, scoreB, elapsedSec,
+  projectedTotal, priorTotal, p25Total, p75Total,
+  priorMargin, p25Margin, p75Margin,
+}: LiveSpreadInput): number {
+  const REG = 40 * 60;
+  const t = Math.max(0, Math.min(REG, elapsedSec));
+  const liveA = scoreA || 0, liveB = scoreB || 0;
+  const liveTotalNow = Math.max(1, liveA + liveB); // avoid div/0
+  const liveMarginNow = liveA - liveB;
+
+  // 1) Get a sensible total multiplier to scale current margin to game-end.
+  //    Prefer caller's projected total; otherwise infer using the same total projector.
+  const projTotal =
+    Number.isFinite(projectedTotal as number)
+      ? (projectedTotal as number)
+      : projectLiveTotal({
+          scoreA, scoreB, elapsedSec: t,
+          priorTotal, p25Total, p75Total,
+        });
+  const multRaw = projTotal / liveTotalNow;
+  // Keep multiplier in a sane band to avoid explosive early-game swings.
+  const mult = Math.max(0.6, Math.min(2.2, multRaw));
+
+  // 2) Live-rate margin projection
+  const liveProj = liveMarginNow * mult;
+
+  // 3) Time-based blend with prior margin (same ramp as totals)
+  const minStart = 4 * 60;
+  const frac = t / REG;
+  const baseW = Math.max(0, frac - (minStart / REG)) / (1 - (minStart / REG));
+  const liveW = Math.min(0.82, 0.15 + 0.95 * baseW);
+
+  const prior = Number.isFinite(priorMargin as number) ? (priorMargin as number) : liveProj;
+  let proj = (1 - liveW) * prior + liveW * liveProj;
+
+  // 4) End-game nudges (very small, just to mimic ATS behavior)
+  const remaining = REG - t;
+  const leadSign = Math.sign(liveMarginNow || prior);
+  if (remaining <= 180) {
+    const absNow = Math.abs(liveMarginNow);
+    if (absNow <= 3) {
+      // ultra-tight late: late possessions & intentional fouls add volatility -> tiny pull toward 0
+      proj -= 0.4 * leadSign;
+    } else if (absNow >= 12) {
+      // comfy lead late: FT parade/empty possessions can stretch a bit
+      proj += 0.6 * leadSign;
+    }
+  } else if (remaining <= 360) {
+    const absNow = Math.abs(liveMarginNow);
+    if (absNow >= 14) proj += 0.3 * leadSign;
+    if (absNow <= 2)  proj -= 0.2 * leadSign;
+  }
+
+  // 5) Soft clamp to prior IQR (loosens as time passes)
+  const lo = Number.isFinite(p25Margin as number) ? (p25Margin as number) : (prior - 6);
+  const hi = Number.isFinite(p75Margin as number) ? (p75Margin as number) : (prior + 6);
+  const slack = 5 * frac;
+  proj = Math.max(lo - slack, Math.min(hi + slack, proj));
+
+  // Margins are effectively integers; keep one decimal for display smoothness
+  return Math.round(proj * 10) / 10;
+}
+
+
+// --- Drop-in live total estimator (college hoops, 40:00 reg) ---
+type LiveTotalInput = {
+  scoreA: number;      // current
+  scoreB: number;      // current
+  elapsedSec: number;  // seconds played in regulation (0..2400)
+  priorTotal?: number; // e.g., medTotal from sims
+  p25Total?: number;   // optional, from sims
+  p75Total?: number;   // optional, from sims
+};
+
+export function projectLiveTotal({
+  scoreA, scoreB, elapsedSec,
+  priorTotal, p25Total, p75Total,
+}: LiveTotalInput): number {
+  const REG = 40 * 60;                                   // 2400s regulation
+  const t = Math.max(0, Math.min(REG, elapsedSec));
+  const liveScore = (scoreA || 0) + (scoreB || 0);
+
+  // 1) Naive pace extrapolation (guard rails for very early game)
+  const minStart = 4 * 60;                                // ignore first 4:00 noise
+  const livePace = t > 15 ? (liveScore * (REG / t)) : (priorTotal ?? liveScore * (REG / Math.max(t, 1)));
+
+  // 2) Time-based blend weight: ramps up as game progresses, but caps < 1
+  //    -> slow ramp pre-4:00, ~50/50 by halftime, ~80% live by 36:00
+  const frac = t / REG;
+  const baseW = Math.max(0, frac - (minStart / REG)) / (1 - (minStart / REG)); // 0 until 4:00
+  const blendW = Math.min(0.82, 0.15 + 0.95 * baseW);     // cap live weight ~82%
+
+  // 3) Prior (pregame sims) fallback
+  const prior = Number.isFinite(priorTotal as number) ? (priorTotal as number) : livePace;
+
+  // 4) Late-game adjustment for fouls/garbage time
+  const remaining = REG - t;
+  const margin = Math.abs((scoreA || 0) - (scoreB || 0));
+  let endgameAdj = 0;
+  if (remaining <= 3 * 60) {
+    // Close game → more fouls + FT → small upward bias
+    if (margin <= 6) endgameAdj += 1.5;           // ~1–2 pts
+    // Blowout → running clock/subs → tiny downward bias
+    if (margin >= 15) endgameAdj -= 1.0;
+  } else if (remaining <= 6 * 60) {
+    if (margin <= 6) endgameAdj += 0.7;
+    if (margin >= 18) endgameAdj -= 0.7;
+  }
+
+  // 5) Simple OT tail: if very tight late, add a fraction of one OT
+  //    One college OT ≈ 5:00, typical combined points ~10–12
+  let otAdj = 0;
+  if (remaining <= 60) {
+    // crude OT probability proxy
+    const tight = margin <= 3 ? 0.15 : margin <= 5 ? 0.08 : 0.03;
+    otAdj = tight * 11; // 11 points expected in OT
+  } else if (remaining <= 120 && margin <= 4) {
+    otAdj = 0.05 * 11;
+  }
+
+  // 6) Blend + adjust
+  let proj = (1 - blendW) * prior + blendW * livePace;
+  proj += endgameAdj + otAdj;
+
+  // 7) Soft clamp to interquartile band (if provided) to avoid wild swings
+  const lo = p25Total ?? (prior - 8);
+  const hi = p75Total ?? (prior + 8);
+  // allow some leakage beyond band as game advances
+  const slack = 6 * frac; // grows from 0 to ~6
+  proj = Math.max(lo - slack, Math.min(hi + slack, proj));
+
+  // 8) Round to half-points like books frequently quote
+  return Math.round(proj * 2) / 2;
+}
+
 const fmtEV = (x?: number) => (x == null ? "" : ` · EV ${(x >= 0 ? "+" : "")}${x.toFixed(2)}u`);
 
 const toNum = (x: unknown): number | undefined => {
@@ -889,16 +1043,22 @@ export default function CBBSims() {
         const elapsed = computeElapsedSecondsCbb(lg);
         if (
           typeof elapsed === "number" &&
-          Number.isFinite(liveScoreA as number) &&
-          Number.isFinite(liveScoreB as number)
+          Number.isFinite(aScore as number) &&
+          Number.isFinite(bScore as number)
         ) {
-          const totalScore = (liveScoreA as number) + (liveScoreB as number);
-          if (totalScore > 0) {
-            const mult = CBB_REG_SECONDS / Math.max(elapsed, 1);
-            liveElapsed = elapsed;
-            liveTotalPace = totalScore * mult;
-          }
+          liveElapsed = elapsed;
+
+          // 🔁 NEW: blended live total forecast (replaces naive extrapolation)
+          liveTotalPace = projectLiveTotal({
+            scoreA: aScore as number,
+            scoreB: bScore as number,
+            elapsedSec: elapsed,
+            priorTotal: r.medTotal,     // from sims summary
+            p25Total:  r.p25Total,      // optional guard rails
+            p75Total:  r.p75Total,
+          });
         }
+
 
         // NEW: copy over live lines from ESPN
         liveTotalLine = lg.liveTotal;
@@ -1217,37 +1377,40 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
   function getSpreadPaceInfo() {
     if (!card.pickSpread || card.liveState !== "in") return null;
     if (
-      !Number.isFinite(card.liveTotalPace as number) ||
       !Number.isFinite(card.liveScoreA as number) ||
-      !Number.isFinite(card.liveScoreB as number)
+      !Number.isFinite(card.liveScoreB as number) ||
+      !Number.isFinite(card.liveElapsed as number)
     ) {
       return null;
     }
 
-    const scoreA = card.liveScoreA as number;
-    const scoreB = card.liveScoreB as number;
-    const totalNow = scoreA + scoreB;
-    if (totalNow <= 0) return null;
+    // 🔁 NEW: projected final margin (A − B)
+    const projMarginA = projectLiveSpread({
+      scoreA: card.liveScoreA as number,
+      scoreB: card.liveScoreB as number,
+      elapsedSec: card.liveElapsed as number,
+      projectedTotal: card.liveTotalPace, // already computed total projection
+      priorTotal: card.medTotal,
+      p25Total: card.p25Total,
+      p75Total: card.p75Total,
 
-    // This is the same multiplier we used to get total pace:
-    // paceTotal = (scoreA + scoreB) * mult
-    const mult = (card.liveTotalPace as number) / totalNow;
-
-    // Projected final margin from team A's perspective
-    const paceMarginA = (scoreA - scoreB) * mult; // A − B at end
+      priorMargin: card.medMargin,
+      p25Margin: card.p25Margin,
+      p75Margin: card.p75Margin,
+    });
 
     const betIsA = card.pickSpread.teamSide === "A";
-    const paceMarginBet = betIsA ? paceMarginA : -paceMarginA; // margin from bet side POV
+    const paceMarginBet = betIsA ? projMarginA : -projMarginA;
 
     const line = card.pickSpread.line;
     if (!Number.isFinite(line as number)) return null;
 
-    // For the bet-side team, they cover if (marginBet > -line)
-    const coverThreshold = -line;
-    const coverDelta = paceMarginBet - coverThreshold; // >0 = ahead of cover, <0 = behind
+    // For the bet side, covering means (paceMarginBet + line) > 0
+    const coverDelta = paceMarginBet + (line as number);
 
     return { paceMarginBet, coverDelta };
   }
+
 
   const spreadPace = getSpreadPaceInfo();
 
@@ -1501,7 +1664,7 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
       style={{
         padding: 12,
         borderRadius: 12,
-        border: liveInProgress ? "2px solid #ef4444" : "1px solid var(--border)",
+        border: liveInProgress ? "2px solid #0b63f6" : "1px solid var(--border)",
         background: "var(--surface)",
         display: "grid",
         gridTemplateRows: "auto auto auto",
