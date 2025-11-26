@@ -12,6 +12,7 @@ import {
 } from "recharts";
 
 import { useLiveScoreboard } from "../lib/useLiveScoreboard";
+import { useEspnScoreboard } from "../lib/useEspnScoreboard";
 
 /** LIVE SCOREBOARD TYPES / HELPERS (CBB) */
 type LiveGame = {
@@ -115,7 +116,6 @@ function mapEspnToLiveGamesCbb(payload: any): LiveGame[] {
     if (state === "in") statusText = `H${period ?? "-"} ${clock ?? ""}`.trim();
     if (state === "final" && !statusText) statusText = "Final";
 
-    // 🔴 CHANGE IS HERE:
     const awayTeam =
       away?.team?.location ??           // "North Dakota"
       away?.team?.displayName ??        // "North Dakota Fighting Hawks"
@@ -656,7 +656,7 @@ export default function CBBSims() {
   // ----- LIVE SCOREBOARD (CBB) -----
   // ESPN expects YYYYMMDD but our helper on the server strips hyphens,
   // so both "2025-11-23" and "20251123" are fine.
-  const livePayload = useLiveScoreboard(date, "cbb");
+  const livePayload = useEspnScoreboard(date, { sport: "cbb", groups: "50", limit: 357, pollMs: 20000 });
 
   useEffect(() => {
   console.log("CBB livePayload", livePayload);
@@ -667,16 +667,48 @@ export default function CBBSims() {
     [livePayload]
   );
 
-  const liveMap = useMemo(() => {
+  // const liveMap = useMemo(() => {
+  //   const m = new Map<string, LiveGame>();
+  //   for (const g of liveGames) {
+  //     const byIds = pairIdsKey(g.awayId, g.homeId);
+  //     if (byIds) m.set(byIds, g);
+  //     // Fallback (legacy name key) – only used if no IDs on this event
+  //     else m.set(pairKey(g.awayTeam, g.homeTeam), g);
+  //   }
+  //   return m;
+  // }, [liveGames]);
+
+  const livePairMap = useMemo(() => {
     const m = new Map<string, LiveGame>();
     for (const g of liveGames) {
-      const byIds = pairIdsKey(g.awayId, g.homeId);
-      if (byIds) m.set(byIds, g);
-      // Fallback (legacy name key) – only used if no IDs on this event
-      else m.set(pairKey(g.awayTeam, g.homeTeam), g);
+      const k = pairIdsKey(g.awayId, g.homeId);
+      if (k) m.set(k, g);
     }
     return m;
   }, [liveGames]);
+
+  const liveIdMap = useMemo(() => {
+    // single-id -> list of events (tournaments can create dupes)
+    const m = new Map<string, LiveGame[]>();
+    for (const g of liveGames) {
+      for (const id of [g.awayId, g.homeId]) {
+        if (!id) continue;
+        const key = String(id);
+        const arr = m.get(key);
+        if (arr) arr.push(g);
+        else m.set(key, [g]);
+      }
+    }
+    return m;
+  }, [liveGames]);
+
+  // Optional: keep legacy name key as a last resort
+  const liveNameMap = useMemo(() => {
+    const m = new Map<string, LiveGame>();
+    for (const g of liveGames) m.set(pairKey(g.awayTeam, g.homeTeam), g);
+    return m;
+  }, [liveGames]);
+
 
 
   const indexUrls = useMemo(() => {
@@ -1066,12 +1098,47 @@ export default function CBBSims() {
       let liveOddsBook: string | null | undefined;
 
 
-      const idKey = pairIdsKey(r.A_espn_id ?? undefined, r.B_espn_id ?? undefined);
-      const lg = (idKey && liveMap.get(idKey)) || liveMap.get(pairKey(r.teamA, r.teamB));
+      // const idKey = pairIdsKey(r.A_espn_id ?? undefined, r.B_espn_id ?? undefined);
+      // const lg = (idKey && liveMap.get(idKey)) || liveMap.get(pairKey(r.teamA, r.teamB));
+
+      const AID = r.A_espn_id ? String(r.A_espn_id) : undefined;
+      const BID = r.B_espn_id ? String(r.B_espn_id) : undefined;
+
+      // 1) exact pair match
+      let lg: LiveGame | undefined;
+      const pairKeyIds = pairIdsKey(AID, BID);
+      if (pairKeyIds) lg = livePairMap.get(pairKeyIds);
+
+      // 2) single-ID match (use closest tip if multiple)
+      if (!lg && (AID || BID)) {
+        const candidates: LiveGame[] = [];
+        if (AID && liveIdMap.get(AID)) candidates.push(...(liveIdMap.get(AID) as LiveGame[]));
+        if (BID && liveIdMap.get(BID)) candidates.push(...(liveIdMap.get(BID) as LiveGame[]));
+
+        if (candidates.length) {
+          const targetTs = Date.parse(r.startUtc ?? r.odds?.start_utc ?? "");
+          if (Number.isFinite(targetTs)) {
+            candidates.sort((a, b) =>
+              Math.abs(Date.parse(((a as any)?.date) ?? "") - targetTs) -
+              Math.abs(Date.parse(((b as any)?.date) ?? "") - targetTs)
+            );
+          }
+          lg = candidates[0];
+        }
+      }
+
+
+      // 3) final fallback to name-key
+      if (!lg) lg = liveNameMap.get(pairKey(r.teamA, r.teamB));
+
+      // DEBUG (while you test one-off cases)
+      if (r.teamA.toLowerCase().includes("army") || r.teamB.toLowerCase().includes("fdu")) {
+        console.log("JOIN", r.teamA, AID, r.teamB, BID, "=>", !!lg, lg?.awayId, lg?.homeId, lg?.awayScore, lg?.homeScore);
+      }
 
 
       // const lg = liveMap.get(pairKey(r.teamA, r.teamB));
-      // console.log("JOIN", r.teamA, r.teamB, "=>", !!lg, lg?.awayScore, lg?.homeScore);
+      console.log("JOIN", r.teamA,r.A_espn_id, r.teamB,r.B_espn_id, "=>", !!lg, lg?.awayScore, lg?.homeScore);
 
       if (lg) {
         liveState = lg.state;
@@ -1209,7 +1276,7 @@ export default function CBBSims() {
         }
       }
     });
-  }, [rows, sortKey, liveMap]);
+  }, [rows, sortKey, livePairMap, liveIdMap, liveNameMap]);
 
   // compute daily records + profit
   function computeRecord(kind: "spread" | "total" | "ml") {
