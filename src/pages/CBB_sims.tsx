@@ -595,6 +595,79 @@ function toEpoch(iso?: string | null) {
   return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
 }
 
+// --- ESPN helpers (event id + summary fetch) ---
+type LiveEventItem = {
+  id?: string | number;
+  status?: { type?: { state?: string } } | any;
+  shortName?: string;
+  competitions?: any[];
+  competitors?: Array<{ team?: { displayName?: string; abbreviation?: string } }>;
+  // our server often returns extra fields (canon slugs etc) — we don't rely on them here
+};
+
+function yyyymmddFromUTC(iso?: string | null): string | undefined {
+  if (!iso) return;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return;
+  const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
+}
+
+function normName(x?: string) {
+  return (x ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Try to read an espn event id from our summary.json payload if present */
+async function tryEventIdFromSummary(url?: string): Promise<string | undefined> {
+  if (!url) return;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return;
+    const J = await res.json();
+    const cand = J?.espn_event_id ?? J?.espnId ?? J?.eventId ?? J?.espn_event ?? J?.event_id;
+    if (cand != null) return String(cand);
+  } catch {}
+  return;
+}
+
+/**
+ * Fallback: query our own live endpoint for the date and match by team names.
+ * This works for both in-progress and final games on the day.
+ */
+async function tryEventIdFromLiveMap(teamA: string, teamB: string, startUtc?: string | null): Promise<{id?: string, state?: string}> {
+  const dateStr = yyyymmddFromUTC(startUtc);
+  if (!dateStr) return {};
+  try {
+    const url = `/api/live?sport=cbb&date=${dateStr}`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return {};
+    const live = await res.json();
+    const items: LiveEventItem[] =
+      (Array.isArray(live) ? live : (live?.events ?? live?.games ?? live?.items ?? [])) as any[];
+
+    const A = normName(teamA), B = normName(teamB);
+    for (const it of items) {
+      // build candidate set of names
+      const names: string[] = [];
+      const comp = (it?.competitions?.[0]?.competitors ?? it?.competitors ?? []) as any[];
+      for (const c of comp) {
+        const dn = c?.team?.displayName ?? c?.team?.name ?? c?.displayName ?? c?.name;
+        const ab = c?.team?.abbreviation ?? c?.abbreviation;
+        if (dn) names.push(normName(dn));
+        if (ab) names.push(normName(ab));
+      }
+      const joined = names.join(" | ");
+      if (joined && joined.includes(A) && joined.includes(B)) {
+        const id = it?.id != null ? String(it.id) :
+                   it?.competitions?.[0]?.id != null ? String(it.competitions[0].id) : undefined;
+        const state = it?.status?.type?.state ?? it?.status?.state ?? undefined;
+        return { id, state };
+      }
+    }
+  } catch {}
+  return {};
+}
+
 type HistBin = { bin: string; start: number; end: number; count: number };
 function computeHistogram(values: number[], bins?: number): HistBin[] {
   if (!values?.length) return [];
@@ -1385,7 +1458,7 @@ export default function CBBSims() {
         }}
       >
         {cards.map((c) => (
-          <GameCard key={c.gameId ?? `${c.teamA}__${c.teamB}`} card={c} logoMode={logoMode} />
+          <GameCard key={c.gameId ?? `${c.teamA}__${c.teamB}`} card={c} logoMode={logoMode} livePayload={livePayload}/>
         ))}
       </div>
     </div>
@@ -1396,11 +1469,29 @@ export default function CBBSims() {
  *  Card + WHY + Distributions
  * ========================= */
 
-function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" }) {
+function GameCard({
+  card,
+  logoMode,
+  livePayload,             // ⬅️ add
+}: {
+  card: Card;
+  logoMode: "primary" | "alt";
+  livePayload: any;        // ⬅️ add
+}) {
   const [showWhy, setShowWhy] = useState(false);
   const [showDist, setShowDist] = useState(false);
   const [loadingDist, setLoadingDist] = useState(false);
   const [errDist, setErrDist] = useState<string | null>(null);
+
+  const [showLive, setShowLive] = useState(false);
+
+  // consider a game "eligible" if we already have finals OR (fallback quick check via date vs now)
+  const nowMs = Date.now();
+  const tipMs = toEpoch(card.startUtc);
+  const afterTip = Number.isFinite(tipMs) ? nowMs >= tipMs : false;
+  const isFinal = Number.isFinite(card.finalA as number) && Number.isFinite(card.finalB as number);
+  const liveEligible = card.liveState === "in" || card.liveState === "final";
+
 
   const hasFinalA = Number.isFinite(card.finalA as number);
   const hasFinalB = Number.isFinite(card.finalB as number);
@@ -2128,6 +2219,28 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
           {showWhy ? "Hide WHY" : "Show WHY"}
         </button>
 
+        {liveEligible && (
+          <button
+            onClick={() => setShowLive(true)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid #0b63f6", // same blue as live outline
+              background: "#0b63f6",
+              color: "white",
+              fontWeight: 800,
+              display: "flex",
+              flexDirection: "column",
+              lineHeight: 1.05,
+            }}
+            title="ESPN live team shooting percentages"
+          >
+            <span>GAME</span>
+            <span>STATS</span>
+          </button>
+        )}
+
+
         <button
           onClick={() => setShowDist((s) => !s)}
           style={{
@@ -2159,6 +2272,15 @@ function GameCard({ card, logoMode }: { card: Card; logoMode: "primary" | "alt" 
           ))}
         </div>
       )}
+
+      {showLive && (
+        <LiveStatsModal
+          card={card}
+          livePayload={livePayload}   // ⬅️ pass in
+          onClose={() => setShowLive(false)}
+        />
+      )}
+
 
       {showDist && (
         <Distributions
@@ -2572,6 +2694,230 @@ function Distributions(props: {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function LiveStatsModal(props: {
+  card: Card;
+  livePayload: any;
+  onClose: () => void;
+}) {
+  const { card, livePayload, onClose } = props;
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [meta, setMeta] = useState<{
+    Aname: string; Bname: string;
+    Alogo?: string; Blogo?: string;
+  } | null>(null);
+
+  const [rows, setRows] = useState<
+    {
+      label: string;
+      A_pct: number; B_pct: number;
+      A_m: number;  A_a: number;
+      B_m: number;  B_a: number;
+      Acolor?: string; Bcolor?: string;
+    }[]
+  >([]);
+
+  // helpers
+  const norm = (s?: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const bestName = (o: any) =>
+    o?.team?.displayName ??
+    o?.team?.shortDisplayName ??
+    o?.team?.name ??
+    o?.displayName ??
+    o?.abbreviation ??
+    "";
+  const firstLogo = (t: any) =>
+    t?.logo ?? t?.logos?.[0]?.href ?? t?.logos?.[0]?.url ?? undefined;
+
+  const toPct = (stats: any[], want: string, abbr: string) => {
+    const s = (stats ?? []).find(
+      (x: any) =>
+        (x?.name ?? "").toLowerCase() === want.toLowerCase() ||
+        (x?.abbreviation ?? "").toLowerCase() === abbr.toLowerCase()
+    );
+    const raw = (s?.displayValue ?? s?.value ?? "").toString();
+    const num = Number(raw.replace(/[^\d.]/g, ""));
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const toInt = (stats: any[], want: string, abbr: string) => {
+    const s = (stats ?? []).find(
+      (x: any) =>
+        (x?.name ?? "").toLowerCase() === want.toLowerCase() ||
+        (x?.abbreviation ?? "").toLowerCase() === abbr.toLowerCase()
+    );
+    const raw = (s?.displayValue ?? s?.value ?? "0").toString();
+    const num = Math.round(Number(raw.replace(/[^\d.-]/g, "")));
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  useEffect(() => {
+    setErr(null);
+    setLoading(true);
+    try {
+      const events = livePayload?.events ?? livePayload?.items ?? [];
+      if (!Array.isArray(events) || !events.length) throw new Error("No live events loaded.");
+
+      const AID = card.A_espn_id ? String(card.A_espn_id) : undefined;
+      const BID = card.B_espn_id ? String(card.B_espn_id) : undefined;
+
+      let ev: any | undefined;
+
+      if (AID || BID) {
+        ev = events.find((e: any) => {
+          const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+          const ids = comp.map((c: any) => String(c?.team?.id ?? ""));
+          const hasA = AID ? ids.includes(AID) : true;
+          const hasB = BID ? ids.includes(BID) : true;
+          return hasA && hasB;
+        });
+      }
+      if (!ev) {
+        const Aname = norm(card.teamA);
+        const Bname = norm(card.teamB);
+        ev = events.find((e: any) => {
+          const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+          const names = comp.flatMap((c: any) => [norm(bestName(c)), norm(c?.team?.abbreviation)]);
+          const joined = names.join("|");
+          return joined.includes(Aname) && joined.includes(Bname);
+        });
+      }
+      if (!ev) throw new Error("Could not locate this game in live payload.");
+
+      const comp = ev?.competitions?.[0]?.competitors ?? ev?.competitors ?? [];
+      if (!Array.isArray(comp) || comp.length < 2) throw new Error("Missing competitor stats.");
+
+      // Align to (teamA, teamB)
+      let iA = 0, iB = 1;
+      const name0 = norm(bestName(comp[0]));
+      const name1 = norm(bestName(comp[1]));
+      const Aname0 = norm(card.teamA);
+      const Bname0 = norm(card.teamB);
+      if (name0.includes(Bname0) || name1.includes(Aname0)) { iA = 1; iB = 0; }
+
+      const cA = comp[iA], cB = comp[iB];
+
+      const Acolor = cA?.team?.color ? `#${cA.team.color}` : undefined;
+      const Bcolor = cB?.team?.color ? `#${cB.team.color}` : undefined;
+
+      const Astats = cA?.statistics ?? [];
+      const Bstats = cB?.statistics ?? [];
+
+      // FG
+      const A_fg_pct = toPct(Astats, "fieldGoalPct", "FG%");
+      const B_fg_pct = toPct(Bstats, "fieldGoalPct", "FG%");
+      const A_fgm = toInt(Astats, "fieldGoalsMade", "FGM");
+      const A_fga = toInt(Astats, "fieldGoalsAttempted", "FGA");
+      const B_fgm = toInt(Bstats, "fieldGoalsMade", "FGM");
+      const B_fga = toInt(Bstats, "fieldGoalsAttempted", "FGA");
+
+      // 3P
+      const A_3p_pct = toPct(Astats, "threePointFieldGoalPct", "3P%");
+      const B_3p_pct = toPct(Bstats, "threePointFieldGoalPct", "3P%");
+      const A_3pm = toInt(Astats, "threePointFieldGoalsMade", "3PM");
+      const A_3pa = toInt(Astats, "threePointFieldGoalsAttempted", "3PA");
+      const B_3pm = toInt(Bstats, "threePointFieldGoalsMade", "3PM");
+      const B_3pa = toInt(Bstats, "threePointFieldGoalsAttempted", "3PA");
+
+      // FT
+      const A_ft_pct = toPct(Astats, "freeThrowPct", "FT%");
+      const B_ft_pct = toPct(Bstats, "freeThrowPct", "FT%");
+      const A_ftm = toInt(Astats, "freeThrowsMade", "FTM");
+      const A_fta = toInt(Astats, "freeThrowsAttempted", "FTA");
+      const B_ftm = toInt(Bstats, "freeThrowsMade", "FTM");
+      const B_fta = toInt(Bstats, "freeThrowsAttempted", "FTA");
+
+      setMeta({
+        Aname: card.teamA,
+        Bname: card.teamB,
+        Alogo: firstLogo(cA?.team),
+        Blogo: firstLogo(cB?.team),
+      });
+
+      setRows([
+        { label: "Field Goal %",  A_pct: A_fg_pct, B_pct: B_fg_pct, A_m: A_fgm, A_a: A_fga, B_m: B_fgm, B_a: B_fga, Acolor, Bcolor },
+        { label: "Three Point %", A_pct: A_3p_pct, B_pct: B_3p_pct, A_m: A_3pm, A_a: A_3pa, B_m: B_3pm, B_a: B_3pa, Acolor, Bcolor },
+        { label: "Free Throw %",  A_pct: A_ft_pct, B_pct: B_ft_pct, A_m: A_ftm, A_a: A_fta, B_m: B_ftm, B_a: B_fta, Acolor, Bcolor },
+      ]);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [card, livePayload]);
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="card"
+        style={{ width: 560, maxWidth: "94vw", background: "white", borderRadius: 12, padding: 16 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>Live Team Shooting</div>
+          <button onClick={onClose} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "4px 8px" }}>Close</button>
+        </div>
+
+        {/* Team headers with logo + name */}
+        {meta && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {meta.Alogo && <img src={meta.Alogo} alt={meta.Aname} style={{ width: 22, height: 22, objectFit: "contain" }} />}
+              <div style={{ fontWeight: 700 }}>{meta.Aname}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+              <div style={{ fontWeight: 700, textAlign: "right" }}>{meta.Bname}</div>
+              {meta.Blogo && <img src={meta.Blogo} alt={meta.Bname} style={{ width: 22, height: 22, objectFit: "contain" }} />}
+            </div>
+          </div>
+        )}
+
+        {loading && <div style={{ padding: 12, color: "var(--muted)" }}>Loading live stats…</div>}
+        {err && <div style={{ padding: 12, color: "crimson" }}>{err}</div>}
+
+        {!loading && !err && (
+          <div style={{ display: "grid", gap: 16 }}>
+            {rows.map((r) => (
+              <div key={r.label}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>{r.label}</div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  {/* Team A bar */}
+                  <div>
+                    <div style={{ height: 18, background: "#f1f5f9", borderRadius: 9999, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, r.A_pct)}%`, height: "100%", background: r.Acolor ?? "var(--brand)" }} />
+                    </div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>
+                      {r.A_pct.toFixed(1)}% &nbsp;–&nbsp; {r.A_m}/{r.A_a}
+                    </div>
+                  </div>
+
+                  {/* Team B bar */}
+                  <div>
+                    <div style={{ height: 18, background: "#f1f5f9", borderRadius: 9999, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, r.B_pct)}%`, height: "100%", background: r.Bcolor ?? "var(--accent)" }} />
+                    </div>
+                    <div style={{ fontSize: 12, marginTop: 4, textAlign: "right" }}>
+                      {r.B_pct.toFixed(1)}% &nbsp;–&nbsp; {r.B_m}/{r.B_a}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
