@@ -1493,6 +1493,81 @@ function GameCard({
   const liveEligible = card.liveState === "in" || card.liveState === "final";
 
 
+  // helper: find last play text + logo for this card from livePayload
+  function getLastPlayInfo(
+    card: Card,
+    livePayload: any
+  ): { text?: string; logo?: string } {
+    const events = livePayload?.events ?? livePayload?.items ?? [];
+    if (!Array.isArray(events) || !events.length) return {};
+
+    const AID = card.A_espn_id ? String(card.A_espn_id) : undefined;
+    const BID = card.B_espn_id ? String(card.B_espn_id) : undefined;
+
+    const norm = (s?: string) =>
+      (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const bestName = (o: any) =>
+      o?.team?.displayName ??
+      o?.team?.shortDisplayName ??
+      o?.team?.name ??
+      o?.displayName ??
+      o?.abbreviation ??
+      "";
+    const firstLogo = (t: any) =>
+      t?.logo ?? t?.logos?.[0]?.href ?? t?.logos?.[0]?.url ?? undefined;
+
+    // locate event (IDs first, then names)
+    let ev: any =
+      events.find((e: any) => {
+        const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+        const ids = comp.map((c: any) => String(c?.team?.id ?? ""));
+        const hasA = AID ? ids.includes(AID) : true;
+        const hasB = BID ? ids.includes(BID) : true;
+        return hasA && hasB;
+      }) ??
+      events.find((e: any) => {
+        const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+        const names = comp.flatMap((c: any) => [
+          norm(bestName(c)),
+          norm(c?.team?.abbreviation),
+        ]);
+        const A = norm(card.teamA),
+          B = norm(card.teamB);
+        const joined = names.join("|");
+        return joined.includes(A) && joined.includes(B);
+      });
+
+    if (!ev) return {};
+
+    // only show during live play
+    const state =
+      ev?.competitions?.[0]?.status?.type?.state ?? ev?.status?.type?.state;
+    if (state !== "in") return {};
+
+    const last =
+      ev?.competitions?.[0]?.situation?.lastPlay ?? ev?.situation?.lastPlay;
+    const text: string | undefined =
+      last?.text ?? last?.description ?? last?.detail;
+    if (!text || !text.trim()) return {};
+
+    // build id -> logo map from competitors
+    const comp = ev?.competitions?.[0]?.competitors ?? ev?.competitors ?? [];
+    const idToLogo: Record<string, string> = {};
+    for (const c of comp) {
+      const id = String(c?.team?.id ?? "");
+      const logo = firstLogo(c?.team);
+      if (id && logo) idToLogo[id] = logo;
+    }
+
+    const tid = last?.team?.id ? String(last.team.id) : "";
+    const logo = tid && idToLogo[tid] ? idToLogo[tid] : undefined;
+
+    return { text: text.trim(), logo };
+  }
+
+
+  const lastPlay = getLastPlayInfo(card, livePayload);
+
   const hasFinalA = Number.isFinite(card.finalA as number);
   const hasFinalB = Number.isFinite(card.finalB as number);
   const pillBg = "color-mix(in oklab, var(--brand) 12%, white)";
@@ -2130,6 +2205,33 @@ function GameCard({
           {typeof displayScoreB === "number" ? displayScoreB : "—"}
         </div>
       </div>
+
+      {lastPlay?.text && (
+        <div
+          style={{
+            margin: "6px 0 10px",
+            padding: "6px 10px",
+            background: "#f5f7fb",
+            border: "1px solid #e6ebf5",
+            borderRadius: 8,
+            fontSize: 13,
+            lineHeight: 1.3,
+            color: "#24324a",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          {lastPlay.logo && (
+            <img
+              src={lastPlay.logo}
+              alt=""
+              style={{ width: 16, height: 16, objectFit: "contain" }}
+            />
+          )}
+          <span>{lastPlay.text}</span>
+        </div>
+      )}
 
       {/* betting pills (spread / total / ML) – PACE pill has been moved to header */}
       {(card.pickSpread || card.pickTotal || card.pickML) && (
