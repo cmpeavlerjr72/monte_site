@@ -378,6 +378,116 @@ type Card = GameRow & {
 
 /* ---------------- helpers ---------------- */
 
+function getVenueBroadcast(card: Card, livePayload: any): {
+  broadcast?: string;
+  venue?: string;
+} {
+  const out: { broadcast?: string; venue?: string } = {};
+  const events = livePayload?.events ?? livePayload?.items ?? [];
+  if (!Array.isArray(events) || !events.length) return out;
+
+  const AID = card.A_espn_id ? String(card.A_espn_id) : undefined;
+  const BID = card.B_espn_id ? String(card.B_espn_id) : undefined;
+  const norm = (s?: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const bestName = (o: any) =>
+    o?.team?.displayName ?? o?.team?.shortDisplayName ?? o?.team?.name ?? o?.displayName ?? o?.abbreviation ?? "";
+
+  let ev: any =
+    events.find((e: any) => {
+      const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+      const ids = comp.map((c: any) => String(c?.team?.id ?? ""));
+      const hasA = AID ? ids.includes(AID) : true;
+      const hasB = BID ? ids.includes(BID) : true;
+      return hasA && hasB;
+    }) ??
+    events.find((e: any) => {
+      const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+      const names = comp.flatMap((c: any) => [norm(bestName(c)), norm(c?.team?.abbreviation)]);
+      const A = norm(card.teamA), B = norm(card.teamB);
+      const joined = names.join("|");
+      return joined.includes(A) && joined.includes(B);
+    });
+
+  if (!ev) return out;
+
+  const comp0 = ev?.competitions?.[0] ?? ev;
+
+  const bc =
+    comp0?.broadcasts?.[0]?.names?.[0] ??
+    comp0?.geoBroadcasts?.[0]?.media?.shortName ??
+    ev?.broadcast;
+  if (typeof bc === "string" && bc.trim()) out.broadcast = bc.trim();
+
+  const venueName = comp0?.venue?.fullName;
+  const neutral = comp0?.neutralSite ? " (Neutral)" : "";
+  if (typeof venueName === "string" && venueName.trim()) out.venue = venueName.trim();
+
+  return out;
+}
+
+// Get per-team rank + record for this card from livePayload
+function getLiveRankRecord(card: Card, livePayload: any): {
+  A: { rank?: number; record?: string };
+  B: { rank?: number; record?: string };
+} {
+  const result = { A: {} as any, B: {} as any };
+  const events = livePayload?.events ?? livePayload?.items ?? [];
+  if (!Array.isArray(events) || !events.length) return result;
+
+  const AID = card.A_espn_id ? String(card.A_espn_id) : undefined;
+  const BID = card.B_espn_id ? String(card.B_espn_id) : undefined;
+
+  const norm = (s?: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const bestName = (o: any) =>
+    o?.team?.displayName ?? o?.team?.shortDisplayName ?? o?.team?.name ?? o?.displayName ?? o?.abbreviation ?? "";
+
+  // locate event (IDs first, then names)
+  let ev: any =
+    events.find((e: any) => {
+      const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+      const ids = comp.map((c: any) => String(c?.team?.id ?? ""));
+      const hasA = AID ? ids.includes(AID) : true;
+      const hasB = BID ? ids.includes(BID) : true;
+      return hasA && hasB;
+    }) ??
+    events.find((e: any) => {
+      const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+      const names = comp.flatMap((c: any) => [norm(bestName(c)), norm(c?.team?.abbreviation)]);
+      const A = norm(card.teamA), B = norm(card.teamB);
+      const joined = names.join("|");
+      return joined.includes(A) && joined.includes(B);
+    });
+
+  const comp = ev?.competitions?.[0]?.competitors ?? ev?.competitors ?? [];
+  if (!Array.isArray(comp) || comp.length < 2) return result;
+
+  // Align to (teamA, teamB)
+  let iA = 0, iB = 1;
+  const name0 = norm(bestName(comp[0]));
+  const name1 = norm(bestName(comp[1]));
+  if (name0.includes(norm(card.teamB)) || name1.includes(norm(card.teamA))) { iA = 1; iB = 0; }
+
+  function pickRecord(recs: any[] = []) {
+    const hit =
+      recs.find(r => (r?.name ?? "").toLowerCase() === "overall" || (r?.type ?? "").toLowerCase() === "total") ??
+      recs[0];
+    return hit?.summary as string | undefined;
+  }
+
+  const cA = comp[iA], cB = comp[iB];
+
+  const rA = Number(cA?.curatedRank?.current);
+  const rB = Number(cB?.curatedRank?.current);
+
+  result.A.rank = Number.isFinite(rA) && rA > 0 && rA < 99 ? rA : undefined;
+  result.B.rank = Number.isFinite(rB) && rB > 0 && rB < 99 ? rB : undefined;
+
+  result.A.record = pickRecord(cA?.records);
+  result.B.record = pickRecord(cB?.records);
+
+  return result;
+}
+
 // --- Drop-in live spread estimator (A − B final margin) ---
 type LiveSpreadInput = {
   scoreA: number;           // current
@@ -1493,80 +1603,116 @@ function GameCard({
   const liveEligible = card.liveState === "in" || card.liveState === "final";
 
 
-  // helper: find last play text + logo for this card from livePayload
-  function getLastPlayInfo(
-    card: Card,
-    livePayload: any
-  ): { text?: string; logo?: string } {
-    const events = livePayload?.events ?? livePayload?.items ?? [];
-    if (!Array.isArray(events) || !events.length) return {};
+// helper: find last play text + team logo + live win % (or fallback to pregame)
+function getLastPlayInfo(
+  card: Card,
+  livePayload: any
+): { text?: string; logo?: string; winPct?: number; winLogo?: string } {
+  const events = livePayload?.events ?? livePayload?.items ?? [];
+  if (!Array.isArray(events) || !events.length) return {};
 
-    const AID = card.A_espn_id ? String(card.A_espn_id) : undefined;
-    const BID = card.B_espn_id ? String(card.B_espn_id) : undefined;
+  const AID = card.A_espn_id ? String(card.A_espn_id) : undefined;
+  const BID = card.B_espn_id ? String(card.B_espn_id) : undefined;
 
-    const norm = (s?: string) =>
-      (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const bestName = (o: any) =>
-      o?.team?.displayName ??
-      o?.team?.shortDisplayName ??
-      o?.team?.name ??
-      o?.displayName ??
-      o?.abbreviation ??
-      "";
-    const firstLogo = (t: any) =>
-      t?.logo ?? t?.logos?.[0]?.href ?? t?.logos?.[0]?.url ?? undefined;
+  const norm = (s?: string) =>
+    (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const bestName = (o: any) =>
+    o?.team?.displayName ??
+    o?.team?.shortDisplayName ??
+    o?.team?.name ??
+    o?.displayName ??
+    o?.abbreviation ??
+    "";
+  const firstLogo = (t: any) =>
+    t?.logo ?? t?.logos?.[0]?.href ?? t?.logos?.[0]?.url ?? undefined;
 
-    // locate event (IDs first, then names)
-    let ev: any =
-      events.find((e: any) => {
-        const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
-        const ids = comp.map((c: any) => String(c?.team?.id ?? ""));
-        const hasA = AID ? ids.includes(AID) : true;
-        const hasB = BID ? ids.includes(BID) : true;
-        return hasA && hasB;
-      }) ??
-      events.find((e: any) => {
-        const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
-        const names = comp.flatMap((c: any) => [
-          norm(bestName(c)),
-          norm(c?.team?.abbreviation),
-        ]);
-        const A = norm(card.teamA),
-          B = norm(card.teamB);
-        const joined = names.join("|");
-        return joined.includes(A) && joined.includes(B);
-      });
+  // locate event (IDs first, then names)
+  let ev: any =
+    events.find((e: any) => {
+      const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+      const ids = comp.map((c: any) => String(c?.team?.id ?? ""));
+      const hasA = AID ? ids.includes(AID) : true;
+      const hasB = BID ? ids.includes(BID) : true;
+      return hasA && hasB;
+    }) ??
+    events.find((e: any) => {
+      const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
+      const names = comp.flatMap((c: any) => [
+        norm(bestName(c)),
+        norm(c?.team?.abbreviation),
+      ]);
+      const A = norm(card.teamA), B = norm(card.teamB);
+      const joined = names.join("|");
+      return joined.includes(A) && joined.includes(B);
+    });
 
-    if (!ev) return {};
+  if (!ev) return {};
 
-    // only show during live play
-    const state =
-      ev?.competitions?.[0]?.status?.type?.state ?? ev?.status?.type?.state;
-    if (state !== "in") return {};
+  // only show during live play
+  const state = ev?.competitions?.[0]?.status?.type?.state ?? ev?.status?.type?.state;
+  if (state !== "in") return {};
 
-    const last =
-      ev?.competitions?.[0]?.situation?.lastPlay ?? ev?.situation?.lastPlay;
-    const text: string | undefined =
-      last?.text ?? last?.description ?? last?.detail;
-    if (!text || !text.trim()) return {};
+  const last = ev?.competitions?.[0]?.situation?.lastPlay ?? ev?.situation?.lastPlay;
+  const text: string | undefined = last?.text ?? last?.description ?? last?.detail;
+  if (!text || !text.trim()) return {};
 
-    // build id -> logo map from competitors
-    const comp = ev?.competitions?.[0]?.competitors ?? ev?.competitors ?? [];
-    const idToLogo: Record<string, string> = {};
-    for (const c of comp) {
-      const id = String(c?.team?.id ?? "");
-      const logo = firstLogo(c?.team);
-      if (id && logo) idToLogo[id] = logo;
+  // competitor + logo lookup
+  const comp = ev?.competitions?.[0]?.competitors ?? ev?.competitors ?? [];
+  const byRole: Record<"home" | "away", { id?: string; logo?: string }> = {
+    home: {
+      id: String(comp.find((c: any) => c?.homeAway === "home")?.team?.id ?? ""),
+      logo: firstLogo(comp.find((c: any) => c?.homeAway === "home")?.team),
+    },
+    away: {
+      id: String(comp.find((c: any) => c?.homeAway === "away")?.team?.id ?? ""),
+      logo: firstLogo(comp.find((c: any) => c?.homeAway === "away")?.team),
+    },
+  };
+
+  // logo for the team that made the play (optional)
+  const tid = last?.team?.id ? String(last.team.id) : "";
+  const idToLogo: Record<string, string | undefined> = {
+    [byRole.home.id || ""]: byRole.home.logo,
+    [byRole.away.id || ""]: byRole.away.logo,
+  };
+  const logo = tid && idToLogo[tid] ? idToLogo[tid] : undefined;
+
+  // live win% if provided
+  const hp = Number(last?.probability?.homeWinPercentage);
+  const ap = Number(last?.probability?.awayWinPercentage);
+  let winPct: number | undefined;
+  let winLogo: string | undefined;
+
+  if (Number.isFinite(hp) || Number.isFinite(ap)) {
+    const h = Number.isFinite(hp) ? hp : 0;
+    const a = Number.isFinite(ap) ? ap : 0;
+    if (h >= a) {
+      winPct = h * 100;
+      winLogo = byRole.home.logo;
+    } else {
+      winPct = a * 100;
+      winLogo = byRole.away.logo;
     }
-
-    const tid = last?.team?.id ? String(last.team.id) : "";
-    const logo = tid && idToLogo[tid] ? idToLogo[tid] : undefined;
-
-    return { text: text.trim(), logo };
+  } else if (Number.isFinite(card.mlProb as number)) {
+    // fallback to pregame ML pick/prob
+    winPct = (card.mlProb as number) * 100;
+    // map A/B to logos shown on the card
+    const aLogo =
+      (card as any).aLogoPrimary || (card as any).aLogoAlt || undefined;
+    const bLogo =
+      (card as any).bLogoPrimary || (card as any).bLogoAlt || undefined;
+    winLogo = card.mlTeam === "A" ? aLogo : bLogo;
   }
+
+  return { text: text.trim(), logo, winPct, winLogo };
+}
+
 
 
   const lastPlay = getLastPlayInfo(card, livePayload);
+  const rr = getLiveRankRecord(card, livePayload);
+  const vb = getVenueBroadcast(card, livePayload);
+
 
   const hasFinalA = Number.isFinite(card.finalA as number);
   const hasFinalB = Number.isFinite(card.finalB as number);
@@ -1970,6 +2116,7 @@ function GameCard({
         boxShadow: liveInProgress
           ? "0 0 0 1px rgba(239,68,68,0.2)"
           : "none",
+        overflow: "hidden"
       }}
     >
       {/* header: tip time + live status + Pace pill */}
@@ -1982,6 +2129,7 @@ function GameCard({
           alignItems: "center",
           gap: 8,
           flexWrap: "wrap",
+          minWidth: 0
         }}
       >
         <span>{card.tipEtLabel ?? "TBD"}</span>
@@ -2116,16 +2264,29 @@ function GameCard({
               (e.currentTarget as HTMLImageElement).style.display = "none";
             }}
           />
-          <div
-            style={{
-              fontWeight: 800,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {card.teamA}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+            {rr.A.rank && (
+              <sup
+                style={{
+                  fontSize: 10,         // smaller
+                  fontWeight: 700,
+                  color: "#5b677a",     // same muted color as record
+                  verticalAlign: "super",
+                  lineHeight: 1,
+                  marginRight: 2,
+                }}
+              >
+                {rr.A.rank}
+              </sup>
+            )}
+            <span style={{ fontWeight: 700 }}>{card.teamA}</span>
+            {rr.A.record && (
+              <span style={{ fontSize: 12, color: "#5b677a" }}>
+                &nbsp;{rr.A.record}
+              </span>
+            )}
           </div>
+
         </div>
         <div
           style={{
@@ -2173,16 +2334,29 @@ function GameCard({
               (e.currentTarget as HTMLImageElement).style.display = "none";
             }}
           />
-          <div
-            style={{
-              fontWeight: 800,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {card.teamB}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {rr.B.rank && (
+              <sup
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#5b677a",
+                  verticalAlign: "super",
+                  lineHeight: 1,
+                  marginRight: 2,
+                }}
+              >
+                {rr.B.rank}
+              </sup>
+            )}
+            <span style={{ fontWeight: 700 }}>{card.teamB}</span>
+            {rr.B.record && (
+              <span style={{ fontSize: 12, color: "#5b677a" }}>
+                &nbsp;{rr.B.record}
+              </span>
+            )}
           </div>
+
         </div>
         <div
           style={{
@@ -2206,6 +2380,20 @@ function GameCard({
         </div>
       </div>
 
+      
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {(vb.broadcast || vb.venue) && (
+            <div style={{ marginLeft: "auto", textAlign: "right", lineHeight: 1 }}>
+              {vb.broadcast && (
+                <div style={{ fontSize: 12, color: "#5b677a" }}>{vb.broadcast}</div>
+              )}
+              {vb.venue && (
+                <div style={{ fontSize: 12, color: "#5b677a" }}>{vb.venue}</div>
+              )}
+            </div>
+          )}
+        </div>
+
       {lastPlay?.text && (
         <div
           style={{
@@ -2220,18 +2408,53 @@ function GameCard({
             display: "flex",
             alignItems: "center",
             gap: 8,
+            justifyContent: "space-between",
+            minWidth: 0
           }}
         >
-          {lastPlay.logo && (
-            <img
-              src={lastPlay.logo}
-              alt=""
-              style={{ width: 16, height: 16, objectFit: "contain" }}
-            />
+          {/* left: team logo that made the play + text */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            {lastPlay.logo && (
+              <img
+                src={lastPlay.logo}
+                alt=""
+                style={{ width: 16, height: 16, objectFit: "contain", flex: "0 0 auto" }}
+              />
+            )}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {lastPlay.text}
+            </span>
+          </div>
+
+          {/* right: current win % + tiny logo of the side favored right now */}
+          {(Number.isFinite(lastPlay.winPct as number) || lastPlay.winLogo) && (
+            <div
+              title="Live win probability"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+                color: "#0b1f4a",
+                whiteSpace: "nowrap",
+                flex: "0 0 auto",
+              }}
+            >
+              {lastPlay.winLogo && (
+                <img
+                  src={lastPlay.winLogo}
+                  alt=""
+                  style={{ width: 14, height: 14, objectFit: "contain" }}
+                />
+              )}
+              {Number.isFinite(lastPlay.winPct as number) && (
+                <strong>{(lastPlay.winPct as number).toFixed(1)}%</strong>
+              )}
+            </div>
           )}
-          <span>{lastPlay.text}</span>
         </div>
       )}
+
 
       {/* betting pills (spread / total / ML) – PACE pill has been moved to header */}
       {(card.pickSpread || card.pickTotal || card.pickML) && (
@@ -2342,7 +2565,6 @@ function GameCard({
           </button>
         )}
 
-
         <button
           onClick={() => setShowDist((s) => !s)}
           style={{
@@ -2355,6 +2577,9 @@ function GameCard({
         >
           {showDist ? "Hide Distributions" : "Show Distributions"}
         </button>
+
+
+
       </div>
 
       {showWhy && (
@@ -2805,6 +3030,19 @@ function LiveStatsModal(props: {
   livePayload: any;
   onClose: () => void;
 }) {
+
+  const [teamStats, setTeamStats] = useState<{
+  A: { reb?: number; ast?: number; to?: number; stl?: number; blk?: number };
+  B: { reb?: number; ast?: number; to?: number; stl?: number; blk?: number };
+  }>({ A: {}, B: {} });
+
+
+  const [leaders, setLeaders] = useState<{
+  A: { pts?: {v:number; n:string}, reb?: {v:number; n:string}, ast?: {v:number; n:string} };
+  B: { pts?: {v:number; n:string}, reb?: {v:number; n:string}, ast?: {v:number; n:string} };
+  }>({ A: {}, B: {} });
+
+
   const { card, livePayload, onClose } = props;
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -2904,11 +3142,62 @@ function LiveStatsModal(props: {
 
       const cA = comp[iA], cB = comp[iB];
 
+      // ---- Leaders (Pts/Reb/Ast) from competitors[*].leaders ----
+      function pickLeader(team: any, key: string) {
+        const L = team?.leaders ?? [];
+        const bucket = L.find((x: any) => (x?.name ?? "").toLowerCase() === key);
+        const top = bucket?.leaders?.[0];
+        if (!top) return undefined;
+        const v = Number(top.value ?? (top.displayValue ?? "").toString().replace(/[^\d.-]/g, ""));
+        const n = top?.athlete?.shortName ?? top?.athlete?.displayName ?? "";
+        return Number.isFinite(v) ? { v, n } : undefined;
+      }
+
+      const A_pts = pickLeader(cA, "points");
+      const Ap_reb = pickLeader(cA, "rebounds");
+      const Ap_ast = pickLeader(cA, "assists");
+
+      const B_pts = pickLeader(cB, "points");
+      const Bp_reb = pickLeader(cB, "rebounds");
+      const Bp_ast = pickLeader(cB, "assists");
+
+      setLeaders({
+        A: { pts: A_pts, reb: Ap_reb, ast: Ap_ast },
+        B: { pts: B_pts, reb: Bp_reb, ast: Bp_ast },
+      });
+
+
       const Acolor = cA?.team?.color ? `#${cA.team.color}` : undefined;
       const Bcolor = cB?.team?.color ? `#${cB.team.color}` : undefined;
 
       const Astats = cA?.statistics ?? [];
       const Bstats = cB?.statistics ?? [];
+
+      // ---- Team totals (Reb/Ast/TO/Stl/Blk) from competitors[*].statistics ----
+      const A_reb = toInt(Astats, "rebounds", "REB");
+      const B_reb = toInt(Bstats, "rebounds", "REB");
+
+      const A_ast = toInt(Astats, "assists", "AST");
+      const B_ast = toInt(Bstats, "assists", "AST");
+
+      // const A_to  = toInt(Astats, "turnovers", "TO");
+      // const B_to  = toInt(Bstats, "turnovers", "TO");
+
+      // const A_stl = toInt(Astats, "steals", "STL");
+      // const B_stl = toInt(Bstats, "steals", "STL");
+
+      // const A_blk = toInt(Astats, "blocks", "BLK");
+      // const B_blk = toInt(Bstats, "blocks", "BLK");
+
+      setTeamStats({
+        A: { reb: A_reb, ast: A_ast },
+        B: { reb: B_reb, ast: B_ast },
+
+      // setTeamStats({
+      //   A: { reb: A_reb, ast: A_ast, to: A_to, stl: A_stl, blk: A_blk },
+      //   B: { reb: B_reb, ast: B_ast, to: B_to, stl: B_stl, blk: B_blk },
+      });
+
 
       // FG
       const A_fg_pct = toPct(Astats, "fieldGoalPct", "FG%");
@@ -2968,7 +3257,9 @@ function LiveStatsModal(props: {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <div style={{ fontWeight: 800, fontSize: 18 }}>Live Team Shooting</div>
-          <button onClick={onClose} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "4px 8px" }}>Close</button>
+          <button onClick={onClose} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "4px 8px" }}>
+            Close
+          </button>
         </div>
 
         {/* Team headers with logo + name */}
@@ -3017,11 +3308,88 @@ function LiveStatsModal(props: {
                 </div>
               </div>
             ))}
+
+            {/* Team Leaders */}
+            <div style={{ marginTop: 4, borderTop: "1px solid #eef2f7", paddingTop: 10 }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>Team Leaders</div>
+
+              {[
+                { key: "pts", label: "Pts" },
+                { key: "reb", label: "Reb" },
+                { key: "ast", label: "Ast" },
+              ].map(({ key, label }) => {
+                const a = (leaders.A as any)?.[key];
+                const b = (leaders.B as any)?.[key];
+                return (
+                  <div
+                    key={key}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto 1fr",
+                      columnGap: 12,
+                      rowGap: 6,
+                      fontSize: 12,
+                      color: "#334155",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ textAlign: "left" }}>
+                      {a && (<span>{a.n} — <strong>{a.v}</strong> </span>)}
+                    </div>
+
+                    <div style={{ textAlign: "center", minWidth: 40, fontWeight: 600 }}>
+                      {label}
+                    </div>
+
+                    <div style={{ textAlign: "right" }}>
+                      {b && (<span><strong>{b.v}</strong> — {b.n}</span>)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Team Stats */}
+            <div style={{ marginTop: 10, borderTop: "1px solid #eef2f7", paddingTop: 10 }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>Team Stats</div>
+
+              {[
+                { k: "reb", label: "Reb" },
+                { k: "ast", label: "Ast" },
+                // { k: "to",  label: "TO"  },
+                // { k: "stl", label: "Stl" },
+                // { k: "blk", label: "Blk" },
+              ].map(({ k, label }) => {
+                const a = (teamStats.A as any)?.[k];
+                const b = (teamStats.B as any)?.[k];
+                return (
+                  <div
+                    key={k}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto 1fr",
+                      columnGap: 12,
+                      rowGap: 6,
+                      fontSize: 12,
+                      color: "#334155",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ textAlign: "left" }}>{Number.isFinite(a) ? <strong>{a}</strong> : null}</div>
+                    <div style={{ textAlign: "center", minWidth: 40, fontWeight: 600 }}>{label}</div>
+                    <div style={{ textAlign: "right" }}>{Number.isFinite(b) ? <strong>{b}</strong> : null}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+
+
           </div>
         )}
       </div>
     </div>
   );
+
 }
 
 /* --- WHY text --- */
