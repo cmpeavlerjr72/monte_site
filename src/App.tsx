@@ -14,6 +14,7 @@ import TrendsCLV from "./pages/Trends_CLV";
 import GameCenter from "./pages/GameCenter";
 import CLVPage from "./pages/CLV";
 import ComboTrend from "./pages/combo_trend";
+import Bracket from "./pages/CFB_Bracket"
 
 // CBB Pages
 
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/cfb/game/*" element={<GameCenter />} />
           <Route path="/cfb/clv/*" element={<CLVPage />} />
           <Route path="/cfb/combo/*" element={<ComboTrend />} />
+          <Route path="/cfb/bracket/*" element={<Bracket />} />
 
           {/* Legacy redirects to preserve old links */}
           <Route path="/scoreboard" element={<Navigate to="/cfb/scoreboard" replace />} />

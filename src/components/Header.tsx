@@ -67,6 +67,7 @@ export default function Header() {
           <NavLink to={`${basePath}/scoreboard`}>Scoreboard</NavLink>
           <NavLink to={`${basePath}/results`}>Results</NavLink>
           <NavLink to={`${basePath}/trends-clv`}>Trends</NavLink>
+          <NavLink to={`${basePath}/bracket`}>Bracket</NavLink>
         </nav>
 
         {/* Mobile hamburger → dropdown (also uses basePath) */}
