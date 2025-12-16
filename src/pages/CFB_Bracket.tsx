@@ -1459,8 +1459,29 @@ export default function Bracket() {
           </div>
         </div>
 
-        <div style={{ marginTop: 10, overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
+        <div
+        style={{
+            marginTop: 10,
+            overflowX: "auto",
+            overflowY: "hidden",
+            WebkitOverflowScrolling: "touch",
+            paddingBottom: 8,
+            marginLeft: -16,  // optional: edge-to-edge on mobile
+            marginRight: -16,
+            paddingLeft: 16,
+            paddingRight: 16,
+        }}
+        >
+        <table
+            style={{
+            width: "max-content",     // key: don’t force-fit into viewport
+            minWidth: "100%",         // still fills on desktop
+            borderCollapse: "separate",
+            borderSpacing: 0,
+            fontSize: 13,
+            }}
+        >
+
             <thead>
               <tr style={{ background: "color-mix(in oklab, var(--brand) 10%, white)" }}>
                 <th style={thStyle}>Team</th>
@@ -1484,20 +1505,35 @@ export default function Bracket() {
         </div>
       </div>
 
-      {/* Bracket grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(240px, 1fr))",
-          gap: 14,
-          alignItems: "start",
-        }}
-      >
-        <RoundColumn title="First Round" items={rounds.firstRound} cardHeightPx={CARD_H} gapPx={GAP} renderMatch={renderMatch} />
-        <RoundColumn title="Quarterfinals" items={rounds.quarterfinals} cardHeightPx={CARD_H} gapPx={GAP} renderMatch={renderMatch} />
-        <RoundColumn title="Semifinals" items={rounds.semifinals} cardHeightPx={CARD_H} gapPx={SEMI_GAP} paddingTopPx={SEMI_PAD_TOP} renderMatch={renderMatch} />
-        <RoundColumn title="Championship" items={rounds.championship} cardHeightPx={CARD_H} gapPx={GAP} paddingTopPx={CHAMP_PAD_TOP} renderMatch={renderMatch} />
-      </div>
+        {/* Bracket grid */}
+        <div
+            style={{
+            overflowX: "auto",
+            overflowY: "visible",
+            WebkitOverflowScrolling: "touch",
+            paddingBottom: 8, // gives space so the horizontal scrollbar doesn't cover content
+            marginLeft: -16,  // optional: lets it bleed edge-to-edge on phones
+            marginRight: -16,
+            paddingLeft: 16,
+            paddingRight: 16,
+            }}
+        >
+            <div
+            style={{
+                display: "inline-grid", // key: size to content so scroll works reliably
+                gridTemplateColumns: "repeat(4, minmax(240px, 1fr))",
+                gap: 14,
+                alignItems: "start",
+                minWidth: "max-content", // ensures it won’t shrink into the viewport
+            }}
+            >
+            <RoundColumn title="First Round" items={rounds.firstRound} cardHeightPx={CARD_H} gapPx={GAP} renderMatch={renderMatch} />
+            <RoundColumn title="Quarterfinals" items={rounds.quarterfinals} cardHeightPx={CARD_H} gapPx={GAP} renderMatch={renderMatch} />
+            <RoundColumn title="Semifinals" items={rounds.semifinals} cardHeightPx={CARD_H} gapPx={SEMI_GAP} paddingTopPx={SEMI_PAD_TOP} renderMatch={renderMatch} />
+            <RoundColumn title="Championship" items={rounds.championship} cardHeightPx={CARD_H} gapPx={GAP} paddingTopPx={CHAMP_PAD_TOP} renderMatch={renderMatch} />
+            </div>
+        </div>
+
 
       <div style={{ fontSize: 12, opacity: 0.65 }}>
         Tip: click a team to advance it. As soon as both teams are known for a matchup, the projected score + buttons become available.
