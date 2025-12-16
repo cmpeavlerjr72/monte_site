@@ -93,6 +93,7 @@ export default function Header() {
             <NavLink to={`${basePath}/scoreboard`} role="menuitem">Scoreboard</NavLink>
             <NavLink to={`${basePath}/results`} role="menuitem">Results</NavLink>
             <NavLink to={`${basePath}/trends-clv`} role="menuitem">Trends</NavLink>
+            <NavLink to={`${basePath}/bracket`}role='menuitem'>Bracket</NavLink>
           </div>
         </div>
       </div>
