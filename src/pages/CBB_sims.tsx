@@ -1560,10 +1560,6 @@ export default function CBBSims() {
             {recML.n ? ` (${fmtPct1(recML.pct)} · ${fmtUnits(recML.profit)})` : ""}
           </span> 
 
-          <SupportButton 
-          venmoHandle="Mitchell-Peavler"
-          label='Donate'
-          triggerVariant="venmo" />
 
         </div>
 

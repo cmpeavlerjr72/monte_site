@@ -1076,11 +1076,6 @@ export default function Scoreboard() {
               {loading ? "Loading…" : `Showing ${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}`}
             </span>
 
-            <SupportButton 
-            venmoHandle="Mitchell-Peavler"
-            label='Donate'
-            triggerVariant="venmo" />
-
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {/* NEW: Conference filter */}

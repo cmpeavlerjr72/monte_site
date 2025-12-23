@@ -3,6 +3,8 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import logoLight from "../assets/mvpeav-logo-light.png";
 
+import SupportButton from "../components/SupportButton";
+
 export default function Header() {
   const { pathname } = useLocation();
   const inCFB = pathname.startsWith("/cfb");
@@ -59,6 +61,12 @@ export default function Header() {
           >
             CBB
           </NavLink>
+
+          <SupportButton 
+          venmoHandle="Mitchell-Peavler"
+          label='Donate'
+          triggerVariant="venmo" />
+
         </div>
 
         {/* Desktop inline nav (uses active sport basePath) */}
