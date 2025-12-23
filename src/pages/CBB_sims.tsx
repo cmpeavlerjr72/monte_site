@@ -14,6 +14,9 @@ import {
 import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 import { useEspnScoreboard } from "../lib/useEspnScoreboard";
 
+import SupportButton from "../components/SupportButton";
+
+
 /** LIVE SCOREBOARD TYPES / HELPERS (CBB) */
 type LiveGame = {
   id: string;
@@ -1555,8 +1558,15 @@ export default function CBBSims() {
             <strong style={{ marginRight: 6 }}>ML</strong>
             {recML.w}-{recML.l}-{recML.p}
             {recML.n ? ` (${fmtPct1(recML.pct)} · ${fmtUnits(recML.profit)})` : ""}
-          </span>
+          </span> 
+
+          <SupportButton 
+          venmoHandle="Mitchell-Peavler"
+          label='Donate'
+          triggerVariant="venmo" />
+
         </div>
+
       </section>
 
       <div

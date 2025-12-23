@@ -9,6 +9,8 @@ import {
 
 import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 
+import SupportButton from "../components/SupportButton";
+
 type LiveGame = {
   id: string;
   state: "pre" | "in" | "post" | "final" | "unknown";
@@ -1073,6 +1075,12 @@ export default function Scoreboard() {
             <span style={{ fontSize: 12, opacity: 0.7 }}>
               {loading ? "Loading…" : `Showing ${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}`}
             </span>
+
+            <SupportButton 
+            venmoHandle="Mitchell-Peavler"
+            label='Donate'
+            triggerVariant="venmo" />
+
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {/* NEW: Conference filter */}
