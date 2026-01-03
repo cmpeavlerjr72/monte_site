@@ -384,17 +384,34 @@ type Card = GameRow & {
 function getVenueBroadcast(card: Card, livePayload: any): {
   broadcast?: string;
   venue?: string;
+  homeTeam?: string;
+  neutralSite?: boolean;
 } {
-  const out: { broadcast?: string; venue?: string } = {};
+  const out: {
+    broadcast?: string;
+    venue?: string;
+    homeTeam?: string;
+    neutralSite?: boolean;
+  } = {};
+
   const events = livePayload?.events ?? livePayload?.items ?? [];
   if (!Array.isArray(events) || !events.length) return out;
 
   const AID = card.A_espn_id ? String(card.A_espn_id) : undefined;
   const BID = card.B_espn_id ? String(card.B_espn_id) : undefined;
-  const norm = (s?: string) => (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const bestName = (o: any) =>
-    o?.team?.displayName ?? o?.team?.shortDisplayName ?? o?.team?.name ?? o?.displayName ?? o?.abbreviation ?? "";
 
+  const norm = (s?: string) =>
+    (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  const bestName = (o: any) =>
+    o?.team?.displayName ??
+    o?.team?.shortDisplayName ??
+    o?.team?.name ??
+    o?.displayName ??
+    o?.abbreviation ??
+    "";
+
+  // --- Find matching event ---
   let ev: any =
     events.find((e: any) => {
       const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
@@ -405,8 +422,12 @@ function getVenueBroadcast(card: Card, livePayload: any): {
     }) ??
     events.find((e: any) => {
       const comp = e?.competitions?.[0]?.competitors ?? e?.competitors ?? [];
-      const names = comp.flatMap((c: any) => [norm(bestName(c)), norm(c?.team?.abbreviation)]);
-      const A = norm(card.teamA), B = norm(card.teamB);
+      const names = comp.flatMap((c: any) => [
+        norm(bestName(c)),
+        norm(c?.team?.abbreviation),
+      ]);
+      const A = norm(card.teamA);
+      const B = norm(card.teamB);
       const joined = names.join("|");
       return joined.includes(A) && joined.includes(B);
     });
@@ -415,18 +436,43 @@ function getVenueBroadcast(card: Card, livePayload: any): {
 
   const comp0 = ev?.competitions?.[0] ?? ev;
 
+  // --- Broadcast ---
   const bc =
     comp0?.broadcasts?.[0]?.names?.[0] ??
     comp0?.geoBroadcasts?.[0]?.media?.shortName ??
     ev?.broadcast;
-  if (typeof bc === "string" && bc.trim()) out.broadcast = bc.trim();
 
+  if (typeof bc === "string" && bc.trim()) {
+    out.broadcast = bc.trim();
+  }
+
+  // --- Venue + neutral site ---
   const venueName = comp0?.venue?.fullName;
-  const neutral = comp0?.neutralSite ? " (Neutral)" : "";
-  if (typeof venueName === "string" && venueName.trim()) out.venue = venueName.trim();
+  const neutralSite = Boolean(comp0?.neutralSite);
+
+  if (typeof venueName === "string" && venueName.trim()) {
+    out.venue = venueName.trim();
+  }
+
+  out.neutralSite = neutralSite;
+
+  // --- Home team (only meaningful if NOT neutral) ---
+  if (!neutralSite) {
+    const competitors = comp0?.competitors ?? [];
+    const home = Array.isArray(competitors)
+      ? competitors.find((c: any) => c?.homeAway === "home")
+      : null;
+
+    const homeName = home ? bestName(home) : "";
+    if (typeof homeName === "string" && homeName.trim()) {
+      out.homeTeam = homeName.trim();
+    }
+  }
 
   return out;
 }
+
+
 
 // Get per-team rank + record for this card from livePayload
 function getLiveRankRecord(card: Card, livePayload: any): {
@@ -2388,14 +2434,31 @@ function getLastPlayInfo(
 
       
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {(vb.broadcast || vb.venue) && (
+          {(vb.broadcast || vb.venue || vb.homeTeam || vb.neutralSite) && (
             <div style={{ marginLeft: "auto", textAlign: "right", lineHeight: 1 }}>
               {vb.broadcast && (
-                <div style={{ fontSize: 12, color: "#5b677a" }}>{vb.broadcast}</div>
+                <div style={{ fontSize: 12, color: "#5b677a" }}>
+                  {vb.broadcast}
+                </div>
               )}
+
               {vb.venue && (
-                <div style={{ fontSize: 12, color: "#5b677a" }}>{vb.venue}</div>
+                <div style={{ fontSize: 12, color: "#5b677a" }}>
+                  {vb.venue}
+                </div>
               )}
+
+              {/* ✅ Home / Neutral indicator */}
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#7a8597",
+                  marginTop: 2,
+                  fontStyle: vb.neutralSite ? "italic" : "normal",
+                }}
+              >
+                {vb.neutralSite ? "Neutral Site" : vb.homeTeam ? `${vb.homeTeam}` : ""}
+              </div>
             </div>
           )}
         </div>
