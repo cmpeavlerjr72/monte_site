@@ -52,7 +52,6 @@ const BRACKETOLOGISTS = [
   { id: "Zac", label: "Bracket Zac" },
 ].sort((a, b) => a.label.localeCompare(b.label));
 
-
 type TeamSlug = string;
 
 type StageId = "R32" | "S16" | "E8" | "F4" | "NC" | "CHAMP";
@@ -328,26 +327,26 @@ function stageHeatColor(info?: StageRankInfo) {
   const { rank, total } = info;
   if (total <= 1) return "transparent";
 
-  const center = (total + 1) / 2; // e.g. 32.5 for 64 teams
-  const diff = rank - center; // < 0: above mid (good), > 0: below mid (bad)
+  const center = (total + 1) / 2;
+  const diff = rank - center; // < 0 = better than middle
   const maxDiff = center - 1;
   if (maxDiff <= 0) return "transparent";
 
-  const intensity = Math.min(1, Math.abs(diff) / maxDiff); // 0..1
+  const intensity = Math.min(1, Math.abs(diff) / maxDiff);
 
-  // Make the very middle basically white
+  // middle of pack ~white
   if (Math.abs(diff) < 0.5) return "transparent";
 
   const baseAlpha = 0.08;
   const extraAlpha = 0.3 * intensity;
   const alpha = baseAlpha + extraAlpha;
 
-  // Green above the midpoint, red below.
   if (diff < 0) {
-    // more likely than "average"
-    return `rgba(22, 163, 74, ${alpha})`; // emerald-ish
+    // better than average = greenish
+    return `rgba(22, 163, 74, ${alpha})`;
   }
-  return `rgba(220, 38, 38, ${alpha})`; // red-ish
+  // worse than average = reddish
+  return `rgba(220, 38, 38, ${alpha})`;
 }
 
 function TeamRow({
@@ -516,7 +515,9 @@ function MatchCard({
 export default function CBB_Bracket() {
   const [selectedBracket, setSelectedBracket] = useState<string>("ESPN");
 
-  const [teamsMaster, setTeamsMaster] = useState<Record<string, TeamMeta> | null>(null);
+  const [teamsMaster, setTeamsMaster] = useState<Record<string, TeamMeta | undefined> | null>(
+    null
+  );
   const [pairMap, setPairMap] = useState<PairMap | null>(null);
   const [bracketJson, setBracketJson] = useState<BracketJson | null>(null);
 
@@ -526,6 +527,7 @@ export default function CBB_Bracket() {
 
   const [picks, setPicks] = useState<PicksMap>({});
 
+  // sort state for odds table
   const [sortColumn, setSortColumn] = useState<"SEED" | StageId>("CHAMP");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -543,7 +545,8 @@ export default function CBB_Bracket() {
         const rrUrl = `${base}/${DATE}_round_robin_minimal.json`;
 
         const [teamsRes, rrRes] = await Promise.all([fetch(teamsUrl), fetch(rrUrl)]);
-        if (!teamsRes.ok) throw new Error(`Failed to load teams_master.json (${teamsRes.status})`);
+        if (!teamsRes.ok)
+          throw new Error(`Failed to load teams_master.json (${teamsRes.status})`);
         if (!rrRes.ok)
           throw new Error(`Failed to load round_robin_minimal.json (${rrRes.status})`);
 
@@ -598,7 +601,9 @@ export default function CBB_Bracket() {
         const url = `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${WEEK}/brackets/${selectedBracket}.json`;
         const res = await fetch(url);
         if (!res.ok)
-          throw new Error(`Failed to load bracket JSON for ${selectedBracket} (${res.status})`);
+          throw new Error(
+            `Failed to load bracket JSON for ${selectedBracket} (${res.status})`
+          );
         const json = (await res.json()) as BracketJson;
         if (cancelled) return;
         setBracketJson(json);
@@ -692,7 +697,7 @@ export default function CBB_Bracket() {
 
       leaves.forEach((m, idx) => {
         const rowSpan = 2;
-        const rowStart = 2 + idx * 4; // gap rows between first-round games
+        const rowStart = 2 + idx * 4;
         layout[m.id] = { rowStart, rowSpan };
       });
 
@@ -706,7 +711,7 @@ export default function CBB_Bracket() {
           const rightInfo = rightFrom ? layout[rightFrom] : undefined;
           if (!leftInfo || !rightInfo) return;
 
-          const childSpan = leftInfo.rowSpan; // both children share same span
+          const childSpan = leftInfo.rowSpan;
           const rowSpan = childSpan * 2;
           const centerLeft = leftInfo.rowStart + childSpan / 2;
           const centerRight = rightInfo.rowStart + childSpan / 2;
@@ -720,7 +725,13 @@ export default function CBB_Bracket() {
       layoutByRegion[r] = layout;
     }
 
-    return { regions: regionTeams, matches, seedMap: sMap, teamsBySlug: tBySlug, layoutByRegion };
+    return {
+      regions: regionTeams,
+      matches,
+      seedMap: sMap,
+      teamsBySlug: tBySlug,
+      layoutByRegion,
+    };
   }, [bracketJson, teamsMaster]);
 
   const { stageProbs } = useMemo(() => {
@@ -817,11 +828,25 @@ export default function CBB_Bracket() {
     return { stageProbs: reach };
   }, [matches, pairMap, seedMap, picks]);
 
-  const oddsRows = useMemo(() => {
-    const rows: {
-      team: RegionTeam;
-      stages: StageProbs;
-    }[] = [];
+  // sorting helpers for odds table
+  const handleSort = (col: "SEED" | StageId) => {
+    setSortColumn((prevCol) => {
+      if (prevCol === col) {
+        setSortDir((prevDir) => (prevDir === "asc" ? "desc" : "asc"));
+        return prevCol;
+      }
+      setSortDir(col === "SEED" ? "asc" : "desc");
+      return col;
+    });
+  };
+
+  const sortIndicator = (col: "SEED" | StageId) => {
+    if (sortColumn !== col) return "";
+    return sortDir === "asc" ? " ▲" : " ▼";
+  };
+
+  const { oddsRows, stageRanks } = useMemo(() => {
+    const rows: { team: RegionTeam; stages: StageProbs }[] = [];
 
     const slugs = Object.keys(teamsBySlug);
     for (const slug of slugs) {
@@ -830,14 +855,42 @@ export default function CBB_Bracket() {
       rows.push({ team, stages });
     }
 
-    rows.sort((a, b) => {
-      const pa = a.stages.CHAMP ?? 0;
-      const pb = b.stages.CHAMP ?? 0;
-      return pb - pa;
+    const stageIds: StageId[] = ["R32", "S16", "E8", "F4", "NC", "CHAMP"];
+
+    const ranks: Record<StageId, Record<TeamSlug, StageRankInfo>> = {
+      R32: {},
+      S16: {},
+      E8: {},
+      F4: {},
+      NC: {},
+      CHAMP: {},
+    };
+
+    stageIds.forEach((stage) => {
+      const arr = rows
+        .map((r) => ({ slug: r.team.slug, p: r.stages[stage] ?? 0 }))
+        .sort((a, b) => b.p - a.p);
+
+      const total = arr.length;
+      arr.forEach((item, idx) => {
+        ranks[stage][item.slug] = { rank: idx + 1, total };
+      });
     });
 
-    return rows;
-  }, [teamsBySlug, stageProbs]);
+    const sorted = [...rows].sort((a, b) => {
+      if (sortColumn === "SEED") {
+        const d = a.team.seed - b.team.seed;
+        return sortDir === "asc" ? d : -d;
+      } else {
+        const pa = a.stages[sortColumn] ?? 0;
+        const pb = b.stages[sortColumn] ?? 0;
+        const d = pb - pa; // higher first
+        return sortDir === "asc" ? -d : d;
+      }
+    });
+
+    return { oddsRows: sorted, stageRanks: ranks };
+  }, [teamsBySlug, stageProbs, sortColumn, sortDir]);
 
   const loading = loadingCommon || loadingBracket;
 
@@ -893,7 +946,6 @@ export default function CBB_Bracket() {
   const regionNames = ["Region 1", "Region 2", "Region 3", "Region 4"];
 
   const outerStyles = {
-    // full-bleed: escape any max-width wrapper and use full viewport width
     margin: "0 calc(-50vw + 50%)",
     padding: "16px 0",
   } as const;
@@ -929,24 +981,23 @@ export default function CBB_Bracket() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <label style={{ fontSize: 13, fontWeight: 600 }}>
               Bracketologist:
-                <select
+              <select
                 value={selectedBracket}
                 onChange={(e) => setSelectedBracket(e.target.value)}
                 style={{
-                    marginLeft: 8,
-                    padding: "4px 8px",
-                    borderRadius: 6,
-                    border: "1px solid rgba(15,23,42,0.2)",
-                    fontSize: 13,
+                  marginLeft: 8,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  border: "1px solid rgba(15,23,42,0.2)",
+                  fontSize: 13,
                 }}
-                >
+              >
                 {BRACKETOLOGISTS.map((b) => (
-                    <option key={b.id} value={b.id}>
+                  <option key={b.id} value={b.id}>
                     {b.label}
-                    </option>
+                  </option>
                 ))}
-                </select>
-
+              </select>
             </label>
           </div>
         </div>
@@ -1027,9 +1078,7 @@ export default function CBB_Bracket() {
                   // games
                   (byRound[round] ?? []).forEach((m) => {
                     const info = layout[m.id];
-                    const gridRow = info
-                      ? `${info.rowStart} / span ${info.rowSpan}`
-                      : "auto";
+                    const gridRow = info ? `${info.rowStart} / span ${info.rowSpan}` : "auto";
                     gridChildren.push(
                       <div
                         key={m.id}
@@ -1133,6 +1182,7 @@ export default function CBB_Bracket() {
                   <thead>
                     <tr>
                       <th
+                        onClick={() => handleSort("SEED")}
                         style={{
                           textAlign: "left",
                           padding: "6px 8px",
@@ -1141,18 +1191,22 @@ export default function CBB_Bracket() {
                           left: 0,
                           background: "white",
                           zIndex: 1,
+                          whiteSpace: "nowrap",
+                          cursor: "pointer",
                         }}
                       >
-                        Team
+                        Team{sortIndicator("SEED")}
                       </th>
-                      {["R32", "S16", "E8", "F4", "NC", "CHAMP"].map((stage) => (
+                      {(["R32", "S16", "E8", "F4", "NC", "CHAMP"] as StageId[]).map((stage) => (
                         <th
                           key={stage}
+                          onClick={() => handleSort(stage)}
                           style={{
                             textAlign: "left",
                             padding: "6px 8px",
                             borderBottom: "1px solid rgba(0,0,0,0.1)",
                             whiteSpace: "nowrap",
+                            cursor: "pointer",
                           }}
                         >
                           {stage === "R32"
@@ -1166,6 +1220,7 @@ export default function CBB_Bracket() {
                             : stage === "NC"
                             ? "Reach title"
                             : "Win title"}
+                          {sortIndicator(stage)}
                         </th>
                       ))}
                     </tr>
@@ -1182,23 +1237,66 @@ export default function CBB_Bracket() {
                             background: "white",
                           }}
                         >
-                          <span style={{ fontWeight: 700, marginRight: 6 }}>
-                            {team.seed}
-                          </span>
-                          {team.name}
-                        </td>
-                        {(["R32", "S16", "E8", "F4", "NC", "CHAMP"] as StageId[]).map(
-                          (stage) => (
-                            <td
-                              key={stage}
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              minWidth: 0,
+                            }}
+                          >
+                            <span
                               style={{
-                                padding: "4px 8px",
-                                borderBottom: "1px solid rgba(0,0,0,0.04)",
+                                fontWeight: 700,
+                                fontVariantNumeric: "tabular-nums",
+                                padding: "1px 6px",
+                                borderRadius: 999,
+                                background: "rgba(15,23,42,0.06)",
+                                marginRight: 2,
                               }}
                             >
-                              <StageCell p={stages[stage]} />
-                            </td>
-                          )
+                              {team.seed}
+                            </span>
+                            {team.logo && (
+                              <img
+                                src={team.logo}
+                                alt={`${team.name} logo`}
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  objectFit: "contain",
+                                  flexShrink: 0,
+                                }}
+                                loading="lazy"
+                              />
+                            )}
+                            <span
+                              style={{
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {team.name}
+                            </span>
+                          </div>
+                        </td>
+                        {(["R32", "S16", "E8", "F4", "NC", "CHAMP"] as StageId[]).map(
+                          (stage) => {
+                            const rankInfo = stageRanks[stage]?.[team.slug];
+                            return (
+                              <td
+                                key={stage}
+                                style={{
+                                  padding: "4px 8px",
+                                  borderBottom: "1px solid rgba(0,0,0,0.04)",
+                                  backgroundColor: stageHeatColor(rankInfo),
+                                }}
+                              >
+                                <StageCell p={stages[stage]} />
+                              </td>
+                            );
+                          }
                         )}
                       </tr>
                     ))}
