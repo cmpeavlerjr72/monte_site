@@ -354,11 +354,13 @@ function TeamRow({
   onClick,
   selected,
   projectedScore,
+  placeholderLabel,
 }: {
   team?: RegionTeam;
   onClick?: () => void;
   selected?: boolean;
   projectedScore?: number;
+  placeholderLabel?: string;
 }) {
   const isPlaceholder = !team;
   const scoreText =
@@ -429,7 +431,7 @@ function TeamRow({
         </>
       ) : (
         <div style={{ fontSize: 12, opacity: 0.5, fontStyle: "italic" }}>
-          Waiting on teams…
+          {placeholderLabel ?? "Waiting on teams…"}
         </div>
       )}
     </button>
@@ -458,6 +460,16 @@ function MatchCard({
   const topScore = projection ? projection.topMed : undefined;
   const bottomScore = projection ? projection.bottomMed : undefined;
 
+  const topPlaceholderLabel =
+  !topTeam && match.left.kind === "winner"
+      ? `${match.left.from} Winner`
+      : undefined;
+
+  const bottomPlaceholderLabel =
+  !bottomTeam && match.right.kind === "winner"
+      ? `${match.right.from} Winner`
+      : undefined;
+
   const line =
     projection && hasTeams
       ? `${topTeam?.name} ${(projection.pTopWin * 100).toFixed(1)}% • ${
@@ -483,12 +495,14 @@ function MatchCard({
           projectedScore={topScore}
           selected={topSelected}
           onClick={hasTeams && topTeam ? () => setPick(topTeam.slug) : undefined}
+          placeholderLabel={topPlaceholderLabel}
         />
         <TeamRow
           team={bottomTeam}
           projectedScore={bottomScore}
           selected={bottomSelected}
           onClick={hasTeams && bottomTeam ? () => setPick(bottomTeam.slug) : undefined}
+          placeholderLabel={bottomPlaceholderLabel}
         />
       </div>
 
