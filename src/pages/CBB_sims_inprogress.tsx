@@ -365,6 +365,9 @@ type Card = GameRow & {
 
   whySummary?: string;
 
+  homeTeam?: string;
+  awayTeam?: string;
+
   // live info (for scores + pace)
   liveState?: "pre" | "in" | "post" | "final" | "unknown";
   liveStatusText?: string;
@@ -378,6 +381,9 @@ type Card = GameRow & {
   liveSpreadFavName?: string;
   liveOddsBook?: string | null;
 };
+
+type MarketType = 'All' | 'ML' | 'Spread' | 'Total';
+type BucketType = 'None' | 'Favorite' | 'Underdog' | 'Over' | 'Under';
 
 /* ---------------- helpers ---------------- */
 
@@ -884,6 +890,9 @@ export default function CBBSims() {
   const [error, setError] = useState<string | null>(null);
   type SortKey = "time" | "ev_spread" | "ev_total" | "ev_ml";
   const [sortKey, setSortKey] = useState<SortKey>("time");
+  const [market, setMarket] = useState<MarketType>('All');
+  const [bucket, setBucket] = useState<BucketType>('None');
+  const [evOnly, setEvOnly] = useState(false);
 
   // ----- LIVE SCOREBOARD (CBB) -----
   // ESPN expects YYYYMMDD but our helper on the server strips hyphens,
@@ -1483,7 +1492,71 @@ export default function CBBSims() {
       }
     };
 
-    return mapped.sort((a, b) => {
+    let filtered = mapped.filter((c) => {
+      if (bucket === 'None' && !evOnly) return true; // no filter
+
+      let matchesMarket = false;
+      let evValue = 0;
+      let isFavPick = false; // for favorite/underdog
+
+      if (market === 'All' || market === 'Spread') {
+        if (c.pickSpread) {
+          matchesMarket = true;
+          evValue = c.evSpread ?? 0;
+
+          // Determine if pick is on favorite
+          const matchedHome = (c.odds?.matched_home_side || 'A').toUpperCase();
+          const homeIsA = matchedHome === 'A';
+          const homeML = homeIsA ? c.odds?.home_ml : c.odds?.away_ml;
+          const awayML = homeIsA ? c.odds?.away_ml : c.odds?.home_ml;
+          const favIsHome = homeML != null && homeML < 0;
+          const favTeamName = favIsHome 
+            ? (homeIsA ? c.teamA : c.teamB)
+            : (homeIsA ? c.teamB : c.teamA);
+          const pickName = c.pickSpread.teamName;
+          isFavPick = favTeamName === pickName;
+        }
+      }
+      if (market === 'All' || market === 'Total') {
+        if (c.pickTotal) {
+          matchesMarket = true;
+          evValue = c.evTotal ?? 0;
+          isFavPick = c.pickTotal.side === 'Over'; // Treat Over as "favorite" analog
+        }
+      }
+      if (market === 'All' || market === 'ML') {
+        if (c.pickML) {
+          matchesMarket = true;
+          evValue = c.evML ?? 0;
+
+          // Similar to spread
+          const matchedHome = (c.odds?.matched_home_side || 'A').toUpperCase();
+          const homeIsA = matchedHome === 'A';
+          const homeML = homeIsA ? c.odds?.home_ml : c.odds?.away_ml;
+          const awayML = homeIsA ? c.odds?.away_ml : c.odds?.home_ml;
+          const favIsHome = homeML != null && homeML < 0;
+          const favTeamName = favIsHome 
+            ? (homeIsA ? c.teamA : c.teamB)
+            : (homeIsA ? c.teamB : c.teamA);
+          const pickName = c.pickML.teamName;
+          isFavPick = favTeamName === pickName;
+        }
+      }
+
+      if (!matchesMarket) return false;
+
+      // EV filter
+      if (evOnly && evValue <= 0) return false;
+
+      // Bucket filter
+      if (bucket === 'None') return true;
+      if (bucket === 'Favorite' || bucket === 'Over') return isFavPick;
+      if (bucket === 'Underdog' || bucket === 'Under') return !isFavPick;
+
+      return false;
+    });
+
+    return filtered.sort((a, b) => {
 
       const ra = stateRank(a);
       const rb = stateRank(b);
@@ -1566,9 +1639,41 @@ export default function CBBSims() {
             Logo: {logoMode === "primary" ? "Primary" : "Alt"}
           </button>
 
+
+
           <span style={{ fontSize: 12, opacity: 0.7, marginLeft: 4 }}>
             {loading ? "Loading…" : error ? error : `Showing ${cards.length} game${cards.length === 1 ? "" : "s"}`}
           </span>
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+            <label>Market:</label>
+            <label><input type="radio" value="All" checked={market === 'All'} onChange={() => setMarket('All')} /> All</label>
+            <label><input type="radio" value="ML" checked={market === 'ML'} onChange={() => setMarket('ML')} /> ML</label>
+            <label><input type="radio" value="Spread" checked={market === 'Spread'} onChange={() => setMarket('Spread')} /> Spread</label>
+            <label><input type="radio" value="Total" checked={market === 'Total'} onChange={() => setMarket('Total')} /> Total</label>
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+            <label>Bucket:</label>
+            <select value={bucket} onChange={(e) => setBucket(e.target.value as any)}>
+              <option value="None">None</option>
+              {(market === 'ML' || market === 'Spread') ? (
+                <>
+                  <option value="Favorite">Favorite</option>
+                  <option value="Underdog">Underdog</option>
+                </>
+              ) : market === 'Total' ? (
+                <>
+                  <option value="Over">Over</option>
+                  <option value="Under">Under</option>
+                </>
+              ) : null}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <label><input type="checkbox" checked={evOnly} onChange={(e) => setEvOnly(e.target.checked)} /> Only +EV</label>
+          </div>
+
+
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "8px 0" }}>
@@ -1620,7 +1725,7 @@ export default function CBBSims() {
         }}
       >
         {cards.map((c) => (
-          <GameCard key={c.gameId ?? `${c.teamA}__${c.teamB}`} card={c} logoMode={logoMode} livePayload={livePayload}/>
+          <GameCard key={c.gameId ?? `${c.teamA}__${c.teamB}`} card={c} logoMode={logoMode} livePayload={livePayload} market={market}/>
         ))}
       </div>
     </div>
@@ -1635,10 +1740,12 @@ function GameCard({
   card,
   logoMode,
   livePayload,             // ⬅️ add
+  market,
 }: {
   card: Card;
   logoMode: "primary" | "alt";
   livePayload: any;        // ⬅️ add
+  market: MarketType;
 }) {
   const [showWhy, setShowWhy] = useState(false);
   const [showDist, setShowDist] = useState(false);
@@ -2535,7 +2642,7 @@ function getLastPlayInfo(
             marginTop: 4,
           }}
         >
-          {card.pickSpread && (
+          {(market === 'All' || market === 'Spread') && card.pickSpread && (
             <span
               style={{
                 fontSize: 12,
@@ -2555,7 +2662,7 @@ function getLastPlayInfo(
             </span>
           )}
 
-          {card.pickTotal && (
+          {(market === 'All' || market === 'Total') && card.pickTotal && (
             <span
               style={{
                 fontSize: 12,
@@ -2572,7 +2679,7 @@ function getLastPlayInfo(
             </span>
           )}
 
-          {card.pickML && (
+          {(market === 'All' || market === 'ML') && card.pickML && (
             <span
               style={{
                 fontSize: 12,
@@ -2588,6 +2695,7 @@ function getLastPlayInfo(
               {fmtEV(card.evML)}
             </span>
           )}
+          
         </div>
       )}
 
