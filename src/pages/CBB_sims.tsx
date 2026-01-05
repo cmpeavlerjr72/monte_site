@@ -343,6 +343,8 @@ type GameRow = {
 
 };
 
+type FilterPickKind = "any" | "spread" | "total" | "ml";
+
 type Card = GameRow & {
   projA?: number;
   projB?: number;
@@ -377,6 +379,13 @@ type Card = GameRow & {
   liveSpreadLine?: number;
   liveSpreadFavName?: string;
   liveOddsBook?: string | null;
+
+  // 🔹 NEW: classification for filters
+  pickSpreadLoc?: "home" | "away" | "neutral";
+  pickSpreadFavDog?: "fav" | "dog" | "pick";
+  pickMLLoc?: "home" | "away" | "neutral";
+  pickMLFavDog?: "fav" | "dog" | "pick";
+
 };
 
 /* ---------------- helpers ---------------- */
@@ -885,6 +894,29 @@ export default function CBBSims() {
   type SortKey = "time" | "ev_spread" | "ev_total" | "ev_ml";
   const [sortKey, setSortKey] = useState<SortKey>("time");
 
+  type FilterPickKind = "any" | "spread" | "total" | "ml";
+  type SideLoc = "any" | "home" | "away" | "neutral";
+  type FavDog = "any" | "favorite" | "dog";
+
+  const [filterPickKind, setFilterPickKind] = useState<FilterPickKind>("any");
+  const [filterSideLoc, setFilterSideLoc] = useState<SideLoc>("any");
+  const [filterFavDog, setFilterFavDog] = useState<FavDog>("any");
+  const [filterEvMin, setFilterEvMin] = useState<string>("");
+
+  const resetFilters = () => {
+    setFilterPickKind("any");
+    setFilterSideLoc("any");
+    setFilterFavDog("any");
+    setFilterEvMin("");
+  };
+
+  const applyHomeFavPlusEv = () => {
+    setFilterPickKind("spread");
+    setFilterSideLoc("home");
+    setFilterFavDog("favorite");
+    setFilterEvMin("0");   // you can bump this to "0.25" etc if you want
+  };
+
   // ----- LIVE SCOREBOARD (CBB) -----
   // ESPN expects YYYYMMDD but our helper on the server strips hyphens,
   // so both "2025-11-23" and "20251123" are fine.
@@ -1316,6 +1348,25 @@ export default function CBBSims() {
       const evSpread = pickSpread ? (pickSpread.teamSide === "A" ? evSpA : evSpB) : 0;
       const evTotal = pickTotal ? (pickTotal.side === "Over" ? evOver : evUnder) : 0;
 
+            // 🔹 classification placeholders (filled in after we know home/away)
+      let pickSpreadLoc: Card["pickSpreadLoc"];
+      let pickSpreadFavDog: Card["pickSpreadFavDog"];
+      let pickMLLoc: Card["pickMLLoc"];
+      let pickMLFavDog: Card["pickMLFavDog"];
+
+      // which A/B side is the favorite from moneyline prices?
+      let favTeamSide: "A" | "B" | undefined;
+      if (
+        mlA != null &&
+        mlB != null &&
+        Number.isFinite(mlA) &&
+        Number.isFinite(mlB) &&
+        mlA !== mlB
+      ) {
+        // more negative = bigger favorite
+        favTeamSide = mlA < mlB ? "A" : "B";
+      }
+
       // ------- LIVE + PACE -------
       let liveState: Card["liveState"];
       let liveStatusText: string | undefined;
@@ -1399,6 +1450,44 @@ export default function CBBSims() {
         const aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
         const bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
 
+                // Use the same ESPN-based mapping to decide who is home/away for filters
+        const aIsHome = aMatchesAway === false; // if A is not away, treat as home; if we couldn't tell, this may be undefined
+
+        const isNeutralSite = (r as any).neutralSite ?? (r as any).isNeutralSite ?? false;
+
+        const sideToLocFromEspn = (side: "A" | "B"): "home" | "away" | "neutral" => {
+          if (isNeutralSite) return "neutral";
+
+          if (aIsHome === undefined) {
+            const sideIsHome = homeIsA ? side === "A" : side === "B";
+            return sideIsHome ? "home" : "away";
+          }
+          const sideIsHome = side === "A" ? aIsHome : !aIsHome;
+          return sideIsHome ? "home" : "away";
+        };
+
+        if (pickSpread) {
+          const side = pickSpread.teamSide;
+          pickSpreadLoc = sideToLocFromEspn(side);
+
+          if (favTeamSide) {
+            pickSpreadFavDog = favTeamSide === side ? "fav" : "dog";
+          } else {
+            pickSpreadFavDog = undefined; // treat as pick'em / unknown
+          }
+        }
+
+        if (pickML) {
+          const side = pickML.teamSide;
+          pickMLLoc = sideToLocFromEspn(side);
+
+          if (favTeamSide) {
+            pickMLFavDog = favTeamSide === side ? "fav" : "dog";
+          } else {
+            pickMLFavDog = undefined;
+          }
+        }
+
 
         if (Number.isFinite(aScore as number)) liveScoreA = aScore as number;
         if (Number.isFinite(bScore as number)) liveScoreB = bScore as number;
@@ -1429,7 +1518,32 @@ export default function CBBSims() {
         liveSpreadFavName = lg.liveFavTeam;
         liveOddsBook = lg.liveBook ?? r.odds?.book ?? null;
 
+            } else {
+        // No ESPN live mapping – fallback to odds-based home alignment
+        const sideToLocFallback = (side: "A" | "B"): "home" | "away" => {
+          const sideIsHome = homeIsA ? side === "A" : side === "B";
+          return sideIsHome ? "home" : "away";
+        };
+
+        if (pickSpread && !pickSpreadLoc) {
+          const side = pickSpread.teamSide;
+          pickSpreadLoc = sideToLocFallback(side);
+
+          if (favTeamSide) {
+            pickSpreadFavDog = favTeamSide === side ? "fav" : "dog";
+          }
+        }
+
+        if (pickML && !pickMLLoc) {
+          const side = pickML.teamSide;
+          pickMLLoc = sideToLocFallback(side);
+
+          if (favTeamSide) {
+            pickMLFavDog = favTeamSide === side ? "fav" : "dog";
+          }
+        }
       }
+
 
       return {
         ...r,
@@ -1454,10 +1568,17 @@ export default function CBBSims() {
         liveSpreadLine,
         liveSpreadFavName,
         liveOddsBook,
+
+        // 🔹 new filter metadata
+        pickSpreadLoc,
+        pickSpreadFavDog,
+        pickMLLoc,
+        pickMLFavDog,
+
+
       } as Card;
     });
 
-    // sorting
     const getStartTs = (c: Card) => c.tipUnix ?? Number.POSITIVE_INFINITY;
     const valueForSort = (c: Card) => {
       switch (sortKey) {
@@ -1483,11 +1604,98 @@ export default function CBBSims() {
       }
     };
 
-    return mapped.sort((a, b) => {
+    // 🔹 Apply filters from the header
+    const evThreshold = parseFloat(filterEvMin.trim());
+    const hasEvFilter = !Number.isNaN(evThreshold);
 
+    const passesTeamSideFilters = (
+      loc: Card["pickSpreadLoc"] | Card["pickMLLoc"],
+      favDog: Card["pickSpreadFavDog"] | Card["pickMLFavDog"]
+    ) => {
+      if (filterSideLoc !== "any") {
+        if (!loc || loc !== filterSideLoc) return false;
+      }
+      if (filterFavDog !== "any") {
+        if (!favDog) return false;
+        if (filterFavDog === "favorite" && favDog !== "fav") return false;
+        if (filterFavDog === "dog" && favDog !== "dog") return false;
+      }
+      return true;
+    };
+
+    const filtered = mapped.filter((c) => {
+      // no filters active → keep everything
+      if (
+        filterPickKind === "any" &&
+        filterSideLoc === "any" &&
+        filterFavDog === "any" &&
+        !hasEvFilter
+      ) {
+        return true;
+      }
+
+      // Specific pick types
+      if (filterPickKind === "spread") {
+        if (!c.pickSpread) return false;
+        if (!passesTeamSideFilters(c.pickSpreadLoc, c.pickSpreadFavDog)) return false;
+        if (hasEvFilter && (c.evSpread ?? -Infinity) < evThreshold) return false;
+        return true;
+      }
+
+      if (filterPickKind === "ml") {
+        if (!c.pickML) return false;
+        if (!passesTeamSideFilters(c.pickMLLoc, c.pickMLFavDog)) return false;
+        if (hasEvFilter && (c.evML ?? -Infinity) < evThreshold) return false;
+        return true;
+      }
+
+      if (filterPickKind === "total") {
+        if (!c.pickTotal) return false;
+        // home/away and fav/dog don't make sense for totals
+        if (filterSideLoc !== "any" || filterFavDog !== "any") return false;
+        if (hasEvFilter && (c.evTotal ?? -Infinity) < evThreshold) return false;
+        return true;
+      }
+
+      // filterPickKind === "any":
+      //   game passes if ANY of its picks matches the filters.
+      let ok = false;
+
+      // spread pick
+      if (c.pickSpread) {
+        if (
+          passesTeamSideFilters(c.pickSpreadLoc, c.pickSpreadFavDog) &&
+          (!hasEvFilter || (c.evSpread ?? -Infinity) >= evThreshold)
+        ) {
+          ok = true;
+        }
+      }
+
+      // ml pick
+      if (!ok && c.pickML) {
+        if (
+          passesTeamSideFilters(c.pickMLLoc, c.pickMLFavDog) &&
+          (!hasEvFilter || (c.evML ?? -Infinity) >= evThreshold)
+        ) {
+          ok = true;
+        }
+      }
+
+      // totals only use EV filter (no home/away or fav/dog notion)
+      if (!ok && c.pickTotal && filterSideLoc === "any" && filterFavDog === "any") {
+        if (!hasEvFilter || (c.evTotal ?? -Infinity) >= evThreshold) {
+          ok = true;
+        }
+      }
+
+      return ok;
+    });
+
+    // final sort on the filtered set
+    return filtered.sort((a, b) => {
       const ra = stateRank(a);
       const rb = stateRank(b);
-      if (ra !== rb) return ra-rb;
+      if (ra !== rb) return ra - rb;
 
       switch (sortKey) {
         case "ev_spread":
@@ -1508,7 +1716,7 @@ export default function CBBSims() {
         }
       }
     });
-  }, [rows, sortKey, livePairMap, liveIdMap, liveNameMap]);
+  }, [rows, sortKey, livePairMap, liveIdMap, liveNameMap, filterPickKind, filterSideLoc, filterFavDog, filterEvMin]);
 
   // compute daily records + profit
   function computeRecord(kind: "spread" | "total" | "ml") {
@@ -1585,6 +1793,147 @@ export default function CBBSims() {
           </select>
         </div>
 
+                {/* 🔹 Filters so we can mirror Results/trend buckets (e.g. home favorites +EV) */}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            alignItems: "center",
+            margin: "4px 0 8px",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>Pick type:</span>
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            {[
+              { value: "any", label: "All" },
+              { value: "spread", label: "Spread" },
+              { value: "total", label: "Total" },
+              { value: "ml", label: "Moneyline" },
+            ].map((opt) => (
+              <label
+                key={opt.value}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 12,
+                  padding: "3px 8px",
+                  borderRadius: 999,
+                  border: "1px solid var(--border)",
+                  background:
+                    filterPickKind === (opt.value as FilterPickKind)
+                      ? "var(--brand)"
+                      : "var(--card)",
+                  color:
+                    filterPickKind === (opt.value as FilterPickKind)
+                      ? "var(--brand-contrast)"
+                      : "var(--text)",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="pickKind"
+                  value={opt.value}
+                  checked={filterPickKind === (opt.value as FilterPickKind)}
+                  onChange={(e) =>
+                    setFilterPickKind(e.target.value as FilterPickKind)
+                  }
+                  style={{ margin: 0 }}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+
+
+          {/* Home/Away only makes sense for team-side picks */}
+          {filterPickKind !== "total" && (
+            <>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Side:</span>
+              <select
+                value={filterSideLoc}
+                onChange={(e) => setFilterSideLoc(e.target.value as SideLoc)}
+                style={{
+                  fontSize: 12,
+                  padding: "4px 6px",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <option value="any">Any</option>
+                <option value="home">Home</option>
+                <option value="away">Away</option>
+                <option value="neutral">Neutral</option>
+
+              </select>
+
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Fav/Dog:</span>
+              <select
+                value={filterFavDog}
+                onChange={(e) => setFilterFavDog(e.target.value as FavDog)}
+                style={{
+                  fontSize: 12,
+                  padding: "4px 6px",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <option value="any">Any</option>
+                <option value="favorite">Favorite</option>
+                <option value="dog">Underdog</option>
+              </select>
+            </>
+          )}
+
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>Min EV (u):</span>
+          <input
+            type="number"
+            step="0.05"
+            value={filterEvMin}
+            onChange={(e) => setFilterEvMin(e.target.value)}
+            placeholder="e.g. 0.25"
+            style={{
+              width: 72,
+              fontSize: 12,
+              padding: "4px 6px",
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={applyHomeFavPlusEv}
+            style={{
+              fontSize: 11,
+              padding: "4px 8px",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "var(--card)",
+            }}
+          >
+            Home fav +EV
+          </button>
+
+          <button
+            type="button"
+            onClick={resetFilters}
+            style={{
+              fontSize: 11,
+              padding: "4px 8px",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "var(--card)",
+            }}
+          >
+            Reset
+          </button>
+        </div>
+
+
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ opacity: 0.75 }}>Record:</span>
 
@@ -1620,7 +1969,13 @@ export default function CBBSims() {
         }}
       >
         {cards.map((c) => (
-          <GameCard key={c.gameId ?? `${c.teamA}__${c.teamB}`} card={c} logoMode={logoMode} livePayload={livePayload}/>
+          <GameCard
+            key={c.gameId ?? `${c.teamA}__${c.teamB}`}
+            card={c}
+            logoMode={logoMode}
+            livePayload={livePayload}
+            pickKindFilter={filterPickKind}
+          />
         ))}
       </div>
     </div>
@@ -1634,11 +1989,13 @@ export default function CBBSims() {
 function GameCard({
   card,
   logoMode,
-  livePayload,             // ⬅️ add
+  livePayload,
+  pickKindFilter,
 }: {
   card: Card;
   logoMode: "primary" | "alt";
-  livePayload: any;        // ⬅️ add
+  livePayload: any;
+  pickKindFilter: FilterPickKind;
 }) {
   const [showWhy, setShowWhy] = useState(false);
   const [showDist, setShowDist] = useState(false);
@@ -2526,70 +2883,84 @@ function getLastPlayInfo(
 
 
       {/* betting pills (spread / total / ML) – PACE pill has been moved to header */}
-      {(card.pickSpread || card.pickTotal || card.pickML) && (
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            marginTop: 4,
-          }}
-        >
-          {card.pickSpread && (
-            <span
-              style={{
-                fontSize: 12,
-                padding: "4px 8px",
-                borderRadius: 999,
-                background: pillColor("spread") ?? pillBg,
-                border: "1px solid var(--border)",
-              }}
-            >
-              Spread: {card.pickSpread.teamName}{" "}
-              {card.pickSpread.line > 0
-                ? `+${card.pickSpread.line}`
-                : `${card.pickSpread.line}`}{" "}
-              ({fmtAmerican(card.pickSpread.fairAm)} ·{" "}
-              {fmtPct(card.pickSpread.prob)})
-              {fmtEV(card.evSpread)}
-            </span>
-          )}
+      {(() => {
+        const showSpread = pickKindFilter === "any" || pickKindFilter === "spread";
+        const showTotal  = pickKindFilter === "any" || pickKindFilter === "total";
+        const showML     = pickKindFilter === "any" || pickKindFilter === "ml";
 
-          {card.pickTotal && (
-            <span
-              style={{
-                fontSize: 12,
-                padding: "4px 8px",
-                borderRadius: 999,
-                background: pillColor("total") ?? pillBg,
-                border: "1px solid var(--border)",
-              }}
-            >
-              Total: {card.pickTotal.side} {card.pickTotal.line}{" "}
-              ({fmtAmerican(card.pickTotal.fairAm)} ·{" "}
-              {fmtPct(card.pickTotal.prob)})
-              {fmtEV(card.evTotal)}
-            </span>
-          )}
+        const anyVisible =
+          (showSpread && card.pickSpread) ||
+          (showTotal && card.pickTotal) ||
+          (showML && card.pickML);
 
-          {card.pickML && (
-            <span
-              style={{
-                fontSize: 12,
-                padding: "4px 8px",
-                borderRadius: 999,
-                background: pillColor("ml") ?? pillBg,
-                border: "1px solid var(--border)",
-              }}
-            >
-              ML: {card.pickML.teamName} (
-              {fmtAmerican(card.pickML.fairAm)} ·{" "}
-              {fmtPct(card.pickML.prob)})
-              {fmtEV(card.evML)}
-            </span>
-          )}
-        </div>
-      )}
+        if (!anyVisible) return null;
+
+        return (
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              marginTop: 4,
+            }}
+          >
+            {showSpread && card.pickSpread && (
+              <span
+                style={{
+                  fontSize: 12,
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  background: pillColor("spread") ?? pillBg,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                Spread: {card.pickSpread.teamName}{" "}
+                {card.pickSpread.line > 0
+                  ? `+${card.pickSpread.line}`
+                  : `${card.pickSpread.line}`}{" "}
+                ({fmtAmerican(card.pickSpread.fairAm)} ·{" "}
+                {fmtPct(card.pickSpread.prob)})
+                {fmtEV(card.evSpread)}
+              </span>
+            )}
+
+            {showTotal && card.pickTotal && (
+              <span
+                style={{
+                  fontSize: 12,
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  background: pillColor("total") ?? pillBg,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                Total: {card.pickTotal.side} {card.pickTotal.line}{" "}
+                ({fmtAmerican(card.pickTotal.fairAm)} ·{" "}
+                {fmtPct(card.pickTotal.prob)})
+                {fmtEV(card.evTotal)}
+              </span>
+            )}
+
+            {showML && card.pickML && (
+              <span
+                style={{
+                  fontSize: 12,
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  background: pillColor("ml") ?? pillBg,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                ML: {card.pickML.teamName} (
+                {fmtAmerican(card.pickML.fairAm)} ·{" "}
+                {fmtPct(card.pickML.prob)})
+                {fmtEV(card.evML)}
+              </span>
+            )}
+          </div>
+        );
+      })()}
+
 
       {/* WHY / Distributions buttons and content remain unchanged */}
       <div

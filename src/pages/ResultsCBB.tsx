@@ -30,6 +30,12 @@ type DailyAgg = {
   date: string;
   profit_units: ProfitMap;
   record: RecordMap;
+
+  // Home/Away/Neutral per-day aggregates (optional; used for summary only)
+  han_ml_all?: Record<SiteRoleKey, SiteBucket>;
+  han_ml_pos_ev?: Record<SiteRoleKey, SiteBucket>;
+  han_spread_all?: Record<SiteRoleKey, SiteBucket>;
+  han_spread_pos_ev?: Record<SiteRoleKey, SiteBucket>;
 };
 
 type Bucket = {
@@ -59,6 +65,44 @@ type FavoriteUnderdogAgg = {
   ml?: FavDogML;
   spread?: FavDogML;
   total?: OverUnderTotals;
+};
+
+type SiteRoleKey =
+  | "home_favorite"
+  | "home_underdog"
+  | "away_favorite"
+  | "away_underdog"
+  | "neutral_favorite"
+  | "neutral_underdog";
+
+type SiteBucket = {
+  count?: number;
+  W?: number;
+  L?: number;
+  P?: number;
+  profit?: number;
+  risk_units?: number;
+  win_pct?: number | null;
+  roi_per_bet?: number | null;
+  roi_units?: number | null;
+};
+
+type HomeAwayNeutralByMarket = {
+  all?: Record<SiteRoleKey, SiteBucket>;
+  pos_ev?: Record<SiteRoleKey, SiteBucket>;
+};
+
+type HomeAwayNeutralAgg = {
+  meta?: {
+    season?: number;
+    source?: string;
+    skipped_games?: number;
+    matched_games?: number;
+  };
+  by_market?: {
+    ml?: HomeAwayNeutralByMarket;
+    spread?: HomeAwayNeutralByMarket;
+  };
 };
 
 type DailyJson = {
@@ -121,6 +165,9 @@ type DailyJson = {
       Bucket
     >;
   };
+
+  /* Home/Away/Neutral splits */
+  aggregate_home_away_neutral?: HomeAwayNeutralAgg;
 };
 
 /* ---------- UTILS ---------- */
@@ -149,6 +196,24 @@ const rangeYMD = (start: string, end: string) => {
 const fmtUnits = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
 const fmtX = (ymd: string) =>
   fromYMD(ymd).toLocaleDateString(undefined, { month: "short", day: "2-digit" });
+
+const siteRoleKeys: SiteRoleKey[] = [
+  "home_favorite",
+  "home_underdog",
+  "away_favorite",
+  "away_underdog",
+  "neutral_favorite",
+  "neutral_underdog",
+];
+
+const siteRoleLabels: Record<SiteRoleKey, string> = {
+  home_favorite: "Home Fav",
+  home_underdog: "Home Dog",
+  away_favorite: "Away Fav",
+  away_underdog: "Away Dog",
+  neutral_favorite: "Neutral Fav",
+  neutral_underdog: "Neutral Dog",
+};
 
 /* ---- Counts helpers ---- */
 const toCounts = (c?: Partial<Counts>): Counts => ({
@@ -191,7 +256,10 @@ function evFallbackProfit(J: DailyJson, m: Market): number {
 function evFallbackRecord(J: DailyJson, m: Market): Counts {
   const inner = J.aggregate_pos_ev_by_market?.[m];
   if (!inner) return emptyC;
-  return Object.values(inner).reduce((acc, v) => addCounts(acc, countsFromBucket(v)), emptyC);
+  return Object.values(inner).reduce(
+    (acc, v) => addCounts(acc, countsFromBucket(v)),
+    emptyC
+  );
 }
 
 function mlProfitRecord(
@@ -204,8 +272,13 @@ function mlProfitRecord(
   if (side === "all") {
     if (!ev) return { profit: null, rec: null };
     return {
-      profit: (src.pos_ev_favorite?.profit_units ?? 0) + (src.pos_ev_underdog?.profit_units ?? 0),
-      rec: addCounts(countsFromBucket(src.pos_ev_favorite), countsFromBucket(src.pos_ev_underdog)),
+      profit:
+        (src.pos_ev_favorite?.profit_units ?? 0) +
+        (src.pos_ev_underdog?.profit_units ?? 0),
+      rec: addCounts(
+        countsFromBucket(src.pos_ev_favorite),
+        countsFromBucket(src.pos_ev_underdog)
+      ),
     };
   }
   if (side === "favorite")
@@ -230,8 +303,13 @@ function spProfitRecord(
   if (side === "all") {
     if (!ev) return { profit: null, rec: null };
     return {
-      profit: (src.pos_ev_favorite?.profit_units ?? 0) + (src.pos_ev_underdog?.profit_units ?? 0),
-      rec: addCounts(countsFromBucket(src.pos_ev_favorite), countsFromBucket(src.pos_ev_underdog)),
+      profit:
+        (src.pos_ev_favorite?.profit_units ?? 0) +
+        (src.pos_ev_underdog?.profit_units ?? 0),
+      rec: addCounts(
+        countsFromBucket(src.pos_ev_favorite),
+        countsFromBucket(src.pos_ev_underdog)
+      ),
     };
   }
   if (side === "favorite")
@@ -256,8 +334,13 @@ function totProfitRecord(
   if (side === "all") {
     if (!ev) return { profit: null, rec: null };
     return {
-      profit: (src.pos_ev_over?.profit_units ?? 0) + (src.pos_ev_under?.profit_units ?? 0),
-      rec: addCounts(countsFromBucket(src.pos_ev_over), countsFromBucket(src.pos_ev_under)),
+      profit:
+        (src.pos_ev_over?.profit_units ?? 0) +
+        (src.pos_ev_under?.profit_units ?? 0),
+      rec: addCounts(
+        countsFromBucket(src.pos_ev_over),
+        countsFromBucket(src.pos_ev_under)
+      ),
     };
   }
   if (side === "over")
@@ -294,19 +377,31 @@ function ttProfitRecord(
       r: TTRole,
       s: TTOUSide
     ): Array<"fav_under" | "fav_over" | "dog_under" | "dog_over"> => {
-      if (r === "all" && s === "all") return ["fav_over", "fav_under", "dog_over", "dog_under"];
+      if (r === "all" && s === "all")
+        return ["fav_over", "fav_under", "dog_over", "dog_under"];
       if (r === "all" && s === "over") return ["fav_over", "dog_over"];
       if (r === "all" && s === "under") return ["fav_under", "dog_under"];
       if (r === "favorite" && s === "all") return ["fav_over", "fav_under"];
       if (r === "underdog" && s === "all") return ["dog_over", "dog_under"];
       const single =
-        r === "favorite" ? (s === "over" ? "fav_over" : "fav_under") : s === "over" ? "dog_over" : "dog_under";
+        r === "favorite"
+          ? s === "over"
+            ? "fav_over"
+            : "fav_under"
+          : s === "over"
+          ? "dog_over"
+          : "dog_under";
       return [single];
     };
 
     const keys = keyFor(role, ou);
-    const profit = keys.reduce((acc, k) => acc + (src[k]?.profit_units ?? 0), 0);
-    const rec = keys.map((k) => countsFromBucket(src[k])).reduce((acc, c) => addCounts(acc, c), emptyC);
+    const profit = keys.reduce(
+      (acc, k) => acc + (src[k]?.profit_units ?? 0),
+      0
+    );
+    const rec = keys
+      .map((k) => countsFromBucket(src[k]))
+      .reduce((acc, c) => addCounts(acc, c), emptyC);
     return { profit, rec };
   }
 
@@ -321,16 +416,18 @@ function ttProfitRecord(
 
   const keyMap: Record<
     string,
-    Array<"favorite_over" | "favorite_under" | "underdog_over" | "underdog_under">
+    Array<
+      "favorite_over" | "favorite_under" | "underdog_over" | "underdog_under"
+    >
   > = {
-    "all_over": ["favorite_over", "underdog_over"],
-    "all_under": ["favorite_under", "underdog_under"],
-    "favorite_all": ["favorite_over", "favorite_under"],
-    "underdog_all": ["underdog_over", "underdog_under"],
-    "favorite_over": ["favorite_over"],
-    "favorite_under": ["favorite_under"],
-    "underdog_over": ["underdog_over"],
-    "underdog_under": ["underdog_under"],
+    all_over: ["favorite_over", "underdog_over"],
+    all_under: ["favorite_under", "underdog_under"],
+    favorite_all: ["favorite_over", "favorite_under"],
+    underdog_all: ["underdog_over", "underdog_under"],
+    favorite_over: ["favorite_over"],
+    favorite_under: ["favorite_under"],
+    underdog_over: ["underdog_over"],
+    underdog_under: ["underdog_under"],
   };
 
   const key =
@@ -341,8 +438,13 @@ function ttProfitRecord(
       : `${role}_${ou}`;
 
   const keys = keyMap[key] ?? [];
-  const profit = keys.reduce((acc, k) => acc + (byRole[k]?.profit_units ?? 0), 0);
-  const rec = keys.map((k) => countsFromBucket(byRole[k])).reduce((acc, c) => addCounts(acc, c), emptyC);
+  const profit = keys.reduce(
+    (acc, k) => acc + (byRole[k]?.profit_units ?? 0),
+    0
+  );
+  const rec = keys
+    .map((k) => countsFromBucket(byRole[k]))
+    .reduce((acc, c) => addCounts(acc, c), emptyC);
   return { profit, rec };
 }
 
@@ -384,7 +486,7 @@ const defaultFS: FilterState = {
   totSide: "all",
   totEV: false,
 
-  useTeamTotals: true,   // on by default; toggle off if you prefer
+  useTeamTotals: true, // on by default; toggle off if you prefer
   ttRole: "all",
   ttSide: "all",
   ttCorrelation: "none",
@@ -426,6 +528,12 @@ export default function ResultsCBB_alt() {
               if (!res.ok) throw new Error(String(res.status));
               const J: DailyJson = await res.json();
 
+              const han = J.aggregate_home_away_neutral?.by_market;
+              const han_ml_all = han?.ml?.all;
+              const han_ml_pos_ev = han?.ml?.pos_ev;
+              const han_spread_all = han?.spread?.all;
+              const han_spread_pos_ev = han?.spread?.pos_ev;
+
               // --- Build profit + records for this day based on filters ---
               let profit_ml = 0;
               let profit_sp = 0;
@@ -437,7 +545,9 @@ export default function ResultsCBB_alt() {
                 const result = mlProfitRecord(J, fs.mlSide, fs.mlEV);
                 if (result.profit === null) {
                   // fallback to aggregate or +EV-any fallback
-                  profit_ml = fs.mlEV ? evFallbackProfit(J, "ml") : profitAggregate(J, "ml");
+                  profit_ml = fs.mlEV
+                    ? evFallbackProfit(J, "ml")
+                    : profitAggregate(J, "ml");
                 } else {
                   profit_ml = result.profit ?? 0;
                 }
@@ -447,7 +557,9 @@ export default function ResultsCBB_alt() {
               if (fs.useSpread) {
                 const result = spProfitRecord(J, fs.spSide, fs.spEV);
                 if (result.profit === null) {
-                  profit_sp = fs.spEV ? evFallbackProfit(J, "spread") : profitAggregate(J, "spread");
+                  profit_sp = fs.spEV
+                    ? evFallbackProfit(J, "spread")
+                    : profitAggregate(J, "spread");
                 } else {
                   profit_sp = result.profit ?? 0;
                 }
@@ -457,7 +569,9 @@ export default function ResultsCBB_alt() {
               if (fs.useTotal) {
                 const result = totProfitRecord(J, fs.totSide, fs.totEV);
                 if (result.profit === null) {
-                  profit_tot = fs.totEV ? evFallbackProfit(J, "total") : profitAggregate(J, "total");
+                  profit_tot = fs.totEV
+                    ? evFallbackProfit(J, "total")
+                    : profitAggregate(J, "total");
                 } else {
                   profit_tot = result.profit ?? 0;
                 }
@@ -466,7 +580,12 @@ export default function ResultsCBB_alt() {
               // Team Totals
               let ttRec = emptyC;
               if (fs.useTeamTotals) {
-                const t = ttProfitRecord(J, fs.ttRole, fs.ttSide, fs.ttCorrelation);
+                const t = ttProfitRecord(
+                  J,
+                  fs.ttRole,
+                  fs.ttSide,
+                  fs.ttCorrelation
+                );
                 profit_tt = t.profit;
                 ttRec = t.rec;
               }
@@ -481,19 +600,25 @@ export default function ResultsCBB_alt() {
               const mlRecResolved = (() => {
                 const r = mlProfitRecord(J, fs.mlSide, fs.mlEV).rec;
                 if (r) return r;
-                return fs.mlEV ? evFallbackRecord(J, "ml") : recordAggregate(J, "ml");
+                return fs.mlEV
+                  ? evFallbackRecord(J, "ml")
+                  : recordAggregate(J, "ml");
               })();
 
               const spRecResolved = (() => {
                 const r = spProfitRecord(J, fs.spSide, fs.spEV).rec;
                 if (r) return r;
-                return fs.spEV ? evFallbackRecord(J, "spread") : recordAggregate(J, "spread");
+                return fs.spEV
+                  ? evFallbackRecord(J, "spread")
+                  : recordAggregate(J, "spread");
               })();
 
               const totRecResolved = (() => {
                 const r = totProfitRecord(J, fs.totSide, fs.totEV).rec;
                 if (r) return r;
-                return fs.totEV ? evFallbackRecord(J, "total") : recordAggregate(J, "total");
+                return fs.totEV
+                  ? evFallbackRecord(J, "total")
+                  : recordAggregate(J, "total");
               })();
 
               const record: RecordMap = {
@@ -512,6 +637,10 @@ export default function ResultsCBB_alt() {
                 date: J.date || d,
                 profit_units,
                 record,
+                han_ml_all,
+                han_ml_pos_ev,
+                han_spread_all,
+                han_spread_pos_ev,
                 _sumProfit: totalProfitForDay,
                 _ttRec: ttRec,
               } as DailyAgg & { _sumProfit: number; _ttRec: Counts };
@@ -522,10 +651,12 @@ export default function ResultsCBB_alt() {
           })
         );
 
-        const tidy = (fetched.filter(Boolean) as (DailyAgg & {
-          _sumProfit: number;
-          _ttRec: Counts;
-        })[]).sort((a, b) => a.date.localeCompare(b.date));
+        const tidy = (
+          fetched.filter(Boolean) as (DailyAgg & {
+            _sumProfit: number;
+            _ttRec: Counts;
+          })[]
+        ).sort((a, b) => a.date.localeCompare(b.date));
 
         if (alive) setDays(tidy);
       } catch (e: any) {
@@ -590,6 +721,88 @@ export default function ResultsCBB_alt() {
     };
   }, [days, fs]);
 
+  const hanSummary = useMemo(() => {
+    const initAgg = () => ({
+      bets: 0,
+      W: 0,
+      L: 0,
+      P: 0,
+      profit: 0,
+      risk: 0,
+    });
+
+    type HanAgg = {
+      bets: number;
+      W: number;
+      L: number;
+      P: number;
+      profit: number;
+      risk: number;
+    };
+
+    type HanRow = {
+      all: HanAgg;
+      posEv: HanAgg;
+    };
+
+    const makeRow = (): HanRow => ({
+      all: initAgg(),
+      posEv: initAgg(),
+    });
+
+    const acc = (dest: HanAgg, src?: SiteBucket) => {
+      if (!src) return;
+      dest.bets += src.count ?? 0;
+      dest.W += src.W ?? 0;
+      dest.L += src.L ?? 0;
+      dest.P += src.P ?? 0;
+      dest.profit += src.profit ?? 0;
+      dest.risk += src.risk_units ?? 0;
+    };
+
+    const base = {
+      ml: {
+        home_favorite: makeRow(),
+        home_underdog: makeRow(),
+        away_favorite: makeRow(),
+        away_underdog: makeRow(),
+        neutral_favorite: makeRow(),
+        neutral_underdog: makeRow(),
+      } as Record<SiteRoleKey, HanRow>,
+      spread: {
+        home_favorite: makeRow(),
+        home_underdog: makeRow(),
+        away_favorite: makeRow(),
+        away_underdog: makeRow(),
+        neutral_favorite: makeRow(),
+        neutral_underdog: makeRow(),
+      } as Record<SiteRoleKey, HanRow>,
+    };
+
+    for (const d of days) {
+      const mlAll = d.han_ml_all;
+      const mlPos = d.han_ml_pos_ev;
+      const spAll = d.han_spread_all;
+      const spPos = d.han_spread_pos_ev;
+
+      for (const key of siteRoleKeys) {
+        if (mlAll?.[key]) acc(base.ml[key].all, mlAll[key]);
+        if (mlPos?.[key]) acc(base.ml[key].posEv, mlPos[key]);
+        if (spAll?.[key]) acc(base.spread[key].all, spAll[key]);
+        if (spPos?.[key]) acc(base.spread[key].posEv, spPos[key]);
+      }
+    }
+
+    const roiPct = (a: HanAgg) =>
+      a.risk > 0 ? (a.profit / a.risk) * 100 : 0;
+
+    return {
+      ml: base.ml,
+      spread: base.spread,
+      roiPct,
+    };
+  }, [days]);
+
   /* y domain (alt style) */
   const yStats = useMemo(() => {
     const vals = candles.flatMap((c) => [c.open, c.close]);
@@ -644,28 +857,59 @@ export default function ResultsCBB_alt() {
           </div>
 
           {/* Summary (now with Team Totals) */}
-          <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.9, textAlign: "right" }}>
+          <div
+            style={{
+              marginLeft: "auto",
+              fontSize: 12,
+              opacity: 0.9,
+              textAlign: "right",
+            }}
+          >
             {loading ? (
               "Loading…"
             ) : err ? (
               <span style={{ color: "var(--accent)" }}>{err}</span>
             ) : (
               <>
-                <div>{`Days: ${candles.length} · Final P&L: ${fmtUnits(finalPnL)}u`}</div>
+                <div>{`Days: ${candles.length} · Final P&L: ${fmtUnits(
+                  finalPnL
+                )}u`}</div>
                 <div style={{ marginTop: 2 }}>
-                  {recLine("Overall", perMarket.overall.counts, perMarket.overall.pct)}
+                  {recLine(
+                    "Overall",
+                    perMarket.overall.counts,
+                    perMarket.overall.pct
+                  )}
                 </div>
                 <div style={{ marginTop: 2, opacity: fs.useML ? 1 : 0.5 }}>
-                  {recLine("ML", perMarket.ml.counts, perMarket.ml.pct)}
+                  {recLine(
+                    "ML",
+                    perMarket.ml.counts,
+                    perMarket.ml.pct
+                  )}
                 </div>
                 <div style={{ marginTop: 2, opacity: fs.useSpread ? 1 : 0.5 }}>
-                  {recLine("Spread", perMarket.spread.counts, perMarket.spread.pct)}
+                  {recLine(
+                    "Spread",
+                    perMarket.spread.counts,
+                    perMarket.spread.pct
+                  )}
                 </div>
                 <div style={{ marginTop: 2, opacity: fs.useTotal ? 1 : 0.5 }}>
-                  {recLine("Total", perMarket.total.counts, perMarket.total.pct)}
+                  {recLine(
+                    "Total",
+                    perMarket.total.counts,
+                    perMarket.total.pct
+                  )}
                 </div>
-                <div style={{ marginTop: 2, opacity: fs.useTeamTotals ? 1 : 0.5 }}>
-                  {recLine("Team Totals", perMarket.teamTotals.counts, perMarket.teamTotals.pct)}
+                <div
+                  style={{ marginTop: 2, opacity: fs.useTeamTotals ? 1 : 0.5 }}
+                >
+                  {recLine(
+                    "Team Totals",
+                    perMarket.teamTotals.counts,
+                    perMarket.teamTotals.pct
+                  )}
                 </div>
               </>
             )}
@@ -677,7 +921,9 @@ export default function ResultsCBB_alt() {
               <input
                 type="checkbox"
                 checked={fs.useML}
-                onChange={(e) => setFs((p) => ({ ...p, useML: e.target.checked }))}
+                onChange={(e) =>
+                  setFs((p) => ({ ...p, useML: e.target.checked }))
+                }
               />
               ML
             </label>
@@ -741,7 +987,9 @@ export default function ResultsCBB_alt() {
               <input
                 type="checkbox"
                 checked={fs.mlEV}
-                onChange={(e) => setFs((p) => ({ ...p, mlEV: e.target.checked }))}
+                onChange={(e) =>
+                  setFs((p) => ({ ...p, mlEV: e.target.checked }))
+                }
               />
               +EV
             </label>
@@ -772,7 +1020,9 @@ export default function ResultsCBB_alt() {
               <input
                 type="checkbox"
                 checked={fs.spEV}
-                onChange={(e) => setFs((p) => ({ ...p, spEV: e.target.checked }))}
+                onChange={(e) =>
+                  setFs((p) => ({ ...p, spEV: e.target.checked }))
+                }
               />
               +EV
             </label>
@@ -803,7 +1053,9 @@ export default function ResultsCBB_alt() {
               <input
                 type="checkbox"
                 checked={fs.totEV}
-                onChange={(e) => setFs((p) => ({ ...p, totEV: e.target.checked }))}
+                onChange={(e) =>
+                  setFs((p) => ({ ...p, totEV: e.target.checked }))
+                }
               />
               +EV
             </label>
@@ -827,7 +1079,12 @@ export default function ResultsCBB_alt() {
                 Role:
                 <select
                   value={fs.ttRole}
-                  onChange={(e) => setFs((p) => ({ ...p, ttRole: e.target.value as TTRole }))}
+                  onChange={(e) =>
+                    setFs((p) => ({
+                      ...p,
+                      ttRole: e.target.value as TTRole,
+                    }))
+                  }
                 >
                   <option value="all">All</option>
                   <option value="favorite">Favorite</option>
@@ -840,7 +1097,12 @@ export default function ResultsCBB_alt() {
                 Side:
                 <select
                   value={fs.ttSide}
-                  onChange={(e) => setFs((p) => ({ ...p, ttSide: e.target.value as TTOUSide }))}
+                  onChange={(e) =>
+                    setFs((p) => ({
+                      ...p,
+                      ttSide: e.target.value as TTOUSide,
+                    }))
+                  }
                 >
                   <option value="all">All</option>
                   <option value="over">Over</option>
@@ -862,8 +1124,12 @@ export default function ResultsCBB_alt() {
                   title="When not 'None', Role & Side map to correlated keys: fav_over / fav_under / dog_over / dog_under"
                 >
                   <option value="none">None</option>
-                  <option value="predicted_underdog_cover">Predicted Underdog Cover</option>
-                  <option value="predicted_favorite_cover">Predicted Favorite Cover</option>
+                  <option value="predicted_underdog_cover">
+                    Predicted Underdog Cover
+                  </option>
+                  <option value="predicted_favorite_cover">
+                    Predicted Favorite Cover
+                  </option>
                 </select>
               </label>
             </div>
@@ -884,7 +1150,10 @@ export default function ResultsCBB_alt() {
                 margin={{ top: 10, right: 16, bottom: 4, left: 0 }}
                 barCategoryGap="55%"
               >
-                <CartesianGrid vertical={false} stroke="var(--border)" />
+                <CartesianGrid
+                  vertical={false}
+                  stroke="var(--border)"
+                />
                 <XAxis
                   dataKey="date"
                   tick={{ fontSize: 12 }}
@@ -908,17 +1177,33 @@ export default function ResultsCBB_alt() {
                   labelFormatter={(label: string, payload: any) => {
                     const r = payload?.[0]?.payload;
                     return r
-                      ? `${fmtX(label)}  |  Open ${fmtUnits(r.open)} → Close ${fmtUnits(
+                      ? `${fmtX(label)}  |  Open ${fmtUnits(
+                          r.open
+                        )} → Close ${fmtUnits(
                           r.close
                         )}  (Δ ${fmtUnits(r.change)})`
                       : label;
                   }}
                 />
-                <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="4 4" />
+                <ReferenceLine
+                  y={0}
+                  stroke="var(--border)"
+                  strokeDasharray="4 4"
+                />
 
                 {/* Candles: stacked base + body (no wicks) */}
-                <Bar dataKey="base" stackId="body" fill="transparent" isAnimationActive={false} />
-                <Bar dataKey="body" stackId="body" barSize={14} isAnimationActive={false}>
+                <Bar
+                  dataKey="base"
+                  stackId="body"
+                  fill="transparent"
+                  isAnimationActive={false}
+                />
+                <Bar
+                  dataKey="body"
+                  stackId="body"
+                  barSize={14}
+                  isAnimationActive={false}
+                >
                   {candles.map((d, i) => (
                     <Cell
                       key={i}
@@ -935,6 +1220,355 @@ export default function ResultsCBB_alt() {
                 <Bar dataKey="change" fill="transparent" />
               </ComposedChart>
             </ResponsiveContainer>
+          </div>
+        )}
+      </section>
+
+      {/* Home/Away/Neutral summary */}
+      <section className="card" style={{ padding: 12, marginTop: 12 }}>
+        <h2 style={{ marginTop: 0, marginBottom: 4 }}>
+          Home / Away / Neutral breakdown
+        </h2>
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--muted)",
+            marginBottom: 8,
+          }}
+        >
+          Aggregated over the selected date range. Shows moneyline and spread
+          results split by home/away/neutral and favorite/underdog.
+        </div>
+
+        {!candles.length && !loading && (
+          <div style={{ fontSize: 12 }}>
+            Select a date range with results to see this breakdown.
+          </div>
+        )}
+
+        {!!candles.length && !loading && !err && (
+          <div
+            style={{ display: "flex", flexWrap: "wrap", gap: 24 }}
+          >
+            {/* Moneyline table */}
+            <div
+              style={{ flex: "1 1 260px", minWidth: 260 }}
+            >
+              <h3
+                style={{ fontSize: 14, marginTop: 0, marginBottom: 6 }}
+              >
+                Moneyline
+              </h3>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: 12,
+                }}
+              >
+                <thead>
+                  <tr>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      Segment
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      Bets
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      W-L-P
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      Profit (u)
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      ROI%
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      +EV Bets
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      +EV Profit
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      +EV ROI%
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {siteRoleKeys.map((key) => {
+                    const row = hanSummary.ml[key];
+                    const all = row.all;
+                    const pos = row.posEv;
+                    const allRoi = hanSummary.roiPct(all);
+                    const posRoi = hanSummary.roiPct(pos);
+
+                    return (
+                      <tr key={key}>
+                        <td style={{ padding: "2px 4px" }}>
+                          {siteRoleLabels[key]}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {all.bets}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {all.W}-{all.L}-{all.P}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(all.profit)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(allRoi)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {pos.bets}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(pos.profit)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(posRoi)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Spread table */}
+            <div
+              style={{ flex: "1 1 260px", minWidth: 260 }}
+            >
+              <h3
+                style={{ fontSize: 14, marginTop: 0, marginBottom: 6 }}
+              >
+                Spread
+              </h3>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  fontSize: 12,
+                }}
+              >
+                <thead>
+                  <tr>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      Segment
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      Bets
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      W-L-P
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      Profit (u)
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      ROI%
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      +EV Bets
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      +EV Profit
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "right",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      +EV ROI%
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {siteRoleKeys.map((key) => {
+                    const row = hanSummary.spread[key];
+                    const all = row.all;
+                    const pos = row.posEv;
+                    const allRoi = hanSummary.roiPct(all);
+                    const posRoi = hanSummary.roiPct(pos);
+
+                    return (
+                      <tr key={key}>
+                        <td style={{ padding: "2px 4px" }}>
+                          {siteRoleLabels[key]}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {all.bets}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {all.W}-{all.L}-{all.P}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(all.profit)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(allRoi)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {pos.bets}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(pos.profit)}
+                        </td>
+                        <td
+                          style={{
+                            padding: "2px 4px",
+                            textAlign: "right",
+                          }}
+                        >
+                          {fmtUnits(posRoi)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </section>
