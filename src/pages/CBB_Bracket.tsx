@@ -5,8 +5,33 @@ import { useEffect, useMemo, useState } from "react";
 const DATASET_ROOT =
   "https://huggingface.co/datasets/mvpeav/cbb-sims-2026/resolve/main";
 const SEASON = 2026;
-const WEEK = "2026-W01";
-const DATE = "2026-01-03";
+
+// ---- NEW: snapshots (date + week) ----
+type Snapshot = {
+  id: string;
+  label: string;
+  week: string;
+  date: string;
+};
+
+// Add more snapshots here as you publish new weeks.
+// Last item in this array will be the default “latest”.
+const SNAPSHOTS: Snapshot[] = [
+  {
+    id: "2026-01-03_W1",
+    label: "Jan 3 – Week W1",
+    week: "2026-W01",
+    date: "2026-01-03",
+  },
+  {
+    id: "2026-01-12_W3",
+    label: "Jan 12 – Week W3",
+    week: "2026-W03",
+    date: "2026-01-12",
+  },
+];
+
+// --------------------------------------
 
 const BRACKETOLOGISTS = [
   { id: "ESPN", label: "ESPN Bracketology - Joe Lunardi" },
@@ -461,12 +486,10 @@ function MatchCard({
   const bottomScore = projection ? projection.bottomMed : undefined;
 
   const topPlaceholderLabel =
-  !topTeam && match.left.kind === "winner"
-      ? `${match.left.from} Winner`
-      : undefined;
+    !topTeam && match.left.kind === "winner" ? `${match.left.from} Winner` : undefined;
 
   const bottomPlaceholderLabel =
-  !bottomTeam && match.right.kind === "winner"
+    !bottomTeam && match.right.kind === "winner"
       ? `${match.right.from} Winner`
       : undefined;
 
@@ -529,9 +552,16 @@ function MatchCard({
 export default function CBB_Bracket() {
   const [selectedBracket, setSelectedBracket] = useState<string>("ESPN");
 
-  const [teamsMaster, setTeamsMaster] = useState<Record<string, TeamMeta | undefined> | null>(
-    null
+  // NEW: snapshot state – default to last (latest) snapshot
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string>(
+    SNAPSHOTS[SNAPSHOTS.length - 1]?.id ?? SNAPSHOTS[0].id
   );
+  const selectedSnapshot =
+    SNAPSHOTS.find((s) => s.id === selectedSnapshotId) ?? SNAPSHOTS[0];
+
+  const [teamsMaster, setTeamsMaster] = useState<
+    Record<string, TeamMeta | undefined> | null
+  >(null);
   const [pairMap, setPairMap] = useState<PairMap | null>(null);
   const [bracketJson, setBracketJson] = useState<BracketJson | null>(null);
 
@@ -560,7 +590,7 @@ export default function CBB_Bracket() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // common data
+  // common data (teams_master + round_robin_minimal) – depends on snapshot
   useEffect(() => {
     let cancelled = false;
 
@@ -569,9 +599,11 @@ export default function CBB_Bracket() {
         setLoadingCommon(true);
         setError(null);
 
-        const base = `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${WEEK}/round_robin/${DATE}`;
+        const { week, date } = selectedSnapshot;
+
+        const base = `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${week}/round_robin/${date}`;
         const teamsUrl = `${base}/teams_master.json`;
-        const rrUrl = `${base}/${DATE}_round_robin_minimal.json`;
+        const rrUrl = `${base}/${date}_round_robin_minimal.json`;
 
         const [teamsRes, rrRes] = await Promise.all([fetch(teamsUrl), fetch(rrUrl)]);
         if (!teamsRes.ok)
@@ -616,9 +648,9 @@ export default function CBB_Bracket() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedSnapshotId, selectedSnapshot]);
 
-  // bracket JSON
+  // bracket JSON – depends on bracketologist AND snapshot (week)
   useEffect(() => {
     let cancelled = false;
     async function loadBracket() {
@@ -627,7 +659,9 @@ export default function CBB_Bracket() {
         setLoadingBracket(true);
         setError(null);
 
-        const url = `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${WEEK}/brackets/${selectedBracket}.json`;
+        const { week } = selectedSnapshot;
+
+        const url = `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${week}/brackets/${selectedBracket}.json`;
         const res = await fetch(url);
         if (!res.ok)
           throw new Error(
@@ -648,7 +682,7 @@ export default function CBB_Bracket() {
     return () => {
       cancelled = true;
     };
-  }, [selectedBracket]);
+  }, [selectedBracket, selectedSnapshotId, selectedSnapshot]);
 
   const {
     regions,
@@ -985,7 +1019,7 @@ export default function CBB_Bracket() {
     width: "100vw",
   };
 
-  /** Desktop bracket layout (unchanged from previous version) */
+  /** Desktop bracket layout */
   const renderDesktopBracket = () => (
     <>
       {/* Regions */}
@@ -1307,11 +1341,34 @@ export default function CBB_Bracket() {
               CBB Bracketology Bracket
             </h1>
             <div style={{ fontSize: 13, opacity: 0.8 }}>
-              Pairwise sims from {DATE} &bull; Week {WEEK} &bull; Season {SEASON}
+              Pairwise sims from {selectedSnapshot.date} &bull; Week{" "}
+              {selectedSnapshot.week} &bull; Season {SEASON}
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            {/* NEW: snapshot selector */}
+            <label style={{ fontSize: 13, fontWeight: 600 }}>
+              Snapshot:
+              <select
+                value={selectedSnapshotId}
+                onChange={(e) => setSelectedSnapshotId(e.target.value)}
+                style={{
+                  marginLeft: 8,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  border: "1px solid rgba(15,23,42,0.2)",
+                  fontSize: 13,
+                }}
+              >
+                {SNAPSHOTS.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label style={{ fontSize: 13, fontWeight: 600 }}>
               Bracketologist:
               <select
@@ -1358,7 +1415,7 @@ export default function CBB_Bracket() {
           <>
             {isMobile ? renderMobileBracket() : renderDesktopBracket()}
 
-            {/* Odds table (same for desktop + mobile) */}
+            {/* Odds table */}
             <div style={{ marginTop: 32 }}>
               <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 15 }}>
                 Path probabilities (from sims)

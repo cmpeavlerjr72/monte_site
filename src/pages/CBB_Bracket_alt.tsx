@@ -354,11 +354,13 @@ function TeamRow({
   onClick,
   selected,
   projectedScore,
+  placeholderLabel,
 }: {
   team?: RegionTeam;
   onClick?: () => void;
   selected?: boolean;
   projectedScore?: number;
+  placeholderLabel?: string;
 }) {
   const isPlaceholder = !team;
   const scoreText =
@@ -429,7 +431,7 @@ function TeamRow({
         </>
       ) : (
         <div style={{ fontSize: 12, opacity: 0.5, fontStyle: "italic" }}>
-          Waiting on teams…
+          {placeholderLabel ?? "Waiting on teams…"}
         </div>
       )}
     </button>
@@ -458,6 +460,16 @@ function MatchCard({
   const topScore = projection ? projection.topMed : undefined;
   const bottomScore = projection ? projection.bottomMed : undefined;
 
+  const topPlaceholderLabel =
+  !topTeam && match.left.kind === "winner"
+      ? `${match.left.from} Winner`
+      : undefined;
+
+  const bottomPlaceholderLabel =
+  !bottomTeam && match.right.kind === "winner"
+      ? `${match.right.from} Winner`
+      : undefined;
+
   const line =
     projection && hasTeams
       ? `${topTeam?.name} ${(projection.pTopWin * 100).toFixed(1)}% • ${
@@ -483,12 +495,14 @@ function MatchCard({
           projectedScore={topScore}
           selected={topSelected}
           onClick={hasTeams && topTeam ? () => setPick(topTeam.slug) : undefined}
+          placeholderLabel={topPlaceholderLabel}
         />
         <TeamRow
           team={bottomTeam}
           projectedScore={bottomScore}
           selected={bottomSelected}
           onClick={hasTeams && bottomTeam ? () => setPick(bottomTeam.slug) : undefined}
+          placeholderLabel={bottomPlaceholderLabel}
         />
       </div>
 
@@ -530,6 +544,21 @@ export default function CBB_Bracket() {
   // sort state for odds table
   const [sortColumn, setSortColumn] = useState<"SEED" | StageId>("CHAMP");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  // mobile / desktop detection
+  const [isMobile, setIsMobile] = useState(false);
+  const [activeRegionMobile, setActiveRegionMobile] = useState<number>(0);
+  const [activeRoundMobile, setActiveRoundMobile] = useState<RoundId>("R64");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 900);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   // common data
   useEffect(() => {
@@ -956,6 +985,310 @@ export default function CBB_Bracket() {
     width: "100vw",
   };
 
+  /** Desktop bracket layout (unchanged from previous version) */
+  const renderDesktopBracket = () => (
+    <>
+      {/* Regions */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 32,
+          alignItems: "flex-start",
+          width: "100%",
+        }}
+      >
+        {regions.map((_, regionIndex) => {
+          const regionMatches = matches.filter((m) => m.regionIndex === regionIndex);
+          const layout = layoutByRegion[regionIndex] ?? {};
+          const byRound: Partial<Record<RoundId, Match[]>> = {};
+          regionMatches.forEach((m) => {
+            if (!byRound[m.round]) byRound[m.round] = [];
+            byRound[m.round]!.push(m);
+          });
+          (Object.keys(byRound) as RoundId[]).forEach((r) => {
+            byRound[r]!.sort((a, b) => (a.id < b.id ? -1 : 1));
+          });
+
+          const isRightSide = regionIndex % 2 === 1;
+          const roundOrderLeft: RoundId[] = ["R64", "R32", "S16", "E8"];
+          const roundOrderRight: RoundId[] = ["E8", "S16", "R32", "R64"];
+          const columnRounds = isRightSide ? roundOrderRight : roundOrderLeft;
+
+          const maxRow =
+            Object.values(layout).reduce(
+              (max, info) => Math.max(max, info.rowStart + info.rowSpan - 1),
+              3
+            ) + 1;
+
+          const gridChildren: any[] = [];
+
+          columnRounds.forEach((round, colIndex) => {
+            // header
+            gridChildren.push(
+              <div
+                key={`hdr-${regionIndex}-${round}`}
+                style={{
+                  gridColumn: colIndex + 1,
+                  gridRow: 1,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  marginBottom: 4,
+                }}
+              >
+                {roundLabel[round]}
+              </div>
+            );
+
+            // games
+            (byRound[round] ?? []).forEach((m) => {
+              const info = layout[m.id];
+              const gridRow = info ? `${info.rowStart} / span ${info.rowSpan}` : "auto";
+              gridChildren.push(
+                <div
+                  key={m.id}
+                  style={{
+                    gridColumn: colIndex + 1,
+                    gridRow,
+                  }}
+                >
+                  {renderMatch(m)}
+                </div>
+              );
+            });
+          });
+
+          return (
+            <div key={regionIndex} style={{ width: "100%", overflowX: "auto" }}>
+              <div
+                style={{
+                  fontWeight: 800,
+                  marginBottom: 6,
+                  fontSize: 15,
+                }}
+              >
+                {regionNames[regionIndex]}
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${columnRounds.length}, minmax(200px, 1fr))`,
+                  gridTemplateRows: `repeat(${maxRow}, minmax(0, auto))`,
+                  columnGap: 32,
+                  rowGap: 8,
+                  alignItems: "start",
+                }}
+              >
+                {gridChildren}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Final Four & Title */}
+      <div style={{ marginTop: 32 }}>
+        <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 15 }}>
+          Final Four & Title
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gridAutoFlow: "column",
+            gridAutoColumns: "minmax(240px, 1fr)",
+            gap: 16,
+            overflowX: "auto",
+          }}
+        >
+          {(["F4", "NC"] as RoundId[]).map((round) => {
+            const roundMatches = matches
+              .filter((m) => m.round === round)
+              .sort((a, b) => (a.id < b.id ? -1 : 1));
+            return (
+              <div key={round} style={{ minWidth: 240 }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    marginBottom: 4,
+                  }}
+                >
+                  {roundLabel[round]}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {roundMatches.map((m) => renderMatch(m))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+
+  /** Mobile “stepper” bracket layout */
+  const renderMobileBracket = () => {
+    const regionTabs = [...regionNames, "Final Four"];
+    const isFinals = activeRegionMobile === 4;
+    const mobileRounds: RoundId[] = ["R64", "R32", "S16", "E8"];
+
+    const renderRoundsForRegion = () => {
+      const regionIndex = activeRegionMobile;
+      const regionMatches = matches.filter((m) => m.regionIndex === regionIndex);
+      const byRound: Partial<Record<RoundId, Match[]>> = {};
+      regionMatches.forEach((m) => {
+        if (!byRound[m.round]) byRound[m.round] = [];
+        byRound[m.round]!.push(m);
+      });
+      mobileRounds.forEach((r) => {
+        if (byRound[r]) byRound[r]!.sort((a, b) => (a.id < b.id ? -1 : 1));
+      });
+
+      const currentRoundMatches = (byRound[activeRoundMobile] ?? []).slice();
+
+      return (
+        <>
+          <div
+            style={{
+              marginTop: 12,
+              display: "flex",
+              gap: 8,
+              overflowX: "auto",
+              paddingBottom: 4,
+            }}
+          >
+            {mobileRounds.map((round) => {
+              const active = activeRoundMobile === round;
+              return (
+                <button
+                  key={round}
+                  type="button"
+                  onClick={() => setActiveRoundMobile(round)}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    border: active
+                      ? "1px solid rgba(37,99,235,0.8)"
+                      : "1px solid rgba(148,163,184,0.7)",
+                    background: active ? "rgba(37,99,235,0.08)" : "white",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {roundLabel[round]}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            {currentRoundMatches.length === 0 ? (
+              <div style={{ fontSize: 12, opacity: 0.7 }}>No games for this round.</div>
+            ) : (
+              currentRoundMatches.map((m) => renderMatch(m))
+            )}
+          </div>
+        </>
+      );
+    };
+
+    const renderFinals = () => {
+      const finalsRounds: RoundId[] = ["F4", "NC"];
+      return (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 16 }}>
+          {finalsRounds.map((round) => {
+            const roundMatches = matches
+              .filter((m) => m.round === round)
+              .sort((a, b) => (a.id < b.id ? -1 : 1));
+            if (!roundMatches.length) return null;
+            return (
+              <div key={round}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    marginBottom: 6,
+                  }}
+                >
+                  {roundLabel[round]}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {roundMatches.map((m) => renderMatch(m))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
+
+    return (
+      <div>
+        <div
+          style={{
+            display: "flex",
+            overflowX: "auto",
+            gap: 8,
+            paddingBottom: 4,
+          }}
+        >
+          {regionTabs.map((label, idx) => {
+            const active = activeRegionMobile === idx;
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setActiveRegionMobile(idx)}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: active
+                    ? "1px solid rgba(37,99,235,0.8)"
+                    : "1px solid rgba(148,163,184,0.7)",
+                  background: active ? "rgba(37,99,235,0.08)" : "white",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {!isFinals ? (
+          <>
+            <div
+              style={{
+                marginTop: 8,
+                fontWeight: 800,
+                fontSize: 15,
+              }}
+            >
+              {regionNames[activeRegionMobile]}
+            </div>
+            {renderRoundsForRegion()}
+          </>
+        ) : (
+          <>
+            <div
+              style={{
+                marginTop: 8,
+                fontWeight: 800,
+                fontSize: 15,
+              }}
+            >
+              Final Four & Title
+            </div>
+            {renderFinals()}
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div style={outerStyles}>
       <div style={innerStyles}>
@@ -1023,143 +1356,9 @@ export default function CBB_Bracket() {
           <div style={{ padding: 20, fontSize: 14 }}>No bracket data loaded.</div>
         ) : (
           <>
-            {/* Regions */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 32,
-                alignItems: "flex-start",
-                width: "100%",
-              }}
-            >
-              {regions.map((_, regionIndex) => {
-                const regionMatches = matches.filter((m) => m.regionIndex === regionIndex);
-                const layout = layoutByRegion[regionIndex] ?? {};
-                const byRound: Partial<Record<RoundId, Match[]>> = {};
-                regionMatches.forEach((m) => {
-                  if (!byRound[m.round]) byRound[m.round] = [];
-                  byRound[m.round]!.push(m);
-                });
-                (Object.keys(byRound) as RoundId[]).forEach((r) => {
-                  byRound[r]!.sort((a, b) => (a.id < b.id ? -1 : 1));
-                });
+            {isMobile ? renderMobileBracket() : renderDesktopBracket()}
 
-                const isRightSide = regionIndex % 2 === 1;
-                const roundOrderLeft: RoundId[] = ["R64", "R32", "S16", "E8"];
-                const roundOrderRight: RoundId[] = ["E8", "S16", "R32", "R64"];
-                const columnRounds = isRightSide ? roundOrderRight : roundOrderLeft;
-
-                const maxRow =
-                  Object.values(layout).reduce(
-                    (max, info) => Math.max(max, info.rowStart + info.rowSpan - 1),
-                    3
-                  ) + 1;
-
-                const gridChildren: any[] = [];
-
-                columnRounds.forEach((round, colIndex) => {
-                  // header
-                  gridChildren.push(
-                    <div
-                      key={`hdr-${regionIndex}-${round}`}
-                      style={{
-                        gridColumn: colIndex + 1,
-                        gridRow: 1,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        marginBottom: 4,
-                      }}
-                    >
-                      {roundLabel[round]}
-                    </div>
-                  );
-
-                  // games
-                  (byRound[round] ?? []).forEach((m) => {
-                    const info = layout[m.id];
-                    const gridRow = info ? `${info.rowStart} / span ${info.rowSpan}` : "auto";
-                    gridChildren.push(
-                      <div
-                        key={m.id}
-                        style={{
-                          gridColumn: colIndex + 1,
-                          gridRow,
-                        }}
-                      >
-                        {renderMatch(m)}
-                      </div>
-                    );
-                  });
-                });
-
-                return (
-                  <div key={regionIndex} style={{ width: "100%", overflowX: "auto" }}>
-                    <div
-                      style={{
-                        fontWeight: 800,
-                        marginBottom: 6,
-                        fontSize: 15,
-                      }}
-                    >
-                      {regionNames[regionIndex]}
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: `repeat(${columnRounds.length}, minmax(200px, 1fr))`,
-                        gridTemplateRows: `repeat(${maxRow}, minmax(0, auto))`,
-                        columnGap: 32,
-                        rowGap: 8,
-                        alignItems: "start",
-                      }}
-                    >
-                      {gridChildren}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Final Four & Title */}
-            <div style={{ marginTop: 32 }}>
-              <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 15 }}>
-                Final Four & Title
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridAutoFlow: "column",
-                  gridAutoColumns: "minmax(240px, 1fr)",
-                  gap: 16,
-                  overflowX: "auto",
-                }}
-              >
-                {(["F4", "NC"] as RoundId[]).map((round) => {
-                  const roundMatches = matches
-                    .filter((m) => m.round === round)
-                    .sort((a, b) => (a.id < b.id ? -1 : 1));
-                  return (
-                    <div key={round} style={{ minWidth: 240 }}>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 700,
-                          marginBottom: 4,
-                        }}
-                      >
-                        {roundLabel[round]}
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {roundMatches.map((m) => renderMatch(m))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Odds table */}
+            {/* Odds table (same for desktop + mobile) */}
             <div style={{ marginTop: 32 }}>
               <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 15 }}>
                 Path probabilities (from sims)
