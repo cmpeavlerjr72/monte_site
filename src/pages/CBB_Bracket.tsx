@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { espnLogoUrl, getEspnTeamsMap, lookupEspnLogo } from "../utils/espnLogos";
 
 /** CONFIG */
 
@@ -120,6 +121,7 @@ interface TeamMeta {
   kpName: string;
   logoPrimary?: string;
   logoAlt?: string;
+  espnId?: string;
 }
 
 interface RegionTeam {
@@ -577,6 +579,10 @@ export default function CBB_Bracket() {
   const selectedSnapshot =
     SNAPSHOTS.find((s) => s.id === selectedSnapshotId) ?? SNAPSHOTS[0];
 
+  // ESPN teams map (fetched once for logo fallback)
+  const [espnTeams, setEspnTeams] = useState<Map<string, any>>(new Map());
+  useEffect(() => { getEspnTeamsMap().then(setEspnTeams); }, []);
+
   const [teamsMaster, setTeamsMaster] = useState<
     Record<string, TeamMeta | undefined> | null
   >(null);
@@ -643,6 +649,7 @@ export default function CBB_Bracket() {
             kpName: row.kp_name ?? row.team ?? row.team_slug,
             logoPrimary: row.logo_primary,
             logoAlt: row.logo_alt,
+            espnId: row.espn_id ?? row.espnId ?? undefined,
           };
         }
 
@@ -748,7 +755,10 @@ export default function CBB_Bracket() {
           conf: row.conf,
           avgSeed: row.avg_seed,
           regionIndex: r,
-          logo: meta?.logoPrimary || meta?.logoAlt,
+          logo: espnLogoUrl(meta?.espnId)
+            || (espnTeams.size ? lookupEspnLogo(espnTeams, meta?.name ?? row.team)?.logo : undefined)
+            || meta?.logoPrimary
+            || meta?.logoAlt,
         });
       }
     }
@@ -813,7 +823,7 @@ export default function CBB_Bracket() {
       teamsBySlug: tBySlug,
       layoutByRegion,
     };
-  }, [bracketJson, teamsMaster]);
+  }, [bracketJson, teamsMaster, espnTeams]);
 
   const { stageProbs } = useMemo(() => {
     if (!matches.length || !pairMap) {

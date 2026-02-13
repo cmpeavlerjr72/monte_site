@@ -15,6 +15,7 @@ import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 import { useEspnScoreboard } from "../lib/useEspnScoreboard";
 
 import SupportButton from "../components/SupportButton";
+import { espnLogoUrl, espnLogoDarkUrl, getEspnTeamsMap, lookupEspnLogo } from "../utils/espnLogos";
 
 
 /** LIVE SCOREBOARD TYPES / HELPERS (CBB) */
@@ -37,6 +38,8 @@ type LiveGame = {
   awayId?: string;   // ESPN team.id
   homeId?: string;   // ESPN team.id
 
+  awayLogo?: string;  // logo URL from ESPN live payload
+  homeLogo?: string;  // logo URL from ESPN live payload
 };
 
 function cleanTeamName(s?: string) {
@@ -149,6 +152,9 @@ function mapEspnToLiveGamesCbb(payload: any): LiveGame[] {
     const awayScore = Number(awayScoreRaw);
     const homeScore = Number(homeScoreRaw);
 
+    const awayLogo = away?.team?.logo ?? away?.team?.logos?.[0]?.href;
+    const homeLogo = home?.team?.logo ?? home?.team?.logos?.[0]?.href;
+
     return {
       id: String(e?.id ?? Math.random()),
       state: state as LiveGame["state"],
@@ -167,6 +173,9 @@ function mapEspnToLiveGamesCbb(payload: any): LiveGame[] {
       liveSpread: Number.isFinite(liveSpread as number) ? (liveSpread as number) : undefined,
       liveFavTeam,
       liveBook,
+
+      awayLogo: typeof awayLogo === "string" ? awayLogo : undefined,
+      homeLogo: typeof homeLogo === "string" ? homeLogo : undefined,
     };
   });
 }
@@ -917,6 +926,10 @@ export default function CBBSims() {
     setFilterEvMin("0");   // you can bump this to "0.25" etc if you want
   };
 
+  // ESPN teams map (fetched once for logo fallback)
+  const [espnTeams, setEspnTeams] = useState<Map<string, any>>(new Map());
+  useEffect(() => { getEspnTeamsMap().then(setEspnTeams); }, []);
+
   // ----- LIVE SCOREBOARD (CBB) -----
   // ESPN expects YYYYMMDD but our helper on the server strips hyphens,
   // so both "2025-11-23" and "20251123" are fine.
@@ -1023,10 +1036,14 @@ export default function CBBSims() {
 
               const Aname = pickStrLoose(r, ["A_kp_name", "A_name", "kp_name_A", "A_name_kp"]) ?? teamA;
               const Bname = pickStrLoose(r, ["B_kp_name", "B_name", "kp_name_B", "B_name_kp"]) ?? teamB;
-              const aLogoPrimary = pickStrLoose(r, ["A_logo_primary", "a_logo_primary"]) ?? null;
-              const aLogoAlt = pickStrLoose(r, ["A_logo_alt", "a_logo_alt"]) ?? null;
-              const bLogoPrimary = pickStrLoose(r, ["B_logo_primary", "b_logo_primary"]) ?? null;
-              const bLogoAlt = pickStrLoose(r, ["B_logo_alt", "b_logo_alt"]) ?? null;
+              const aLogoPrimary = espnLogoUrl(aEspnId)
+                || pickStrLoose(r, ["A_logo_primary", "a_logo_primary"]) || null;
+              const aLogoAlt = espnLogoDarkUrl(aEspnId)
+                || pickStrLoose(r, ["A_logo_alt", "a_logo_alt"]) || null;
+              const bLogoPrimary = espnLogoUrl(bEspnId)
+                || pickStrLoose(r, ["B_logo_primary", "b_logo_primary"]) || null;
+              const bLogoAlt = espnLogoDarkUrl(bEspnId)
+                || pickStrLoose(r, ["B_logo_alt", "b_logo_alt"]) || null;
 
               return {
                 teamA: Aname,
@@ -1545,8 +1562,38 @@ export default function CBBSims() {
       }
 
 
+      // --- Logo fallback chain ---
+      let { aLogoPrimary, aLogoAlt, bLogoPrimary, bLogoAlt } = r;
+
+      // Fallback: logos from ESPN live payload
+      if (lg) {
+        const aMatchesAwayLogo = cleanTeamName(r.teamA) === cleanTeamName(lg.awayTeam);
+        if (!aLogoPrimary) aLogoPrimary = (aMatchesAwayLogo ? lg.awayLogo : lg.homeLogo) ?? null;
+        if (!bLogoPrimary) bLogoPrimary = (aMatchesAwayLogo ? lg.homeLogo : lg.awayLogo) ?? null;
+      }
+
+      // Fallback: ESPN teams map lookup by name
+      if (!aLogoPrimary && espnTeams.size) {
+        const entry = lookupEspnLogo(espnTeams, r.teamA);
+        if (entry) {
+          aLogoPrimary = entry.logo;
+          if (!aLogoAlt) aLogoAlt = entry.darkLogo ?? null;
+        }
+      }
+      if (!bLogoPrimary && espnTeams.size) {
+        const entry = lookupEspnLogo(espnTeams, r.teamB);
+        if (entry) {
+          bLogoPrimary = entry.logo;
+          if (!bLogoAlt) bLogoAlt = entry.darkLogo ?? null;
+        }
+      }
+
       return {
         ...r,
+        aLogoPrimary,
+        aLogoAlt,
+        bLogoPrimary,
+        bLogoAlt,
         projA, projB, mlTeam, mlProb, mlFair,
         tipEtLabel,
         tipUnix,
@@ -1569,12 +1616,10 @@ export default function CBBSims() {
         liveSpreadFavName,
         liveOddsBook,
 
-        // 🔹 new filter metadata
         pickSpreadLoc,
         pickSpreadFavDog,
         pickMLLoc,
         pickMLFavDog,
-
 
       } as Card;
     });
@@ -1716,7 +1761,7 @@ export default function CBBSims() {
         }
       }
     });
-  }, [rows, sortKey, livePairMap, liveIdMap, liveNameMap, filterPickKind, filterSideLoc, filterFavDog, filterEvMin]);
+  }, [rows, sortKey, livePairMap, liveIdMap, liveNameMap, espnTeams, filterPickKind, filterSideLoc, filterFavDog, filterEvMin]);
 
   // compute daily records + profit
   function computeRecord(kind: "spread" | "total" | "ml") {
