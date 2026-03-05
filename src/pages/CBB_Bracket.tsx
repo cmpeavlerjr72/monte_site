@@ -48,6 +48,12 @@ const SNAPSHOTS: Snapshot[] = [
     week: "2026-W07",
     date: "2026-02-12",
   },
+    {
+    id: "2026-03-05_W10",                                                                                                                                               
+    label: "Mar 5 – Week W10",
+    week: "2026-W10",
+    date: "2026-03-05",
+  },
 ];
 
 // --------------------------------------
@@ -94,6 +100,7 @@ const BRACKETOLOGISTS = [
   { id: "T-Rank", label: "T-Ranketology" },
   { id: "TRR", label: "The Round Robin" },
   { id: "Zac", label: "Bracket Zac" },
+  { id: "JaysBracketPlays", label: "Jay's Bracket Plays" },
 ].sort((a, b) => a.label.localeCompare(b.label));
 
 type TeamSlug = string;
