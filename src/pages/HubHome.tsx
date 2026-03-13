@@ -68,6 +68,23 @@ export default function HubHome() {
               Cup, Xfinity & Truck Series predictions powered by LightGBM — win, top 5, and top 10 probabilities.
             </div>
           </Link>
+
+          <Link
+            to="/tennis"
+            className="card"
+            style={{
+              padding: 16,
+              border: "1px solid var(--border)",
+              borderRadius: 14,
+              textDecoration: "none",
+              background: "var(--card)",
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 18 }}>Tennis</div>
+            <div style={{ marginTop: 6, color: "var(--muted)" }}>
+              ATP & WTA match predictions — hybrid Elo + point simulation + ML model with daily updates.
+            </div>
+          </Link>
         </div>
       </section>
     </main>

@@ -25,6 +25,9 @@ import CBB_Bracket from "./pages/CBB_Bracket";
 // NASCAR Pages
 import NascarPredictions from "./pages/NascarPredictions";
 
+// Tennis Pages
+import TennisPredictions from "./pages/TennisPredictions";
+
 // New pages
 import HubHome from "./pages/HubHome";
 import CBBComingSoon from "./pages/CBBComingSoon";
@@ -65,6 +68,10 @@ export default function App() {
           {/* NASCAR */}
           <Route path="/nascar" element={<NascarPredictions />} />
           <Route path="/nascar/predictions" element={<NascarPredictions />} />
+
+          {/* Tennis */}
+          <Route path="/tennis" element={<TennisPredictions />} />
+          <Route path="/tennis/predictions" element={<TennisPredictions />} />
 
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />

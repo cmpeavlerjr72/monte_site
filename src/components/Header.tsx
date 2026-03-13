@@ -10,8 +10,9 @@ export default function Header() {
   const inCFB = pathname.startsWith("/cfb");
   const inCBB = pathname.startsWith("/cbb");
   const inNASCAR = pathname.startsWith("/nascar");
+  const inTennis = pathname.startsWith("/tennis");
   // Use current sport for all header links; default to CFB on non-sport routes
-  const basePath = inNASCAR ? "/nascar" : inCBB ? "/cbb" : "/cfb";
+  const basePath = inTennis ? "/tennis" : inNASCAR ? "/nascar" : inCBB ? "/cbb" : "/cfb";
 
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -69,6 +70,13 @@ export default function Header() {
           >
             NASCAR
           </NavLink>
+          <NavLink
+            to="/tennis"
+            className={({ isActive }) => `tab${isActive || inTennis ? " active" : ""}`}
+            aria-current={inTennis ? "page" : undefined}
+          >
+            Tennis
+          </NavLink>
 
           <SupportButton 
           venmoHandle="Mitchell-Peavler"
@@ -81,6 +89,8 @@ export default function Header() {
         <nav className="primary-nav">
           {inNASCAR ? (
             <NavLink to="/nascar/predictions">Predictions</NavLink>
+          ) : inTennis ? (
+            <NavLink to="/tennis/predictions">Predictions</NavLink>
           ) : (
             <>
               <NavLink to={`${basePath}/game`}>Detailed Player</NavLink>
@@ -113,6 +123,8 @@ export default function Header() {
           >
             {inNASCAR ? (
               <NavLink to="/nascar/predictions" role="menuitem">Predictions</NavLink>
+            ) : inTennis ? (
+              <NavLink to="/tennis/predictions" role="menuitem">Predictions</NavLink>
             ) : (
               <>
                 <NavLink to={`${basePath}/game`} role="menuitem">Detailed Player</NavLink>
