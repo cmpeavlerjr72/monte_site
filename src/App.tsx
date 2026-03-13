@@ -22,6 +22,9 @@ import CBB_Sims from "./pages/CBB_sims";
 import ResultsCBB from "./pages/ResultsCBB";
 import CBB_Bracket from "./pages/CBB_Bracket";
 
+// NASCAR Pages
+import NascarPredictions from "./pages/NascarPredictions";
+
 // New pages
 import HubHome from "./pages/HubHome";
 import CBBComingSoon from "./pages/CBBComingSoon";
@@ -59,6 +62,10 @@ export default function App() {
           <Route path="/cbb/scoreboard" element={<CBB_Sims />} />
           <Route path="/cbb/results" element={<ResultsCBB />} />  
           <Route path="/cbb/bracket" element={<CBB_Bracket />} />        
+          {/* NASCAR */}
+          <Route path="/nascar" element={<NascarPredictions />} />
+          <Route path="/nascar/predictions" element={<NascarPredictions />} />
+
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

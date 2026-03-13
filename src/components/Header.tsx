@@ -9,8 +9,9 @@ export default function Header() {
   const { pathname } = useLocation();
   const inCFB = pathname.startsWith("/cfb");
   const inCBB = pathname.startsWith("/cbb");
+  const inNASCAR = pathname.startsWith("/nascar");
   // Use current sport for all header links; default to CFB on non-sport routes
-  const basePath = inCBB ? "/cbb" : "/cfb";
+  const basePath = inNASCAR ? "/nascar" : inCBB ? "/cbb" : "/cfb";
 
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -61,6 +62,13 @@ export default function Header() {
           >
             CBB
           </NavLink>
+          <NavLink
+            to="/nascar"
+            className={({ isActive }) => `tab${isActive || inNASCAR ? " active" : ""}`}
+            aria-current={inNASCAR ? "page" : undefined}
+          >
+            NASCAR
+          </NavLink>
 
           <SupportButton 
           venmoHandle="Mitchell-Peavler"
@@ -71,14 +79,20 @@ export default function Header() {
 
         {/* Desktop inline nav (uses active sport basePath) */}
         <nav className="primary-nav">
-          <NavLink to={`${basePath}/game`}>Detailed Player</NavLink>
-          <NavLink to={`${basePath}/scoreboard`}>Scoreboard</NavLink>
-          <NavLink to={`${basePath}/results`}>Results</NavLink>
-          <NavLink to={`${basePath}/trends-clv`}>Trends</NavLink>
-          <NavLink to={`${basePath}/bracket`}>Bracket</NavLink>
+          {inNASCAR ? (
+            <NavLink to="/nascar/predictions">Predictions</NavLink>
+          ) : (
+            <>
+              <NavLink to={`${basePath}/game`}>Detailed Player</NavLink>
+              <NavLink to={`${basePath}/scoreboard`}>Scoreboard</NavLink>
+              <NavLink to={`${basePath}/results`}>Results</NavLink>
+              <NavLink to={`${basePath}/trends-clv`}>Trends</NavLink>
+              <NavLink to={`${basePath}/bracket`}>Bracket</NavLink>
+            </>
+          )}
         </nav>
 
-        {/* Mobile hamburger → dropdown (also uses basePath) */}
+        {/* Mobile hamburger -> dropdown (also uses basePath) */}
         <div className="menu-wrap">
           <button
             ref={btnRef}
@@ -97,11 +111,17 @@ export default function Header() {
             className={`menu-dropdown${open ? " open" : ""}`}
             role="menu"
           >
-            <NavLink to={`${basePath}/game`} role="menuitem">Detailed Player</NavLink>
-            <NavLink to={`${basePath}/scoreboard`} role="menuitem">Scoreboard</NavLink>
-            <NavLink to={`${basePath}/results`} role="menuitem">Results</NavLink>
-            <NavLink to={`${basePath}/trends-clv`} role="menuitem">Trends</NavLink>
-            <NavLink to={`${basePath}/bracket`}role='menuitem'>Bracket</NavLink>
+            {inNASCAR ? (
+              <NavLink to="/nascar/predictions" role="menuitem">Predictions</NavLink>
+            ) : (
+              <>
+                <NavLink to={`${basePath}/game`} role="menuitem">Detailed Player</NavLink>
+                <NavLink to={`${basePath}/scoreboard`} role="menuitem">Scoreboard</NavLink>
+                <NavLink to={`${basePath}/results`} role="menuitem">Results</NavLink>
+                <NavLink to={`${basePath}/trends-clv`} role="menuitem">Trends</NavLink>
+                <NavLink to={`${basePath}/bracket`} role="menuitem">Bracket</NavLink>
+              </>
+            )}
           </div>
         </div>
       </div>
