@@ -63,9 +63,9 @@ export default function HubHome() {
               background: "var(--card)",
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: 18 }}>NASCAR Cup Series</div>
+            <div style={{ fontWeight: 800, fontSize: 18 }}>NASCAR</div>
             <div style={{ marginTop: 6, color: "var(--muted)" }}>
-              Race predictions powered by LightGBM — win, top 5, and top 10 probabilities.
+              Cup, Xfinity & Truck Series predictions powered by LightGBM — win, top 5, and top 10 probabilities.
             </div>
           </Link>
         </div>

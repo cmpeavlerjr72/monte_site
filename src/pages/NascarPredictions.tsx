@@ -15,6 +15,23 @@ import {
 const DATASET_ROOT =
   "https://huggingface.co/datasets/mvpeav/nascar-predictions/resolve/main";
 
+/* ── Series config ────────────────────────────────────────── */
+
+type SeriesKey = "cup" | "xfinity" | "trucks";
+
+interface SeriesInfo {
+  label: string;
+  badgeCdn: string; // NASCAR CDN car badge path (series 1/2/3)
+}
+
+const SERIES: Record<SeriesKey, SeriesInfo> = {
+  cup:     { label: "Cup Series",            badgeCdn: "https://cf.nascar.com/data/images/carbadges/1" },
+  xfinity: { label: "Xfinity Series",        badgeCdn: "https://cf.nascar.com/data/images/carbadges/2" },
+  trucks:  { label: "Craftsman Truck Series", badgeCdn: "https://cf.nascar.com/data/images/carbadges/3" },
+};
+
+const SERIES_KEYS: SeriesKey[] = ["cup", "xfinity", "trucks"];
+
 /* ── Types ─────────────────────────────────────────────────── */
 
 interface Driver {
@@ -101,13 +118,14 @@ function formatDate(dateStr: string) {
 
 /* ── Car Number Badge (official NASCAR CDN images) ─────────── */
 
-const BADGE_CDN = "https://cf.nascar.com/data/images/carbadges/1";
-
-function CarNumber({ num }: { num: string }) {
+function CarNumber({ num, series }: { num: string; series: SeriesKey }) {
   const [err, setErr] = useState(false);
+  // Reset error state when series or number changes
+  useEffect(() => setErr(false), [num, series]);
+
+  const badgeCdn = SERIES[series].badgeCdn;
 
   if (!num || err) {
-    // Fallback: styled text number
     return (
       <span
         style={{
@@ -130,7 +148,7 @@ function CarNumber({ num }: { num: string }) {
 
   return (
     <img
-      src={`${BADGE_CDN}/${num}.png`}
+      src={`${badgeCdn}/${num}.png`}
       alt={`#${num}`}
       onError={() => setErr(true)}
       style={{ height: 28, width: "auto", display: "block" }}
@@ -175,6 +193,7 @@ function SortArrow({ col, sortKey, sortAsc }: { col: SortKey; sortKey: SortKey; 
 /* ── Main Component ────────────────────────────────────────── */
 
 export default function NascarPredictions() {
+  const [series, setSeries] = useState<SeriesKey>("cup");
   const [index, setIndex] = useState<IndexEntry[]>([]);
   const [schedule, setSchedule] = useState<ScheduleRace[]>([]);
   const [selected, setSelected] = useState<string>("");
@@ -187,17 +206,21 @@ export default function NascarPredictions() {
 
   const season = new Date().getFullYear();
 
-  // Fetch index + schedule in parallel
+  // Fetch index + schedule in parallel (re-fetches when series changes)
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
+    setPrediction(null);
+    setSelected("");
 
-    const fetchIndex = fetch(`${DATASET_ROOT}/${season}/index.json`, { cache: "no-store" })
+    const base = `${DATASET_ROOT}/${season}/${series}`;
+
+    const fetchIndex = fetch(`${base}/index.json`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : []))
       .catch(() => [] as IndexEntry[]);
 
-    const fetchSchedule = fetch(`${DATASET_ROOT}/${season}/schedule.json`, { cache: "no-store" })
+    const fetchSchedule = fetch(`${base}/schedule.json`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : []))
       .catch(() => [] as ScheduleRace[]);
 
@@ -220,7 +243,7 @@ export default function NascarPredictions() {
     });
 
     return () => { cancelled = true; };
-  }, [season]);
+  }, [season, series]);
 
   // Fetch predictions for selected race
   useEffect(() => {
@@ -228,7 +251,7 @@ export default function NascarPredictions() {
     let cancelled = false;
     setPrediction(null);
 
-    fetch(`${DATASET_ROOT}/${season}/races/${selected}/predictions.json`, {
+    fetch(`${DATASET_ROOT}/${season}/${series}/races/${selected}/predictions.json`, {
       cache: "no-store",
     })
       .then((r) => {
@@ -243,7 +266,7 @@ export default function NascarPredictions() {
       });
 
     return () => { cancelled = true; };
-  }, [selected, season]);
+  }, [selected, season, series]);
 
   // Build the race dropdown options from schedule
   const raceOptions = useMemo(() => {
@@ -280,7 +303,6 @@ export default function NascarPredictions() {
       setSortAsc(!sortAsc);
     } else {
       setSortKey(key);
-      // Default descending for probabilities, ascending for position/name
       setSortAsc(
         key === "predicted_position" ||
         key === "actual_position" ||
@@ -305,25 +327,14 @@ export default function NascarPredictions() {
   if (loading) {
     return (
       <div style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
-        Loading NASCAR predictions...
-      </div>
-    );
-  }
-
-  if (error && !prediction) {
-    return (
-      <div style={{ textAlign: "center", padding: 40 }}>
-        <p style={{ color: "#b91c1c", fontWeight: 600 }}>{error}</p>
-        <p style={{ color: "var(--muted)", marginTop: 8 }}>
-          No predictions available yet. Check back after the weekly pipeline runs.
-        </p>
+        Loading {SERIES[series].label} predictions...
       </div>
     );
   }
 
   return (
     <div>
-      {/* Race selector card */}
+      {/* Series selector + race selector card */}
       <section className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div
           style={{
@@ -337,6 +348,29 @@ export default function NascarPredictions() {
             NASCAR Predictions
           </h1>
 
+          {/* Series pills */}
+          <div style={{ display: "flex", gap: 4 }}>
+            {SERIES_KEYS.map((key) => (
+              <button
+                key={key}
+                onClick={() => setSeries(key)}
+                style={{
+                  padding: "5px 14px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: series === key ? "var(--brand)" : "var(--card)",
+                  color: series === key ? "var(--brand-contrast)" : "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  transition: "background 0.15s, color 0.15s",
+                }}
+              >
+                {SERIES[key].label}
+              </button>
+            ))}
+          </div>
+
           <select
             value={selected}
             onChange={(e) => {
@@ -345,6 +379,9 @@ export default function NascarPredictions() {
             }}
             style={{ fontSize: 14, padding: "6px 10px", maxWidth: 400 }}
           >
+            {raceOptions.length === 0 && (
+              <option value="" disabled>No races available</option>
+            )}
             {raceOptions.map((r) => (
               <option
                 key={r.slug}
@@ -363,6 +400,20 @@ export default function NascarPredictions() {
           <p style={{ margin: "8px 0 0", color: "var(--muted)", fontSize: 14 }}>
             {currentRace.track_name} &middot; {currentRace.date} &middot;{" "}
             {drivers.length} drivers &middot; Model: LightGBM + Platt calibration
+          </p>
+        )}
+
+        {/* No data message for series without predictions yet */}
+        {!loading && raceOptions.length === 0 && (
+          <p style={{ margin: "12px 0 0", color: "var(--muted)", fontSize: 14 }}>
+            No predictions available yet for the {SERIES[series].label}.
+            Check back after models are validated and the pipeline runs.
+          </p>
+        )}
+
+        {error && !prediction && raceOptions.length > 0 && (
+          <p style={{ margin: "12px 0 0", color: "#b91c1c", fontSize: 14 }}>
+            {error} — predictions may not be available for this race yet.
           </p>
         )}
       </section>
@@ -546,7 +597,7 @@ export default function NascarPredictions() {
                       );
                     })()}
                     <td style={{ ...tdStyle, padding: "4px 6px" }}>
-                      <CarNumber num={d.car_number} />
+                      <CarNumber num={d.car_number} series={series} />
                     </td>
                     <td style={{ ...tdStyle, fontWeight: 600 }}>{d.driver_name}</td>
                     <td style={{ ...tdStyle, verticalAlign: "middle" }}>
