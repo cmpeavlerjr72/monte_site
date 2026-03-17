@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toPng } from "html-to-image";
 import { espnLogoUrl, getEspnTeamsMap, lookupEspnLogo } from "../utils/espnLogos";
 
 /** CONFIG */
@@ -1175,6 +1176,61 @@ export default function CBB_Bracket() {
 
   const loading = loadingCommon || loadingBracket;
 
+  const bracketRef = useRef<HTMLDivElement>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Auto-fill bracket with model picks (highest win prob advances each round)
+  const autoFillModelPicks = useCallback(() => {
+    if (!matches.length || !pairMap || !seedMap) return;
+
+    const newPicks: PicksMap = {};
+
+    // Helper to resolve a slot given picks-so-far
+    const resolveSlot = (m: Match, slot: Slot): TeamSlug | undefined => {
+      if (slot.kind === "seed") {
+        if (m.regionIndex == null) return undefined;
+        return seedMap[`${m.regionIndex}-${slot.seed}`];
+      }
+      return newPicks[slot.from];
+    };
+
+    // Process matches in order (FF -> R64 -> R32 -> ... -> NC)
+    for (const m of matches) {
+      const topSlug = resolveSlot(m, m.left);
+      const bottomSlug = resolveSlot(m, m.right);
+      if (!topSlug || !bottomSlug) continue;
+
+      const pTop = winProbSlug(topSlug, bottomSlug, pairMap);
+      newPicks[m.id] = pTop >= 0.5 ? topSlug : bottomSlug;
+    }
+
+    setPicks(newPicks);
+  }, [matches, pairMap, seedMap]);
+
+  // Save bracket as PNG image
+  const saveBracketImage = useCallback(async () => {
+    if (!bracketRef.current) return;
+    setSaving(true);
+    try {
+      const dataUrl = await toPng(bracketRef.current, {
+        backgroundColor: "#ffffff",
+        pixelRatio: 2,
+        style: {
+          padding: "24px",
+        },
+      });
+      // Create download link
+      const link = document.createElement("a");
+      link.download = `march-madness-bracket-${new Date().toISOString().slice(0, 10)}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error("Failed to save bracket image:", err);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
   const roundLabel: Record<RoundId, string> = {
     FF: "First Four",
     R64: "Round of 64",
@@ -1659,6 +1715,63 @@ export default function CBB_Bracket() {
                 </select>
               </label>
             )}
+
+            {!loading && regions.length > 0 && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={autoFillModelPicks}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(37,99,235,0.4)",
+                    background: "rgba(37,99,235,0.06)",
+                    color: "#1e40af",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Auto-fill Model Picks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicks({})}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(148,163,184,0.5)",
+                    background: "transparent",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Clear Picks
+                </button>
+                <button
+                  type="button"
+                  onClick={saveBracketImage}
+                  disabled={saving}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(22,163,74,0.4)",
+                    background: "rgba(22,163,74,0.06)",
+                    color: "#166534",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: saving ? "wait" : "pointer",
+                    whiteSpace: "nowrap",
+                    opacity: saving ? 0.6 : 1,
+                  }}
+                >
+                  {saving ? "Saving..." : "Save as Image"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1683,6 +1796,7 @@ export default function CBB_Bracket() {
           <div style={{ padding: 20, fontSize: 14 }}>No bracket data loaded.</div>
         ) : (
           <>
+            <div ref={bracketRef}>
             {isMobile ? renderMobileBracket() : renderDesktopBracket()}
 
             {/* Odds table */}
@@ -1830,6 +1944,7 @@ export default function CBB_Bracket() {
                 </table>
               </div>
             </div>
+            </div>{/* close bracketRef */}
           </>
         )}
       </div>
