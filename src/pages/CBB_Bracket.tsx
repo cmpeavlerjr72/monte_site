@@ -1223,10 +1223,10 @@ export default function CBB_Bracket() {
     setSaving(true);
 
     try {
-      // Create offscreen container
+      // Create container (must be visible for html-to-image to render it)
       const container = document.createElement("div");
       container.style.cssText = `
-        position: fixed; left: -9999px; top: 0;
+        position: absolute; top: 0; left: 0; z-index: 99999;
         width: 1800px; background: #fff; padding: 24px 16px;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       `;
@@ -1254,12 +1254,11 @@ export default function CBB_Bracket() {
       const rLabels = { R64: "Rd 64", R32: "Rd 32", S16: "Sweet 16", E8: "Elite 8" } as Record<string, string>;
 
       const teamCell = (team: RegionTeam | undefined, isWinner: boolean, align: "left" | "right") => {
-        if (!team) return `<div style="height:18px;"></div>`;
-        const bg = isWinner ? "background:rgba(37,99,235,0.10);font-weight:700;" : "";
+        if (!team) return `<div style="height:20px;"></div>`;
+        const bg = isWinner ? "background:rgba(37,99,235,0.12);font-weight:700;" : "";
         const ta = align === "right" ? "text-align:right;flex-direction:row-reverse;" : "";
-        return `<div style="display:flex;align-items:center;gap:4px;height:18px;padding:1px 4px;border-radius:4px;${bg}${ta}white-space:nowrap;overflow:hidden;">
-          <span style="font-size:9px;font-weight:700;opacity:0.5;min-width:14px;text-align:center;">${team.seed}</span>
-          ${team.logo ? `<img src="${team.logo}" style="width:14px;height:14px;object-fit:contain;" crossorigin="anonymous"/>` : ""}
+        return `<div style="display:flex;align-items:center;gap:4px;height:20px;padding:2px 6px;border-radius:4px;${bg}${ta}white-space:nowrap;overflow:hidden;">
+          <span style="font-size:10px;font-weight:800;color:#64748b;min-width:16px;text-align:center;">${team.seed}</span>
           <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;">${team.name}</span>
         </div>`;
       };
@@ -1383,19 +1382,8 @@ export default function CBB_Bracket() {
       // Right side (West + South, rounds flow left)
       grid.appendChild(renderSide(rightRegions, roundsRight, "right"));
 
-      // Wait for images to load
-      const imgs = container.querySelectorAll("img");
-      await Promise.all(
-        Array.from(imgs).map(
-          (img) =>
-            new Promise<void>((resolve) => {
-              if (img.complete) return resolve();
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-              setTimeout(resolve, 2000);
-            })
-        )
-      );
+      // Small delay to let DOM render
+      await new Promise((r) => setTimeout(r, 100));
 
       // Capture
       const dataUrl = await toPng(container, {
