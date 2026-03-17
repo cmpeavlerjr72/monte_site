@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toPng } from "html-to-image";
 import { espnLogoUrl, getEspnTeamsMap, lookupEspnLogo } from "../utils/espnLogos";
 
@@ -1176,7 +1176,6 @@ export default function CBB_Bracket() {
 
   const loading = loadingCommon || loadingBracket;
 
-  const bracketRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
 
   // Auto-fill bracket with model picks (highest win prob advances each round)
@@ -1207,19 +1206,205 @@ export default function CBB_Bracket() {
     setPicks(newPicks);
   }, [matches, pairMap, seedMap]);
 
-  // Save bracket as PNG image
+  // Resolve a team from a slot using current picks
+  const resolveSlotForExport = useCallback((m: Match, slot: Slot): RegionTeam | undefined => {
+    if (slot.kind === "seed") {
+      if (m.regionIndex == null) return undefined;
+      const slug = seedMap[`${m.regionIndex}-${slot.seed}`];
+      return slug ? teamsBySlug[slug] : undefined;
+    }
+    const winnerSlug = picks[slot.from];
+    return winnerSlug ? teamsBySlug[winnerSlug] : undefined;
+  }, [seedMap, teamsBySlug, picks]);
+
+  // Build and capture a full 64-team bracket image
   const saveBracketImage = useCallback(async () => {
-    if (!bracketRef.current) return;
+    if (!matches.length || !regions.length) return;
     setSaving(true);
+
     try {
-      const dataUrl = await toPng(bracketRef.current, {
+      // Create offscreen container
+      const container = document.createElement("div");
+      container.style.cssText = `
+        position: fixed; left: -9999px; top: 0;
+        width: 1800px; background: #fff; padding: 24px 16px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      `;
+      document.body.appendChild(container);
+
+      // Title
+      const title = document.createElement("div");
+      title.style.cssText = "text-align:center;margin-bottom:16px;";
+      title.innerHTML = `
+        <div style="font-size:22px;font-weight:800;letter-spacing:0.5px;">2026 March Madness Bracket</div>
+        <div style="font-size:12px;opacity:0.6;margin-top:4px;">Monte Carlo Sim Projections (20,000 sims/matchup) | montesim.com</div>
+      `;
+      container.appendChild(title);
+
+      // Main bracket grid: left regions | Final Four | right regions
+      const grid = document.createElement("div");
+      grid.style.cssText = "display:grid;grid-template-columns:1fr 200px 1fr;gap:0;align-items:center;";
+      container.appendChild(grid);
+
+      // Region ordering: left side = regions 0,2 (East,Midwest), right side = regions 1,3 (West,South)
+      const leftRegions = [0, 2];  // East, Midwest
+      const rightRegions = [1, 3]; // West, South
+      const roundsLeft: RoundId[] = ["R64", "R32", "S16", "E8"];
+      const roundsRight: RoundId[] = ["E8", "S16", "R32", "R64"];
+      const rLabels = { R64: "Rd 64", R32: "Rd 32", S16: "Sweet 16", E8: "Elite 8" } as Record<string, string>;
+
+      const teamCell = (team: RegionTeam | undefined, isWinner: boolean, align: "left" | "right") => {
+        if (!team) return `<div style="height:18px;"></div>`;
+        const bg = isWinner ? "background:rgba(37,99,235,0.10);font-weight:700;" : "";
+        const ta = align === "right" ? "text-align:right;flex-direction:row-reverse;" : "";
+        return `<div style="display:flex;align-items:center;gap:4px;height:18px;padding:1px 4px;border-radius:4px;${bg}${ta}white-space:nowrap;overflow:hidden;">
+          <span style="font-size:9px;font-weight:700;opacity:0.5;min-width:14px;text-align:center;">${team.seed}</span>
+          ${team.logo ? `<img src="${team.logo}" style="width:14px;height:14px;object-fit:contain;" crossorigin="anonymous"/>` : ""}
+          <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;">${team.name}</span>
+        </div>`;
+      };
+
+      const renderSide = (regionIndices: number[], rounds: RoundId[], align: "left" | "right") => {
+        const side = document.createElement("div");
+
+        for (const rIdx of regionIndices) {
+          const regionDiv = document.createElement("div");
+          regionDiv.style.cssText = "margin-bottom:8px;";
+
+          // Region header
+          const hdr = document.createElement("div");
+          hdr.style.cssText = `font-weight:800;font-size:13px;margin-bottom:4px;${align === "right" ? "text-align:right;" : ""}`;
+          hdr.textContent = (REGION_LABELS[rIdx] ?? "Region") + " Region";
+          regionDiv.appendChild(hdr);
+
+          // Rounds grid
+          const rGrid = document.createElement("div");
+          const cols = rounds.map(() => "1fr").join(" ");
+          rGrid.style.cssText = `display:grid;grid-template-columns:${cols};gap:2px;align-items:start;`;
+
+          for (const round of rounds) {
+            const col = document.createElement("div");
+            // Round header
+            const rh = document.createElement("div");
+            rh.style.cssText = `font-size:9px;font-weight:700;opacity:0.4;margin-bottom:2px;${align === "right" ? "text-align:right;" : ""}`;
+            rh.textContent = rLabels[round] ?? round;
+            col.appendChild(rh);
+
+            const roundMatches = matches
+              .filter((m) => m.regionIndex === rIdx && m.round === round)
+              .sort((a, b) => (a.id < b.id ? -1 : 1));
+
+            // Compute vertical spacing based on round
+            const spacerHeight = round === "R64" ? 0 : round === "R32" ? 18 : round === "S16" ? 54 : 126;
+
+            for (let gi = 0; gi < roundMatches.length; gi++) {
+              const m = roundMatches[gi];
+              const top = resolveSlotForExport(m, m.left);
+              const bot = resolveSlotForExport(m, m.right);
+              const pick = picks[m.id];
+              const topWin = pick === top?.slug;
+              const botWin = pick === bot?.slug;
+
+              if (gi === 0 && spacerHeight > 0) {
+                const sp = document.createElement("div");
+                sp.style.height = `${spacerHeight / 2}px`;
+                col.appendChild(sp);
+              }
+
+              const game = document.createElement("div");
+              game.style.cssText = "border:1px solid rgba(0,0,0,0.08);border-radius:4px;margin-bottom:2px;padding:1px 0;";
+              game.innerHTML = teamCell(top, topWin, align) + teamCell(bot, botWin, align);
+              col.appendChild(game);
+
+              if (gi < roundMatches.length - 1 && spacerHeight > 0) {
+                const sp = document.createElement("div");
+                sp.style.height = `${spacerHeight}px`;
+                col.appendChild(sp);
+              }
+            }
+            rGrid.appendChild(col);
+          }
+          regionDiv.appendChild(rGrid);
+          side.appendChild(regionDiv);
+        }
+        return side;
+      };
+
+      // Left side (East + Midwest, rounds flow right)
+      grid.appendChild(renderSide(leftRegions, roundsLeft, "left"));
+
+      // Center: Final Four + Championship
+      const center = document.createElement("div");
+      center.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:0 8px;";
+
+      const f4Hdr = document.createElement("div");
+      f4Hdr.style.cssText = "font-weight:800;font-size:13px;text-align:center;";
+      f4Hdr.textContent = "Final Four";
+      center.appendChild(f4Hdr);
+
+      const f4Matches = matches.filter((m) => m.round === "F4").sort((a, b) => (a.id < b.id ? -1 : 1));
+      const ncMatch = matches.find((m) => m.round === "NC");
+
+      for (const m of f4Matches) {
+        const top = resolveSlotForExport(m, m.left);
+        const bot = resolveSlotForExport(m, m.right);
+        const pick = picks[m.id];
+        const game = document.createElement("div");
+        game.style.cssText = "border:1px solid rgba(0,0,0,0.12);border-radius:6px;padding:4px;min-width:160px;margin-bottom:4px;";
+        game.innerHTML = teamCell(top, pick === top?.slug, "left") + teamCell(bot, pick === bot?.slug, "left");
+        center.appendChild(game);
+      }
+
+      if (ncMatch) {
+        const ncHdr = document.createElement("div");
+        ncHdr.style.cssText = "font-weight:800;font-size:13px;text-align:center;margin-top:8px;";
+        ncHdr.textContent = "Championship";
+        center.appendChild(ncHdr);
+
+        const top = resolveSlotForExport(ncMatch, ncMatch.left);
+        const bot = resolveSlotForExport(ncMatch, ncMatch.right);
+        const pick = picks[ncMatch.id];
+        const game = document.createElement("div");
+        game.style.cssText = "border:2px solid rgba(37,99,235,0.3);border-radius:6px;padding:4px;min-width:160px;background:rgba(37,99,235,0.03);";
+        game.innerHTML = teamCell(top, pick === top?.slug, "left") + teamCell(bot, pick === bot?.slug, "left");
+        center.appendChild(game);
+
+        if (pick) {
+          const champ = document.createElement("div");
+          champ.style.cssText = "font-size:12px;font-weight:800;text-align:center;margin-top:6px;color:#1e40af;";
+          const champTeam = teamsBySlug[pick];
+          champ.textContent = champTeam ? `Champion: ${champTeam.name}` : "";
+          center.appendChild(champ);
+        }
+      }
+
+      grid.appendChild(center);
+
+      // Right side (West + South, rounds flow left)
+      grid.appendChild(renderSide(rightRegions, roundsRight, "right"));
+
+      // Wait for images to load
+      const imgs = container.querySelectorAll("img");
+      await Promise.all(
+        Array.from(imgs).map(
+          (img) =>
+            new Promise<void>((resolve) => {
+              if (img.complete) return resolve();
+              img.onload = () => resolve();
+              img.onerror = () => resolve();
+              setTimeout(resolve, 2000);
+            })
+        )
+      );
+
+      // Capture
+      const dataUrl = await toPng(container, {
         backgroundColor: "#ffffff",
         pixelRatio: 2,
-        style: {
-          padding: "24px",
-        },
       });
-      // Create download link
+
+      document.body.removeChild(container);
+
       const link = document.createElement("a");
       link.download = `march-madness-bracket-${new Date().toISOString().slice(0, 10)}.png`;
       link.href = dataUrl;
@@ -1229,7 +1414,7 @@ export default function CBB_Bracket() {
     } finally {
       setSaving(false);
     }
-  }, []);
+  }, [matches, regions, picks, seedMap, teamsBySlug, resolveSlotForExport]);
 
   const roundLabel: Record<RoundId, string> = {
     FF: "First Four",
@@ -1796,7 +1981,6 @@ export default function CBB_Bracket() {
           <div style={{ padding: 20, fontSize: 14 }}>No bracket data loaded.</div>
         ) : (
           <>
-            <div ref={bracketRef}>
             {isMobile ? renderMobileBracket() : renderDesktopBracket()}
 
             {/* Odds table */}
@@ -1944,7 +2128,6 @@ export default function CBB_Bracket() {
                 </table>
               </div>
             </div>
-            </div>{/* close bracketRef */}
           </>
         )}
       </div>
