@@ -295,7 +295,9 @@ function buildBracketMatches(
         regionIndex: ff.regionIndex,
         left: { kind: "seed", seed: -(ff.regionIndex * 100 + ff.seed) },   // unique negative seed for FF team A
         right: { kind: "seed", seed: -(ff.regionIndex * 100 + ff.seed + 50) }, // unique negative seed for FF team B
-        advanceTo: "R32",
+        // No advanceTo: winning FF only enters R64, not R32.
+        // The R64 match references this via { kind: "winner", from: ffMatchId }
+        // and its advanceTo: "R32" correctly records P(win FF) * P(win R64).
       });
       ffLookup.set(`${ff.regionIndex}-${ff.seed}`, ff.ffMatchId);
     }
