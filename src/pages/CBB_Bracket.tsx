@@ -93,7 +93,7 @@ const BRACKETOLOGISTS = [
 type TeamSlug = string;
 
 type StageId = "R32" | "S16" | "E8" | "F4" | "NC" | "CHAMP";
-type RoundId = "R64" | "R32" | "S16" | "E8" | "F4" | "NC";
+type RoundId = "FF" | "R64" | "R32" | "S16" | "E8" | "F4" | "NC";
 type MatchId = string;
 
 type Slot =
@@ -265,13 +265,41 @@ function projectionForPair(
   };
 }
 
+/** First Four slot: which region/seed has a play-in game */
+interface FirstFourSlot {
+  regionIndex: number;
+  seed: number;
+  ffMatchId: MatchId;
+  teamA: RegionTeam;
+  teamB: RegionTeam;
+}
+
 /** Build bracket matches from regional teams */
 
-function buildBracketMatches(regionTeams: RegionTeam[][]): {
+function buildBracketMatches(
+  regionTeams: RegionTeam[][],
+  firstFourSlots?: FirstFourSlot[],
+): {
   matches: Match[];
 } {
   const matches: Match[] = [];
   const regionFinals: MatchId[] = [];
+
+  // Create First Four matches
+  const ffLookup = new Map<string, MatchId>(); // "regionIndex-seed" -> ffMatchId
+  if (firstFourSlots) {
+    for (const ff of firstFourSlots) {
+      matches.push({
+        id: ff.ffMatchId,
+        round: "FF",
+        regionIndex: ff.regionIndex,
+        left: { kind: "seed", seed: -(ff.regionIndex * 100 + ff.seed) },   // unique negative seed for FF team A
+        right: { kind: "seed", seed: -(ff.regionIndex * 100 + ff.seed + 50) }, // unique negative seed for FF team B
+        advanceTo: "R32",
+      });
+      ffLookup.set(`${ff.regionIndex}-${ff.seed}`, ff.ffMatchId);
+    }
+  }
 
   const pairings: [number, number][] = [
     [1, 16],
@@ -289,12 +317,17 @@ function buildBracketMatches(regionTeams: RegionTeam[][]): {
 
     pairings.forEach(([s1, s2], idx) => {
       const id: MatchId = `R64-R${r + 1}-G${idx + 1}`;
+
+      // Check if either seed in this pairing is a First Four slot
+      const ffLeft = ffLookup.get(`${r}-${s1}`);
+      const ffRight = ffLookup.get(`${r}-${s2}`);
+
       matches.push({
         id,
         round: "R64",
         regionIndex: r,
-        left: { kind: "seed", seed: s1 },
-        right: { kind: "seed", seed: s2 },
+        left: ffLeft ? { kind: "winner", from: ffLeft } : { kind: "seed", seed: s1 },
+        right: ffRight ? { kind: "winner", from: ffRight } : { kind: "seed", seed: s2 },
         advanceTo: "R32",
       });
       r64Ids.push(id);
@@ -767,8 +800,12 @@ export default function CBB_Bracket() {
     const regionTeams: RegionTeam[][] = [[], [], [], []];
     const hasExplicitRegions = bracketJson.teams.some((t) => !!t.region);
 
+    // Track First Four slots for match building
+    const ffSlots: FirstFourSlot[] = [];
+
     if (hasExplicitRegions) {
       // NCAA official bracket: teams have explicit region assignments
+      // First, add all non-First-Four teams to their regions
       const nonFirstFour = bracketJson.teams.filter((t) => !t.first_four);
       for (const row of nonFirstFour) {
         const r = REGION_NAMES[row.region ?? ""] ?? 0;
@@ -788,6 +825,50 @@ export default function CBB_Bracket() {
             || meta?.logoPrimary
             || meta?.logoAlt,
         });
+      }
+
+      // Now handle First Four teams: group by region+seed, create FF slots
+      const ffTeams = bracketJson.teams.filter((t) => t.first_four);
+      const ffGroups = new Map<string, BracketJsonTeamRow[]>();
+      for (const t of ffTeams) {
+        const key = `${t.region}-${t.seed}`;
+        const arr = ffGroups.get(key) ?? [];
+        arr.push(t);
+        ffGroups.set(key, arr);
+      }
+
+      let ffIdx = 0;
+      for (const [key, pair] of ffGroups) {
+        if (pair.length < 2) continue;
+        const [regionName, seedStr] = key.split("-");
+        const rIdx = REGION_NAMES[regionName] ?? 0;
+        const seed = parseInt(seedStr, 10);
+        const ffMatchId: MatchId = `FF-G${ffIdx + 1}`;
+
+        const toRegionTeam = (row: BracketJsonTeamRow): RegionTeam => {
+          const meta = teamsMaster[row.team_slug];
+          const espnId = row.espn_id ? String(row.espn_id) : meta?.espnId;
+          return {
+            slug: row.team_slug,
+            name: row.team,
+            kpName: meta?.kpName ?? row.kp_name ?? row.team,
+            seed,
+            conf: row.conf ?? "",
+            avgSeed: row.avg_seed ?? seed,
+            regionIndex: rIdx,
+            logo: espnLogoUrl(espnId)
+              || row.logo
+              || (espnTeams.size ? lookupEspnLogo(espnTeams, row.team)?.logo : undefined)
+              || meta?.logoPrimary
+              || meta?.logoAlt,
+          };
+        };
+
+        const teamA = toRegionTeam(pair[0]);
+        const teamB = toRegionTeam(pair[1]);
+
+        ffSlots.push({ regionIndex: rIdx, seed, ffMatchId, teamA, teamB });
+        ffIdx++;
       }
     } else {
       // Bracketology format: distribute by avg_seed across 4 anonymous regions
@@ -833,7 +914,17 @@ export default function CBB_Bracket() {
       });
     });
 
-    const { matches } = buildBracketMatches(regionTeams);
+    // Add FF teams to lookup maps (using negative seed keys for unique FF slots)
+    for (const ff of ffSlots) {
+      const negA = -(ff.regionIndex * 100 + ff.seed);
+      const negB = -(ff.regionIndex * 100 + ff.seed + 50);
+      sMap[`${ff.regionIndex}-${negA}`] = ff.teamA.slug;
+      sMap[`${ff.regionIndex}-${negB}`] = ff.teamB.slug;
+      tBySlug[ff.teamA.slug] = ff.teamA;
+      tBySlug[ff.teamB.slug] = ff.teamB;
+    }
+
+    const { matches } = buildBracketMatches(regionTeams, ffSlots.length > 0 ? ffSlots : undefined);
 
     const layoutByRegion: Record<number, Record<MatchId, LayoutInfo>> = {};
 
@@ -899,6 +990,25 @@ export default function CBB_Bracket() {
           info[matchId] = m;
         }
       }
+    }
+    // Add First Four game info
+    if (bracketJson?.bracket?.first_four?.games) {
+      bracketJson.bracket.first_four.games.forEach((g, idx) => {
+        const ffId = `FF-G${idx + 1}`;
+        info[ffId] = {
+          game_id: g.game_id,
+          round: "First Four",
+          seed_high: g.seed,
+          team_high: g.team_a,
+          seed_low: g.seed,
+          team_low: g.team_b,
+          date: g.date,
+          time: g.time,
+          tv: g.tv,
+          venue: "UD Arena",
+          city: "Dayton, OH",
+        };
+      });
     }
     return info;
   }, [bracketJson]);
@@ -1064,6 +1174,7 @@ export default function CBB_Bracket() {
   const loading = loadingCommon || loadingBracket;
 
   const roundLabel: Record<RoundId, string> = {
+    FF: "First Four",
     R64: "Round of 64",
     R32: "Round of 32",
     S16: "Sweet 16",
@@ -1127,9 +1238,33 @@ export default function CBB_Bracket() {
     width: "100vw",
   };
 
+  // First Four matches
+  const ffMatches = matches.filter((m) => m.round === "FF");
+
   /** Desktop bracket layout */
   const renderDesktopBracket = () => (
     <>
+      {/* First Four */}
+      {ffMatches.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontWeight: 800, marginBottom: 6, fontSize: 15 }}>
+            First Four - Dayton, OH
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 8 }}>
+            Winners advance to the Round of 64
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+              gap: 12,
+            }}
+          >
+            {ffMatches.map((m) => renderMatch(m))}
+          </div>
+        </div>
+      )}
+
       {/* Regions */}
       <div
         style={{
@@ -1270,12 +1405,17 @@ export default function CBB_Bracket() {
 
   /** Mobile "stepper" bracket layout */
   const renderMobileBracket = () => {
-    const regionTabs = [...regionNames, "Final Four"];
-    const isFinals = activeRegionMobile === 4;
+    const hasFF = ffMatches.length > 0;
+    const regionTabs = hasFF
+      ? ["First Four", ...regionNames, "Final Four"]
+      : [...regionNames, "Final Four"];
+    const regionOffset = hasFF ? 1 : 0; // shift region indices when FF tab is present
+    const isFirstFour = hasFF && activeRegionMobile === 0;
+    const isFinals = activeRegionMobile === regionTabs.length - 1;
     const mobileRounds: RoundId[] = ["R64", "R32", "S16", "E8"];
 
     const renderRoundsForRegion = () => {
-      const regionIndex = activeRegionMobile;
+      const regionIndex = activeRegionMobile - regionOffset;
       const regionMatches = matches.filter((m) => m.regionIndex === regionIndex);
       const byRound: Partial<Record<RoundId, Match[]>> = {};
       regionMatches.forEach((m) => {
@@ -1400,7 +1540,15 @@ export default function CBB_Bracket() {
           })}
         </div>
 
-        {!isFinals ? (
+        {isFirstFour ? (
+          <>
+            <div style={{ marginTop: 8, fontWeight: 800, fontSize: 15 }}>First Four</div>
+            <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 8 }}>Dayton, OH - Winners advance to Round of 64</div>
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              {ffMatches.map((m) => renderMatch(m))}
+            </div>
+          </>
+        ) : !isFinals ? (
           <>
             <div
               style={{
@@ -1409,7 +1557,7 @@ export default function CBB_Bracket() {
                 fontSize: 15,
               }}
             >
-              {regionNames[activeRegionMobile]}
+              {regionNames[activeRegionMobile - regionOffset]}
             </div>
             {renderRoundsForRegion()}
           </>
