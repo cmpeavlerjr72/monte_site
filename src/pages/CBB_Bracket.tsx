@@ -1223,6 +1223,28 @@ export default function CBB_Bracket() {
     setSaving(true);
 
     try {
+      // Pre-fetch all team logos as data URLs to avoid CORS canvas tainting
+      const logoDataUrls: Record<string, string> = {};
+      const allSlugs = Object.keys(teamsBySlug);
+      const logoFetches = allSlugs.map(async (slug) => {
+        const team = teamsBySlug[slug];
+        if (!team?.logo) return;
+        try {
+          const resp = await fetch(team.logo, { mode: "cors" });
+          if (!resp.ok) return;
+          const blob = await resp.blob();
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+          logoDataUrls[slug] = dataUrl;
+        } catch {
+          // CORS blocked or network error - skip this logo
+        }
+      });
+      await Promise.all(logoFetches);
+
       // Create container (must be visible for html-to-image to render it)
       const container = document.createElement("div");
       container.style.cssText = `
@@ -1257,8 +1279,13 @@ export default function CBB_Bracket() {
         if (!team) return `<div style="height:20px;"></div>`;
         const bg = isWinner ? "background:rgba(37,99,235,0.12);font-weight:700;" : "";
         const ta = align === "right" ? "text-align:right;flex-direction:row-reverse;" : "";
+        const logoSrc = logoDataUrls[team.slug];
+        const logoHtml = logoSrc
+          ? `<img src="${logoSrc}" style="width:14px;height:14px;object-fit:contain;flex-shrink:0;"/>`
+          : "";
         return `<div style="display:flex;align-items:center;gap:4px;height:20px;padding:2px 6px;border-radius:4px;${bg}${ta}white-space:nowrap;overflow:hidden;">
           <span style="font-size:10px;font-weight:800;color:#64748b;min-width:16px;text-align:center;">${team.seed}</span>
+          ${logoHtml}
           <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;">${team.name}</span>
         </div>`;
       };
