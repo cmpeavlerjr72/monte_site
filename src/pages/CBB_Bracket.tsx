@@ -1206,6 +1206,123 @@ export default function CBB_Bracket() {
     setPicks(newPicks);
   }, [matches, pairMap, seedMap]);
 
+  // Helper: find slug by display name in teamsBySlug
+  const get_slug_js = (name: string, tbs: Record<string, RegionTeam>): string => {
+    for (const [slug, team] of Object.entries(tbs)) {
+      if (team.name === name) return slug;
+    }
+    return "";
+  };
+
+  // Claude's curated picks: tournament-aware bracket mixing model sims,
+  // historical seed trends, power rankings, and matchup analysis.
+  const claudePicks = useCallback(() => {
+    if (!matches.length || !pairMap || !seedMap || !teamsBySlug) return;
+
+    // Curated first-round upset picks based on:
+    // - Model win probabilities (20k sims)
+    // - Historical seed upset rates (5v12=35%, 6v11=37%, 7v10=39%, 8v9=52%)
+    // - Power rankings vs seed (underseeded/overseeded teams)
+    // - KenPom efficiency profiles
+    //
+    // Key principles applied:
+    // 1. Our model is UNDERCONFIDENT (proven on 5,216 games) - when model
+    //    says "tossup", the favorite usually wins. So only pick upsets where
+    //    the model STRONGLY supports it.
+    // 2. Target 5-7 R64 upsets (historical average is ~6)
+    // 3. Pick at least one 5v12 (35% historical, happens almost every year)
+    // 4. Don't pick 1-seeds to lose (only 2 ever in history)
+    // 5. Overseeded teams are the best upset targets (Kansas #42 power as
+    //    a 4-seed, UNC #43 as a 6-seed, Texas Tech #36 as a 5-seed)
+
+    // Map of slug overrides: slug -> true means "pick this team to win
+    // their first-round game even though they are the lower seed"
+    const upsetPicks = new Set([
+      // 8v9 upsets (coin flips, go with model + power rank):
+      "texas-christian",         // (9) TCU over (8) Ohio State - model 54%, TCU better team
+      "utah-state",              // (9) Utah State over (8) Villanova - model 52%
+      "iowa",                    // (9) Iowa over (8) Clemson - model 56%, Iowa pwr #22
+
+      // 10v7 upset:
+      "santa-clara",             // (10) Santa Clara over (7) Kentucky - model 55%, pwr #13 vs #31
+
+      // 12v5 upsets (the classic, picking 2 of 4):
+      "akron",                   // (12) Akron over (5) Texas Tech - model 46%, TT overseeded at pwr #36
+      "mcneese-state",           // (12) McNeese over (5) Vanderbilt - model 45%, McNeese pwr #29
+
+      // 11v6 upset:
+      "virginia-commonwealth",   // (11) VCU over (6) UNC - model 48%, UNC massively overseeded at pwr #43
+    ]);
+
+    // Teams to advance in later rounds (beyond just picking favorites):
+    // These encode the "story" of the bracket.
+    //
+    // EAST: Duke cruises. Louisville makes a run to S16 from the bottom half.
+    // WEST: Arizona survives a tough region. Gonzaga is the E8 opponent.
+    // MIDWEST: Iowa State over Michigan. Santa Clara makes S16.
+    // SOUTH: Florida over Houston in E8. Illinois is the S16 threat.
+
+    const newPicks: PicksMap = {};
+
+    const resolveSlot = (m: Match, slot: Slot): TeamSlug | undefined => {
+      if (slot.kind === "seed") {
+        if (m.regionIndex == null) return undefined;
+        return seedMap[`${m.regionIndex}-${slot.seed}`];
+      }
+      return newPicks[slot.from];
+    };
+
+    for (const m of matches) {
+      const topSlug = resolveSlot(m, m.left);
+      const bottomSlug = resolveSlot(m, m.right);
+      if (!topSlug || !bottomSlug) continue;
+
+      if (m.round === "FF" || m.round === "R64") {
+        // First Four + First Round: apply upset overrides
+        if (upsetPicks.has(topSlug)) {
+          newPicks[m.id] = topSlug;
+        } else if (upsetPicks.has(bottomSlug)) {
+          newPicks[m.id] = bottomSlug;
+        } else {
+          // Default to model favorite
+          const pTop = winProbSlug(topSlug, bottomSlug, pairMap);
+          newPicks[m.id] = pTop >= 0.5 ? topSlug : bottomSlug;
+        }
+      } else {
+        // Later rounds: use model favorite, but with curated regional winners
+        // These specific deep-round picks are encoded here:
+        const deepOverrides: Record<string, string> = {
+          // EAST region: Duke wins, Louisville makes S16
+          // Louisville beats USF (R64), then beats UConn (R32) - Louisville pwr #10 > UConn pwr #11
+          // Duke beats Louisville in E8 (model: Duke 56%)
+          "R32-R1-G3": get_slug_js("Louisville", teamsBySlug), // Louisville over UConn in R32 (contrarian)
+
+          // MIDWEST: Iowa State wins region
+          // Santa Clara beats Iowa State... no, ISU is too good (60%).
+          // ISU over Michigan in E8 (model: ISU 55%)
+
+          // SOUTH: Illinois makes E8, Florida wins
+          // Illinois path is clean (vs Penn R64, vs Nebraska/Troy R32, vs Florida E8)
+
+          // FINAL FOUR:
+          // East vs South: Duke over Florida (model 54%)
+          // West vs Midwest: Iowa State over Arizona (model 54%)
+          // NC: Duke over Iowa State (model 53%)
+        };
+
+        const override = deepOverrides[m.id];
+        if (override && (override === topSlug || override === bottomSlug)) {
+          newPicks[m.id] = override;
+        } else {
+          const pTop = winProbSlug(topSlug, bottomSlug, pairMap);
+          newPicks[m.id] = pTop >= 0.5 ? topSlug : bottomSlug;
+        }
+      }
+    }
+
+    setPicks(newPicks);
+  }, [matches, pairMap, seedMap, teamsBySlug]);
+
   // Resolve a team from a slot using current picks
   const resolveSlotForExport = useCallback((m: Match, slot: Slot): RegionTeam | undefined => {
     if (slot.kind === "seed") {
@@ -1934,6 +2051,23 @@ export default function CBB_Bracket() {
                   }}
                 >
                   Auto-fill Model Picks
+                </button>
+                <button
+                  type="button"
+                  onClick={claudePicks}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 8,
+                    border: "1px solid rgba(147,51,234,0.4)",
+                    background: "rgba(147,51,234,0.06)",
+                    color: "#7c3aed",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Claude's Picks
                 </button>
                 <button
                   type="button"
