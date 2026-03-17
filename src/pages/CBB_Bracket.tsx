@@ -7,54 +7,41 @@ const DATASET_ROOT =
   "https://huggingface.co/datasets/mvpeav/cbb-sims-2026/resolve/main";
 const SEASON = 2026;
 
-// ---- NEW: snapshots (date + week) ----
+// ---- snapshots (date + week) ----
 type Snapshot = {
   id: string;
   label: string;
   week: string;
   date: string;
+  isOfficial?: boolean;       // true = actual NCAA bracket (not bracketology)
+  bracketFile?: string;       // filename override for bracket JSON
 };
 
-// Add more snapshots here as you publish new weeks.
-// Last item in this array will be the default “latest”.
-const SNAPSHOTS: Snapshot[] = [
-  {
-    id: "2026-01-03_W1",
-    label: "Jan 3 – Week W1",
-    week: "2026-W01",
-    date: "2026-01-03",
-  },
-  {
-    id: "2026-01-12_W3",
-    label: "Jan 12 – Week W3",
-    week: "2026-W03",
-    date: "2026-01-12",
-  },
-    {
-    id: "2026-01-20_W4",
-    label: "Jan 20 – Week W4",
-    week: "2026-W04",
-    date: "2026-01-20",
-  },
-      {
-    id: "2026-01-28_W5",
-    label: "Jan 28 – Week W5",
-    week: "2026-W05",
-    date: "2026-01-28",
-  },
-    {
-    id: "2026-02-012_W7",
-    label: "Feb 12 – Week W7",
-    week: "2026-W07",
-    date: "2026-02-12",
-  },
-    {
-    id: "2026-03-05_W10",                                                                                                                                               
-    label: "Mar 5 – Week W10",
-    week: "2026-W10",
-    date: "2026-03-05",
-  },
+// Historical bracketology snapshots (pre-Selection Sunday)
+const BRACKETOLOGY_SNAPSHOTS: Snapshot[] = [
+  { id: "2026-01-03_W1", label: "Jan 3 - Week 1", week: "2026-W01", date: "2026-01-03" },
+  { id: "2026-01-12_W3", label: "Jan 12 - Week 3", week: "2026-W03", date: "2026-01-12" },
+  { id: "2026-01-20_W4", label: "Jan 20 - Week 4", week: "2026-W04", date: "2026-01-20" },
+  { id: "2026-01-28_W5", label: "Jan 28 - Week 5", week: "2026-W05", date: "2026-01-28" },
+  { id: "2026-02-12_W7", label: "Feb 12 - Week 7", week: "2026-W07", date: "2026-02-12" },
+  { id: "2026-03-05_W10", label: "Mar 5 - Week 10", week: "2026-W10", date: "2026-03-05" },
 ];
+
+// Official NCAA tournament bracket (default)
+const NCAA_SNAPSHOT: Snapshot = {
+  id: "ncaa_official",
+  label: "Official NCAA Bracket",
+  week: "ncaa_official",
+  date: "2026-03-17",
+  isOfficial: true,
+  bracketFile: "ncaa_2026",
+};
+
+// All snapshots -- official bracket is last (default)
+const SNAPSHOTS: Snapshot[] = [...BRACKETOLOGY_SNAPSHOTS, NCAA_SNAPSHOT];
+
+const REGION_NAMES: Record<string, number> = { East: 0, West: 1, Midwest: 2, South: 3 };
+const REGION_LABELS = ["East", "West", "Midwest", "South"];
 
 // --------------------------------------
 
@@ -157,8 +144,27 @@ interface BracketJsonTeamRow {
   team: string;
   kp_name: string;
   team_slug: string;
-  conf: string;
-  avg_seed: number;
+  conf?: string;
+  avg_seed?: number;
+  region?: string;        // present in NCAA bracket
+  espn_id?: number;
+  logo?: string;
+  first_four?: boolean;
+}
+
+interface BracketMatchup {
+  game_id: string;
+  round: string;
+  seed_high: number;
+  team_high: string;
+  seed_low: number;
+  team_low: string;
+  date: string;
+  time: string;
+  tv: string;
+  venue: string;
+  city: string;
+  first_four_winner?: boolean;
 }
 
 interface BracketJson {
@@ -172,6 +178,11 @@ interface BracketJson {
   };
   teams: BracketJsonTeamRow[];
   meta: unknown;
+  bracket?: {
+    regions?: Record<string, { no_1_seed: string; matchups: BracketMatchup[] }>;
+    first_four?: { games: Array<{ game_id: string; team_a: string; team_b: string; date: string; time: string; tv: string; seed: number; winner_plays: string }> };
+    final_four?: { venue: string; city: string; dates: { semifinal: string; championship: string } };
+  };
 }
 
 type StageProbs = Partial<Record<StageId, number>>;
@@ -362,7 +373,7 @@ function buildBracketMatches(regionTeams: RegionTeam[][]): {
 /** UI helpers */
 
 function StageCell({ p }: { p: number | undefined }) {
-  if (!p || p <= 0) return <span style={{ opacity: 0.4 }}>–</span>;
+  if (!p || p <= 0) return <span style={{ opacity: 0.4 }}>-</span>;
   const pct = (p * 100).toFixed(1) + "%";
   const odds = americanOdds(p);
   return (
@@ -483,7 +494,7 @@ function TeamRow({
         </>
       ) : (
         <div style={{ fontSize: 12, opacity: 0.5, fontStyle: "italic" }}>
-          {placeholderLabel ?? "Waiting on teams…"}
+          {placeholderLabel ?? "Waiting on teams..."}
         </div>
       )}
     </button>
@@ -497,6 +508,7 @@ function MatchCard({
   pick,
   setPick,
   projection,
+  gameInfo,
 }: {
   match: Match;
   topTeam?: RegionTeam;
@@ -504,6 +516,7 @@ function MatchCard({
   pick?: TeamSlug;
   setPick: (winner?: TeamSlug) => void;
   projection: Projection | null;
+  gameInfo?: BracketMatchup;
 }) {
   const hasTeams = !!topTeam && !!bottomTeam;
   const topSelected = hasTeams && pick === topTeam?.slug;
@@ -520,13 +533,13 @@ function MatchCard({
       ? `${match.right.from} Winner`
       : undefined;
 
-  const line =
+  const probLine =
     projection && hasTeams
-      ? `${topTeam?.name} ${(projection.pTopWin * 100).toFixed(1)}% • ${
+      ? `${topTeam?.name} ${(projection.pTopWin * 100).toFixed(1)}% | ${
           bottomTeam?.name
         } ${(projection.pBottomWin * 100).toFixed(1)}%`
       : !hasTeams
-      ? "Waiting on teams…"
+      ? "Waiting on teams..."
       : "No sims found";
 
   return (
@@ -560,15 +573,22 @@ function MatchCard({
         style={{
           marginTop: 4,
           fontSize: 11,
-          opacity: 0.8,
+          opacity: 0.7,
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 8,
+          flexDirection: "column",
+          gap: 2,
         }}
       >
-        <span style={{ fontWeight: 700, fontSize: 10 }}>{match.id}</span>
-        <span style={{ whiteSpace: "nowrap" }}>{line}</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontWeight: 600 }}>{probLine}</span>
+        </div>
+        {gameInfo && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 10, opacity: 0.85 }}>
+            <span>{gameInfo.date} {gameInfo.time}</span>
+            <span style={{ fontWeight: 600 }}>{gameInfo.tv}</span>
+            <span>{gameInfo.city}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -579,7 +599,7 @@ function MatchCard({
 export default function CBB_Bracket() {
   const [selectedBracket, setSelectedBracket] = useState<string>("ESPN");
 
-  // NEW: snapshot state – default to last (latest) snapshot
+  // NEW: snapshot state - default to last (latest) snapshot
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string>(
     SNAPSHOTS[SNAPSHOTS.length - 1]?.id ?? SNAPSHOTS[0].id
   );
@@ -621,7 +641,7 @@ export default function CBB_Bracket() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // common data (teams_master + round_robin_minimal) – depends on snapshot
+  // common data (teams_master + round_robin_minimal) - depends on snapshot
   useEffect(() => {
     let cancelled = false;
 
@@ -630,9 +650,12 @@ export default function CBB_Bracket() {
         setLoadingCommon(true);
         setError(null);
 
-        const { week, date } = selectedSnapshot;
+        const { week, date, isOfficial } = selectedSnapshot;
 
-        const base = `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${week}/round_robin/${date}`;
+        const pathPrefix = isOfficial
+          ? `${SEASON}/bracketology/ncaa_official`
+          : `${SEASON}/bracketology/bracketmatrix/${week}`;
+        const base = `${DATASET_ROOT}/${pathPrefix}/round_robin/${date}`;
         const teamsUrl = `${base}/teams_master.json`;
         const rrUrl = `${base}/${date}_round_robin_minimal.json`;
 
@@ -682,22 +705,24 @@ export default function CBB_Bracket() {
     };
   }, [selectedSnapshotId, selectedSnapshot]);
 
-  // bracket JSON – depends on bracketologist AND snapshot (week)
+  // bracket JSON - depends on bracketologist AND snapshot (week)
   useEffect(() => {
     let cancelled = false;
     async function loadBracket() {
-      if (!selectedBracket) return;
       try {
         setLoadingBracket(true);
         setError(null);
 
-        const { week } = selectedSnapshot;
+        const { week, isOfficial, bracketFile } = selectedSnapshot;
 
-        const url = `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${week}/brackets/${selectedBracket}.json`;
+        const url = isOfficial
+          ? `${DATASET_ROOT}/${SEASON}/bracketology/ncaa_official/brackets/${bracketFile ?? "ncaa_2026"}.json`
+          : `${DATASET_ROOT}/${SEASON}/bracketology/bracketmatrix/${week}/brackets/${selectedBracket}.json`;
+
         const res = await fetch(url);
         if (!res.ok)
           throw new Error(
-            `Failed to load bracket JSON for ${selectedBracket} (${res.status})`
+            `Failed to load bracket JSON (${res.status})`
           );
         const json = (await res.json()) as BracketJson;
         if (cancelled) return;
@@ -739,34 +764,60 @@ export default function CBB_Bracket() {
       };
     }
 
-    const bySeed = new Map<number, BracketJsonTeamRow[]>();
-    for (const t of bracketJson.teams) {
-      const arr = bySeed.get(t.seed) ?? [];
-      arr.push(t);
-      bySeed.set(t.seed, arr);
-    }
-
     const regionTeams: RegionTeam[][] = [[], [], [], []];
+    const hasExplicitRegions = bracketJson.teams.some((t) => !!t.region);
 
-    for (let seed = 1; seed <= 16; seed += 1) {
-      const arr = (bySeed.get(seed) ?? []).slice().sort((a, b) => a.avg_seed - b.avg_seed);
-      const keep = arr.slice(0, 4);
-      for (let r = 0; r < keep.length && r < 4; r += 1) {
-        const row = keep[r];
+    if (hasExplicitRegions) {
+      // NCAA official bracket: teams have explicit region assignments
+      const nonFirstFour = bracketJson.teams.filter((t) => !t.first_four);
+      for (const row of nonFirstFour) {
+        const r = REGION_NAMES[row.region ?? ""] ?? 0;
         const meta = teamsMaster[row.team_slug];
+        const espnId = row.espn_id ? String(row.espn_id) : meta?.espnId;
         regionTeams[r].push({
           slug: row.team_slug,
-          name: meta?.name ?? row.team,
+          name: row.team,
           kpName: meta?.kpName ?? row.kp_name ?? row.team,
-          seed,
-          conf: row.conf,
-          avgSeed: row.avg_seed,
+          seed: row.seed,
+          conf: row.conf ?? "",
+          avgSeed: row.avg_seed ?? row.seed,
           regionIndex: r,
-          logo: espnLogoUrl(meta?.espnId)
-            || (espnTeams.size ? lookupEspnLogo(espnTeams, meta?.name ?? row.team)?.logo : undefined)
+          logo: espnLogoUrl(espnId)
+            || row.logo
+            || (espnTeams.size ? lookupEspnLogo(espnTeams, row.team)?.logo : undefined)
             || meta?.logoPrimary
             || meta?.logoAlt,
         });
+      }
+    } else {
+      // Bracketology format: distribute by avg_seed across 4 anonymous regions
+      const bySeed = new Map<number, BracketJsonTeamRow[]>();
+      for (const t of bracketJson.teams) {
+        const arr = bySeed.get(t.seed) ?? [];
+        arr.push(t);
+        bySeed.set(t.seed, arr);
+      }
+
+      for (let seed = 1; seed <= 16; seed += 1) {
+        const arr = (bySeed.get(seed) ?? []).slice().sort((a, b) => (a.avg_seed ?? seed) - (b.avg_seed ?? seed));
+        const keep = arr.slice(0, 4);
+        for (let r = 0; r < keep.length && r < 4; r += 1) {
+          const row = keep[r];
+          const meta = teamsMaster[row.team_slug];
+          regionTeams[r].push({
+            slug: row.team_slug,
+            name: meta?.name ?? row.team,
+            kpName: meta?.kpName ?? row.kp_name ?? row.team,
+            seed,
+            conf: row.conf ?? "",
+            avgSeed: row.avg_seed ?? seed,
+            regionIndex: r,
+            logo: espnLogoUrl(meta?.espnId)
+              || (espnTeams.size ? lookupEspnLogo(espnTeams, meta?.name ?? row.team)?.logo : undefined)
+              || meta?.logoPrimary
+              || meta?.logoAlt,
+          });
+        }
       }
     }
 
@@ -831,6 +882,26 @@ export default function CBB_Bracket() {
       layoutByRegion,
     };
   }, [bracketJson, teamsMaster, espnTeams]);
+
+  // Build matchup info lookup from bracket data (for game details)
+  const matchupInfo = useMemo(() => {
+    const info: Record<string, BracketMatchup> = {};
+    if (!bracketJson?.bracket?.regions) return info;
+    for (const [regionName, region] of Object.entries(bracketJson.bracket.regions)) {
+      const rIdx = REGION_NAMES[regionName] ?? -1;
+      if (rIdx < 0) continue;
+      for (const m of region.matchups) {
+        // Map seed pairings to match IDs: R64-R{rIdx+1}-G{gameIdx+1}
+        const pairings: [number, number][] = [[1,16],[8,9],[5,12],[4,13],[6,11],[3,14],[7,10],[2,15]];
+        const gIdx = pairings.findIndex(([h, l]) => h === m.seed_high && l === m.seed_low);
+        if (gIdx >= 0) {
+          const matchId = `R64-R${rIdx + 1}-G${gIdx + 1}`;
+          info[matchId] = m;
+        }
+      }
+    }
+    return info;
+  }, [bracketJson]);
 
   const { stageProbs } = useMemo(() => {
     if (!matches.length || !pairMap) {
@@ -1037,11 +1108,13 @@ export default function CBB_Bracket() {
         pick={pick}
         setPick={setPickForMatch}
         projection={projection}
+        gameInfo={matchupInfo[m.id]}
       />
     );
   };
 
-  const regionNames = ["Region 1", "Region 2", "Region 3", "Region 4"];
+  const isOfficial = selectedSnapshot.isOfficial;
+  const regionNames = isOfficial ? REGION_LABELS : ["Region 1", "Region 2", "Region 3", "Region 4"];
 
   const outerStyles = {
     margin: "0 calc(-50vw + 50%)",
@@ -1195,7 +1268,7 @@ export default function CBB_Bracket() {
     </>
   );
 
-  /** Mobile “stepper” bracket layout */
+  /** Mobile "stepper" bracket layout */
   const renderMobileBracket = () => {
     const regionTabs = [...regionNames, "Final Four"];
     const isFinals = activeRegionMobile === 4;
@@ -1373,18 +1446,25 @@ export default function CBB_Bracket() {
         >
           <div>
             <h1 style={{ margin: 0, fontSize: 22, letterSpacing: 0.3 }}>
-              CBB Bracketology Bracket
+              {isOfficial ? "March Madness Bracket" : "CBB Bracketology"}
             </h1>
             <div style={{ fontSize: 13, opacity: 0.8 }}>
-              Pairwise sims from {selectedSnapshot.date} &bull; Week{" "}
-              {selectedSnapshot.week} &bull; Season {SEASON}
+              {isOfficial ? (
+                <>Tournament sim projections (20,000 sims/matchup) &bull; Data as of {selectedSnapshot.date}</>
+              ) : (
+                <>Pairwise sims from {selectedSnapshot.date} &bull; Week {selectedSnapshot.week} &bull; Season {SEASON}</>
+              )}
             </div>
+            {isOfficial && bracketJson?.bracket?.final_four && (
+              <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>
+                Final Four: {bracketJson.bracket.final_four.venue}, {bracketJson.bracket.final_four.city}
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            {/* NEW: snapshot selector */}
             <label style={{ fontSize: 13, fontWeight: 600 }}>
-              Snapshot:
+              View:
               <select
                 value={selectedSnapshotId}
                 onChange={(e) => setSelectedSnapshotId(e.target.value)}
@@ -1396,34 +1476,39 @@ export default function CBB_Bracket() {
                   fontSize: 13,
                 }}
               >
-                {SNAPSHOTS.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
+                <optgroup label="Official Bracket">
+                  <option value={NCAA_SNAPSHOT.id}>{NCAA_SNAPSHOT.label}</option>
+                </optgroup>
+                <optgroup label="Pre-Tournament Bracketology">
+                  {BRACKETOLOGY_SNAPSHOTS.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </optgroup>
               </select>
             </label>
 
-            <label style={{ fontSize: 13, fontWeight: 600 }}>
-              Bracketologist:
-              <select
-                value={selectedBracket}
-                onChange={(e) => setSelectedBracket(e.target.value)}
-                style={{
-                  marginLeft: 8,
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  border: "1px solid rgba(15,23,42,0.2)",
-                  fontSize: 13,
-                }}
-              >
-                {BRACKETOLOGISTS.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {!isOfficial && (
+              <label style={{ fontSize: 13, fontWeight: 600 }}>
+                Bracketologist:
+                <select
+                  value={selectedBracket}
+                  onChange={(e) => setSelectedBracket(e.target.value)}
+                  style={{
+                    marginLeft: 8,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    border: "1px solid rgba(15,23,42,0.2)",
+                    fontSize: 13,
+                  }}
+                >
+                  {BRACKETOLOGISTS.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
         </div>
 
@@ -1443,7 +1528,7 @@ export default function CBB_Bracket() {
         ) : null}
 
         {loading ? (
-          <div style={{ padding: 20, fontSize: 14 }}>Loading bracket & sims…</div>
+          <div style={{ padding: 20, fontSize: 14 }}>Loading bracket & sims...</div>
         ) : !regions.length ? (
           <div style={{ padding: 20, fontSize: 14 }}>No bracket data loaded.</div>
         ) : (
