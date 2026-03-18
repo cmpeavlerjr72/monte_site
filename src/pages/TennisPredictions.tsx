@@ -9,6 +9,9 @@ import {
   Tooltip,
   CartesianGrid,
   Cell,
+  LineChart,
+  Line,
+  Legend,
 } from "recharts";
 
 const DATASET_ROOT =
@@ -30,6 +33,8 @@ interface Player {
 interface Prediction {
   prob_a: number;
   prob_b: number;
+  calibrated_prob_a: number;
+  calibrated_prob_b: number;
   elo_prob_a: number;
   sim_prob_a: number;
   ml_prob_a: number;
@@ -50,6 +55,25 @@ interface H2H {
   pct_a: number | null;
 }
 
+interface MatchResult {
+  winner: "a" | "b";
+  winner_name: string;
+  score: number[] | null;
+  score_loser: number[] | null;
+  correct: boolean;
+  pnl: number | null;
+}
+
+interface ResultsSummary {
+  updated_at: string;
+  total_completed: number;
+  correct: number;
+  incorrect: number;
+  accuracy_pct: number;
+  total_pnl?: number;
+  avg_pnl?: number;
+}
+
 interface Match {
   tournament: string;
   tour: string;
@@ -62,6 +86,7 @@ interface Match {
   prediction: Prediction;
   market: Market;
   h2h: H2H;
+  result?: MatchResult;
 }
 
 interface DayPredictions {
@@ -71,6 +96,7 @@ interface DayPredictions {
   total_matches: number;
   by_tour: Record<string, number>;
   matches: Match[];
+  results_summary?: ResultsSummary;
 }
 
 interface IndexEntry {
@@ -81,6 +107,7 @@ interface IndexEntry {
 
 type TourFilter = "all" | "ATP" | "WTA" | "Challenger";
 type SortKey = "prob" | "value" | "elo_diff" | "tournament";
+type ViewTab = "predictions" | "performance";
 
 /* -- Helpers ------------------------------------------------- */
 
@@ -103,7 +130,8 @@ function formatPct(v: number) {
 
 function formatOdds(v: number | null) {
   if (v == null) return "-";
-  return v.toFixed(2);
+  if (v > 0) return `+${v}`;
+  return `${v}`;
 }
 
 function formatDate(iso: string) {
@@ -113,6 +141,11 @@ function formatDate(iso: string) {
     month: "short",
     day: "numeric",
   });
+}
+
+function formatScore(score: number[] | null, scoreLose: number[] | null) {
+  if (!score || !scoreLose) return "";
+  return score.map((s, i) => `${s}-${scoreLose[i] ?? 0}`).join(", ");
 }
 
 /* -- Flag image component ------------------------------------ */
@@ -198,6 +231,33 @@ function SurfacePill({ surface }: { surface: string }) {
   );
 }
 
+/* -- Result badge -------------------------------------------- */
+
+function ResultBadge({ result }: { result: MatchResult }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        borderRadius: 4,
+        fontSize: 11,
+        fontWeight: 700,
+        color: "#fff",
+        background: result.correct ? "#16a34a" : "#dc2626",
+      }}
+    >
+      {result.correct ? "W" : "L"}
+      {result.pnl != null && (
+        <span style={{ fontWeight: 400 }}>
+          {result.pnl > 0 ? `+$${result.pnl}` : `-$${Math.abs(result.pnl)}`}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /* -- Value indicator ----------------------------------------- */
 
 function ValueCell({ value }: { value: number | null }) {
@@ -212,9 +272,12 @@ function ValueCell({ value }: { value: number | null }) {
 
 /* -- Probability bar ----------------------------------------- */
 
-function ProbBar({ probA }: { probA: number }) {
+function ProbBar({ probA, result }: { probA: number; result?: MatchResult }) {
   const probB = 100 - probA;
   const favA = probA >= 50;
+  const winnerA = result?.winner === "a";
+  const winnerB = result?.winner === "b";
+
   return (
     <div
       style={{
@@ -230,8 +293,10 @@ function ProbBar({ probA }: { probA: number }) {
       <div
         style={{
           width: `${probA}%`,
-          background: favA ? "var(--brand)" : "#e2e8f0",
-          color: favA ? "var(--brand-contrast)" : "var(--text)",
+          background: result
+            ? winnerA ? "#16a34a" : "#ef4444"
+            : favA ? "var(--brand)" : "#e2e8f0",
+          color: result || favA ? "#fff" : "var(--text)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -243,8 +308,10 @@ function ProbBar({ probA }: { probA: number }) {
       <div
         style={{
           width: `${probB}%`,
-          background: !favA ? "var(--brand)" : "#e2e8f0",
-          color: !favA ? "var(--brand-contrast)" : "var(--text)",
+          background: result
+            ? winnerB ? "#16a34a" : "#ef4444"
+            : !favA ? "var(--brand)" : "#e2e8f0",
+          color: result || !favA ? "#fff" : "var(--text)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -253,6 +320,418 @@ function ProbBar({ probA }: { probA: number }) {
       >
         {probB >= 20 && formatPct(probB)}
       </div>
+    </div>
+  );
+}
+
+/* -- Performance dashboard ----------------------------------- */
+
+function PerformanceDashboard({
+  dateIndex,
+  season,
+}: {
+  dateIndex: IndexEntry[];
+  season: number;
+}) {
+  const [allData, setAllData] = useState<DayPredictions[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch all dates that might have results
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
+    const sorted = [...dateIndex].sort((a, b) => a.date.localeCompare(b.date));
+
+    Promise.all(
+      sorted.map((entry) =>
+        fetch(
+          `${DATASET_ROOT}/${season}/tennis/days/${entry.date}/predictions.json`,
+          { cache: "no-store" }
+        )
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null)
+      )
+    ).then((results) => {
+      if (cancelled) return;
+      setAllData(results.filter((d): d is DayPredictions => d != null));
+      setLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dateIndex, season]);
+
+  // Aggregate stats across all dates
+  const stats = useMemo(() => {
+    const days: {
+      date: string;
+      correct: number;
+      total: number;
+      pnl: number;
+      cumPnl: number;
+      accuracy: number;
+    }[] = [];
+    let cumPnl = 0;
+    let totalCorrect = 0;
+    let totalMatches = 0;
+    let totalPnl = 0;
+    let betsPlaced = 0;
+
+    // By confidence level
+    const byConf: Record<string, { correct: number; total: number; pnl: number }> = {};
+    // By tour
+    const byTour: Record<string, { correct: number; total: number; pnl: number }> = {};
+
+    for (const day of allData) {
+      const completed = day.matches.filter((m) => m.result);
+      if (completed.length === 0) continue;
+
+      const dayCorrect = completed.filter((m) => m.result!.correct).length;
+      const dayPnl = completed.reduce(
+        (sum, m) => sum + (m.result!.pnl ?? 0),
+        0
+      );
+      cumPnl += dayPnl;
+      totalCorrect += dayCorrect;
+      totalMatches += completed.length;
+      totalPnl += dayPnl;
+      betsPlaced += completed.filter((m) => m.result!.pnl != null).length;
+
+      days.push({
+        date: day.date,
+        correct: dayCorrect,
+        total: completed.length,
+        pnl: dayPnl,
+        cumPnl,
+        accuracy: Math.round((dayCorrect / completed.length) * 100),
+      });
+
+      // Breakdown
+      for (const m of completed) {
+        const conf = m.prediction.confidence;
+        if (!byConf[conf]) byConf[conf] = { correct: 0, total: 0, pnl: 0 };
+        byConf[conf].total++;
+        if (m.result!.correct) byConf[conf].correct++;
+        byConf[conf].pnl += m.result!.pnl ?? 0;
+
+        const tour = m.tour;
+        if (!byTour[tour]) byTour[tour] = { correct: 0, total: 0, pnl: 0 };
+        byTour[tour].total++;
+        if (m.result!.correct) byTour[tour].correct++;
+        byTour[tour].pnl += m.result!.pnl ?? 0;
+      }
+    }
+
+    return {
+      days,
+      totalCorrect,
+      totalMatches,
+      totalPnl,
+      betsPlaced,
+      accuracy: totalMatches > 0 ? (totalCorrect / totalMatches) * 100 : 0,
+      byConf,
+      byTour,
+    };
+  }, [allData]);
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
+        Loading performance data...
+      </div>
+    );
+  }
+
+  if (stats.totalMatches === 0) {
+    return (
+      <section className="card" style={{ padding: 24, textAlign: "center", color: "var(--muted)" }}>
+        No completed matches with results yet. Results are updated daily.
+      </section>
+    );
+  }
+
+  return (
+    <div>
+      {/* Summary cards */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
+        <div className="card" style={{ padding: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 28, fontWeight: 900 }}>
+            {stats.accuracy.toFixed(1)}%
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>Accuracy</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+            {stats.totalCorrect}/{stats.totalMatches}
+          </div>
+        </div>
+        <div className="card" style={{ padding: 16, textAlign: "center" }}>
+          <div
+            style={{
+              fontSize: 28,
+              fontWeight: 900,
+              color: stats.totalPnl >= 0 ? "#16a34a" : "#dc2626",
+            }}
+          >
+            {stats.totalPnl >= 0 ? "+" : ""}${stats.totalPnl.toFixed(0)}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>Total PnL</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+            {stats.betsPlaced} bets ($100/bet)
+          </div>
+        </div>
+        <div className="card" style={{ padding: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 28, fontWeight: 900 }}>
+            {stats.days.length}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>Days Tracked</div>
+        </div>
+        <div className="card" style={{ padding: 16, textAlign: "center" }}>
+          <div
+            style={{
+              fontSize: 28,
+              fontWeight: 900,
+              color:
+                stats.betsPlaced > 0 && stats.totalPnl / stats.betsPlaced > 0
+                  ? "#16a34a"
+                  : "#dc2626",
+            }}
+          >
+            {stats.betsPlaced > 0
+              ? `${((stats.totalPnl / (stats.betsPlaced * 100)) * 100).toFixed(1)}%`
+              : "-"}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>ROI</div>
+        </div>
+      </div>
+
+      {/* Cumulative PnL chart */}
+      {stats.days.length > 1 && (
+        <section className="card" style={{ padding: 16, marginBottom: 16 }}>
+          <h2 style={{ margin: "0 0 12px", fontWeight: 700, fontSize: 18 }}>
+            Cumulative PnL
+          </h2>
+          <ResponsiveContainer width="100%" height={250}>
+            <LineChart data={stats.days} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(d: string) => d.slice(5)}
+                fontSize={12}
+              />
+              <YAxis
+                tickFormatter={(v: number) => `$${v}`}
+                fontSize={12}
+              />
+              <Tooltip
+                formatter={(v: number, name: string) => [
+                  `$${v.toFixed(0)}`,
+                  name === "cumPnl" ? "Cumulative PnL" : name,
+                ]}
+                labelFormatter={(l: string) => formatDate(l)}
+              />
+              <Line
+                type="monotone"
+                dataKey="cumPnl"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                dot={{ r: 4 }}
+                name="Cumulative PnL"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </section>
+      )}
+
+      {/* Daily accuracy chart */}
+      {stats.days.length > 1 && (
+        <section className="card" style={{ padding: 16, marginBottom: 16 }}>
+          <h2 style={{ margin: "0 0 12px", fontWeight: 700, fontSize: 18 }}>
+            Daily Accuracy
+          </h2>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={stats.days} margin={{ left: 0, right: 16, top: 4, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(d: string) => d.slice(5)}
+                fontSize={12}
+              />
+              <YAxis
+                tickFormatter={(v: number) => `${v}%`}
+                domain={[0, 100]}
+                fontSize={12}
+              />
+              <Tooltip
+                formatter={(v: number, name: string) => [
+                  `${v}%`,
+                  name === "accuracy" ? "Accuracy" : name,
+                ]}
+                labelFormatter={(l: string) => `${formatDate(l)}`}
+              />
+              <Legend />
+              <Bar dataKey="accuracy" name="Accuracy" radius={[4, 4, 0, 0]}>
+                {stats.days.map((d, i) => (
+                  <Cell
+                    key={i}
+                    fill={d.accuracy >= 60 ? "#16a34a" : d.accuracy >= 50 ? "#ca8a04" : "#dc2626"}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </section>
+      )}
+
+      {/* Breakdown tables */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        {/* By confidence */}
+        <section className="card" style={{ padding: 16 }}>
+          <h3 style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 16 }}>By Confidence</h3>
+          <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <th style={{ textAlign: "left", padding: "4px 0" }}>Level</th>
+                <th style={{ textAlign: "right", padding: "4px 0" }}>Record</th>
+                <th style={{ textAlign: "right", padding: "4px 0" }}>Acc%</th>
+                <th style={{ textAlign: "right", padding: "4px 0" }}>PnL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(["high", "medium", "low"] as const).map((conf) => {
+                const d = stats.byConf[conf];
+                if (!d) return null;
+                const acc = ((d.correct / d.total) * 100).toFixed(1);
+                return (
+                  <tr key={conf} style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td style={{ padding: "4px 0" }}>
+                      <ConfBadge level={conf} />
+                    </td>
+                    <td style={{ textAlign: "right", padding: "4px 0" }}>
+                      {d.correct}-{d.total - d.correct}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "4px 0" }}>{acc}%</td>
+                    <td
+                      style={{
+                        textAlign: "right",
+                        padding: "4px 0",
+                        fontWeight: 600,
+                        color: d.pnl >= 0 ? "#16a34a" : "#dc2626",
+                      }}
+                    >
+                      {d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(0)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+
+        {/* By tour */}
+        <section className="card" style={{ padding: 16 }}>
+          <h3 style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 16 }}>By Tour</h3>
+          <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <th style={{ textAlign: "left", padding: "4px 0" }}>Tour</th>
+                <th style={{ textAlign: "right", padding: "4px 0" }}>Record</th>
+                <th style={{ textAlign: "right", padding: "4px 0" }}>Acc%</th>
+                <th style={{ textAlign: "right", padding: "4px 0" }}>PnL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(stats.byTour)
+                .sort((a, b) => b[1].total - a[1].total)
+                .map(([tour, d]) => {
+                  const acc = ((d.correct / d.total) * 100).toFixed(1);
+                  return (
+                    <tr key={tour} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td style={{ padding: "4px 0", fontWeight: 600 }}>{tour}</td>
+                      <td style={{ textAlign: "right", padding: "4px 0" }}>
+                        {d.correct}-{d.total - d.correct}
+                      </td>
+                      <td style={{ textAlign: "right", padding: "4px 0" }}>{acc}%</td>
+                      <td
+                        style={{
+                          textAlign: "right",
+                          padding: "4px 0",
+                          fontWeight: 600,
+                          color: d.pnl >= 0 ? "#16a34a" : "#dc2626",
+                        }}
+                      >
+                        {d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(0)}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      {/* Daily breakdown table */}
+      <section className="card" style={{ padding: 16 }}>
+        <h3 style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 16 }}>Daily Results</h3>
+        <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid var(--border)" }}>
+              <th style={{ textAlign: "left", padding: "6px 0" }}>Date</th>
+              <th style={{ textAlign: "right", padding: "6px 0" }}>Record</th>
+              <th style={{ textAlign: "right", padding: "6px 0" }}>Accuracy</th>
+              <th style={{ textAlign: "right", padding: "6px 0" }}>Day PnL</th>
+              <th style={{ textAlign: "right", padding: "6px 0" }}>Cumulative</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stats.days.map((d) => (
+              <tr key={d.date} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td style={{ padding: "6px 0" }}>{formatDate(d.date)}</td>
+                <td style={{ textAlign: "right", padding: "6px 0" }}>
+                  {d.correct}-{d.total - d.correct}
+                </td>
+                <td
+                  style={{
+                    textAlign: "right",
+                    padding: "6px 0",
+                    color: d.accuracy >= 60 ? "#16a34a" : d.accuracy >= 50 ? "#ca8a04" : "#dc2626",
+                    fontWeight: 600,
+                  }}
+                >
+                  {d.accuracy}%
+                </td>
+                <td
+                  style={{
+                    textAlign: "right",
+                    padding: "6px 0",
+                    fontWeight: 600,
+                    color: d.pnl >= 0 ? "#16a34a" : "#dc2626",
+                  }}
+                >
+                  {d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(0)}
+                </td>
+                <td
+                  style={{
+                    textAlign: "right",
+                    padding: "6px 0",
+                    fontWeight: 600,
+                    color: d.cumPnl >= 0 ? "#16a34a" : "#dc2626",
+                  }}
+                >
+                  {d.cumPnl >= 0 ? "+" : ""}${d.cumPnl.toFixed(0)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 }
@@ -268,6 +747,7 @@ export default function TennisPredictions() {
   const [tourFilter, setTourFilter] = useState<TourFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("prob");
   const [expandedMatch, setExpandedMatch] = useState<number | null>(null);
+  const [viewTab, setViewTab] = useState<ViewTab>("predictions");
 
   const season = new Date().getFullYear();
 
@@ -411,28 +891,56 @@ export default function TennisPredictions() {
             Tennis Predictions
           </h1>
 
-          <select
-            value={selectedDate}
-            onChange={(e) => {
-              setSelectedDate(e.target.value);
-              setError("");
-            }}
-            style={{ fontSize: 14, padding: "6px 10px" }}
-          >
-            {dateIndex
-              .sort((a, b) => b.date.localeCompare(a.date))
-              .map((entry) => (
-                <option key={entry.date} value={entry.date}>
-                  {formatDate(entry.date)} ({entry.match_count} matches)
-                </option>
-              ))}
-          </select>
+          {/* View tabs */}
+          <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
+            {(["predictions", "performance"] as ViewTab[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setViewTab(tab)}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: viewTab === tab ? "var(--brand)" : "var(--card)",
+                  color: viewTab === tab ? "var(--brand-contrast)" : "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  textTransform: "capitalize",
+                }}
+              >
+                {tab === "performance" ? "PnL & Accuracy" : "Predictions"}
+              </button>
+            ))}
+          </div>
+
+          {viewTab === "predictions" && (
+            <select
+              value={selectedDate}
+              onChange={(e) => {
+                setSelectedDate(e.target.value);
+                setError("");
+              }}
+              style={{ fontSize: 14, padding: "6px 10px" }}
+            >
+              {dateIndex
+                .sort((a, b) => b.date.localeCompare(a.date))
+                .map((entry) => (
+                  <option key={entry.date} value={entry.date}>
+                    {formatDate(entry.date)} ({entry.match_count} matches)
+                  </option>
+                ))}
+            </select>
+          )}
         </div>
 
-        {data && (
+        {viewTab === "predictions" && data && (
           <p style={{ margin: "8px 0 0", color: "var(--muted)", fontSize: 14 }}>
             {data.total_matches} matches &middot; Model: Hybrid (Elo + Point Sim + LightGBM)
             &middot; Generated {new Date(data.generated_at).toLocaleString()}
+            {data.results_summary && (
+              <> &middot; Results: {data.results_summary.correct}/{data.results_summary.total_completed} ({data.results_summary.accuracy_pct}%)</>
+            )}
           </p>
         )}
 
@@ -441,235 +949,267 @@ export default function TennisPredictions() {
         )}
       </section>
 
-      {/* Filters + sort */}
-      {data && (
-        <section className="card" style={{ padding: 12, marginBottom: 16 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-            <span style={{ fontWeight: 700, fontSize: 13, color: "var(--muted)" }}>Tour:</span>
-            {(["all", "ATP", "WTA", "Challenger"] as TourFilter[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTourFilter(t)}
-                style={{
-                  padding: "4px 12px",
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  background: tourFilter === t ? "var(--brand)" : "var(--card)",
-                  color: tourFilter === t ? "var(--brand-contrast)" : "var(--text)",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: 13,
-                }}
-              >
-                {t === "all" ? "All" : t} {tourCounts[t] != null ? `(${tourCounts[t]})` : ""}
-              </button>
-            ))}
-
-            <span style={{ marginLeft: 16, fontWeight: 700, fontSize: 13, color: "var(--muted)" }}>Sort:</span>
-            {([
-              ["prob", "Confidence"],
-              ["value", "Value"],
-              ["elo_diff", "Elo Gap"],
-              ["tournament", "Tournament"],
-            ] as [SortKey, string][]).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setSortKey(key)}
-                style={{
-                  padding: "4px 10px",
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  background: sortKey === key ? "var(--brand)" : "var(--card)",
-                  color: sortKey === key ? "var(--brand-contrast)" : "var(--text)",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: 13,
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </section>
+      {/* Performance view */}
+      {viewTab === "performance" && (
+        <PerformanceDashboard dateIndex={dateIndex} season={season} />
       )}
 
-      {/* Probability chart */}
-      {chartData.length > 0 && (
-        <section className="card" style={{ padding: 16, marginBottom: 16 }}>
-          <h2 style={{ margin: "0 0 12px", fontWeight: 700, fontSize: 18 }}>
-            Top Predictions
-          </h2>
-          <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 32)}>
-            <BarChart
-              data={chartData}
-              layout="vertical"
-              margin={{ left: 4, right: 16, top: 4, bottom: 4 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis
-                type="number"
-                tickFormatter={(v: number) => `${v.toFixed(0)}%`}
-                domain={[40, 100]}
-                fontSize={12}
-              />
-              <YAxis dataKey="label" type="category" width={140} tick={{ fontSize: 12 }} />
-              <Tooltip
-                formatter={(v: number) => [`${v.toFixed(1)}%`, "Win Prob"]}
-              />
-              <Bar dataKey="value" radius={[0, 6, 6, 0]}>
-                {chartData.map((d, i) => (
-                  <Cell
-                    key={i}
-                    fill={SURFACE_COLORS[d.surface] ?? "var(--brand)"}
-                    opacity={d.confidence === "high" ? 1 : d.confidence === "medium" ? 0.75 : 0.5}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-          {/* Surface legend */}
-          <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
-            {Object.entries(SURFACE_COLORS).map(([surface, color]) => (
-              <span key={surface} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span style={{ width: 12, height: 12, borderRadius: 3, background: color, display: "inline-block" }} />
-                {surface}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Match cards */}
-      {filteredMatches.length > 0 && (
-        <section>
-          <h2 style={{ margin: "0 0 12px", fontWeight: 700, fontSize: 18 }}>
-            Match Predictions ({filteredMatches.length})
-          </h2>
-          {filteredMatches.map((m, i) => {
-            const expanded = expandedMatch === i;
-            const favA = m.prediction.prob_a >= m.prediction.prob_b;
-            const bestValue = Math.max(m.market.value_a ?? -999, m.market.value_b ?? -999);
-            const hasValue = bestValue > 3;
-
-            return (
-              <div
-                key={i}
-                className="card"
-                style={{
-                  padding: 14,
-                  marginBottom: 10,
-                  cursor: "pointer",
-                  borderLeft: hasValue ? "4px solid #16a34a" : "4px solid transparent",
-                }}
-                onClick={() => setExpandedMatch(expanded ? null : i)}
-              >
-                {/* Tournament + surface + confidence row */}
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: "var(--muted)" }}>{m.tour}</span>
-                  <span style={{ fontSize: 13, color: "var(--muted)" }}>{m.tournament}</span>
-                  <SurfacePill surface={m.surface} />
-                  <ConfBadge level={m.prediction.confidence} />
-                  {m.match_time && (
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{m.match_time}</span>
-                  )}
-                </div>
-
-                {/* Player names + flags + prob bar */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  {/* Player A */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 150 }}>
-                    <Flag url={m.player_a.flag_url} code={m.player_a.country_code} />
-                    <span style={{ fontWeight: favA ? 800 : 400, fontSize: 15 }}>
-                      {m.player_a.name}
-                    </span>
-                  </div>
-
-                  {/* Prob bar */}
-                  <div style={{ flex: 1, minWidth: 140, maxWidth: 300 }}>
-                    <ProbBar probA={m.prediction.prob_a} />
-                  </div>
-
-                  {/* Player B */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 150, justifyContent: "flex-end" }}>
-                    <span style={{ fontWeight: !favA ? 800 : 400, fontSize: 15 }}>
-                      {m.player_b.name}
-                    </span>
-                    <Flag url={m.player_b.flag_url} code={m.player_b.country_code} />
-                  </div>
-                </div>
-
-                {/* Quick stats row */}
-                <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, color: "var(--muted)", flexWrap: "wrap" }}>
-                  <span>Fair: {formatOdds(m.prediction.fair_odds_a)} / {formatOdds(m.prediction.fair_odds_b)}</span>
-                  {m.market.odds_a && (
-                    <span>Market: {formatOdds(m.market.odds_a)} / {formatOdds(m.market.odds_b)}</span>
-                  )}
-                  {m.market.value_a != null && (
-                    <span>Value: <ValueCell value={m.market.value_a} /> / <ValueCell value={m.market.value_b} /></span>
-                  )}
-                  {m.h2h.total > 0 && (
-                    <span>H2H: {Math.round((m.h2h.pct_a ?? 50) / 100 * m.h2h.total)}-{m.h2h.total - Math.round((m.h2h.pct_a ?? 50) / 100 * m.h2h.total)}</span>
-                  )}
-                </div>
-
-                {/* Expanded details */}
-                {expanded && (
-                  <div
+      {/* Predictions view */}
+      {viewTab === "predictions" && (
+        <>
+          {/* Filters + sort */}
+          {data && (
+            <section className="card" style={{ padding: 12, marginBottom: 16 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: "var(--muted)" }}>Tour:</span>
+                {(["all", "ATP", "WTA", "Challenger"] as TourFilter[]).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTourFilter(t)}
                     style={{
-                      marginTop: 12,
-                      paddingTop: 12,
-                      borderTop: "1px solid var(--border)",
-                      display: "grid",
-                      gridTemplateColumns: "1fr auto 1fr",
-                      gap: 8,
+                      padding: "4px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: tourFilter === t ? "var(--brand)" : "var(--card)",
+                      color: tourFilter === t ? "var(--brand-contrast)" : "var(--text)",
+                      cursor: "pointer",
+                      fontWeight: 600,
                       fontSize: 13,
                     }}
                   >
-                    {/* Player A details */}
-                    <div>
-                      <div style={{ fontWeight: 700, marginBottom: 4 }}>{m.player_a.name}</div>
-                      <div>Elo: <strong>{m.player_a.elo.toFixed(0)}</strong></div>
-                      <div>Serve: <strong>{formatPct(m.player_a.serve_pct)}</strong></div>
-                      <div>Return: <strong>{formatPct(m.player_a.return_pct)}</strong></div>
-                      <div>Form: <strong>{formatPct(m.player_a.recent_form)}</strong></div>
-                      <div>Hand: <strong>{m.player_a.hand === "R" ? "Right" : m.player_a.hand === "L" ? "Left" : "Unknown"}</strong></div>
-                    </div>
+                    {t === "all" ? "All" : t} {tourCounts[t] != null ? `(${tourCounts[t]})` : ""}
+                  </button>
+                ))}
 
-                    {/* Model breakdown */}
-                    <div style={{ textAlign: "center", minWidth: 120 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Model Breakdown</div>
-                      <div>Elo: {formatPct(m.prediction.elo_prob_a)}</div>
-                      <div>Point Sim: {formatPct(m.prediction.sim_prob_a)}</div>
-                      <div>ML: {formatPct(m.prediction.ml_prob_a)}</div>
-                      <div style={{ marginTop: 4, fontWeight: 700 }}>
-                        Hybrid: {formatPct(m.prediction.prob_a)}
-                      </div>
-                      <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
-                        Best of {m.best_of}
-                      </div>
-                    </div>
-
-                    {/* Player B details */}
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontWeight: 700, marginBottom: 4 }}>{m.player_b.name}</div>
-                      <div>Elo: <strong>{m.player_b.elo.toFixed(0)}</strong></div>
-                      <div>Serve: <strong>{formatPct(m.player_b.serve_pct)}</strong></div>
-                      <div>Return: <strong>{formatPct(m.player_b.return_pct)}</strong></div>
-                      <div>Form: <strong>{formatPct(m.player_b.recent_form)}</strong></div>
-                      <div>Hand: <strong>{m.player_b.hand === "R" ? "Right" : m.player_b.hand === "L" ? "Left" : "Unknown"}</strong></div>
-                    </div>
-                  </div>
-                )}
+                <span style={{ marginLeft: 16, fontWeight: 700, fontSize: 13, color: "var(--muted)" }}>Sort:</span>
+                {([
+                  ["prob", "Confidence"],
+                  ["value", "Value"],
+                  ["elo_diff", "Elo Gap"],
+                  ["tournament", "Tournament"],
+                ] as [SortKey, string][]).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setSortKey(key)}
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: sortKey === key ? "var(--brand)" : "var(--card)",
+                      color: sortKey === key ? "var(--brand-contrast)" : "var(--text)",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: 13,
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            );
-          })}
-        </section>
-      )}
+            </section>
+          )}
 
-      {filteredMatches.length === 0 && data && (
-        <section className="card" style={{ padding: 24, textAlign: "center", color: "var(--muted)" }}>
-          No matches found for the selected filters.
-        </section>
+          {/* Probability chart */}
+          {chartData.length > 0 && (
+            <section className="card" style={{ padding: 16, marginBottom: 16 }}>
+              <h2 style={{ margin: "0 0 12px", fontWeight: 700, fontSize: 18 }}>
+                Top Predictions
+              </h2>
+              <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 32)}>
+                <BarChart
+                  data={chartData}
+                  layout="vertical"
+                  margin={{ left: 4, right: 16, top: 4, bottom: 4 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis
+                    type="number"
+                    tickFormatter={(v: number) => `${v.toFixed(0)}%`}
+                    domain={[40, 100]}
+                    fontSize={12}
+                  />
+                  <YAxis dataKey="label" type="category" width={140} tick={{ fontSize: 12 }} />
+                  <Tooltip
+                    formatter={(v: number) => [`${v.toFixed(1)}%`, "Win Prob"]}
+                  />
+                  <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                    {chartData.map((d, i) => (
+                      <Cell
+                        key={i}
+                        fill={SURFACE_COLORS[d.surface] ?? "var(--brand)"}
+                        opacity={d.confidence === "high" ? 1 : d.confidence === "medium" ? 0.75 : 0.5}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              {/* Surface legend */}
+              <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+                {Object.entries(SURFACE_COLORS).map(([surface, color]) => (
+                  <span key={surface} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 12, height: 12, borderRadius: 3, background: color, display: "inline-block" }} />
+                    {surface}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Match cards */}
+          {filteredMatches.length > 0 && (
+            <section>
+              <h2 style={{ margin: "0 0 12px", fontWeight: 700, fontSize: 18 }}>
+                Match Predictions ({filteredMatches.length})
+              </h2>
+              {filteredMatches.map((m, i) => {
+                const expanded = expandedMatch === i;
+                const favA = m.prediction.prob_a >= m.prediction.prob_b;
+                const bestValue = Math.max(m.market.value_a ?? -999, m.market.value_b ?? -999);
+                const hasValue = bestValue > 3;
+
+                return (
+                  <div
+                    key={i}
+                    className="card"
+                    style={{
+                      padding: 14,
+                      marginBottom: 10,
+                      cursor: "pointer",
+                      borderLeft: m.result
+                        ? `4px solid ${m.result.correct ? "#16a34a" : "#dc2626"}`
+                        : hasValue
+                          ? "4px solid #16a34a"
+                          : "4px solid transparent",
+                    }}
+                    onClick={() => setExpandedMatch(expanded ? null : i)}
+                  >
+                    {/* Tournament + surface + confidence + result row */}
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 700, fontSize: 13, color: "var(--muted)" }}>{m.tour}</span>
+                      <span style={{ fontSize: 13, color: "var(--muted)" }}>{m.tournament}</span>
+                      <SurfacePill surface={m.surface} />
+                      <ConfBadge level={m.prediction.confidence} />
+                      {m.result && <ResultBadge result={m.result} />}
+                      {m.match_time && !m.result && (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>{m.match_time}</span>
+                      )}
+                    </div>
+
+                    {/* Player names + flags + prob bar */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                      {/* Player A */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 150 }}>
+                        <Flag url={m.player_a.flag_url} code={m.player_a.country_code} />
+                        <span style={{
+                          fontWeight: favA ? 800 : 400,
+                          fontSize: 15,
+                          textDecoration: m.result && m.result.winner !== "a" ? "line-through" : "none",
+                          opacity: m.result && m.result.winner !== "a" ? 0.5 : 1,
+                        }}>
+                          {m.player_a.name}
+                        </span>
+                      </div>
+
+                      {/* Prob bar */}
+                      <div style={{ flex: 1, minWidth: 140, maxWidth: 300 }}>
+                        <ProbBar probA={m.prediction.prob_a} result={m.result} />
+                      </div>
+
+                      {/* Player B */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 150, justifyContent: "flex-end" }}>
+                        <span style={{
+                          fontWeight: !favA ? 800 : 400,
+                          fontSize: 15,
+                          textDecoration: m.result && m.result.winner !== "b" ? "line-through" : "none",
+                          opacity: m.result && m.result.winner !== "b" ? 0.5 : 1,
+                        }}>
+                          {m.player_b.name}
+                        </span>
+                        <Flag url={m.player_b.flag_url} code={m.player_b.country_code} />
+                      </div>
+                    </div>
+
+                    {/* Score line for completed matches */}
+                    {m.result && m.result.score && (
+                      <div style={{ textAlign: "center", fontSize: 13, fontWeight: 700, marginTop: 4, color: "var(--muted)" }}>
+                        {m.result.winner === "a" ? m.player_a.name.split(" ").pop() : m.player_b.name.split(" ").pop()} won {formatScore(m.result.score, m.result.score_loser)}
+                      </div>
+                    )}
+
+                    {/* Quick stats row */}
+                    <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, color: "var(--muted)", flexWrap: "wrap" }}>
+                      <span>Fair: {formatOdds(m.prediction.fair_odds_a)} / {formatOdds(m.prediction.fair_odds_b)}</span>
+                      {m.market.odds_a != null && (
+                        <span>Market: {formatOdds(m.market.odds_a)} / {formatOdds(m.market.odds_b)}</span>
+                      )}
+                      {m.market.value_a != null && (
+                        <span>Value: <ValueCell value={m.market.value_a} /> / <ValueCell value={m.market.value_b} /></span>
+                      )}
+                      {m.h2h.total > 0 && (
+                        <span>H2H: {Math.round((m.h2h.pct_a ?? 50) / 100 * m.h2h.total)}-{m.h2h.total - Math.round((m.h2h.pct_a ?? 50) / 100 * m.h2h.total)}</span>
+                      )}
+                    </div>
+
+                    {/* Expanded details */}
+                    {expanded && (
+                      <div
+                        style={{
+                          marginTop: 12,
+                          paddingTop: 12,
+                          borderTop: "1px solid var(--border)",
+                          display: "grid",
+                          gridTemplateColumns: "1fr auto 1fr",
+                          gap: 8,
+                          fontSize: 13,
+                        }}
+                      >
+                        {/* Player A details */}
+                        <div>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{m.player_a.name}</div>
+                          <div>Elo: <strong>{m.player_a.elo.toFixed(0)}</strong></div>
+                          <div>Serve: <strong>{formatPct(m.player_a.serve_pct)}</strong></div>
+                          <div>Return: <strong>{formatPct(m.player_a.return_pct)}</strong></div>
+                          <div>Form: <strong>{formatPct(m.player_a.recent_form)}</strong></div>
+                          <div>Hand: <strong>{m.player_a.hand === "R" ? "Right" : m.player_a.hand === "L" ? "Left" : "Unknown"}</strong></div>
+                        </div>
+
+                        {/* Model breakdown */}
+                        <div style={{ textAlign: "center", minWidth: 120 }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>Model Breakdown</div>
+                          <div>Elo: {formatPct(m.prediction.elo_prob_a)}</div>
+                          <div>Point Sim: {formatPct(m.prediction.sim_prob_a)}</div>
+                          <div>ML: {formatPct(m.prediction.ml_prob_a)}</div>
+                          <div style={{ marginTop: 4, fontWeight: 700 }}>
+                            Hybrid: {formatPct(m.prediction.prob_a)}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
+                            Best of {m.best_of}
+                          </div>
+                        </div>
+
+                        {/* Player B details */}
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{m.player_b.name}</div>
+                          <div>Elo: <strong>{m.player_b.elo.toFixed(0)}</strong></div>
+                          <div>Serve: <strong>{formatPct(m.player_b.serve_pct)}</strong></div>
+                          <div>Return: <strong>{formatPct(m.player_b.return_pct)}</strong></div>
+                          <div>Form: <strong>{formatPct(m.player_b.recent_form)}</strong></div>
+                          <div>Hand: <strong>{m.player_b.hand === "R" ? "Right" : m.player_b.hand === "L" ? "Left" : "Unknown"}</strong></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </section>
+          )}
+
+          {filteredMatches.length === 0 && data && (
+            <section className="card" style={{ padding: 24, textAlign: "center", color: "var(--muted)" }}>
+              No matches found for the selected filters.
+            </section>
+          )}
+        </>
       )}
     </div>
   );
