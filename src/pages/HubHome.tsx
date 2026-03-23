@@ -53,6 +53,23 @@ export default function HubHome() {
           </Link>
 
           <Link
+            to="/mlb/scoreboard"
+            className="card"
+            style={{
+              padding: 16,
+              border: "1px solid var(--border)",
+              borderRadius: 14,
+              textDecoration: "none",
+              background: "var(--card)",
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 18 }}>MLB Baseball</div>
+            <div style={{ marginTop: 6, color: "var(--muted)" }}>
+              Monte Carlo game sims with F5 lines, pitcher K props, batter props, and full betting analysis.
+            </div>
+          </Link>
+
+          <Link
             to="/nascar"
             className="card"
             style={{

@@ -8,7 +8,7 @@ import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 
-type Sport = "cfb" | "cbb";
+type Sport = "cfb" | "cbb" | "mlb";
 
 interface ScoreboardPayload {
   // We don't care about the exact ESPN shape here; treat as any.
@@ -124,7 +124,9 @@ export function buildIndexBySingleTeam(indexGames: IndexGame[]): Record<string, 
 
 function toSport(q: any): Sport {
   const s = String(q || "cfb").toLowerCase();
-  return s === "cbb" ? "cbb" : "cfb";
+  if (s === "cbb") return "cbb";
+  if (s === "mlb") return "mlb";
+  return "cfb";
 }
 
 // replace the existing espnUrl with:
@@ -140,6 +142,10 @@ function espnUrl(
     if (sport === "cbb") {
       const g = groups ?? "50"; // Men's D-I
       return `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
+    }
+
+    if (sport === "mlb") {
+      return `https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates=${d}&limit=${limit}`;
     }
 
     // CFB

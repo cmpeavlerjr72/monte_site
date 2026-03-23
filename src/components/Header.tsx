@@ -9,10 +9,11 @@ export default function Header() {
   const { pathname } = useLocation();
   const inCFB = pathname.startsWith("/cfb");
   const inCBB = pathname.startsWith("/cbb");
+  const inMLB = pathname.startsWith("/mlb");
   const inNASCAR = pathname.startsWith("/nascar");
   const inTennis = pathname.startsWith("/tennis");
   // Use current sport for all header links; default to CFB on non-sport routes
-  const basePath = inTennis ? "/tennis" : inNASCAR ? "/nascar" : inCBB ? "/cbb" : "/cfb";
+  const basePath = inTennis ? "/tennis" : inNASCAR ? "/nascar" : inMLB ? "/mlb" : inCBB ? "/cbb" : "/cfb";
 
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -64,6 +65,13 @@ export default function Header() {
             CBB
           </NavLink>
           <NavLink
+            to="/mlb/scoreboard"
+            className={({ isActive }) => `tab${isActive || inMLB ? " active" : ""}`}
+            aria-current={inMLB ? "page" : undefined}
+          >
+            MLB
+          </NavLink>
+          <NavLink
             to="/nascar"
             className={({ isActive }) => `tab${isActive || inNASCAR ? " active" : ""}`}
             aria-current={inNASCAR ? "page" : undefined}
@@ -91,6 +99,11 @@ export default function Header() {
             <NavLink to="/nascar/predictions">Predictions</NavLink>
           ) : inTennis ? (
             <NavLink to="/tennis/predictions">Predictions</NavLink>
+          ) : inMLB ? (
+            <>
+              <NavLink to="/mlb/scoreboard">Scoreboard</NavLink>
+              <NavLink to="/mlb/game">Game Detail</NavLink>
+            </>
           ) : (
             <>
               <NavLink to={`${basePath}/game`}>Detailed Player</NavLink>
@@ -125,6 +138,11 @@ export default function Header() {
               <NavLink to="/nascar/predictions" role="menuitem">Predictions</NavLink>
             ) : inTennis ? (
               <NavLink to="/tennis/predictions" role="menuitem">Predictions</NavLink>
+            ) : inMLB ? (
+              <>
+                <NavLink to="/mlb/scoreboard" role="menuitem">Scoreboard</NavLink>
+                <NavLink to="/mlb/game" role="menuitem">Game Detail</NavLink>
+              </>
             ) : (
               <>
                 <NavLink to={`${basePath}/game`} role="menuitem">Detailed Player</NavLink>

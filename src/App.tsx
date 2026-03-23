@@ -22,6 +22,10 @@ import CBB_Sims from "./pages/CBB_sims";
 import ResultsCBB from "./pages/ResultsCBB";
 import CBB_Bracket from "./pages/CBB_Bracket";
 
+// MLB Pages
+import MLBScoreboard from "./pages/MLBScoreboard";
+import MLBGameDetail from "./pages/MLBGameDetail";
+
 // NASCAR Pages
 import NascarPredictions from "./pages/NascarPredictions";
 
@@ -65,6 +69,11 @@ export default function App() {
           <Route path="/cbb/scoreboard" element={<CBB_Sims />} />
           <Route path="/cbb/results" element={<ResultsCBB />} />  
           <Route path="/cbb/bracket" element={<CBB_Bracket />} />        
+          {/* MLB */}
+          <Route path="/mlb" element={<MLBScoreboard />} />
+          <Route path="/mlb/scoreboard" element={<MLBScoreboard />} />
+          <Route path="/mlb/game/*" element={<MLBGameDetail />} />
+
           {/* NASCAR */}
           <Route path="/nascar" element={<NascarPredictions />} />
           <Route path="/nascar/predictions" element={<NascarPredictions />} />

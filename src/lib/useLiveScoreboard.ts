@@ -6,11 +6,11 @@ import { useEffect, useState } from "react";
  * with a fallback to /api/scoreboard.
  *
  * @param date  e.g. "20251123" or "2025-11-23"
- * @param sport "cfb" or "cbb" (defaults to "cfb" for backwards compatibility)
+ * @param sport "cfb", "cbb", or "mlb" (defaults to "cfb" for backwards compatibility)
  */
 export function useLiveScoreboard(
   date: string | null | undefined,
-  sport: "cfb" | "cbb" = "cfb"
+  sport: "cfb" | "cbb" | "mlb" = "cfb"
 ) {
   const [payload, setPayload] = useState<any | null>(null);
 
