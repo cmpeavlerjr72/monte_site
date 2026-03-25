@@ -28,10 +28,29 @@
 .cb-chip-score { font-weight: 700; font-size: 14px; min-width: 20px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 .cb-chip-score.w { color: var(--text); }
 
-/* ── Section title ────────────────────────────────────────── */
-.cb-section-title {
-  font-size: 20px; font-weight: 700; color: var(--text); padding: 16px 0 12px;
-  border-bottom: 2px solid var(--brand); margin-bottom: 0;
+/* ── Date navigator ──────────────────────────────────────── */
+.cb-date-nav {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 14px 0; border-bottom: 2px solid var(--brand);
+}
+.cb-date-arrow {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 700; color: var(--muted); cursor: pointer;
+  transition: background .1s, color .1s, border-color .1s;
+}
+.cb-date-arrow:hover { background: var(--card); color: var(--text); border-color: var(--accent); }
+.cb-date-today {
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 12px; font-size: 12px; font-weight: 600; color: var(--brand);
+  cursor: pointer; transition: background .1s, border-color .1s;
+}
+.cb-date-today:hover { border-color: var(--brand); background: color-mix(in oklab, var(--card) 92%, var(--brand)); }
+.cb-date-label {
+  font-size: 18px; font-weight: 700; color: var(--text); min-width: 100px; text-align: center;
+}
+.cb-date-full {
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
 
 .cb-filter-bar {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { cbQuery } from "../lib/supabaseCollegeBaseball";
 import "./CollegeBaseball.css";
@@ -6,7 +6,33 @@ import "./CollegeBaseball.css";
 interface Team { id: number; name: string; short_name: string; mascot: string; logo_espn: string | null; color_primary: string | null; }
 interface Game { id: number; status: string; inning: number | null; inning_half: string | null; outs: number | null; balls: number | null; strikes: number | null; runner_first: boolean; runner_second: boolean; runner_third: boolean; home_team_id: number; away_team_id: number; home_score: number | null; away_score: number | null; home_hits: number | null; away_hits: number | null; home_errors: number | null; away_errors: number | null; current_batter_name: string | null; current_batter_number: string | null; current_pitcher_name: string | null; current_pitcher_number: string | null; start_time: string | null; start_time_display: string | null; sb_event_id: string | null; game_date: string | null; }
 
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatDateLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+  const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+  const dateOnly = new Date(y, m - 1, d); dateOnly.setHours(0, 0, 0, 0);
+  if (dateOnly.getTime() === today.getTime()) return "Today";
+  if (dateOnly.getTime() === yesterday.getTime()) return "Yesterday";
+  if (dateOnly.getTime() === tomorrow.getTime()) return "Tomorrow";
+  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function shiftDate(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 export default function CollegeBaseballScoreboard() {
+  const [selectedDate, setSelectedDate] = useState(todayStr);
   const [games, setGames] = useState<Game[]>([]);
   const [teams, setTeams] = useState<Record<number, Team>>({});
   const [linescores, setLinescores] = useState<Record<number, Record<number, Record<number, number>>>>({});
@@ -14,27 +40,47 @@ export default function CollegeBaseballScoreboard() {
   const [loading, setLoading] = useState(true);
   const nav = useNavigate();
 
-  useEffect(() => {
-    async function load() {
-      const [g, t, ls] = await Promise.all([
-        cbQuery("games", { select: "*", order: "status.desc,start_time.asc.nullslast,id" }),
-        cbQuery("teams", { select: "id,name,short_name,mascot,logo_espn,color_primary" }),
-        cbQuery("game_linescores", { select: "game_id,team_id,inning,runs", order: "game_id,team_id,inning", limit: "10000" }),
-      ]);
-      const tm: Record<number, Team> = {};
-      t.forEach((team: Team) => { tm[team.id] = team; });
-      const lsMap: Record<number, Record<number, Record<number, number>>> = {};
-      ls.forEach((l: { game_id: number; team_id: number; inning: number; runs: number }) => {
-        if (!lsMap[l.game_id]) lsMap[l.game_id] = {};
-        if (!lsMap[l.game_id][l.team_id]) lsMap[l.game_id][l.team_id] = {};
-        lsMap[l.game_id][l.team_id][l.inning] = l.runs;
+  const loadGames = useCallback(async (date: string) => {
+    setLoading(true);
+    const [g, t] = await Promise.all([
+      cbQuery("games", { select: "*", game_date: `eq.${date}`, order: "status.desc,start_time.asc.nullslast,id" }),
+      cbQuery("teams", { select: "id,name,short_name,mascot,logo_espn,color_primary" }),
+    ]);
+
+    // Fetch linescores only for games on this date
+    const gameIds = g.map((gm: Game) => gm.id);
+    let ls: any[] = [];
+    if (gameIds.length > 0) {
+      ls = await cbQuery("game_linescores", {
+        select: "game_id,team_id,inning,runs",
+        game_id: `in.(${gameIds.join(",")})`,
+        order: "game_id,team_id,inning",
+        limit: "10000",
       });
-      setGames(g); setTeams(tm); setLinescores(lsMap); setLoading(false);
     }
-    load();
+
+    const tm: Record<number, Team> = {};
+    t.forEach((team: Team) => { tm[team.id] = team; });
+    const lsMap: Record<number, Record<number, Record<number, number>>> = {};
+    ls.forEach((l: { game_id: number; team_id: number; inning: number; runs: number }) => {
+      if (!lsMap[l.game_id]) lsMap[l.game_id] = {};
+      if (!lsMap[l.game_id][l.team_id]) lsMap[l.game_id][l.team_id] = {};
+      lsMap[l.game_id][l.team_id][l.inning] = l.runs;
+    });
+    setGames(g); setTeams(tm); setLinescores(lsMap); setLoading(false);
   }, []);
 
-  if (loading) return <div className="cb-loading">Loading scores...</div>;
+  useEffect(() => {
+    loadGames(selectedDate);
+  }, [selectedDate, loadGames]);
+
+  // Auto-refresh every 30s when there are live games
+  useEffect(() => {
+    const hasLive = games.some(g => g.status === "live");
+    if (!hasLive) return;
+    const interval = setInterval(() => loadGames(selectedDate), 30000);
+    return () => clearInterval(interval);
+  }, [games, selectedDate, loadGames]);
 
   const statusOrder: Record<string, number> = { live: 0, pre: 1, scheduled: 2, final: 3 };
   const sorted = [...games].sort((a, b) => {
@@ -92,8 +138,16 @@ export default function CollegeBaseballScoreboard() {
         ))}
       </div>
 
+      {/* Date navigator */}
+      <div className="cb-date-nav">
+        <button className="cb-date-arrow" onClick={() => setSelectedDate(d => shiftDate(d, -1))} title="Previous day">&lsaquo;</button>
+        <button className="cb-date-today" onClick={() => setSelectedDate(todayStr())} title="Go to today">Today</button>
+        <span className="cb-date-label">{formatDateLabel(selectedDate)}</span>
+        <span className="cb-date-full">{selectedDate}</span>
+        <button className="cb-date-arrow" onClick={() => setSelectedDate(d => shiftDate(d, 1))} title="Next day">&rsaquo;</button>
+      </div>
+
       {/* Header + filter */}
-      <h2 className="cb-section-title">Scores</h2>
       <div className="cb-filter-bar">
         <label>Filter</label>
         <select value={filter} onChange={e => setFilter(e.target.value)}>
@@ -105,60 +159,66 @@ export default function CollegeBaseballScoreboard() {
       </div>
 
       {/* Game cards */}
-      <div className="cb-game-cards">
-        {filtered.map(g => {
-          const awayInn = getInnings(g.id, g.away_team_id);
-          const homeInn = getInnings(g.id, g.home_team_id);
-          const maxInn = Math.max(awayInn.length, homeInn.length, 9);
-          const hasMatchup = g.current_batter_name || g.current_pitcher_name;
-          return (
-            <div key={g.id} className="cb-game-card" onClick={() => nav(`/college-baseball/game/${g.id}`)}
-              style={{ borderLeft: `4px solid ${color(g.home_team_id) || "var(--border)"}` }}>
-              <div className={`cb-gc-status ${g.status}`}>{gameStatus(g)}</div>
-              <div className="cb-gc-teams">
-                {(["away", "home"] as const).map(side => {
-                  const tid = side === "away" ? g.away_team_id : g.home_team_id;
-                  const won = isWinner(g, side);
-                  const lost = g.status === "final" && !won;
-                  const score = side === "away" ? g.away_score : g.home_score;
-                  return (
-                    <div key={side} className={`cb-gc-team-row ${won ? "won" : lost ? "lost" : ""}`}>
-                      {logo(tid) && <img src={logo(tid)!} className="cb-team-logo" alt="" />}
-                      <span className="cb-gc-abbr">{abbr(tid)}</span>
-                      <span className="cb-gc-full">{fullName(tid)}</span>
-                      <span className={`cb-gc-score ${won ? "w" : lost ? "l" : ""}`}>{score ?? "-"}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="cb-gc-linescore">
-                {([g.away_team_id, g.home_team_id]).map(tid => (
-                  <div key={tid} className="cb-ls-row">
-                    {Array.from({ length: Math.min(maxInn, 9) }, (_, i) => {
-                      const inn = tid === g.away_team_id ? awayInn : homeInn;
-                      return <span key={i} className={`cb-ls-cell ${(inn[i] || 0) > 0 ? "runs" : ""}`}>{inn[i] ?? "-"}</span>;
-                    })}
-                  </div>
-                ))}
-              </div>
-              <div className="cb-gc-rhe">
-                <div className="cb-rhe-hdr"><span>R</span><span>H</span><span>E</span></div>
-                <div className="cb-rhe-row"><span>{g.away_score ?? "-"}</span><span>{g.away_hits ?? "-"}</span><span>{g.away_errors ?? "-"}</span></div>
-                <div className="cb-rhe-row"><span>{g.home_score ?? "-"}</span><span>{g.home_hits ?? "-"}</span><span>{g.home_errors ?? "-"}</span></div>
-              </div>
-              {g.status === "live" && hasMatchup && (
-                <div className="cb-gc-matchup">
-                  {g.current_batter_name && <span>AB: <strong>#{g.current_batter_number} {g.current_batter_name}</strong></span>}
-                  {g.current_batter_name && g.current_pitcher_name && " | "}
-                  {g.current_pitcher_name && <span>P: <strong>#{g.current_pitcher_number} {g.current_pitcher_name}</strong></span>}
-                  {g.outs != null && <span> | {g.outs} out</span>}
-                  {g.balls != null && <span> | {g.balls}-{g.strikes}</span>}
+      {loading ? (
+        <div className="cb-loading">Loading scores...</div>
+      ) : filtered.length === 0 ? (
+        <div className="cb-no-data">No games {filter !== "all" ? `(${filter}) ` : ""}for {formatDateLabel(selectedDate)}</div>
+      ) : (
+        <div className="cb-game-cards">
+          {filtered.map(g => {
+            const awayInn = getInnings(g.id, g.away_team_id);
+            const homeInn = getInnings(g.id, g.home_team_id);
+            const maxInn = Math.max(awayInn.length, homeInn.length, 9);
+            const hasMatchup = g.current_batter_name || g.current_pitcher_name;
+            return (
+              <div key={g.id} className="cb-game-card" onClick={() => nav(`/college-baseball/game/${g.id}`)}
+                style={{ borderLeft: `4px solid ${color(g.home_team_id) || "var(--border)"}` }}>
+                <div className={`cb-gc-status ${g.status}`}>{gameStatus(g)}</div>
+                <div className="cb-gc-teams">
+                  {(["away", "home"] as const).map(side => {
+                    const tid = side === "away" ? g.away_team_id : g.home_team_id;
+                    const won = isWinner(g, side);
+                    const lost = g.status === "final" && !won;
+                    const score = side === "away" ? g.away_score : g.home_score;
+                    return (
+                      <div key={side} className={`cb-gc-team-row ${won ? "won" : lost ? "lost" : ""}`}>
+                        {logo(tid) && <img src={logo(tid)!} className="cb-team-logo" alt="" />}
+                        <span className="cb-gc-abbr">{abbr(tid)}</span>
+                        <span className="cb-gc-full">{fullName(tid)}</span>
+                        <span className={`cb-gc-score ${won ? "w" : lost ? "l" : ""}`}>{score ?? "-"}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                <div className="cb-gc-linescore">
+                  {([g.away_team_id, g.home_team_id]).map(tid => (
+                    <div key={tid} className="cb-ls-row">
+                      {Array.from({ length: Math.min(maxInn, 9) }, (_, i) => {
+                        const inn = tid === g.away_team_id ? awayInn : homeInn;
+                        return <span key={i} className={`cb-ls-cell ${(inn[i] || 0) > 0 ? "runs" : ""}`}>{inn[i] ?? "-"}</span>;
+                      })}
+                    </div>
+                  ))}
+                </div>
+                <div className="cb-gc-rhe">
+                  <div className="cb-rhe-hdr"><span>R</span><span>H</span><span>E</span></div>
+                  <div className="cb-rhe-row"><span>{g.away_score ?? "-"}</span><span>{g.away_hits ?? "-"}</span><span>{g.away_errors ?? "-"}</span></div>
+                  <div className="cb-rhe-row"><span>{g.home_score ?? "-"}</span><span>{g.home_hits ?? "-"}</span><span>{g.home_errors ?? "-"}</span></div>
+                </div>
+                {g.status === "live" && hasMatchup && (
+                  <div className="cb-gc-matchup">
+                    {g.current_batter_name && <span>AB: <strong>#{g.current_batter_number} {g.current_batter_name}</strong></span>}
+                    {g.current_batter_name && g.current_pitcher_name && " | "}
+                    {g.current_pitcher_name && <span>P: <strong>#{g.current_pitcher_number} {g.current_pitcher_name}</strong></span>}
+                    {g.outs != null && <span> | {g.outs} out</span>}
+                    {g.balls != null && <span> | {g.balls}-{g.strikes}</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
