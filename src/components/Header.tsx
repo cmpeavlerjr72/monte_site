@@ -12,8 +12,9 @@ export default function Header() {
   const inMLB = pathname.startsWith("/mlb");
   const inNASCAR = pathname.startsWith("/nascar");
   const inTennis = pathname.startsWith("/tennis");
+  const inCollegeBB = pathname.startsWith("/college-baseball");
   // Use current sport for all header links; default to CFB on non-sport routes
-  const basePath = inTennis ? "/tennis" : inNASCAR ? "/nascar" : inMLB ? "/mlb" : inCBB ? "/cbb" : "/cfb";
+  const basePath = inCollegeBB ? "/college-baseball" : inTennis ? "/tennis" : inNASCAR ? "/nascar" : inMLB ? "/mlb" : inCBB ? "/cbb" : "/cfb";
 
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -85,6 +86,13 @@ export default function Header() {
           >
             Tennis
           </NavLink>
+          <NavLink
+            to="/college-baseball"
+            className={({ isActive }) => `tab${isActive || inCollegeBB ? " active" : ""}`}
+            aria-current={inCollegeBB ? "page" : undefined}
+          >
+            CBASE
+          </NavLink>
 
           <SupportButton 
           venmoHandle="Mitchell-Peavler"
@@ -95,7 +103,9 @@ export default function Header() {
 
         {/* Desktop inline nav (uses active sport basePath) */}
         <nav className="primary-nav">
-          {inNASCAR ? (
+          {inCollegeBB ? (
+            <NavLink to="/college-baseball/scoreboard">Scoreboard</NavLink>
+          ) : inNASCAR ? (
             <NavLink to="/nascar/predictions">Predictions</NavLink>
           ) : inTennis ? (
             <NavLink to="/tennis/predictions">Predictions</NavLink>
@@ -134,7 +144,9 @@ export default function Header() {
             className={`menu-dropdown${open ? " open" : ""}`}
             role="menu"
           >
-            {inNASCAR ? (
+            {inCollegeBB ? (
+              <NavLink to="/college-baseball/scoreboard" role="menuitem">Scoreboard</NavLink>
+            ) : inNASCAR ? (
               <NavLink to="/nascar/predictions" role="menuitem">Predictions</NavLink>
             ) : inTennis ? (
               <NavLink to="/tennis/predictions" role="menuitem">Predictions</NavLink>

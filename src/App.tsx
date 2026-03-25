@@ -32,6 +32,10 @@ import NascarPredictions from "./pages/NascarPredictions";
 // Tennis Pages
 import TennisPredictions from "./pages/TennisPredictions";
 
+// College Baseball Pages
+import CollegeBaseballScoreboard from "./pages/CollegeBaseballScoreboard";
+import CollegeBaseballGame from "./pages/CollegeBaseballGame";
+
 // New pages
 import HubHome from "./pages/HubHome";
 import CBBComingSoon from "./pages/CBBComingSoon";
@@ -81,6 +85,11 @@ export default function App() {
           {/* Tennis */}
           <Route path="/tennis" element={<TennisPredictions />} />
           <Route path="/tennis/predictions" element={<TennisPredictions />} />
+
+          {/* College Baseball */}
+          <Route path="/college-baseball" element={<CollegeBaseballScoreboard />} />
+          <Route path="/college-baseball/scoreboard" element={<CollegeBaseballScoreboard />} />
+          <Route path="/college-baseball/game/:id" element={<CollegeBaseballGame />} />
 
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />
