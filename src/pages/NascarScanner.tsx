@@ -395,10 +395,10 @@ export default function NascarScanner() {
           )}
 
           {/* TV Sync delay */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: streams.length > 0 ? "auto" : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: streams.length > 0 ? "auto" : 0, flexWrap: "wrap" }}>
             <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>TV Sync</span>
             <div style={{ display: "flex", gap: 2 }}>
-              {[0, 10, 20, 30].map((d) => (
+              {[0, 15, 25, 30, 45].map((d) => (
                 <button
                   key={d}
                   onClick={() => setDelay(d)}
@@ -415,13 +415,54 @@ export default function NascarScanner() {
               ))}
             </div>
             <input
-              type="range" min={0} max={60} step={2} value={delay}
+              type="range" min={0} max={90} step={1} value={delay}
               onChange={(e) => setDelay(Number(e.target.value))}
-              style={{ width: 80, accentColor: "var(--brand)" }}
+              style={{ width: 90, accentColor: "var(--brand)" }}
             />
-            <span style={{ fontSize: 12, color: "var(--muted)", minWidth: 28, textAlign: "right" }}>
-              {delay === 0 ? "Live" : `-${delay}s`}
-            </span>
+            {/* Editable numeric input with +/- buttons */}
+            <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+              <button
+                onClick={() => setDelay(Math.max(0, delay - 1))}
+                style={{
+                  width: 24, height: 26, borderRadius: "6px 0 0 6px",
+                  border: "1px solid var(--border)", borderRight: "none",
+                  background: "var(--card)", cursor: "pointer",
+                  fontSize: 14, fontWeight: 700, color: "var(--text)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min={0}
+                max={90}
+                value={delay}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v)) setDelay(Math.max(0, Math.min(90, v)));
+                }}
+                style={{
+                  width: 42, height: 26, textAlign: "center",
+                  border: "1px solid var(--border)", borderRadius: 0,
+                  fontSize: 12, fontWeight: 700, padding: 0,
+                  MozAppearance: "textfield",
+                }}
+              />
+              <button
+                onClick={() => setDelay(Math.min(90, delay + 1))}
+                style={{
+                  width: 24, height: 26, borderRadius: "0 6px 6px 0",
+                  border: "1px solid var(--border)", borderLeft: "none",
+                  background: "var(--card)", cursor: "pointer",
+                  fontSize: 14, fontWeight: 700, color: "var(--text)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                +
+              </button>
+            </div>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>sec</span>
           </div>
         </div>
 
@@ -684,6 +725,15 @@ export default function NascarScanner() {
         @keyframes scanner-pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }
+        }
+        /* Hide number input spinners */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        input[type=number] {
+          -moz-appearance: textfield;
         }
       `}</style>
     </div>
