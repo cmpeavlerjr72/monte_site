@@ -58,6 +58,7 @@ export default function NascarScanner() {
   const [activeStream, setActiveStream] = useState<AudioEntry | null>(null);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(80);
+  const [delay, setDelay] = useState(0); // seconds behind live edge (TV sync)
   const [search, setSearch] = useState("");
   const [badgeErrors, setBadgeErrors] = useState<Set<string>>(new Set());
 
@@ -127,6 +128,22 @@ export default function NascarScanner() {
     setActiveStream(null);
   }, []);
 
+  // Build hls.js config based on current delay.
+  // Each HLS segment is ~2s. liveSyncDurationCount = how many segments behind
+  // the live edge to target. liveMaxLatencyDurationCount is the ceiling before
+  // hls.js jumps forward to catch up.
+  const hlsConfig = useCallback((delaySec: number) => {
+    const segmentDuration = 2; // ~2s per AAC segment
+    const baseSegments = 2;    // minimum buffer even at 0 delay
+    const delaySegments = Math.ceil(delaySec / segmentDuration);
+    return {
+      liveSyncDurationCount: baseSegments + delaySegments,
+      liveMaxLatencyDurationCount: baseSegments + delaySegments + 3,
+      enableWorker: true,
+      lowLatencyMode: delaySec === 0,
+    };
+  }, []);
+
   const playStream = useCallback((entry: AudioEntry) => {
     const Hls = (window as any).Hls;
     const audio = audioRef.current;
@@ -141,12 +158,7 @@ export default function NascarScanner() {
     setPlaying(true);
 
     if (Hls && Hls.isSupported()) {
-      const hls = new Hls({
-        liveSyncDurationCount: 2,
-        liveMaxLatencyDurationCount: 5,
-        enableWorker: true,
-        lowLatencyMode: true,
-      });
+      const hls = new Hls(hlsConfig(delay));
       hls.loadSource(url);
       hls.attachMedia(audio);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -161,7 +173,7 @@ export default function NascarScanner() {
       });
       hlsRef.current = hls;
     } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari native HLS
+      // Safari native HLS — no delay control available
       audio.src = url;
       audio.volume = volume / 100;
       audio.play().catch(() => {});
@@ -169,7 +181,26 @@ export default function NascarScanner() {
       setError("Your browser does not support HLS audio playback.");
       setPlaying(false);
     }
-  }, [volume]);
+  }, [volume, delay, hlsConfig]);
+
+  // When delay changes mid-playback, reconfigure hls.js
+  useEffect(() => {
+    const hls = hlsRef.current;
+    if (!hls || !playing) return;
+
+    const cfg = hlsConfig(delay);
+    hls.config.liveSyncDurationCount = cfg.liveSyncDurationCount;
+    hls.config.liveMaxLatencyDurationCount = cfg.liveMaxLatencyDurationCount;
+    hls.config.lowLatencyMode = cfg.lowLatencyMode;
+    // Nudge playback position to match new delay target
+    const audio = audioRef.current;
+    if (audio && hls.liveSyncPosition != null) {
+      const target = hls.liveSyncPosition;
+      if (Math.abs(audio.currentTime - target) > 3) {
+        audio.currentTime = target;
+      }
+    }
+  }, [delay, playing, hlsConfig]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -292,6 +323,46 @@ export default function NascarScanner() {
           Stop
         </button>
 
+        {/* TV Sync delay */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
+            TV Sync
+          </span>
+          <div style={{ display: "flex", gap: 2 }}>
+            {[0, 10, 20, 30].map((d) => (
+              <button
+                key={d}
+                onClick={() => setDelay(d)}
+                style={{
+                  padding: "3px 8px",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  background: delay === d ? "var(--brand)" : "var(--card)",
+                  color: delay === d ? "var(--brand-contrast)" : "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontSize: 11,
+                }}
+              >
+                {d === 0 ? "Live" : `${d}s`}
+              </button>
+            ))}
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={60}
+            step={2}
+            value={delay}
+            onChange={(e) => setDelay(Number(e.target.value))}
+            style={{ width: 80, accentColor: "var(--brand)" }}
+          />
+          <span style={{ fontSize: 12, color: "var(--muted)", minWidth: 28, textAlign: "right" }}>
+            {delay === 0 ? "Live" : `-${delay}s`}
+          </span>
+        </div>
+
+        {/* Volume */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>Vol</span>
           <input
