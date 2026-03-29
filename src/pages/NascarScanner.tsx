@@ -642,6 +642,7 @@ export default function NascarScanner() {
 
           {tx.enabled && tx.transcripts.length > 0 && (
             <div
+              ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
               style={{
                 maxHeight: 240, overflowY: "auto",
                 borderRadius: 8, border: "1px solid var(--border)",
