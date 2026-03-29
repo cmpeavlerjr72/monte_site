@@ -6,6 +6,7 @@
 // Each stream gets a Web Audio AnalyserNode for voice activity detection.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranscription, type TranscriptEntry } from "../lib/useTranscription";
 
 /* ── NASCAR Audio Mapping API ─────────────────────────────── */
 
@@ -86,6 +87,9 @@ export default function NascarScanner() {
   // Audio activity levels per stream_number (0-1), updated by animation loop
   const [levels, setLevels] = useState<Record<number, number>>({});
 
+  // Transcription
+  const tx = useTranscription();
+
   const audioCtxRef = useRef<AudioContext | null>(null);
   const hlsJsLoaded = useRef(false);
   const animFrameRef = useRef<number>(0);
@@ -121,6 +125,8 @@ export default function NascarScanner() {
       liveMaxLatencyDurationCount: base + delaySegs + 3,
       enableWorker: true,
       lowLatencyMode: delaySec === 0,
+      // Ensure XHR returns ArrayBuffer so we can grab raw segment data
+      xhrSetup: (xhr: XMLHttpRequest) => { xhr.responseType = "arraybuffer"; },
     };
   }, []);
 
@@ -180,9 +186,10 @@ export default function NascarScanner() {
       s.audio.pause();
       s.audio.src = "";
       s.audio.remove();
+      tx.clearStream(streamNumber);
       return prev.filter((_, i) => i !== idx);
     });
-  }, []);
+  }, [tx]);
 
   // ── Stop all streams ──
   const stopAll = useCallback(() => {
@@ -195,7 +202,8 @@ export default function NascarScanner() {
       }
       return [];
     });
-  }, []);
+    tx.clearAll();
+  }, [tx]);
 
   // ── Toggle a stream on/off ──
   const toggleStream = useCallback((entry: AudioEntry) => {
@@ -207,6 +215,7 @@ export default function NascarScanner() {
         existing.audio.pause();
         existing.audio.src = "";
         existing.audio.remove();
+        tx.clearStream(entry.stream_number);
         return prev.filter((s) => s.entry.stream_number !== entry.stream_number);
       }
 
@@ -249,6 +258,23 @@ export default function NascarScanner() {
         hlsInstance.on(Hls.Events.ERROR, (_: any, data: any) => {
           if (data.fatal) setError(`Stream error: ${streamLabel(entry)}`);
         });
+        // Feed raw segment data to transcription engine.
+        // hls.js exposes the XHR/fetch response in networkDetails.
+        hlsInstance.on(Hls.Events.FRAG_LOADED, (_: any, data: any) => {
+          // Try networkDetails (XHR object) first, then various payload locations
+          const xhr = data?.networkDetails;
+          let buf: ArrayBuffer | undefined;
+          if (xhr?.response instanceof ArrayBuffer) {
+            buf = xhr.response;
+          } else if (data?.payload instanceof ArrayBuffer) {
+            buf = data.payload;
+          } else if (data?.frag?.response?.data instanceof ArrayBuffer) {
+            buf = data.frag.response.data;
+          }
+          if (buf && buf.byteLength > 0) {
+            tx.feedSegment(entry.stream_number, buf);
+          }
+        });
       } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
         audio.src = url;
         audio.volume = defaultVol / 100;
@@ -266,7 +292,7 @@ export default function NascarScanner() {
 
       return [...prev, newStream];
     });
-  }, [delay, hlsConfig, getAudioCtx]);
+  }, [delay, hlsConfig, getAudioCtx, tx]);
 
   // ── Per-stream volume change ──
   const setStreamVolume = useCallback((streamNumber: number, vol: number) => {
@@ -577,6 +603,99 @@ export default function NascarScanner() {
           );
         })}
       </section>
+
+      {/* ── Transcription Panel ── */}
+      {streams.length > 0 && (
+        <section className="card" style={{ padding: 16, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: tx.enabled && tx.transcripts.length > 0 ? 10 : 0, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>Live Transcription</span>
+
+            <button
+              onClick={() => tx.setEnabled(!tx.enabled)}
+              style={{
+                padding: "5px 14px", borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: tx.enabled ? "var(--brand)" : "var(--card)",
+                color: tx.enabled ? "var(--brand-contrast)" : "var(--text)",
+                cursor: "pointer", fontWeight: 600, fontSize: 13,
+              }}
+            >
+              {tx.enabled ? "On" : "Off"}
+            </button>
+
+            {tx.enabled && (
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                {tx.modelStatus}
+              </span>
+            )}
+
+            {tx.enabled && tx.transcripts.length > 0 && (
+              <button
+                onClick={tx.clearAll}
+                style={{
+                  marginLeft: "auto",
+                  padding: "3px 10px", borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  background: "var(--card)", color: "var(--muted)",
+                  cursor: "pointer", fontSize: 11, fontWeight: 600,
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {tx.enabled && !tx.modelReady && tx.modelStatus && (
+            <div style={{
+              padding: "10px 12px", borderRadius: 8, marginTop: 8,
+              background: "color-mix(in oklab, var(--brand) 6%, var(--card))",
+              fontSize: 13, color: "var(--muted)",
+            }}>
+              {tx.modelStatus}
+            </div>
+          )}
+
+          {tx.enabled && tx.transcripts.length > 0 && (
+            <div
+              style={{
+                maxHeight: 240, overflowY: "auto",
+                borderRadius: 8, border: "1px solid var(--border)",
+                padding: 10, fontSize: 13,
+                background: "color-mix(in oklab, var(--brand) 3%, var(--card))",
+                display: "flex", flexDirection: "column", gap: 6,
+              }}
+            >
+              {tx.transcripts.map((t, i) => {
+                const entry = configs.find((c) => c.stream_number === t.streamNumber);
+                const label = entry ? streamLabel(entry) : `Stream ${t.streamNumber}`;
+                return (
+                  <div key={i} style={{ display: "flex", gap: 8, lineHeight: 1.4 }}>
+                    <span style={{
+                      fontWeight: 700, fontSize: 12, color: "var(--brand)",
+                      minWidth: 100, flexShrink: 0, paddingTop: 1,
+                    }}>
+                      {label}
+                    </span>
+                    <span style={{ color: "var(--text)" }}>{t.text}</span>
+                    <span style={{
+                      fontSize: 10, color: "var(--muted)", marginLeft: "auto",
+                      flexShrink: 0, paddingTop: 2,
+                    }}>
+                      {new Date(t.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {tx.enabled && !tx.modelReady && !tx.modelStatus && (
+            <p style={{ color: "var(--muted)", fontSize: 13, margin: "8px 0 0" }}>
+              Initializing speech model...
+            </p>
+          )}
+        </section>
+      )}
 
       {/* Search */}
       <div style={{ marginBottom: 12 }}>

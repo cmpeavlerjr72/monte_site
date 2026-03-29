@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.30.0",
+    "@huggingface/transformers": "^3.8.1",
     "dayjs": "^1.11.18",
     "html-to-image": "^1.11.13",
     "papaparse": "^5.5.3",
