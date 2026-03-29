@@ -1,8 +1,9 @@
 // src/pages/NascarScanner.tsx
 //
-// Live NASCAR Scanner — streams driver comms directly from NASCAR's CDN.
+// Live NASCAR Scanner — multi-stream mixer with up to 5 simultaneous channels.
 // All audio flows browser → sa.aws.nascar.com (zero bandwidth on our server).
 // Audio mapping JSON fetched from cf.nascar.com (also zero cost to us).
+// Each stream gets a Web Audio AnalyserNode for voice activity detection.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -21,6 +22,8 @@ const SERIES_MAP: Record<SeriesKey, { id: number; label: string }> = {
 
 const SERIES_KEYS: SeriesKey[] = ["cup", "xfinity", "trucks"];
 
+const MAX_STREAMS = 5;
+
 interface AudioEntry {
   stream_number: number;
   driver_number: string;
@@ -38,6 +41,16 @@ interface AudioMapping {
   audio_config: AudioEntry[];
 }
 
+/** Runtime state for one active stream in the mixer. */
+interface ActiveStream {
+  entry: AudioEntry;
+  audio: HTMLAudioElement;
+  hls: any | null;
+  analyser: AnalyserNode | null;
+  source: MediaElementAudioSourceNode | null;
+  volume: number; // 0-100 per-stream
+}
+
 /* ── Helpers ──────────────────────────────────────────────── */
 
 const SPECIAL_CHANNELS = new Set(["All Scan", "MRN", "NRN", "Officials"]);
@@ -48,6 +61,15 @@ const CAR_BADGE_CDN: Record<SeriesKey, string> = {
   trucks:  "https://cf.nascar.com/data/images/carbadges/3",
 };
 
+function streamLabel(entry: AudioEntry): string {
+  if (SPECIAL_CHANNELS.has(entry.driver_name)) {
+    return entry.driver_name === "MRN" || entry.driver_name === "NRN"
+      ? `${entry.driver_name} Radio`
+      : entry.driver_name;
+  }
+  return `#${entry.driver_number} ${entry.driver_name}`;
+}
+
 /* ── Component ────────────────────────────────────────────── */
 
 export default function NascarScanner() {
@@ -55,26 +77,51 @@ export default function NascarScanner() {
   const [mapping, setMapping] = useState<AudioMapping | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeStream, setActiveStream] = useState<AudioEntry | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [volume, setVolume] = useState(80);
-  const [delay, setDelay] = useState(0); // seconds behind live edge (TV sync)
+  const [delay, setDelay] = useState(0);
   const [search, setSearch] = useState("");
   const [badgeErrors, setBadgeErrors] = useState<Set<string>>(new Set());
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const hlsRef = useRef<any>(null);
+  // Multi-stream mixer state
+  const [streams, setStreams] = useState<ActiveStream[]>([]);
+  // Audio activity levels per stream_number (0-1), updated by animation loop
+  const [levels, setLevels] = useState<Record<number, number>>({});
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const hlsJsLoaded = useRef(false);
+  const animFrameRef = useRef<number>(0);
+
+  // Lazy-init shared AudioContext
+  const getAudioCtx = useCallback(() => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContext();
+    }
+    if (audioCtxRef.current.state === "suspended") {
+      audioCtxRef.current.resume();
+    }
+    return audioCtxRef.current;
+  }, []);
 
   // Load hls.js from CDN once
   useEffect(() => {
     if (hlsJsLoaded.current) return;
     if ((window as any).Hls) { hlsJsLoaded.current = true; return; }
-
     const script = document.createElement("script");
     script.src = "https://cdn.jsdelivr.net/npm/hls.js@latest";
     script.onload = () => { hlsJsLoaded.current = true; };
     document.head.appendChild(script);
+  }, []);
+
+  // HLS config builder
+  const hlsConfig = useCallback((delaySec: number) => {
+    const segDur = 2;
+    const base = 2;
+    const delaySegs = Math.ceil(delaySec / segDur);
+    return {
+      liveSyncDurationCount: base + delaySegs,
+      liveMaxLatencyDurationCount: base + delaySegs + 3,
+      enableWorker: true,
+      lowLatencyMode: delaySec === 0,
+    };
   }, []);
 
   // Fetch audio mapping when series changes
@@ -83,181 +130,230 @@ export default function NascarScanner() {
     setLoading(true);
     setError("");
     setMapping(null);
-    stopPlayback();
+    stopAll();
 
     const url = AUDIO_MAPPING_URL.replace("{series}", String(SERIES_MAP[series].id));
     fetch(url, { cache: "no-store" })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data: AudioMapping) => {
-        if (!cancelled) {
-          setMapping(data);
-          setLoading(false);
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setError(e.message);
-          setLoading(false);
-        }
-      });
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data: AudioMapping) => { if (!cancelled) { setMapping(data); setLoading(false); } })
+      .catch((e) => { if (!cancelled) { setError(e.message); setLoading(false); } });
 
     return () => { cancelled = true; };
   }, [series]);
 
-  // Reset badge errors when series changes
   useEffect(() => setBadgeErrors(new Set()), [series]);
 
-  // Volume sync
+  // ── Animation loop: sample analyser levels ──
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume / 100;
-  }, [volume]);
-
-  const stopPlayback = useCallback(() => {
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = "";
-    }
-    setPlaying(false);
-    setActiveStream(null);
-  }, []);
-
-  // Build hls.js config based on current delay.
-  // Each HLS segment is ~2s. liveSyncDurationCount = how many segments behind
-  // the live edge to target. liveMaxLatencyDurationCount is the ceiling before
-  // hls.js jumps forward to catch up.
-  const hlsConfig = useCallback((delaySec: number) => {
-    const segmentDuration = 2; // ~2s per AAC segment
-    const baseSegments = 2;    // minimum buffer even at 0 delay
-    const delaySegments = Math.ceil(delaySec / segmentDuration);
-    return {
-      liveSyncDurationCount: baseSegments + delaySegments,
-      liveMaxLatencyDurationCount: baseSegments + delaySegments + 3,
-      enableWorker: true,
-      lowLatencyMode: delaySec === 0,
-    };
-  }, []);
-
-  const playStream = useCallback((entry: AudioEntry) => {
-    const Hls = (window as any).Hls;
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    // Stop current
-    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-    audio.pause();
-
-    const url = entry.base_url + entry.stream_ios;
-    setActiveStream(entry);
-    setPlaying(true);
-
-    if (Hls && Hls.isSupported()) {
-      const hls = new Hls(hlsConfig(delay));
-      hls.loadSource(url);
-      hls.attachMedia(audio);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        audio.volume = volume / 100;
-        audio.play().catch(() => {});
-      });
-      hls.on(Hls.Events.ERROR, (_: any, data: any) => {
-        if (data.fatal) {
-          setPlaying(false);
-          setError("Stream offline or unavailable");
+    const buf = new Uint8Array(256);
+    const tick = () => {
+      const next: Record<number, number> = {};
+      // Read from current streams ref via closure over state
+      setStreams((prev) => {
+        for (const s of prev) {
+          if (s.analyser) {
+            s.analyser.getByteFrequencyData(buf);
+            // RMS over frequency bins, normalized 0-1
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+            next[s.entry.stream_number] = Math.sqrt(sum / buf.length) / 255;
+          } else {
+            next[s.entry.stream_number] = 0;
+          }
         }
+        return prev; // no mutation
       });
-      hlsRef.current = hls;
-    } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari native HLS — no delay control available
-      audio.src = url;
-      audio.volume = volume / 100;
-      audio.play().catch(() => {});
-    } else {
-      setError("Your browser does not support HLS audio playback.");
-      setPlaying(false);
-    }
-  }, [volume, delay, hlsConfig]);
+      setLevels(next);
+      animFrameRef.current = requestAnimationFrame(tick);
+    };
+    animFrameRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animFrameRef.current);
+  }, []);
 
-  // When delay changes mid-playback, reconfigure hls.js
-  useEffect(() => {
-    const hls = hlsRef.current;
-    if (!hls || !playing) return;
+  // ── Stop a single stream ──
+  const stopStream = useCallback((streamNumber: number) => {
+    setStreams((prev) => {
+      const idx = prev.findIndex((s) => s.entry.stream_number === streamNumber);
+      if (idx === -1) return prev;
+      const s = prev[idx];
+      if (s.hls) s.hls.destroy();
+      s.audio.pause();
+      s.audio.src = "";
+      s.audio.remove();
+      return prev.filter((_, i) => i !== idx);
+    });
+  }, []);
 
-    const cfg = hlsConfig(delay);
-    hls.config.liveSyncDurationCount = cfg.liveSyncDurationCount;
-    hls.config.liveMaxLatencyDurationCount = cfg.liveMaxLatencyDurationCount;
-    hls.config.lowLatencyMode = cfg.lowLatencyMode;
-    // Nudge playback position to match new delay target
-    const audio = audioRef.current;
-    if (audio && hls.liveSyncPosition != null) {
-      const target = hls.liveSyncPosition;
-      if (Math.abs(audio.currentTime - target) > 3) {
-        audio.currentTime = target;
+  // ── Stop all streams ──
+  const stopAll = useCallback(() => {
+    setStreams((prev) => {
+      for (const s of prev) {
+        if (s.hls) s.hls.destroy();
+        s.audio.pause();
+        s.audio.src = "";
+        s.audio.remove();
       }
-    }
-  }, [delay, playing, hlsConfig]);
+      return [];
+    });
+  }, []);
+
+  // ── Toggle a stream on/off ──
+  const toggleStream = useCallback((entry: AudioEntry) => {
+    // If already active, remove it
+    setStreams((prev) => {
+      const existing = prev.find((s) => s.entry.stream_number === entry.stream_number);
+      if (existing) {
+        if (existing.hls) existing.hls.destroy();
+        existing.audio.pause();
+        existing.audio.src = "";
+        existing.audio.remove();
+        return prev.filter((s) => s.entry.stream_number !== entry.stream_number);
+      }
+
+      // Max streams check
+      if (prev.length >= MAX_STREAMS) return prev;
+
+      // Create new stream
+      const Hls = (window as any).Hls;
+      const audio = document.createElement("audio");
+      audio.crossOrigin = "anonymous";
+      const url = entry.base_url + entry.stream_ios;
+      const defaultVol = 80;
+
+      let analyser: AnalyserNode | null = null;
+      let source: MediaElementAudioSourceNode | null = null;
+
+      // Set up Web Audio analyser for activity detection
+      try {
+        const ctx = getAudioCtx();
+        source = ctx.createMediaElementSource(audio);
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.4;
+        source.connect(analyser);
+        analyser.connect(ctx.destination);
+      } catch {
+        // Fallback: no analyser, audio still plays directly
+      }
+
+      let hlsInstance: any = null;
+
+      if (Hls && Hls.isSupported()) {
+        hlsInstance = new Hls(hlsConfig(delay));
+        hlsInstance.loadSource(url);
+        hlsInstance.attachMedia(audio);
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+          audio.volume = defaultVol / 100;
+          audio.play().catch(() => {});
+        });
+        hlsInstance.on(Hls.Events.ERROR, (_: any, data: any) => {
+          if (data.fatal) setError(`Stream error: ${streamLabel(entry)}`);
+        });
+      } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
+        audio.src = url;
+        audio.volume = defaultVol / 100;
+        audio.play().catch(() => {});
+      }
+
+      const newStream: ActiveStream = {
+        entry,
+        audio,
+        hls: hlsInstance,
+        analyser,
+        source,
+        volume: defaultVol,
+      };
+
+      return [...prev, newStream];
+    });
+  }, [delay, hlsConfig, getAudioCtx]);
+
+  // ── Per-stream volume change ──
+  const setStreamVolume = useCallback((streamNumber: number, vol: number) => {
+    setStreams((prev) =>
+      prev.map((s) => {
+        if (s.entry.stream_number !== streamNumber) return s;
+        s.audio.volume = vol / 100;
+        return { ...s, volume: vol };
+      })
+    );
+  }, []);
+
+  // ── Apply delay changes to all active HLS instances ──
+  useEffect(() => {
+    const cfg = hlsConfig(delay);
+    setStreams((prev) => {
+      for (const s of prev) {
+        if (!s.hls) continue;
+        s.hls.config.liveSyncDurationCount = cfg.liveSyncDurationCount;
+        s.hls.config.liveMaxLatencyDurationCount = cfg.liveMaxLatencyDurationCount;
+        s.hls.config.lowLatencyMode = cfg.lowLatencyMode;
+        if (s.hls.liveSyncPosition != null) {
+          const target = s.hls.liveSyncPosition;
+          if (Math.abs(s.audio.currentTime - target) > 3) {
+            s.audio.currentTime = target;
+          }
+        }
+      }
+      return prev; // no mutation needed for re-render
+    });
+  }, [delay, hlsConfig]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (hlsRef.current) hlsRef.current.destroy();
+      setStreams((prev) => {
+        for (const s of prev) {
+          if (s.hls) s.hls.destroy();
+          s.audio.pause();
+          s.audio.remove();
+        }
+        return [];
+      });
+      cancelAnimationFrame(animFrameRef.current);
+      if (audioCtxRef.current) audioCtxRef.current.close();
     };
   }, []);
 
   const configs = mapping?.audio_config ?? [];
   const disabled = mapping?.disable_scanner !== "off" && mapping?.disable_scanner != null;
+  const activeNumbers = new Set(streams.map((s) => s.entry.stream_number));
 
-  // Filter by search
   const filtered = configs.filter((c) => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
-    return (
-      c.driver_name.toLowerCase().includes(q) ||
-      c.driver_number.toLowerCase().includes(q)
-    );
+    return c.driver_name.toLowerCase().includes(q) || c.driver_number.toLowerCase().includes(q);
   });
 
-  // Split into drivers vs special channels
   const driverStreams = filtered.filter((c) => !SPECIAL_CHANNELS.has(c.driver_name));
   const specialStreams = filtered.filter((c) => SPECIAL_CHANNELS.has(c.driver_name));
 
-  const activeLabel = activeStream
-    ? SPECIAL_CHANNELS.has(activeStream.driver_name)
-      ? activeStream.driver_name
-      : `#${activeStream.driver_number} ${activeStream.driver_name}`
+  // Which stream is loudest right now (for "speaking" highlight in grid)
+  const loudestStream = streams.length > 0
+    ? streams.reduce((best, s) => {
+        const lvl = levels[s.entry.stream_number] ?? 0;
+        return lvl > (levels[best.entry.stream_number] ?? 0) ? s : best;
+      })
     : null;
+  const SPEAK_THRESHOLD = 0.08;
 
   return (
     <div>
-      <audio ref={audioRef} />
-
       {/* Header card */}
       <section className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-          <h1 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>
-            NASCAR Scanner
-          </h1>
-
-          {/* Series pills */}
+          <h1 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>NASCAR Scanner</h1>
           <div style={{ display: "flex", gap: 4 }}>
             {SERIES_KEYS.map((key) => (
               <button
                 key={key}
                 onClick={() => setSeries(key)}
                 style={{
-                  padding: "5px 14px",
-                  borderRadius: 8,
+                  padding: "5px 14px", borderRadius: 8,
                   border: "1px solid var(--border)",
                   background: series === key ? "var(--brand)" : "var(--card)",
                   color: series === key ? "var(--brand-contrast)" : "var(--text)",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                  fontSize: 13,
+                  cursor: "pointer", fontWeight: 700, fontSize: 13,
                   transition: "background 0.15s, color 0.15s",
                 }}
               >
@@ -266,12 +362,10 @@ export default function NascarScanner() {
             ))}
           </div>
         </div>
-
         <p style={{ margin: "8px 0 0", color: "var(--muted)", fontSize: 14 }}>
-          Live driver &amp; crew chief radio — audio streams directly from NASCAR
+          Live driver &amp; crew chief radio — click up to {MAX_STREAMS} channels to mix
           {mapping && <> &middot; Race ID: {mapping.historical_race_id} &middot; {configs.length} channels</>}
         </p>
-
         {disabled && (
           <p style={{ margin: "8px 0 0", color: "#b91c1c", fontWeight: 600, fontSize: 14 }}>
             Scanner is currently disabled for this session.
@@ -279,101 +373,168 @@ export default function NascarScanner() {
         )}
       </section>
 
-      {/* Now Playing bar */}
-      <section
-        className="card"
-        style={{
-          padding: "12px 16px",
-          marginBottom: 16,
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        {/* Live dot */}
-        <span
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            background: playing ? "#e10600" : "var(--border)",
-            animation: playing ? "scanner-pulse 1.5s infinite" : "none",
-            flexShrink: 0,
-          }}
-        />
-        <span style={{ fontWeight: 700, fontSize: 15, minWidth: 120 }}>
-          {playing ? activeLabel : "Not playing"}
-        </span>
-
-        <button
-          onClick={stopPlayback}
-          disabled={!playing}
-          style={{
-            padding: "6px 16px",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: playing ? "var(--brand)" : "var(--card)",
-            color: playing ? "var(--brand-contrast)" : "var(--muted)",
-            cursor: playing ? "pointer" : "default",
-            fontWeight: 600,
-            fontSize: 13,
-          }}
-        >
-          Stop
-        </button>
-
-        {/* TV Sync delay */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
-            TV Sync
+      {/* ── Mixer Panel ── */}
+      <section className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: streams.length > 0 ? 12 : 0, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, fontSize: 15 }}>
+            Mixer {streams.length > 0 && `(${streams.length}/${MAX_STREAMS})`}
           </span>
-          <div style={{ display: "flex", gap: 2 }}>
-            {[0, 10, 20, 30].map((d) => (
-              <button
-                key={d}
-                onClick={() => setDelay(d)}
+
+          {streams.length > 0 && (
+            <button
+              onClick={stopAll}
+              style={{
+                padding: "5px 14px", borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--brand)", color: "var(--brand-contrast)",
+                cursor: "pointer", fontWeight: 600, fontSize: 13,
+              }}
+            >
+              Stop All
+            </button>
+          )}
+
+          {/* TV Sync delay */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: streams.length > 0 ? "auto" : 0 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>TV Sync</span>
+            <div style={{ display: "flex", gap: 2 }}>
+              {[0, 10, 20, 30].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDelay(d)}
+                  style={{
+                    padding: "3px 8px", borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: delay === d ? "var(--brand)" : "var(--card)",
+                    color: delay === d ? "var(--brand-contrast)" : "var(--text)",
+                    cursor: "pointer", fontWeight: 600, fontSize: 11,
+                  }}
+                >
+                  {d === 0 ? "Live" : `${d}s`}
+                </button>
+              ))}
+            </div>
+            <input
+              type="range" min={0} max={60} step={2} value={delay}
+              onChange={(e) => setDelay(Number(e.target.value))}
+              style={{ width: 80, accentColor: "var(--brand)" }}
+            />
+            <span style={{ fontSize: 12, color: "var(--muted)", minWidth: 28, textAlign: "right" }}>
+              {delay === 0 ? "Live" : `-${delay}s`}
+            </span>
+          </div>
+        </div>
+
+        {/* Active stream rows */}
+        {streams.length === 0 && (
+          <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>
+            Click a driver or channel below to start listening. You can add up to {MAX_STREAMS} at once.
+          </p>
+        )}
+
+        {streams.map((s) => {
+          const lvl = levels[s.entry.stream_number] ?? 0;
+          const isSpeaking = lvl > SPEAK_THRESHOLD;
+          const isLoudest = loudestStream?.entry.stream_number === s.entry.stream_number && isSpeaking;
+
+          return (
+            <div
+              key={s.entry.stream_number}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "8px 12px",
+                marginBottom: 4,
+                borderRadius: 10,
+                border: `2px solid ${isLoudest ? "#e10600" : isSpeaking ? "var(--brand)" : "var(--border)"}`,
+                background: isLoudest
+                  ? "color-mix(in oklab, #e10600 8%, var(--card))"
+                  : isSpeaking
+                  ? "color-mix(in oklab, var(--brand) 6%, var(--card))"
+                  : "var(--card)",
+                transition: "border-color 0.15s, background 0.15s",
+              }}
+            >
+              {/* Activity meter bar */}
+              <div
                 style={{
-                  padding: "3px 8px",
-                  borderRadius: 6,
-                  border: "1px solid var(--border)",
-                  background: delay === d ? "var(--brand)" : "var(--card)",
-                  color: delay === d ? "var(--brand-contrast)" : "var(--text)",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  fontSize: 11,
+                  width: 4,
+                  height: 28,
+                  borderRadius: 2,
+                  background: "var(--border)",
+                  position: "relative",
+                  overflow: "hidden",
+                  flexShrink: 0,
                 }}
               >
-                {d === 0 ? "Live" : `${d}s`}
-              </button>
-            ))}
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={60}
-            step={2}
-            value={delay}
-            onChange={(e) => setDelay(Number(e.target.value))}
-            style={{ width: 80, accentColor: "var(--brand)" }}
-          />
-          <span style={{ fontSize: 12, color: "var(--muted)", minWidth: 28, textAlign: "right" }}>
-            {delay === 0 ? "Live" : `-${delay}s`}
-          </span>
-        </div>
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    height: `${Math.min(lvl * 250, 100)}%`,
+                    background: isLoudest ? "#e10600" : "var(--brand)",
+                    borderRadius: 2,
+                    transition: "height 0.1s",
+                  }}
+                />
+              </div>
 
-        {/* Volume */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>Vol</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={volume}
-            onChange={(e) => setVolume(Number(e.target.value))}
-            style={{ width: 100, accentColor: "var(--brand)" }}
-          />
-        </div>
+              {/* Speaking indicator dot */}
+              <span
+                style={{
+                  width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                  background: isLoudest ? "#e10600" : isSpeaking ? "var(--brand)" : "var(--border)",
+                  animation: isLoudest ? "scanner-pulse 0.8s infinite" : "none",
+                  transition: "background 0.15s",
+                }}
+              />
+
+              {/* Label */}
+              <span style={{
+                fontWeight: isLoudest ? 800 : 600,
+                fontSize: 14,
+                minWidth: 140,
+                color: isLoudest ? "#e10600" : "var(--text)",
+                transition: "color 0.15s",
+              }}>
+                {streamLabel(s.entry)}
+                {isLoudest && (
+                  <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, opacity: 0.8 }}>
+                    SPEAKING
+                  </span>
+                )}
+              </span>
+
+              {/* Per-stream volume */}
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto" }}>
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>Vol</span>
+                <input
+                  type="range" min={0} max={100} value={s.volume}
+                  onChange={(e) => setStreamVolume(s.entry.stream_number, Number(e.target.value))}
+                  style={{ width: 80, accentColor: "var(--brand)" }}
+                />
+              </div>
+
+              {/* Remove button */}
+              <button
+                onClick={() => stopStream(s.entry.stream_number)}
+                style={{
+                  width: 28, height: 28, borderRadius: 6,
+                  border: "1px solid var(--border)", background: "var(--card)",
+                  cursor: "pointer", fontSize: 16, lineHeight: 1,
+                  color: "var(--muted)", display: "flex", alignItems: "center",
+                  justifyContent: "center", flexShrink: 0,
+                }}
+                title="Remove stream"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
       </section>
 
       {/* Search */}
@@ -394,38 +555,38 @@ export default function NascarScanner() {
       )}
 
       {error && !loading && (
-        <p style={{ color: "#b91c1c", padding: "12px 0", fontSize: 14 }}>
-          {error}
-        </p>
+        <p style={{ color: "#b91c1c", padding: "12px 0", fontSize: 14 }}>{error}</p>
       )}
 
       {/* Special channels */}
       {specialStreams.length > 0 && (
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          {specialStreams.map((c) => (
-            <button
-              key={c.stream_number}
-              onClick={() => playStream(c)}
-              style={{
-                padding: "10px 20px",
-                borderRadius: 10,
-                border: `2px solid ${activeStream?.stream_number === c.stream_number ? "var(--brand)" : "var(--border)"}`,
-                background: activeStream?.stream_number === c.stream_number ? "var(--brand)" : "var(--card)",
-                color: activeStream?.stream_number === c.stream_number ? "var(--brand-contrast)" : "var(--text)",
-                cursor: "pointer",
-                fontWeight: 700,
-                fontSize: 14,
-                transition: "all 0.15s",
-              }}
-            >
-              {c.driver_name === "MRN" || c.driver_name === "NRN"
-                ? `${c.driver_name} Radio`
-                : c.driver_name}
-              {!c.requiresAuth && (
-                <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>FREE</span>
-              )}
-            </button>
-          ))}
+          {specialStreams.map((c) => {
+            const isActive = activeNumbers.has(c.stream_number);
+            const lvl = levels[c.stream_number] ?? 0;
+            const isSpeaking = isActive && lvl > SPEAK_THRESHOLD;
+            return (
+              <button
+                key={c.stream_number}
+                onClick={() => toggleStream(c)}
+                style={{
+                  padding: "10px 20px", borderRadius: 10,
+                  border: `2px solid ${isSpeaking ? "#e10600" : isActive ? "var(--brand)" : "var(--border)"}`,
+                  background: isActive ? "var(--brand)" : "var(--card)",
+                  color: isActive ? "var(--brand-contrast)" : "var(--text)",
+                  cursor: streams.length >= MAX_STREAMS && !isActive ? "not-allowed" : "pointer",
+                  opacity: streams.length >= MAX_STREAMS && !isActive ? 0.5 : 1,
+                  fontWeight: 700, fontSize: 14, transition: "all 0.15s",
+                }}
+              >
+                {c.driver_name === "MRN" || c.driver_name === "NRN"
+                  ? `${c.driver_name} Radio` : c.driver_name}
+                {!c.requiresAuth && (
+                  <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.7 }}>FREE</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -439,65 +600,65 @@ export default function NascarScanner() {
           }}
         >
           {driverStreams.map((c) => {
-            const isActive = activeStream?.stream_number === c.stream_number;
+            const isActive = activeNumbers.has(c.stream_number);
+            const lvl = levels[c.stream_number] ?? 0;
+            const isSpeaking = isActive && lvl > SPEAK_THRESHOLD;
+            const isLoudest = isActive && loudestStream?.entry.stream_number === c.stream_number && isSpeaking;
+            const atMax = streams.length >= MAX_STREAMS && !isActive;
             const showBadge = !badgeErrors.has(c.driver_number);
+
             return (
               <button
                 key={c.stream_number}
-                onClick={() => playStream(c)}
+                onClick={() => !atMax && toggleStream(c)}
                 className="card"
                 style={{
-                  padding: 12,
-                  cursor: "pointer",
-                  border: `2px solid ${isActive ? "var(--brand)" : "var(--border)"}`,
-                  background: isActive ? "color-mix(in oklab, var(--brand) 10%, var(--card))" : "var(--card)",
-                  borderRadius: 12,
-                  textAlign: "left",
+                  padding: 12, cursor: atMax ? "not-allowed" : "pointer",
+                  opacity: atMax ? 0.5 : 1,
+                  border: `2px solid ${isLoudest ? "#e10600" : isSpeaking ? "color-mix(in oklab, var(--brand) 70%, #e10600)" : isActive ? "var(--brand)" : "var(--border)"}`,
+                  background: isLoudest
+                    ? "color-mix(in oklab, #e10600 10%, var(--card))"
+                    : isActive
+                    ? "color-mix(in oklab, var(--brand) 10%, var(--card))"
+                    : "var(--card)",
+                  borderRadius: 12, textAlign: "left",
                   transition: "all 0.15s",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
+                  display: "flex", alignItems: "center", gap: 10,
                 }}
               >
-                {/* Car number badge or fallback */}
                 {showBadge ? (
                   <img
                     src={`${CAR_BADGE_CDN[series]}/${c.driver_number}.png`}
                     alt={`#${c.driver_number}`}
-                    onError={() =>
-                      setBadgeErrors((prev) => new Set(prev).add(c.driver_number))
-                    }
+                    onError={() => setBadgeErrors((prev) => new Set(prev).add(c.driver_number))}
                     style={{ height: 32, width: "auto", flexShrink: 0 }}
                   />
                 ) : (
                   <span
                     style={{
-                      fontWeight: 900,
-                      fontStyle: "italic",
-                      fontSize: 20,
+                      fontWeight: 900, fontStyle: "italic", fontSize: 20,
                       fontFamily: "Impact, 'Arial Narrow Bold', sans-serif",
-                      color: "var(--brand)",
-                      minWidth: 36,
-                      textAlign: "center",
-                      flexShrink: 0,
+                      color: "var(--brand)", minWidth: 36, textAlign: "center", flexShrink: 0,
                     }}
                   >
                     {c.driver_number}
                   </span>
                 )}
-                <span style={{ fontWeight: 600, fontSize: 14, color: "var(--text)" }}>
+                <span style={{
+                  fontWeight: 600, fontSize: 14,
+                  color: isLoudest ? "#e10600" : "var(--text)",
+                  transition: "color 0.15s",
+                }}>
                   {c.driver_name}
                 </span>
-                {isActive && playing && (
+                {isActive && (
                   <span
                     style={{
-                      marginLeft: "auto",
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: "#e10600",
-                      animation: "scanner-pulse 1.5s infinite",
-                      flexShrink: 0,
+                      marginLeft: "auto", width: 8, height: 8,
+                      borderRadius: "50%", flexShrink: 0,
+                      background: isLoudest ? "#e10600" : isSpeaking ? "var(--brand)" : "var(--border)",
+                      animation: isLoudest ? "scanner-pulse 0.8s infinite" : "none",
+                      transition: "background 0.15s",
                     }}
                   />
                 )}
@@ -519,7 +680,6 @@ export default function NascarScanner() {
         </section>
       )}
 
-      {/* Pulse animation */}
       <style>{`
         @keyframes scanner-pulse {
           0%, 100% { opacity: 1; }
