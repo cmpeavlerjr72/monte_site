@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import WhisperWorker from "../workers/whisperWorker?worker";
 
 export interface TranscriptEntry {
   streamNumber: number;
@@ -60,10 +61,7 @@ export function useTranscription() {
       return;
     }
 
-    const worker = new Worker(
-      new URL("../workers/whisperWorker.ts", import.meta.url),
-      { type: "module" },
-    );
+    const worker = new WhisperWorker();
 
     worker.onmessage = (e: MessageEvent) => {
       const msg = e.data;
