@@ -106,7 +106,10 @@ export default function Header() {
           {inCollegeBB ? (
             <NavLink to="/college-baseball/scoreboard">Scoreboard</NavLink>
           ) : inNASCAR ? (
-            <NavLink to="/nascar/predictions">Predictions</NavLink>
+            <>
+              <NavLink to="/nascar/predictions">Predictions</NavLink>
+              <NavLink to="/nascar/scanner">Scanner</NavLink>
+            </>
           ) : inTennis ? (
             <NavLink to="/tennis/predictions">Predictions</NavLink>
           ) : inMLB ? (
@@ -147,7 +150,10 @@ export default function Header() {
             {inCollegeBB ? (
               <NavLink to="/college-baseball/scoreboard" role="menuitem">Scoreboard</NavLink>
             ) : inNASCAR ? (
-              <NavLink to="/nascar/predictions" role="menuitem">Predictions</NavLink>
+              <>
+                <NavLink to="/nascar/predictions" role="menuitem">Predictions</NavLink>
+                <NavLink to="/nascar/scanner" role="menuitem">Scanner</NavLink>
+              </>
             ) : inTennis ? (
               <NavLink to="/tennis/predictions" role="menuitem">Predictions</NavLink>
             ) : inMLB ? (
