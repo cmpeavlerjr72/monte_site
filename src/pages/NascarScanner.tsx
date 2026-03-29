@@ -6,7 +6,7 @@
 // Each stream gets a Web Audio AnalyserNode for voice activity detection.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranscription, type TranscriptEntry } from "../lib/useTranscription";
+import { useTranscription } from "../lib/useTranscription";
 
 /* ── NASCAR Audio Mapping API ─────────────────────────────── */
 
@@ -125,8 +125,6 @@ export default function NascarScanner() {
       liveMaxLatencyDurationCount: base + delaySegs + 3,
       enableWorker: true,
       lowLatencyMode: delaySec === 0,
-      // Ensure XHR returns ArrayBuffer so we can grab raw segment data
-      xhrSetup: (xhr: XMLHttpRequest) => { xhr.responseType = "arraybuffer"; },
     };
   }, []);
 
@@ -186,7 +184,7 @@ export default function NascarScanner() {
       s.audio.pause();
       s.audio.src = "";
       s.audio.remove();
-      tx.clearStream(streamNumber);
+      tx.removeStream(streamNumber);
       return prev.filter((_, i) => i !== idx);
     });
   }, [tx]);
@@ -215,7 +213,7 @@ export default function NascarScanner() {
         existing.audio.pause();
         existing.audio.src = "";
         existing.audio.remove();
-        tx.clearStream(entry.stream_number);
+        tx.removeStream(entry.stream_number);
         return prev.filter((s) => s.entry.stream_number !== entry.stream_number);
       }
 
@@ -259,26 +257,13 @@ export default function NascarScanner() {
           if (data.fatal) setError(`Stream error: ${streamLabel(entry)}`);
         });
         // Feed raw segment data to transcription engine.
-        // hls.js exposes the XHR/fetch response in networkDetails.
-        hlsInstance.on(Hls.Events.FRAG_LOADED, (_: any, data: any) => {
-          // Try networkDetails (XHR object) first, then various payload locations
-          const xhr = data?.networkDetails;
-          let buf: ArrayBuffer | undefined;
-          if (xhr?.response instanceof ArrayBuffer) {
-            buf = xhr.response;
-          } else if (data?.payload instanceof ArrayBuffer) {
-            buf = data.payload;
-          } else if (data?.frag?.response?.data instanceof ArrayBuffer) {
-            buf = data.frag.response.data;
-          }
-          if (buf && buf.byteLength > 0) {
-            tx.feedSegment(entry.stream_number, buf);
-          }
-        });
+        // Register stream for transcription (fetches segments independently)
+        tx.addStream(entry.stream_number, url);
       } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
         audio.src = url;
         audio.volume = defaultVol / 100;
         audio.play().catch(() => {});
+        tx.addStream(entry.stream_number, url);
       }
 
       const newStream: ActiveStream = {
