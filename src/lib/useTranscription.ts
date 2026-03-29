@@ -157,23 +157,23 @@ export function useTranscription() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [enabled]);
 
-  // ── Periodic send to worker ──
+  // ── Periodic send to worker (decode AAC → PCM in main thread first) ──
   useEffect(() => {
     if (!enabled || !modelReady) {
       if (sendRef.current) clearInterval(sendRef.current);
       return;
     }
 
-    sendRef.current = setInterval(() => {
+    const decodeAndSend = async () => {
       const worker = workerRef.current;
       if (!worker) return;
       const now = Date.now();
 
-      streamsRef.current.forEach((state, streamNum) => {
-        if (now - state.lastSent < SEND_INTERVAL_MS) return;
-        if (state.pendingBuffers.length < 3) return; // need ~6s minimum
+      for (const [streamNum, state] of streamsRef.current.entries()) {
+        if (now - state.lastSent < SEND_INTERVAL_MS) continue;
+        if (state.pendingBuffers.length < 3) continue;
 
-        // Concatenate pending buffers
+        // Concatenate pending AAC buffers
         const combined = new Uint8Array(state.pendingBytes);
         let offset = 0;
         for (const buf of state.pendingBuffers) {
@@ -182,17 +182,30 @@ export function useTranscription() {
         }
 
         state.lastSent = now;
-        // Keep last 2 segments for overlap on next send
         const keep = state.pendingBuffers.slice(-2);
         state.pendingBuffers = keep;
         state.pendingBytes = keep.reduce((s, b) => s + b.byteLength, 0);
 
-        worker.postMessage(
-          { type: "transcribe", id: streamNum, audio: combined.buffer },
-          [combined.buffer],
-        );
-      });
-    }, 3000);
+        // Decode AAC → PCM in main thread (AudioContext is main-thread only)
+        try {
+          const ctx = new AudioContext({ sampleRate: 16000 });
+          const audioBuffer = await ctx.decodeAudioData(combined.buffer);
+          const pcm = audioBuffer.getChannelData(0);
+          await ctx.close();
+
+          // Transfer the PCM Float32Array to the worker
+          const pcmCopy = new Float32Array(pcm);
+          worker.postMessage(
+            { type: "transcribe", id: streamNum, audio: pcmCopy },
+            [pcmCopy.buffer],
+          );
+        } catch {
+          // decode failed on this batch, skip
+        }
+      }
+    };
+
+    sendRef.current = setInterval(decodeAndSend, 3000);
 
     return () => { if (sendRef.current) clearInterval(sendRef.current); };
   }, [enabled, modelReady]);
@@ -202,7 +215,6 @@ export function useTranscription() {
    * manifestUrl is the HLS .m3u8 URL (e.g. https://sa.aws.nascar.com/driveaudio1/stream_12.m3u8)
    */
   const addStream = useCallback((streamNumber: number, manifestUrl: string) => {
-    if (!enabled) return;
     if (streamsRef.current.has(streamNumber)) return;
     streamsRef.current.set(streamNumber, {
       manifestUrl,
@@ -211,7 +223,7 @@ export function useTranscription() {
       pendingBytes: 0,
       lastSent: Date.now(),
     });
-  }, [enabled]);
+  }, []);
 
   /** Stop transcription for a stream. */
   const removeStream = useCallback((streamNumber: number) => {
