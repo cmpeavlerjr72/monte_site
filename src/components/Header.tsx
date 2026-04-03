@@ -107,6 +107,7 @@ export default function Header() {
             <NavLink to="/college-baseball/scoreboard">Scoreboard</NavLink>
           ) : inNASCAR ? (
             <>
+              <NavLink to="/nascar/live">Live</NavLink>
               <NavLink to="/nascar/predictions">Predictions</NavLink>
               <NavLink to="/nascar/scanner">Scanner</NavLink>
             </>
@@ -151,6 +152,7 @@ export default function Header() {
               <NavLink to="/college-baseball/scoreboard" role="menuitem">Scoreboard</NavLink>
             ) : inNASCAR ? (
               <>
+                <NavLink to="/nascar/live" role="menuitem">Live</NavLink>
                 <NavLink to="/nascar/predictions" role="menuitem">Predictions</NavLink>
                 <NavLink to="/nascar/scanner" role="menuitem">Scanner</NavLink>
               </>

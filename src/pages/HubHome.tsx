@@ -82,7 +82,7 @@ export default function HubHome() {
           >
             <div style={{ fontWeight: 800, fontSize: 18 }}>NASCAR</div>
             <div style={{ marginTop: 6, color: "var(--muted)" }}>
-              Cup, Xfinity & Truck Series predictions powered by LightGBM — win, top 5, and top 10 probabilities.
+              Live race tracking, predictions, and radio scanner for Cup, Xfinity & Truck Series.
             </div>
           </Link>
 

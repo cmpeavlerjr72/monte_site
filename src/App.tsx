@@ -29,6 +29,7 @@ import MLBGameDetail from "./pages/MLBGameDetail";
 // NASCAR Pages
 import NascarPredictions from "./pages/NascarPredictions";
 import NascarScanner from "./pages/NascarScanner";
+import NascarLive from "./pages/NascarLive";
 
 // Tennis Pages
 import TennisPredictions from "./pages/TennisPredictions";
@@ -80,7 +81,8 @@ export default function App() {
           <Route path="/mlb/game/*" element={<MLBGameDetail />} />
 
           {/* NASCAR */}
-          <Route path="/nascar" element={<NascarPredictions />} />
+          <Route path="/nascar" element={<NascarLive />} />
+          <Route path="/nascar/live" element={<NascarLive />} />
           <Route path="/nascar/predictions" element={<NascarPredictions />} />
           <Route path="/nascar/scanner" element={<NascarScanner />} />
 
