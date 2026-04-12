@@ -56,6 +56,22 @@ interface ActiveStream {
 
 const SPECIAL_CHANNELS = new Set(["All Scan", "MRN", "NRN", "Officials"]);
 
+/** Detect mobile devices where the Whisper model's ~200MB WASM heap
+ *  reliably OOM-kills the tab mid-transcription. iOS Safari especially
+ *  enforces strict per-tab memory budgets and reloads on overage. */
+function isMobileDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  // iOS (including iPadOS 13+ which reports as Mac but has touch)
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  if (/Mac/i.test(ua) && typeof document !== "undefined" && "ontouchend" in document) return true;
+  // Android phones/tablets
+  if (/Android/i.test(ua)) return true;
+  // Generic mobile hint
+  if (/Mobi/i.test(ua)) return true;
+  return false;
+}
+
 const CAR_BADGE_CDN: Record<SeriesKey, string> = {
   cup:     "https://cf.nascar.com/data/images/carbadges/1",
   xfinity: "https://cf.nascar.com/data/images/carbadges/2",
@@ -81,6 +97,8 @@ export default function NascarScanner() {
   const [delay, setDelay] = useState(0);
   const [search, setSearch] = useState("");
   const [badgeErrors, setBadgeErrors] = useState<Set<string>>(new Set());
+  // Memoize once — UA sniff is stable for the session
+  const isMobile = useRef(isMobileDevice()).current;
 
   // Multi-stream mixer state
   const [streams, setStreams] = useState<ActiveStream[]>([]);
@@ -601,19 +619,29 @@ export default function NascarScanner() {
             <span style={{ fontWeight: 700, fontSize: 15 }}>Live Transcription</span>
 
             <button
-              onClick={() => tx.setEnabled(!tx.enabled)}
+              onClick={() => !isMobile && tx.setEnabled(!tx.enabled)}
+              disabled={isMobile}
+              title={isMobile ? "Transcription requires a desktop browser — mobile devices don't have enough memory for the speech model." : undefined}
               style={{
                 padding: "5px 14px", borderRadius: 8,
                 border: "1px solid var(--border)",
-                background: tx.enabled ? "var(--brand)" : "var(--card)",
-                color: tx.enabled ? "var(--brand-contrast)" : "var(--text)",
-                cursor: "pointer", fontWeight: 600, fontSize: 13,
+                background: isMobile ? "var(--card)" : tx.enabled ? "var(--brand)" : "var(--card)",
+                color: isMobile ? "var(--muted)" : tx.enabled ? "var(--brand-contrast)" : "var(--text)",
+                cursor: isMobile ? "not-allowed" : "pointer",
+                opacity: isMobile ? 0.5 : 1,
+                fontWeight: 600, fontSize: 13,
               }}
             >
-              {tx.enabled ? "On" : "Off"}
+              {isMobile ? "Desktop Only" : tx.enabled ? "On" : "Off"}
             </button>
 
-            {tx.enabled && (
+            {isMobile && (
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                Requires a desktop browser — mobile devices can't run the speech model
+              </span>
+            )}
+
+            {!isMobile && tx.enabled && (
               <span style={{ fontSize: 12, color: "var(--muted)" }}>
                 {tx.modelStatus}
               </span>
