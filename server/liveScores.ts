@@ -33,8 +33,116 @@ interface LiveClient {
 const app = express();
 app.use(cors());
 app.use(compression());
+// JSON body parser for transcription ingest (small payloads; cap at 128 KB)
+app.use(express.json({ limit: "128kb" }));
 
 const PORT = process.env.PORT || 8080;
+
+// ----------------------------------------------------------------------------
+// NASCAR scanner transcription — ingested from user's local PC, served to browsers
+// ----------------------------------------------------------------------------
+//
+// Flow: user's PC runs Whisper on each driver's HLS feed and POSTs transcripts
+// here. Browsers (including mobile) poll GET to receive them. Transcripts are
+// ephemeral — we keep the most recent N entries per stream_number in memory.
+// No database; if the server restarts, scrollback is lost but live keeps flowing.
+
+interface TxEntry {
+  id: number;              // monotonic per-server entry id (for "since" queries)
+  streamNumber: number;    // matches NASCAR audio_config.stream_number
+  text: string;
+  timestamp: number;       // ms since epoch, wall clock on the PC worker
+  series: number;          // 1=cup, 2=xfinity, 3=trucks
+}
+
+const TX_INGEST_TOKEN = process.env.TX_INGEST_TOKEN || "";
+const TX_MAX_ENTRIES = 500;        // ring buffer size across all streams
+const TX_MAX_AGE_MS = 30 * 60_000; // drop anything older than 30 min
+
+const txEntries: TxEntry[] = [];
+let txNextId = 1;
+
+function pruneOldTx() {
+  const cutoff = Date.now() - TX_MAX_AGE_MS;
+  // Single pass: drop old and trim to cap
+  let writeIdx = 0;
+  for (let i = 0; i < txEntries.length; i++) {
+    if (txEntries[i].timestamp >= cutoff) {
+      txEntries[writeIdx++] = txEntries[i];
+    }
+  }
+  txEntries.length = writeIdx;
+  if (txEntries.length > TX_MAX_ENTRIES) {
+    txEntries.splice(0, txEntries.length - TX_MAX_ENTRIES);
+  }
+}
+
+// POST /api/tx/ingest   body: { streamNumber, text, timestamp?, series }
+// Auth: header "x-tx-token" must match TX_INGEST_TOKEN env var
+app.post("/api/tx/ingest", (req, res) => {
+  if (!TX_INGEST_TOKEN) {
+    return res.status(503).json({ error: "ingest_not_configured" });
+  }
+  const token = req.header("x-tx-token") || "";
+  if (token !== TX_INGEST_TOKEN) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+
+  const body = req.body as Partial<TxEntry> | Partial<TxEntry>[] | undefined;
+  const items = Array.isArray(body) ? body : body ? [body] : [];
+  if (items.length === 0) {
+    return res.status(400).json({ error: "empty_body" });
+  }
+
+  let accepted = 0;
+  for (const raw of items) {
+    const streamNumber = Number(raw?.streamNumber);
+    const text = typeof raw?.text === "string" ? raw.text.trim() : "";
+    const series = Number(raw?.series);
+    const timestamp = Number(raw?.timestamp) || Date.now();
+    if (!Number.isFinite(streamNumber) || !text || !Number.isFinite(series)) continue;
+    if (text.length > 1000) continue; // sanity cap per entry
+    txEntries.push({
+      id: txNextId++,
+      streamNumber,
+      text,
+      timestamp,
+      series,
+    });
+    accepted++;
+  }
+  pruneOldTx();
+  res.json({ accepted, total: txEntries.length, lastId: txNextId - 1 });
+});
+
+// GET /api/tx/stream?since=<id>&series=<1|2|3>&streams=<csv of stream_numbers>
+// Returns transcripts with id > since, filtered by series and (optionally) streams.
+app.get("/api/tx/stream", (req, res) => {
+  const since = Number(req.query.since) || 0;
+  const series = Number(req.query.series) || 0;
+  const streamsRaw = String(req.query.streams || "").trim();
+  const streamFilter = streamsRaw
+    ? new Set(streamsRaw.split(",").map((s) => Number(s)).filter(Number.isFinite))
+    : null;
+
+  pruneOldTx();
+
+  const out: TxEntry[] = [];
+  for (const e of txEntries) {
+    if (e.id <= since) continue;
+    if (series && e.series !== series) continue;
+    if (streamFilter && !streamFilter.has(e.streamNumber)) continue;
+    out.push(e);
+  }
+
+  // Cap response size
+  const MAX_RETURN = 200;
+  const trimmed = out.length > MAX_RETURN ? out.slice(-MAX_RETURN) : out;
+  const lastId = txEntries.length > 0 ? txEntries[txEntries.length - 1].id : since;
+
+  res.set("Cache-Control", "no-store");
+  res.json({ entries: trimmed, lastId });
+});
 
 // ----------------------------------------------------------------------------
 // Helpers

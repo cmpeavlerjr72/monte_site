@@ -9,7 +9,92 @@ import { fileURLToPath } from "url";
 const app = express();
 app.use(cors());
 app.use(compression());
+// JSON body parser for transcription ingest (small payloads; cap at 128 KB)
+app.use(express.json({ limit: "128kb" }));
 const PORT = process.env.PORT || 8080;
+const TX_INGEST_TOKEN = process.env.TX_INGEST_TOKEN || "";
+const TX_MAX_ENTRIES = 500; // ring buffer size across all streams
+const TX_MAX_AGE_MS = 30 * 60_000; // drop anything older than 30 min
+const txEntries = [];
+let txNextId = 1;
+function pruneOldTx() {
+    const cutoff = Date.now() - TX_MAX_AGE_MS;
+    // Single pass: drop old and trim to cap
+    let writeIdx = 0;
+    for (let i = 0; i < txEntries.length; i++) {
+        if (txEntries[i].timestamp >= cutoff) {
+            txEntries[writeIdx++] = txEntries[i];
+        }
+    }
+    txEntries.length = writeIdx;
+    if (txEntries.length > TX_MAX_ENTRIES) {
+        txEntries.splice(0, txEntries.length - TX_MAX_ENTRIES);
+    }
+}
+// POST /api/tx/ingest   body: { streamNumber, text, timestamp?, series }
+// Auth: header "x-tx-token" must match TX_INGEST_TOKEN env var
+app.post("/api/tx/ingest", (req, res) => {
+    if (!TX_INGEST_TOKEN) {
+        return res.status(503).json({ error: "ingest_not_configured" });
+    }
+    const token = req.header("x-tx-token") || "";
+    if (token !== TX_INGEST_TOKEN) {
+        return res.status(401).json({ error: "unauthorized" });
+    }
+    const body = req.body;
+    const items = Array.isArray(body) ? body : body ? [body] : [];
+    if (items.length === 0) {
+        return res.status(400).json({ error: "empty_body" });
+    }
+    let accepted = 0;
+    for (const raw of items) {
+        const streamNumber = Number(raw?.streamNumber);
+        const text = typeof raw?.text === "string" ? raw.text.trim() : "";
+        const series = Number(raw?.series);
+        const timestamp = Number(raw?.timestamp) || Date.now();
+        if (!Number.isFinite(streamNumber) || !text || !Number.isFinite(series))
+            continue;
+        if (text.length > 1000)
+            continue; // sanity cap per entry
+        txEntries.push({
+            id: txNextId++,
+            streamNumber,
+            text,
+            timestamp,
+            series,
+        });
+        accepted++;
+    }
+    pruneOldTx();
+    res.json({ accepted, total: txEntries.length, lastId: txNextId - 1 });
+});
+// GET /api/tx/stream?since=<id>&series=<1|2|3>&streams=<csv of stream_numbers>
+// Returns transcripts with id > since, filtered by series and (optionally) streams.
+app.get("/api/tx/stream", (req, res) => {
+    const since = Number(req.query.since) || 0;
+    const series = Number(req.query.series) || 0;
+    const streamsRaw = String(req.query.streams || "").trim();
+    const streamFilter = streamsRaw
+        ? new Set(streamsRaw.split(",").map((s) => Number(s)).filter(Number.isFinite))
+        : null;
+    pruneOldTx();
+    const out = [];
+    for (const e of txEntries) {
+        if (e.id <= since)
+            continue;
+        if (series && e.series !== series)
+            continue;
+        if (streamFilter && !streamFilter.has(e.streamNumber))
+            continue;
+        out.push(e);
+    }
+    // Cap response size
+    const MAX_RETURN = 200;
+    const trimmed = out.length > MAX_RETURN ? out.slice(-MAX_RETURN) : out;
+    const lastId = txEntries.length > 0 ? txEntries[txEntries.length - 1].id : since;
+    res.set("Cache-Control", "no-store");
+    res.json({ entries: trimmed, lastId });
+});
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
@@ -62,7 +147,7 @@ export function buildIndexByEspnPair(indexGames) {
             const k = pairKey(A, B);
             if (!k)
                 continue;
-            (map[k] || (map[k] = [])).push(g);
+            (map[k] ||= []).push(g);
         }
     }
     return map;
@@ -70,15 +155,14 @@ export function buildIndexByEspnPair(indexGames) {
 // Fallback: single-team key, to handle entries where one side lacks ESPN metadata
 const singleKey = (id) => (id ? `t:${id}` : '');
 export function buildIndexBySingleTeam(indexGames) {
-    var _a, _b;
     const map = {};
     for (const g of indexGames) {
         const A = g.A_espn?.espn_id;
         const B = g.B_espn?.espn_id;
         if (A)
-            (map[_a = singleKey(A)] || (map[_a] = [])).push(g);
+            (map[singleKey(A)] ||= []).push(g);
         if (B)
-            (map[_b = singleKey(B)] || (map[_b] = [])).push(g);
+            (map[singleKey(B)] ||= []).push(g);
     }
     return map;
 }
@@ -163,7 +247,7 @@ async function fetchAllPages(baseUrl, maxPages = 8) {
 }
 function ttlFor(liveCount) {
     // Shorter TTL when there are live games, longer when there aren't.
-    return liveCount > 0 ? 20000 : 120000;
+    return liveCount > 0 ? 20_000 : 120_000;
 }
 // ESPN date helper – returns YYYYMMDD in America/New_York
 function currentETDate() {
@@ -180,7 +264,7 @@ function currentETDate() {
     const d = parts.find((p) => p.type === "day")?.value ?? "01";
     return `${y}${m}${d}`;
 }
-async function fetchJsonWithTimeout(url, ms = 10000) {
+async function fetchJsonWithTimeout(url, ms = 10_000) {
     const ctrl = new AbortController();
     const id = setTimeout(() => ctrl.abort(), ms);
     try {
@@ -274,7 +358,7 @@ app.get("/api/live", async (req, res) => {
     // initial snapshot
     const snapshot = await getScoreboard(sport, date, force, { groups, limit });
     sseSend(res, { type: "hello", meta: { sport, date }, payload: snapshot });
-    const intervalMs = 20000;
+    const intervalMs = 20_000;
     const timer = setInterval(async () => {
         const payload = await getScoreboard(sport, date, false, { groups, limit });
         sseSend(res, { type: "tick", meta: { sport, date }, payload });

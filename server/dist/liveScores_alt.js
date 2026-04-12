@@ -1,193 +1,227 @@
-// server/dist/liveScores.js
+// server/liveScores.ts
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
 import AbortController from "abort-controller";
+import compression from "compression";
 import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
-import compression from "compression";
-
 const app = express();
 app.use(cors());
-
+app.use(compression());
 const PORT = process.env.PORT || 8080;
-
-// ---- in-memory state ----
-const memCache = new Map(); // key: espn:${sport}:${date} -> { ts, ttl, hash, payload, liveCount }
-const clients = [];         // { id, res, sport, date }
-const POLL_KEYS = new Set();// keys like "cfb:20251103" or "cbb:20251103"
-
-const jsonHash = (obj) => crypto.createHash("sha1").update(JSON.stringify(obj)).digest("hex");
-const now = () => Date.now();
-
-function espnUrl(sport, dateYYYYMMDD, groups) {
-  const d = String(dateYYYYMMDD).replace(/-/g, "");
-  if (sport === "cbb") {
-    const g = groups || "50"; // Men's D-I
-    const limit = 3000;
-    return `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
-  }
-  const g = groups || "80,81"; // FBS + FCS
-  const limit = 3000;
-  return `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
+// Build a sorted pair key from two ESPN team IDs
+const pairKey = (a, b) => {
+    if (!a || !b)
+        return '';
+    const [x, y] = [String(a), String(b)].sort();
+    return `${x}-${y}`;
+};
+// Build a lookup map from index.json contents
+export function buildIndexByEspnPair(indexGames) {
+    const map = {};
+    for (const g of indexGames) {
+        const A = g.A_espn?.espn_id;
+        const B = g.B_espn?.espn_id;
+        if (A && B) {
+            const k = pairKey(A, B);
+            if (!k)
+                continue;
+            (map[k] ||= []).push(g);
+        }
+    }
+    return map;
 }
-
-
+// Fallback: single-team key, to handle entries where one side lacks ESPN metadata
+const singleKey = (id) => (id ? `t:${id}` : '');
+export function buildIndexBySingleTeam(indexGames) {
+    const map = {};
+    for (const g of indexGames) {
+        const A = g.A_espn?.espn_id;
+        const B = g.B_espn?.espn_id;
+        if (A)
+            (map[singleKey(A)] ||= []).push(g);
+        if (B)
+            (map[singleKey(B)] ||= []).push(g);
+    }
+    return map;
+}
+function toSport(q) {
+    const s = String(q || "cfb").toLowerCase();
+    return s === "cbb" ? "cbb" : "cfb";
+}
+function espnUrl(sport, dateYYYYMMDD, groups) {
+    const d = String(dateYYYYMMDD).replace(/-/g, "");
+    if (sport === "cbb") {
+        const g = groups || "50"; // Men's D-I
+        const limit = 3000;
+        return `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
+    }
+    // Default: CFB
+    const g = groups || "80,81"; // FBS + FCS
+    const limit = 3000;
+    return `https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
+}
 function countLiveGames(payload) {
-  try {
-    const events = payload?.events ?? [];
-    return events.filter((e) => e?.status?.type?.state === "in").length;
-  } catch {
-    return 0;
-  }
+    try {
+        const events = payload?.events ?? [];
+        return events.filter((e) => e?.status?.type?.state === "in").length;
+    }
+    catch {
+        return 0;
+    }
 }
 function ttlFor(liveCount) {
-  return liveCount > 0 ? 20_000 : 120_000;
+    // Shorter TTL when there are live games, longer when there aren't.
+    return liveCount > 0 ? 20_000 : 120_000;
 }
-
+// ESPN date helper – returns YYYYMMDD in America/New_York
 function currentETDate() {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  });
-  const p = fmt.formatToParts(new Date());
-  const y = p.find((x) => x.type === "year").value;
-  const m = p.find((x) => x.type === "month").value;
-  const d = p.find((x) => x.type === "day").value;
-  return `${y}${m}${d}`;
+    const now = new Date();
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    });
+    const parts = fmt.formatToParts(now);
+    const y = parts.find((p) => p.type === "year")?.value ?? "0000";
+    const m = parts.find((p) => p.type === "month")?.value ?? "01";
+    const d = parts.find((p) => p.type === "day")?.value ?? "01";
+    return `${y}${m}${d}`;
 }
-
-function toSport(q) {
-  const s = String(q || "cfb").toLowerCase();
-  return s === "cbb" ? "cbb" : "cfb";
+async function fetchJsonWithTimeout(url, ms = 10_000) {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), ms);
+    try {
+        const resp = await fetch(url, {
+            signal: ctrl.signal,
+            headers: {
+                "cache-control": "no-cache",
+            },
+        });
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+        return await resp.json();
+    }
+    finally {
+        clearTimeout(id);
+    }
 }
-
-// fetch with timeout (node-fetch v3)
-async function fetchJsonWithTimeout(url, ms = 10000) {
-  const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), ms);
-  try {
-    const resp = await fetch(url, { signal: ctrl.signal, headers: { "cache-control": "no-cache" } });
-    if (!resp.ok) throw new Error(`ESPN ${resp.status}`);
-    return await resp.json();
-  } finally {
-    clearTimeout(id);
-  }
+// ----------------------------------------------------------------------------
+// Simple in-memory cache for scoreboard payloads
+// ----------------------------------------------------------------------------
+const SCOREBOARD_CACHE = new Map();
+async function getScoreboard(sport, dateYYYYMMDD) {
+    const key = `${sport}:${dateYYYYMMDD}`;
+    const existing = SCOREBOARD_CACHE.get(key);
+    const now = Date.now();
+    if (existing) {
+        const age = now - existing.fetchedAt;
+        const ttl = ttlFor(existing.liveCount);
+        if (age < ttl) {
+            return existing.payload;
+        }
+    }
+    const url = espnUrl(sport, dateYYYYMMDD);
+    const payload = (await fetchJsonWithTimeout(url));
+    const liveCount = countLiveGames(payload);
+    SCOREBOARD_CACHE.set(key, {
+        sport,
+        date: dateYYYYMMDD,
+        payload,
+        fetchedAt: now,
+        liveCount,
+    });
+    return payload;
 }
-
-// Cache-on-read fetcher per sport+date
-async function getScoreboard(sport, date) {
-  const key = `espn:${sport}:${date}`;
-  const cached = memCache.get(key);
-  if (cached && now() - cached.ts < cached.ttl) return cached.payload;
-
-  const url = espnUrl(sport, date);
-  const payload = await fetchJsonWithTimeout(url);
-  const hash = jsonHash(payload);
-  const liveCount = countLiveGames(payload);
-  const ttl = ttlFor(liveCount);
-
-  memCache.set(key, { ts: now(), ttl, hash, payload, liveCount, url });
-  return payload;
+// ----------------------------------------------------------------------------
+// SSE helpers
+// ----------------------------------------------------------------------------
+function sseSend(res, data) {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
-
-// ---------- REST (pull) ----------
+const clients = [];
+// ----------------------------------------------------------------------------
+// REST: /api/scoreboard
+// ----------------------------------------------------------------------------
 app.get("/api/scoreboard", async (req, res) => {
-  try {
+    try {
+        const sport = toSport(req.query.sport);
+        const date = req.query.date || currentETDate();
+        const payload = await getScoreboard(sport, date);
+        res.json({
+            sport,
+            date,
+            payload,
+            cached_at: new Date().toISOString(),
+        });
+    }
+    catch (err) {
+        console.error("GET /api/scoreboard error", err?.message || err);
+        res.status(500).json({ error: "failed_to_fetch_scoreboard" });
+    }
+});
+// ----------------------------------------------------------------------------
+// SSE: /api/live
+// ----------------------------------------------------------------------------
+app.get("/api/live", async (req, res) => {
     const sport = toSport(req.query.sport);
     const date = req.query.date || currentETDate();
-    const payload = await getScoreboard(sport, date);
-    res.json({ sport, date, payload, cached_at: new Date().toISOString() });
-  } catch (e) {
-    res.status(502).json({ error: e?.message ?? "Fetch failed" });
-  }
-});
-
-// ---------- SSE (push) ----------
-app.get("/api/live", async (req, res) => {
-  const sport = toSport(req.query.sport);
-  const date = req.query.date || currentETDate();
-  const key = `${sport}:${date}`;
-
-  res.set({
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-store, no-transform",
-    "Connection": "keep-alive",
-    "X-Accel-Buffering": "no",
-    "Vary": "sport, date",
-  });
-  res.flushHeaders?.();
-
-  const id = crypto.randomUUID();
-  const client = { id, res, sport, date };
-  clients.push(client);
-  POLL_KEYS.add(key);
-
-  try {
-    const snapshot = await getScoreboard(sport, date);
-    sseSend(res, { type: "hello", meta: { sport, date, key }, payload: snapshot });
-  } catch { /* ignore */ }
-
-  req.on("close", () => {
-    const idx = clients.findIndex((c) => c.id === id);
-    if (idx >= 0) clients.splice(idx, 1);
-    if (!clients.some((c) => c.sport === sport && c.date === date)) {
-      POLL_KEYS.delete(key);
-    }
-  });
-});
-
-// Gzip all responses except SSE
-app.use(compression({
-  level: 6,
-  threshold: 1024,
-  filter: (req, res) => {
-    const isSSE = req.path?.startsWith("/api/live") ||
-      req.headers.accept?.includes("text/event-stream");
-    if (isSSE) return false;
-    return compression.filter(req, res);
-  },
-}));
-
-function sseSend(res, data) {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-function broadcast(key, data) {
-  const [sport, date] = key.split(":");
-  clients
-    .filter((c) => c.sport === sport && c.date === date)
-    .forEach((c) => sseSend(c.res, data));
-}
-
-// Proactive refresher per sport:date
-setInterval(async () => {
-  for (const key of POLL_KEYS) {
+    const key = `${sport}:${date}`;
+    res.set({
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-store, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+        Vary: "sport, date",
+    });
+    res.flushHeaders?.();
+    const id = crypto.randomUUID();
+    const client = { id, res, sport, date };
+    clients.push(client);
+    // Send initial snapshot
     try {
-      const [sport, date] = key.split(":");
-      const cacheKey = `espn:${sport}:${date}`;
-      const before = memCache.get(cacheKey);
-      const payload = await getScoreboard(sport, date);
-      const after = memCache.get(cacheKey);
-      if (!before || (after && before.hash !== after.hash)) {
-        broadcast(key, { type: "scoreboard", meta: { sport, date, key }, payload });
-      }
-    } catch {
-      // ignore; try next tick
+        const snapshot = await getScoreboard(sport, date);
+        sseSend(res, { type: "hello", meta: { sport, date, key }, payload: snapshot });
     }
-  }
-}, 5_000);
-
-// ---------- Serve React build from /dist ----------
+    catch (err) {
+        console.error("SSE hello error", err?.message || err);
+    }
+    // Periodic polling loop per client
+    const intervalMs = 20_000;
+    const timer = setInterval(async () => {
+        try {
+            const payload = await getScoreboard(sport, date);
+            sseSend(res, { type: "tick", meta: { sport, date, key }, payload });
+        }
+        catch (err) {
+            console.error("SSE tick error", err?.message || err);
+        }
+    }, intervalMs);
+    req.on("close", () => {
+        clearInterval(timer);
+        const idx = clients.findIndex((c) => c.id === id);
+        if (idx >= 0) {
+            clients.splice(idx, 1);
+        }
+    });
+});
+// ----------------------------------------------------------------------------
+// Static React build
+// ----------------------------------------------------------------------------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const staticDir = path.resolve(__dirname, "../../dist");
 app.use(express.static(staticDir));
 app.get("*", (_req, res) => {
-  res.sendFile(path.join(staticDir, "index.html"));
+    res.sendFile(path.join(staticDir, "index.html"));
 });
-
-// ---------- Start ----------
+// ----------------------------------------------------------------------------
+// Start
+// ----------------------------------------------------------------------------
 app.listen(PORT, () => {
-  console.log(`liveScores listening on :${PORT}`);
+    console.log(`liveScores listening on :${PORT}`);
 });

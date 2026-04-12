@@ -5,8 +5,8 @@
 // Audio mapping JSON fetched from cf.nascar.com (also zero cost to us).
 // Each stream gets a Web Audio AnalyserNode for voice activity detection.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranscription } from "../lib/useTranscription";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useServerTranscription } from "../lib/useServerTranscription";
 
 /* ── NASCAR Audio Mapping API ─────────────────────────────── */
 
@@ -56,22 +56,6 @@ interface ActiveStream {
 
 const SPECIAL_CHANNELS = new Set(["All Scan", "MRN", "NRN", "Officials"]);
 
-/** Detect mobile devices where the Whisper model's ~200MB WASM heap
- *  reliably OOM-kills the tab mid-transcription. iOS Safari especially
- *  enforces strict per-tab memory budgets and reloads on overage. */
-function isMobileDevice(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  // iOS (including iPadOS 13+ which reports as Mac but has touch)
-  if (/iPhone|iPad|iPod/i.test(ua)) return true;
-  if (/Mac/i.test(ua) && typeof document !== "undefined" && "ontouchend" in document) return true;
-  // Android phones/tablets
-  if (/Android/i.test(ua)) return true;
-  // Generic mobile hint
-  if (/Mobi/i.test(ua)) return true;
-  return false;
-}
-
 const CAR_BADGE_CDN: Record<SeriesKey, string> = {
   cup:     "https://cf.nascar.com/data/images/carbadges/1",
   xfinity: "https://cf.nascar.com/data/images/carbadges/2",
@@ -97,8 +81,6 @@ export default function NascarScanner() {
   const [delay, setDelay] = useState(0);
   const [search, setSearch] = useState("");
   const [badgeErrors, setBadgeErrors] = useState<Set<string>>(new Set());
-  // Memoize once — UA sniff is stable for the session
-  const isMobile = useRef(isMobileDevice()).current;
 
   // Multi-stream mixer state
   const [streams, setStreams] = useState<ActiveStream[]>([]);
@@ -111,10 +93,15 @@ export default function NascarScanner() {
   // Audio activity levels per stream_number (0-1), updated by animation loop
   const [levels, setLevels] = useState<Record<number, number>>({});
 
-  // Transcription
-  const tx = useTranscription();
-  const txRef = useRef(tx);
-  txRef.current = tx;
+  // Transcription — polled from the operator's local Whisper worker via
+  // /api/tx/stream. Works on mobile because no model runs in the browser.
+  const [txEnabled, setTxEnabled] = useState(false);
+  const selectedStreamNumbers = useMemo(
+    () => streams.map((s) => s.entry.stream_number),
+    [streams],
+  );
+  const seriesId = SERIES_MAP[series].id;
+  const tx = useServerTranscription(txEnabled, seriesId, selectedStreamNumbers);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const hlsJsLoaded = useRef(false);
@@ -209,7 +196,6 @@ export default function NascarScanner() {
     target.audio.pause();
     target.audio.src = "";
     target.audio.remove();
-    txRef.current.removeStream(streamNumber);
     setStreams((prev) => prev.filter((s) => s.entry.stream_number !== streamNumber));
   }, []);
 
@@ -222,7 +208,6 @@ export default function NascarScanner() {
       s.audio.src = "";
       s.audio.remove();
     }
-    txRef.current.clearAll();
     setStreams([]);
   }, []);
 
@@ -239,7 +224,6 @@ export default function NascarScanner() {
       existing.audio.pause();
       existing.audio.src = "";
       existing.audio.remove();
-      txRef.current.removeStream(entry.stream_number);
       setStreams((prev) => prev.filter((s) => s.entry.stream_number !== entry.stream_number));
       return;
     }
@@ -283,12 +267,10 @@ export default function NascarScanner() {
       hlsInstance.on(Hls.Events.ERROR, (_: any, data: any) => {
         if (data.fatal) setError(`Stream error: ${streamLabel(entry)}`);
       });
-      txRef.current.addStream(entry.stream_number, url);
     } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
       audio.src = url;
       audio.volume = defaultVol / 100;
       audio.play().catch(() => {});
-      txRef.current.addStream(entry.stream_number, url);
     }
 
     const newStream: ActiveStream = {
@@ -615,39 +597,34 @@ export default function NascarScanner() {
       {/* ── Transcription Panel ── */}
       {streams.length > 0 && (
         <section className="card" style={{ padding: 16, marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: tx.enabled && tx.transcripts.length > 0 ? 10 : 0, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: txEnabled && tx.transcripts.length > 0 ? 10 : 0, flexWrap: "wrap" }}>
             <span style={{ fontWeight: 700, fontSize: 15 }}>Live Transcription</span>
 
             <button
-              onClick={() => !isMobile && tx.setEnabled(!tx.enabled)}
-              disabled={isMobile}
-              title={isMobile ? "Transcription requires a desktop browser — mobile devices don't have enough memory for the speech model." : undefined}
+              onClick={() => setTxEnabled(!txEnabled)}
               style={{
                 padding: "5px 14px", borderRadius: 8,
                 border: "1px solid var(--border)",
-                background: isMobile ? "var(--card)" : tx.enabled ? "var(--brand)" : "var(--card)",
-                color: isMobile ? "var(--muted)" : tx.enabled ? "var(--brand-contrast)" : "var(--text)",
-                cursor: isMobile ? "not-allowed" : "pointer",
-                opacity: isMobile ? 0.5 : 1,
-                fontWeight: 600, fontSize: 13,
+                background: txEnabled ? "var(--brand)" : "var(--card)",
+                color: txEnabled ? "var(--brand-contrast)" : "var(--text)",
+                cursor: "pointer", fontWeight: 600, fontSize: 13,
               }}
             >
-              {isMobile ? "Desktop Only" : tx.enabled ? "On" : "Off"}
+              {txEnabled ? "On" : "Off"}
             </button>
 
-            {isMobile && (
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                Requires a desktop browser — mobile devices can't run the speech model
+            {txEnabled && (
+              <span style={{ fontSize: 12, color: tx.online ? "var(--muted)" : "#b91c1c", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{
+                  width: 8, height: 8, borderRadius: "50%",
+                  background: tx.online ? "#16a34a" : "#b91c1c",
+                  display: "inline-block",
+                }} />
+                {tx.status}
               </span>
             )}
 
-            {!isMobile && tx.enabled && (
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                {tx.modelStatus}
-              </span>
-            )}
-
-            {tx.enabled && tx.transcripts.length > 0 && (
+            {txEnabled && tx.transcripts.length > 0 && (
               <button
                 onClick={tx.clearAll}
                 style={{
@@ -663,17 +640,18 @@ export default function NascarScanner() {
             )}
           </div>
 
-          {tx.enabled && !tx.modelReady && tx.modelStatus && (
+          {txEnabled && !tx.online && (
             <div style={{
               padding: "10px 12px", borderRadius: 8, marginTop: 8,
               background: "color-mix(in oklab, var(--brand) 6%, var(--card))",
               fontSize: 13, color: "var(--muted)",
             }}>
-              {tx.modelStatus}
+              Transcripts are produced by the site operator's local Whisper worker.
+              If it's not running, no text will appear here — audio still works.
             </div>
           )}
 
-          {tx.enabled && tx.transcripts.length > 0 && (
+          {txEnabled && tx.transcripts.length > 0 && (
             <div
               ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
               style={{
@@ -706,12 +684,6 @@ export default function NascarScanner() {
                 );
               })}
             </div>
-          )}
-
-          {tx.enabled && !tx.modelReady && !tx.modelStatus && (
-            <p style={{ color: "var(--muted)", fontSize: 13, margin: "8px 0 0" }}>
-              Initializing speech model...
-            </p>
           )}
         </section>
       )}
