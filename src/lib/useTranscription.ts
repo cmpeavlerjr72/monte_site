@@ -12,7 +12,7 @@
  * (hls.js detaches the buffer internally before the event fires).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WhisperWorker from "../workers/whisperWorker?worker";
 
 export interface TranscriptEntry {
@@ -48,6 +48,10 @@ export function useTranscription() {
   const streamsRef = useRef<Map<number, StreamState>>(new Map());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sendRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** Shared AudioContext for AAC → PCM decoding. Reused across all decodes
+   *  to avoid hitting Chrome's 6-context limit (browsers crash/throttle
+   *  when you create a new context every few seconds). */
+  const decoderCtxRef = useRef<AudioContext | null>(null);
 
   // ── Worker lifecycle ──
   useEffect(() => {
@@ -55,6 +59,10 @@ export function useTranscription() {
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
+      }
+      if (decoderCtxRef.current && decoderCtxRef.current.state !== "closed") {
+        decoderCtxRef.current.close().catch(() => {});
+        decoderCtxRef.current = null;
       }
       setModelReady(false);
       setModelStatus("");
@@ -184,12 +192,17 @@ export function useTranscription() {
         state.pendingBuffers = keep;
         state.pendingBytes = keep.reduce((s, b) => s + b.byteLength, 0);
 
-        // Decode AAC → PCM in main thread (AudioContext is main-thread only)
+        // Decode AAC → PCM in main thread (AudioContext is main-thread only).
+        // Reuse a single shared decoder context — creating one per decode cycle
+        // quickly exhausts Chrome's 6-context limit and crashes the tab.
         try {
-          const ctx = new AudioContext({ sampleRate: 16000 });
-          const audioBuffer = await ctx.decodeAudioData(combined.buffer);
+          if (!decoderCtxRef.current || decoderCtxRef.current.state === "closed") {
+            decoderCtxRef.current = new AudioContext({ sampleRate: 16000 });
+          }
+          const ctx = decoderCtxRef.current;
+          // decodeAudioData detaches its input buffer, so pass a copy
+          const audioBuffer = await ctx.decodeAudioData(combined.buffer.slice(0));
           const pcm = audioBuffer.getChannelData(0);
-          await ctx.close();
 
           // Transfer the PCM Float32Array to the worker
           const pcmCopy = new Float32Array(pcm);
@@ -234,7 +247,7 @@ export function useTranscription() {
     streamsRef.current.clear();
   }, []);
 
-  return {
+  return useMemo(() => ({
     enabled,
     setEnabled,
     modelStatus,
@@ -243,5 +256,5 @@ export function useTranscription() {
     addStream,
     removeStream,
     clearAll,
-  };
+  }), [enabled, setEnabled, modelStatus, modelReady, transcripts, addStream, removeStream, clearAll]);
 }

@@ -84,11 +84,19 @@ export default function NascarScanner() {
 
   // Multi-stream mixer state
   const [streams, setStreams] = useState<ActiveStream[]>([]);
+  // Ref mirror of streams so event handlers can read current value without
+  // doing side effects inside the setStreams updater (updaters must be pure —
+  // React may call them multiple times in concurrent/strict mode, which would
+  // duplicate audio elements and HLS fetches).
+  const streamsStateRef = useRef<ActiveStream[]>([]);
+  streamsStateRef.current = streams;
   // Audio activity levels per stream_number (0-1), updated by animation loop
   const [levels, setLevels] = useState<Record<number, number>>({});
 
   // Transcription
   const tx = useTranscription();
+  const txRef = useRef(tx);
+  txRef.current = tx;
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const hlsJsLoaded = useRef(false);
@@ -152,21 +160,18 @@ export default function NascarScanner() {
     const buf = new Uint8Array(256);
     const tick = () => {
       const next: Record<number, number> = {};
-      // Read from current streams ref via closure over state
-      setStreams((prev) => {
-        for (const s of prev) {
-          if (s.analyser) {
-            s.analyser.getByteFrequencyData(buf);
-            // RMS over frequency bins, normalized 0-1
-            let sum = 0;
-            for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-            next[s.entry.stream_number] = Math.sqrt(sum / buf.length) / 255;
-          } else {
-            next[s.entry.stream_number] = 0;
-          }
+      // Read streams from ref (no setStreams at 60fps — that triggers the
+      // scheduler every frame even when React bails on same-ref state)
+      for (const s of streamsStateRef.current) {
+        if (s.analyser) {
+          s.analyser.getByteFrequencyData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+          next[s.entry.stream_number] = Math.sqrt(sum / buf.length) / 255;
+        } else {
+          next[s.entry.stream_number] = 0;
         }
-        return prev; // no mutation
-      });
+      }
       setLevels(next);
       animFrameRef.current = requestAnimationFrame(tick);
     };
@@ -176,108 +181,113 @@ export default function NascarScanner() {
 
   // ── Stop a single stream ──
   const stopStream = useCallback((streamNumber: number) => {
-    setStreams((prev) => {
-      const idx = prev.findIndex((s) => s.entry.stream_number === streamNumber);
-      if (idx === -1) return prev;
-      const s = prev[idx];
+    // Read current state from ref, do side effects ONCE, then update state.
+    // Do NOT mutate inside a setStreams updater — React may invoke updaters
+    // twice in dev/concurrent mode, which would double-destroy resources.
+    const current = streamsStateRef.current;
+    const target = current.find((s) => s.entry.stream_number === streamNumber);
+    if (!target) return;
+    if (target.hls) target.hls.destroy();
+    target.audio.pause();
+    target.audio.src = "";
+    target.audio.remove();
+    txRef.current.removeStream(streamNumber);
+    setStreams((prev) => prev.filter((s) => s.entry.stream_number !== streamNumber));
+  }, []);
+
+  // ── Stop all streams ──
+  const stopAll = useCallback(() => {
+    const current = streamsStateRef.current;
+    for (const s of current) {
       if (s.hls) s.hls.destroy();
       s.audio.pause();
       s.audio.src = "";
       s.audio.remove();
-      tx.removeStream(streamNumber);
-      return prev.filter((_, i) => i !== idx);
-    });
-  }, [tx]);
-
-  // ── Stop all streams ──
-  const stopAll = useCallback(() => {
-    setStreams((prev) => {
-      for (const s of prev) {
-        if (s.hls) s.hls.destroy();
-        s.audio.pause();
-        s.audio.src = "";
-        s.audio.remove();
-      }
-      return [];
-    });
-    tx.clearAll();
-  }, [tx]);
+    }
+    txRef.current.clearAll();
+    setStreams([]);
+  }, []);
 
   // ── Toggle a stream on/off ──
+  // All side effects (creating audio elements, HLS instances, registering
+  // transcription streams) happen OUTSIDE setStreams. The updater is pure so
+  // React re-invoking it in concurrent/strict mode can't leak resources.
   const toggleStream = useCallback((entry: AudioEntry) => {
-    // If already active, remove it
-    setStreams((prev) => {
-      const existing = prev.find((s) => s.entry.stream_number === entry.stream_number);
-      if (existing) {
-        if (existing.hls) existing.hls.destroy();
-        existing.audio.pause();
-        existing.audio.src = "";
-        existing.audio.remove();
-        tx.removeStream(entry.stream_number);
-        return prev.filter((s) => s.entry.stream_number !== entry.stream_number);
-      }
+    const current = streamsStateRef.current;
+    const existing = current.find((s) => s.entry.stream_number === entry.stream_number);
 
-      // Max streams check
-      if (prev.length >= MAX_STREAMS) return prev;
+    if (existing) {
+      if (existing.hls) existing.hls.destroy();
+      existing.audio.pause();
+      existing.audio.src = "";
+      existing.audio.remove();
+      txRef.current.removeStream(entry.stream_number);
+      setStreams((prev) => prev.filter((s) => s.entry.stream_number !== entry.stream_number));
+      return;
+    }
 
-      // Create new stream
-      const Hls = (window as any).Hls;
-      const audio = document.createElement("audio");
-      audio.crossOrigin = "anonymous";
-      const url = entry.base_url + entry.stream_ios;
-      const defaultVol = 80;
+    // Max streams check
+    if (current.length >= MAX_STREAMS) return;
 
-      let analyser: AnalyserNode | null = null;
-      let source: MediaElementAudioSourceNode | null = null;
+    // Create new stream (side effects)
+    const Hls = (window as any).Hls;
+    const audio = document.createElement("audio");
+    audio.crossOrigin = "anonymous";
+    const url = entry.base_url + entry.stream_ios;
+    const defaultVol = 80;
 
-      // Set up Web Audio analyser for activity detection
-      try {
-        const ctx = getAudioCtx();
-        source = ctx.createMediaElementSource(audio);
-        analyser = ctx.createAnalyser();
-        analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.4;
-        source.connect(analyser);
-        analyser.connect(ctx.destination);
-      } catch {
-        // Fallback: no analyser, audio still plays directly
-      }
+    let analyser: AnalyserNode | null = null;
+    let source: MediaElementAudioSourceNode | null = null;
 
-      let hlsInstance: any = null;
+    // Set up Web Audio analyser for activity detection
+    try {
+      const ctx = getAudioCtx();
+      source = ctx.createMediaElementSource(audio);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.4;
+      source.connect(analyser);
+      analyser.connect(ctx.destination);
+    } catch {
+      // Fallback: no analyser, audio still plays directly
+    }
 
-      if (Hls && Hls.isSupported()) {
-        hlsInstance = new Hls(hlsConfig(delay));
-        hlsInstance.loadSource(url);
-        hlsInstance.attachMedia(audio);
-        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-          audio.volume = defaultVol / 100;
-          audio.play().catch(() => {});
-        });
-        hlsInstance.on(Hls.Events.ERROR, (_: any, data: any) => {
-          if (data.fatal) setError(`Stream error: ${streamLabel(entry)}`);
-        });
-        // Feed raw segment data to transcription engine.
-        // Register stream for transcription (fetches segments independently)
-        tx.addStream(entry.stream_number, url);
-      } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
-        audio.src = url;
+    let hlsInstance: any = null;
+
+    if (Hls && Hls.isSupported()) {
+      hlsInstance = new Hls(hlsConfig(delay));
+      hlsInstance.loadSource(url);
+      hlsInstance.attachMedia(audio);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
         audio.volume = defaultVol / 100;
         audio.play().catch(() => {});
-        tx.addStream(entry.stream_number, url);
-      }
+      });
+      hlsInstance.on(Hls.Events.ERROR, (_: any, data: any) => {
+        if (data.fatal) setError(`Stream error: ${streamLabel(entry)}`);
+      });
+      txRef.current.addStream(entry.stream_number, url);
+    } else if (audio.canPlayType("application/vnd.apple.mpegurl")) {
+      audio.src = url;
+      audio.volume = defaultVol / 100;
+      audio.play().catch(() => {});
+      txRef.current.addStream(entry.stream_number, url);
+    }
 
-      const newStream: ActiveStream = {
-        entry,
-        audio,
-        hls: hlsInstance,
-        analyser,
-        source,
-        volume: defaultVol,
-      };
+    const newStream: ActiveStream = {
+      entry,
+      audio,
+      hls: hlsInstance,
+      analyser,
+      source,
+      volume: defaultVol,
+    };
 
+    setStreams((prev) => {
+      // Guard against the rare case where a concurrent toggle already added it
+      if (prev.some((s) => s.entry.stream_number === entry.stream_number)) return prev;
       return [...prev, newStream];
     });
-  }, [delay, hlsConfig, getAudioCtx, tx]);
+  }, [delay, hlsConfig, getAudioCtx]);
 
   // ── Per-stream volume change ──
   const setStreamVolume = useCallback((streamNumber: number, vol: number) => {
@@ -293,34 +303,29 @@ export default function NascarScanner() {
   // ── Apply delay changes to all active HLS instances ──
   useEffect(() => {
     const cfg = hlsConfig(delay);
-    setStreams((prev) => {
-      for (const s of prev) {
-        if (!s.hls) continue;
-        s.hls.config.liveSyncDurationCount = cfg.liveSyncDurationCount;
-        s.hls.config.liveMaxLatencyDurationCount = cfg.liveMaxLatencyDurationCount;
-        s.hls.config.lowLatencyMode = cfg.lowLatencyMode;
-        if (s.hls.liveSyncPosition != null) {
-          const target = s.hls.liveSyncPosition;
-          if (Math.abs(s.audio.currentTime - target) > 3) {
-            s.audio.currentTime = target;
-          }
+    // Mutate HLS configs in-place on existing instances — no state update needed
+    for (const s of streamsStateRef.current) {
+      if (!s.hls) continue;
+      s.hls.config.liveSyncDurationCount = cfg.liveSyncDurationCount;
+      s.hls.config.liveMaxLatencyDurationCount = cfg.liveMaxLatencyDurationCount;
+      s.hls.config.lowLatencyMode = cfg.lowLatencyMode;
+      if (s.hls.liveSyncPosition != null) {
+        const target = s.hls.liveSyncPosition;
+        if (Math.abs(s.audio.currentTime - target) > 3) {
+          s.audio.currentTime = target;
         }
       }
-      return prev; // no mutation needed for re-render
-    });
+    }
   }, [delay, hlsConfig]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      setStreams((prev) => {
-        for (const s of prev) {
-          if (s.hls) s.hls.destroy();
-          s.audio.pause();
-          s.audio.remove();
-        }
-        return [];
-      });
+      for (const s of streamsStateRef.current) {
+        if (s.hls) s.hls.destroy();
+        s.audio.pause();
+        s.audio.remove();
+      }
       cancelAnimationFrame(animFrameRef.current);
       if (audioCtxRef.current) audioCtxRef.current.close();
     };
