@@ -14,7 +14,7 @@ import {
 
 /* ---------- DATASET CONFIG ---------- */
 const DATASET_ROOT =
-  "https://huggingface.co/datasets/mvpeav/cbb-sims-2026/resolve/main";
+  "/api/data/cbb-sims-2026"; // same-origin proxy; see server/liveScores.ts
 const SEASON_PREFIX = "2026";
 
 /* ---------- TYPES ---------- */

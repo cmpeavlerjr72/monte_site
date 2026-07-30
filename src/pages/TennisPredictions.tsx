@@ -15,7 +15,7 @@ import {
 } from "recharts";
 
 const DATASET_ROOT =
-  "https://huggingface.co/datasets/mvpeav/tennis-predictions/resolve/main";
+  "/api/data/tennis-predictions"; // same-origin proxy; see server/liveScores.ts
 
 /* -- Types --------------------------------------------------- */
 

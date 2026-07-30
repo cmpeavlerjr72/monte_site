@@ -13,7 +13,7 @@ import {
 // Driver color data in ../utils/nascarData.ts (available if needed for future features)
 
 const DATASET_ROOT =
-  "https://huggingface.co/datasets/mvpeav/nascar-predictions/resolve/main";
+  "/api/data/nascar-predictions"; // same-origin proxy; see server/liveScores.ts
 
 /* ── Series config ────────────────────────────────────────── */
 

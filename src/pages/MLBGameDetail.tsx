@@ -12,7 +12,7 @@ import {
 
 /* ---------- HuggingFace dataset ---------- */
 const DATASET_ROOT =
-  "https://huggingface.co/datasets/mvpeav/mlb-sims-2026/resolve/main";
+  "/api/data/mlb-sims-2026"; // same-origin proxy; see server/liveScores.ts
 const SEASON = "2026";
 
 /* ---------- Types ---------- */
@@ -97,7 +97,7 @@ const MLB_ESPN_IDS: Record<string, number> = {
 };
 function mlbLogoUrl(name: string): string {
   const id = MLB_ESPN_IDS[name.toLowerCase()] ?? 0;
-  return id ? `https://a.espncdn.com/i/teamlogos/mlb/500/${id}.png` : "";
+  return id ? `/logos/mlb/${id}.webp` : "";
 }
 
 /* Split players into away/home using the team mapping */

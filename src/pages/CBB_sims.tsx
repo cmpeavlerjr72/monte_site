@@ -217,7 +217,9 @@ function computeElapsedSecondsCbb(lg: LiveGame): number | undefined {
 }
 
 /** CONFIG */
-const DATASET_ROOT = "https://huggingface.co/datasets/mvpeav/cbb-sims-2026/resolve/main";
+// Served from our own origin (see /api/data in server/liveScores.ts) so the
+// page still loads on networks that block huggingface.co.
+const DATASET_ROOT = "/api/data/cbb-sims-2026";
 const SEASON_PREFIX = "2026"; // e.g., 2026
 
 /* ---------------- utils ---------------- */

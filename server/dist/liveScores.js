@@ -400,6 +400,77 @@ app.get("/api/espn/scoreboard", async (req, res) => {
     }
 });
 // ----------------------------------------------------------------------------
+// Hugging Face dataset pass-through
+//
+// Some school/office networks block huggingface.co outright. Serving the data
+// from our own origin means a visitor who can load the site can always load the
+// data. Repos are allowlisted so this cannot be used as an open relay.
+// ----------------------------------------------------------------------------
+const HF_OWNER = "mvpeav";
+// Frozen archives -> cache forever. Live-season repos -> short TTL.
+const HF_ARCHIVE_REPOS = new Set([
+    "cfb-sims-2025",
+]);
+const HF_LIVE_REPOS = new Set([
+    "cfb-sims-2026",
+    "cfb-playoff-compacts-2026",
+    "cbb-sims-2026",
+    "mlb-sims-2026",
+    "nascar-predictions",
+    "tennis-predictions",
+]);
+app.get("/api/data/:repo/*", async (req, res) => {
+    const repo = String(req.params.repo || "");
+    const isArchive = HF_ARCHIVE_REPOS.has(repo);
+    if (!isArchive && !HF_LIVE_REPOS.has(repo)) {
+        return res.status(404).json({ error: "unknown_dataset", repo });
+    }
+    // Everything after /api/data/<repo>/ is the path inside the dataset.
+    const rest = req.params[0] || "";
+    if (rest.includes("..") || rest.startsWith("/")) {
+        return res.status(400).json({ error: "bad_path" });
+    }
+    const upstream = `https://huggingface.co/datasets/${HF_OWNER}/${repo}/resolve/main/` +
+        rest.split("/").map(encodeURIComponent).join("/");
+    try {
+        const headers = { "user-agent": "monte-site-proxy" };
+        // Let the browser revalidate instead of re-downloading unchanged files.
+        const inm = req.headers["if-none-match"];
+        if (typeof inm === "string")
+            headers["if-none-match"] = inm;
+        const r = await fetch(upstream, { headers, redirect: "follow" });
+        if (r.status === 304)
+            return res.status(304).end();
+        if (!r.ok) {
+            return res
+                .status(r.status === 404 ? 404 : 502)
+                .json({ error: "dataset_upstream_error", status: r.status, path: rest });
+        }
+        const ct = r.headers.get("content-type");
+        if (ct)
+            res.set("Content-Type", ct);
+        const etag = r.headers.get("etag");
+        if (etag)
+            res.set("ETag", etag);
+        // Deliberately not forwarding Content-Length/Content-Encoding: the Hub
+        // gzips these CSVs and node-fetch decompresses them, so the upstream length
+        // describes bytes we are no longer sending. Let compression() re-encode.
+        res.set("Cache-Control", isArchive
+            ? "public, max-age=31536000, immutable"
+            : "public, max-age=300, stale-while-revalidate=600");
+        if (r.body) {
+            r.body.pipe(res);
+        }
+        else {
+            res.end();
+        }
+    }
+    catch (err) {
+        console.error(`GET /api/data/${repo}/${rest} error:`, err?.message || err);
+        res.status(502).json({ error: "dataset_upstream_error" });
+    }
+});
+// ----------------------------------------------------------------------------
 // Static React build
 // ----------------------------------------------------------------------------
 const __filename = fileURLToPath(import.meta.url);

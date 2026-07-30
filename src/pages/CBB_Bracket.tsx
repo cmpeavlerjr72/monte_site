@@ -5,7 +5,7 @@ import { espnLogoUrl, getEspnTeamsMap, lookupEspnLogo } from "../utils/espnLogos
 /** CONFIG */
 
 const DATASET_ROOT =
-  "https://huggingface.co/datasets/mvpeav/cbb-sims-2026/resolve/main";
+  "/api/data/cbb-sims-2026"; // same-origin proxy; see server/liveScores.ts
 const SEASON = 2026;
 
 // ---- snapshots (date + week) ----

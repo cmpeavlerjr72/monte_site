@@ -64,7 +64,7 @@ const TEAM: Record<TeamKey, TeamInfo> = {
 };
 
 function logoUrl(espnId: number) {
-  return `https://a.espncdn.com/i/teamlogos/ncaa/500/${espnId}.png`;
+  return `/logos/${espnId}.webp`;
 }
 
 // Match your build_playoff_compact.py slug logic :contentReference[oaicite:2]{index=2}
@@ -1034,8 +1034,10 @@ export default function Bracket() {
   // HF compacts location (matches hf_publish_playoff_compacts.py) :contentReference[oaicite:4]{index=4}
   const SEASON = 2026;
   const WEEK = 15;
-  const REPO_ID = "mvpeav/cfb-playoff-compacts-2026";
-  const baseUrl = `https://huggingface.co/datasets/${REPO_ID}/resolve/main/${SEASON}/playoffs/week${WEEK}/compact`;
+  // Same-origin proxy (see /api/data in server/liveScores.ts) so the bracket
+  // still loads on networks that block huggingface.co.
+  const REPO_ID = "cfb-playoff-compacts-2026";
+  const baseUrl = `/api/data/${REPO_ID}/${SEASON}/playoffs/week${WEEK}/compact`;
 
   // picks: matchId -> winner team
   const [picks, setPicks] = useState<Partial<Record<MatchId, TeamKey>>>({});

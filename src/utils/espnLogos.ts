@@ -1,12 +1,28 @@
-// Deterministic ESPN CDN URL from a known team ID
+// Logos are self-hosted under /logos so the site renders on networks that block
+// espncdn.com. Regenerate with scripts/fetch_logos.py when teams change.
 export function espnLogoUrl(espnId: string | number | null | undefined): string | undefined {
   if (espnId == null || espnId === "") return undefined;
-  return `https://a.espncdn.com/i/teamlogos/ncaa/500/${espnId}.png`;
+  return `/logos/${espnId}.webp`;
 }
 
 export function espnLogoDarkUrl(espnId: string | number | null | undefined): string | undefined {
   if (espnId == null || espnId === "") return undefined;
-  return `https://a.espncdn.com/i/teamlogos/ncaa/500-dark/${espnId}.png`;
+  return `/logos/${espnId}-dark.webp`;
+}
+
+// Rewrite a baked-in ESPN CDN logo URL (e.g. from team_info.csv) to its local
+// copy. Anything we don't recognize is returned unchanged, upgraded to https.
+const ESPN_LOGO_RE = /teamlogos\/ncaa\/(500(?:-dark)?)\/(\d+)\.png/i;
+
+export function localizeLogoUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  let s = url.trim();
+  if (!s) return undefined;
+  const m = s.match(ESPN_LOGO_RE);
+  if (m) return `/logos/${m[2]}${m[1].toLowerCase() === "500-dark" ? "-dark" : ""}.webp`;
+  if (s.startsWith("//")) s = "https:" + s;
+  if (s.startsWith("http://")) s = "https://" + s.slice(7);
+  return s;
 }
 
 // Cached ESPN teams lookup — fetched once, shared across components
@@ -155,16 +171,17 @@ export async function getEspnTeamsMap(): Promise<Map<string, EspnTeamEntry>> {
   fetchPromise = (async () => {
     const map = new Map<string, EspnTeamEntry>();
     try {
-      const url = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/teams?limit=500";
-      const res = await fetch(url);
+      // Snapshot of ESPN's teams list, served from our own origin. Calling
+      // site.api.espn.com directly fails on networks that filter ESPN.
+      const res = await fetch("/logos/teams-cbb.json");
       if (!res.ok) return map;
       const json = await res.json();
-      const teams = json?.sports?.[0]?.leagues?.[0]?.teams ?? json?.teams ?? [];
+      const teams = json?.teams ?? [];
       for (const entry of teams) {
         const t = entry?.team ?? entry;
         const id = String(t?.id ?? "");
-        const logo = t?.logos?.[0]?.href ?? espnLogoUrl(id) ?? "";
-        const darkLogo = t?.logos?.[1]?.href ?? espnLogoDarkUrl(id);
+        const logo = t?.logo ?? espnLogoUrl(id) ?? "";
+        const darkLogo = t?.darkLogo ?? espnLogoDarkUrl(id);
         const item: EspnTeamEntry = { id, logo, darkLogo };
 
         // Index by every name variant ESPN provides

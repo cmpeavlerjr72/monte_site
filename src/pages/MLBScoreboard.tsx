@@ -15,7 +15,7 @@ import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 
 /* ---------- HuggingFace dataset ---------- */
 const DATASET_ROOT =
-  "https://huggingface.co/datasets/mvpeav/mlb-sims-2026/resolve/main";
+  "/api/data/mlb-sims-2026"; // same-origin proxy; see server/liveScores.ts
 const SEASON_PREFIX = "2026";
 
 /* ---------- Types ---------- */
@@ -112,7 +112,7 @@ function espnDateStr(iso: string): string {
 function mlbLogoUrl(teamName: string): string {
   const id = MLB_ESPN_IDS[teamName.toLowerCase()] ?? 0;
   if (!id) return "";
-  return `https://a.espncdn.com/i/teamlogos/mlb/500/${id}.png`;
+  return `/logos/mlb/${id}.webp`;
 }
 
 /* ESPN team ID lookup */
