@@ -6,47 +6,14 @@ import {
   CartesianGrid, ReferenceLine, Cell,
 } from "recharts";
 import { getTeamColors } from "../utils/teamColors";
+import {
+  getCatalog, playerFileForPair,
+  type CfbCatalog, type FileItem,
+} from "../lib/cfbData";
 
 /* --------------------------------------------------------------------------
-   CSV discovery (URL-imports only → keeps bundles small & avoids iOS memory)
+   Sim data is fetched at runtime from the archived dataset (see lib/cfbData).
 ----------------------------------------------------------------------------*/
-// Scores (team sims)
-const S_URL = Object.assign(
-  {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: true })
-) as Record<string, string>;
-
-// Players
-const P_URL = Object.assign(
-  {},
-  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: true })
-) as Record<string, string>;
-
-type FileInfo = { path: string; week: string; file: string; url?: string };
-
-const normSlashes = (p: string) => p.replace(/\\/g, "/");
-const weekFromPath = (p: string) =>
-  normSlashes(p).match(/\/(week[^/]+)\//i)?.[1].toLowerCase()
-  ?? normSlashes(p).match(/\/data\/([^/]+)\//i)?.[1].toLowerCase()
-  ?? "root";
-
-function buildFiles(urls: Record<string, string>): FileInfo[] {
-  const paths = Object.keys(urls);
-  return paths.map(p => ({
-    path: p,
-    week: weekFromPath(p),
-    file: p.split("/").pop() || p,
-    url: urls[p],
-  })).sort((a,b)=>a.file.localeCompare(b.file));
-}
-const scoreFilesAll  = buildFiles(S_URL);
-const playerFilesAll = buildFiles(P_URL);
 
 /* --------------------------------------------------------------------------
    Safari-safe CSV loader (fetch as TEXT, then parse; no web workers on iOS)
@@ -199,6 +166,53 @@ const prettyStat = (s: string) => {
   return CANON_LABEL[STAT_SYNONYMS[key] ?? key] ?? s;
 };
 
+/* --------------------- Player sims -> nested lookup --------------------- */
+const PLAYER_META_KEYS = new Set([
+  "team","Team","school","School",
+  "player","Player","name","Name",
+  "opp","Opp",
+  "role","Role","position","Position","pos","Pos",
+  "stat","Stat","metric","Metric","category","Category","value","Value","amount","Amount","val","Val"
+]);
+
+function buildPlayerMap(data: any[]): PlayerMap {
+  const out: PlayerObs[] = [];
+
+  for (const raw of data) {
+    if (!raw) continue;
+    const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
+    const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
+    if (!team || !player) continue;
+
+    // role (explicit or inferred from stat)
+    const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
+
+    // long format
+    const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
+    const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
+    if (statKey != null && valKey != null && isFinite(Number(valKey))) {
+      const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
+      if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
+      continue;
+    }
+
+    // wide format
+    for (const k of Object.keys(raw)) {
+      if (PLAYER_META_KEYS.has(k)) continue;
+      const v = Number(raw[k]); if (!Number.isFinite(v)) continue;
+      const r = roleFromField ?? canonicalRoleFromValueKey(k); if (!r) continue;
+      out.push({ team, player, role: r, stat: k, value: v });
+    }
+  }
+
+  const pmap: PlayerMap = {};
+  for (const o of out) {
+    if (!o.role) continue;
+    ((((pmap[o.team] ||= {})[o.player] ||= {})[o.role] ||= {})[o.stat] ||= []).push(o.value);
+  }
+  return pmap;
+}
+
 /* --------------------- URL helpers (embed + deep links) --------------------- */
 const getSearchParam = (name: string) =>
   typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get(name);
@@ -232,26 +246,35 @@ function NumberSpinner({
    Page
 ============================================================================= */
 export default function GameCenter() {
-  /* -------- Weeks and file indices -------- */
-  const weeks = useMemo(() => {
-    const s = new Set<string>(scoreFilesAll.map(f=>f.week));
-    for (const f of playerFilesAll) s.add(f.week);
-    return Array.from(s).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  /* -------- Dataset catalog -------- */
+  const [catalog, setCatalog] = useState<CfbCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getCatalog()
+      .then((c) => { if (alive) setCatalog(c); })
+      .catch((e) => { if (alive) setCatalogError(String(e?.message ?? e)); });
+    return () => { alive = false; };
   }, []);
 
-  const filesByWeekScores = useMemo(() => {
-    const m:Record<string,FileInfo[]> = {};
-    for (const f of scoreFilesAll) (m[f.week] ||= []).push(f);
-    return m;
-  }, []);
-  const filesByWeekPlayers = useMemo(() => {
-    const m:Record<string,FileInfo[]> = {};
-    for (const f of playerFilesAll) (m[f.week] ||= []).push(f);
-    return m;
-  }, []);
+  const weeks = useMemo(
+    () => (catalog?.weeks ?? []).map((w) => w.legacyKey),
+    [catalog]
+  );
 
-  const [selectedWeek, setSelectedWeek] = useState(weeks[0] ?? "");
-  useEffect(() => { if (URL_WEEK && weeks.includes(URL_WEEK)) setSelectedWeek(URL_WEEK); }, [weeks]);
+  // One bundled score file per week, keyed by the legacy week name.
+  const scoreFileByWeek = useMemo(() => {
+    const m: Record<string, FileItem> = {};
+    for (const f of catalog?.scoreFiles ?? []) m[f.week] = f;
+    return m;
+  }, [catalog]);
+
+  const [selectedWeek, setSelectedWeek] = useState("");
+  useEffect(() => {
+    if (selectedWeek || !weeks.length) return;
+    setSelectedWeek(URL_WEEK && weeks.includes(URL_WEEK) ? URL_WEEK : weeks[0]);
+  }, [weeks, selectedWeek]);
 
   const [loading, setLoading] = useState(false);
 
@@ -262,6 +285,7 @@ export default function GameCenter() {
 
   // Players per role
   const [players, setPlayers] = useState<PlayerMap>({});
+  const [playersLoading, setPlayersLoading] = useState(false);
 
   // Team chart controls
   const [metric, setMetric] = useState<Metric>("spread");
@@ -276,22 +300,23 @@ export default function GameCenter() {
   const [pStat, setPStat] = useState<string>("");
   const [playerLine, setPlayerLine] = useState<string>("");
 
-  /* --------- Load both score + player CSVs for the selected week --------- */
+  /* --------- Load the selected week's score sims (one bundled file) --------- */
   useEffect(() => {
     const ac = new AbortController();
     let alive = true;
 
     async function load() {
+      const bundle = scoreFileByWeek[selectedWeek];
+      if (!bundle) { setGames({}); setSelectedKey(null); return; }
+
       setLoading(true);
       try {
-        // ---- scores ----
-        const sFiles = filesByWeekScores[selectedWeek] ?? [];
-        const scoreArrays = await pAllLimit(sFiles, 3, async (item) => {
-          const data = await parseCsvFromItemSafe<any>(item, undefined, ac.signal);
-          return (data as any[])
+        const data = await parseCsvFromItemSafe<any>(bundle, undefined, ac.signal);
+        const scoreArrays = [
+          (data as any[])
             .filter(r => r && r.team!=null && r.opp!=null && r.pts!=null && r.opp_pts!=null)
-            .map(r => ({ team:String(r.team), opp:String(r.opp), pts:Number(r.pts), opp_pts:Number(r.opp_pts) })) as SimRow[];
-        });
+            .map(r => ({ team:String(r.team), opp:String(r.opp), pts:Number(r.pts), opp_pts:Number(r.opp_pts) })) as SimRow[]
+        ];
 
         const gameMap: GameMap = {};
         for (const rows of scoreArrays) {
@@ -317,58 +342,6 @@ export default function GameCenter() {
         const firstKey = URL_PAIR && gameMap[URL_PAIR] ? URL_PAIR : (Object.keys(gameMap)[0] ?? null);
         setSelectedKey(firstKey);
         setTeamOrder(0);
-
-        // ---- players (per role) ----
-        const pFiles = filesByWeekPlayers[selectedWeek] ?? [];
-        const playerArrays = await pAllLimit(pFiles, 3, async (item) => {
-          const data = await parseCsvFromItemSafe<any>(item, undefined, ac.signal);
-          const out: PlayerObs[] = [];
-          const metaKeys = new Set([
-            "team","Team","school","School",
-            "player","Player","name","Name",
-            "opp","Opp",
-            "role","Role","position","Position","pos","Pos",
-            "stat","Stat","metric","Metric","category","Category","value","Value","amount","Amount","val","Val"
-          ]);
-
-          for (const raw of data as any[]) {
-            if (!raw) continue;
-            const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
-            const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
-            if (!team || !player) continue;
-
-            // role (explicit or inferred from stat)
-            const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
-
-            // long format
-            const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
-            const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
-            if (statKey != null && valKey != null && isFinite(Number(valKey))) {
-              const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
-              if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
-              continue;
-            }
-
-            // wide format
-            for (const k of Object.keys(raw)) {
-              if (metaKeys.has(k)) continue;
-              const v = Number(raw[k]); if (!Number.isFinite(v)) continue;
-              const r = roleFromField ?? canonicalRoleFromValueKey(k); if (!r) continue;
-              out.push({ team, player, role: r, stat: k, value: v });
-            }
-          }
-          return out;
-        });
-
-        const pmap: PlayerMap = {};
-        for (const arr of playerArrays) {
-          for (const o of arr) {
-            if (!o.role) continue;
-            ((((pmap[o.team] ||= {})[o.player] ||= {})[o.role] ||= {})[o.stat] ||= []).push(o.value);
-          }
-        }
-        if (!alive) return;
-        setPlayers(pmap);
       } finally {
         if (alive) setLoading(false);
       }
@@ -376,10 +349,39 @@ export default function GameCenter() {
 
     load();
     return () => { alive = false; ac.abort(); };
-  }, [selectedWeek, filesByWeekScores, filesByWeekPlayers]);
+  }, [selectedWeek, scoreFileByWeek]);
 
   /* -------- When selected game changes, seed player controls -------- */
   const selectedGame = selectedKey ? games[selectedKey] : null;
+
+  /* --------- Player sims for the selected game only ---------
+     A full week of player sims is ~50MB; a single matchup is ~1MB. */
+  useEffect(() => {
+    const ac = new AbortController();
+    let alive = true;
+
+    async function loadPlayers() {
+      setPlayers({});
+      if (!selectedWeek || !selectedGame) return;
+
+      setPlayersLoading(true);
+      try {
+        const item = await playerFileForPair(selectedWeek, selectedGame.teamA, selectedGame.teamB);
+        if (!item || !alive) return;
+        const data = await parseCsvFromItemSafe<any>(item, undefined, ac.signal);
+        if (!alive) return;
+        setPlayers(buildPlayerMap(data as any[]));
+      } catch {
+        if (alive) setPlayers({});
+      } finally {
+        if (alive) setPlayersLoading(false);
+      }
+    }
+
+    loadPlayers();
+    return () => { alive = false; ac.abort(); };
+  }, [selectedWeek, selectedGame?.teamA, selectedGame?.teamB]);
+
   useEffect(() => {
     if (!selectedGame) return;
     // Default to left team initially

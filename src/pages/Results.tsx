@@ -1,68 +1,18 @@
 // src/pages/Results.tsx
 import { useEffect, useMemo, useState } from "react";
 import * as Papa from "papaparse";
+import { getCatalog, type CfbCatalog, type FileItem } from "../lib/cfbData";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   Tooltip, CartesianGrid, ReferenceLine,
 } from "recharts";
-
-/* ---------- Discover sim CSVs (sims under scores/) ---------- */
-const S_RAW = Object.assign(
-  {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "raw", eager: true }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "raw", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "raw", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "raw", eager: true })
-) as Record<string, string>;
-
-const S_URL = Object.assign(
-  {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: true })
-) as Record<string, string>;
-
-/* ---------- Discover week games CSVs (date/time, lines, finals, ML) ---------- */
-const G_RAW = Object.assign(
-  {},
-  import.meta.glob("../data/**/week*_games*.csv", { as: "raw", eager: true }),
-  import.meta.glob("../data/**/games*.csv",       { as: "raw", eager: true }) // optional fallback
-) as Record<string, string>;
-
-const G_URL = Object.assign(
-  {},
-  import.meta.glob("../data/**/week*_games*.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/games*.csv",       { as: "url", eager: true })
-) as Record<string, string>;
 
 /* ---------- Load team & conference dictionary from assets ---------- */
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
 const teamInfoCsvText = Object.values(TEAM_INFO_RAW)[0] || "";
 
 /* ---------- Shared helpers ---------- */
-type FileInfo = { path: string; week: string; file: string; raw?: string; url?: string };
-const normPath = (s: string) => s.replace(/\\/g, "/");
-const weekFromPath = (p: string) =>
-  normPath(p).match(/\/(week[^/]+)\//i)?.[1].toLowerCase() ??
-  normPath(p).match(/\/data\/([^/]+)\//i)?.[1].toLowerCase() ??
-  "root";
-
-function buildFiles(raw: Record<string, string>, urls: Record<string, string>): FileInfo[] {
-  const paths = Array.from(new Set([...Object.keys(raw), ...Object.keys(urls)]));
-  return paths
-    .map((p) => ({
-      path: p,
-      week: weekFromPath(p),
-      file: p.split("/").pop() || p,
-      raw: raw[p],
-      url: urls[p],
-    }))
-    .sort((a, b) => a.file.localeCompare(b.file));
-}
-
-const scoreFilesAll = buildFiles(S_RAW, S_URL);
-const gamesFilesAll = buildFiles(G_RAW, G_URL);
+const EMPTY_FILES: FileItem[] = [];
 
 /* ---------- Local Safari-safe CSV parse + concurrency limiter ---------- */
 const isSafari =
@@ -252,10 +202,24 @@ type EVFilter = "all" | "positive";
 type GameTypeFilter = "all" | "conference" | "nonconference";
 
 export default function Results() {
+  const [catalog, setCatalog] = useState<CfbCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getCatalog()
+      .then((c) => { if (alive) setCatalog(c); })
+      .catch((e) => { if (alive) setCatalogError(String(e?.message ?? e)); });
+    return () => { alive = false; };
+  }, []);
+
+  const scoreFilesAll = catalog?.scoreFiles ?? EMPTY_FILES;
+  const gamesFilesAll = catalog?.gamesFiles ?? EMPTY_FILES;
+
   const weeks = useMemo(() => {
     const s = new Set<string>([...scoreFilesAll, ...gamesFilesAll].map((f) => f.week));
     return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, []);
+  }, [scoreFilesAll, gamesFilesAll]);
 
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<PickRow[]>([]);

@@ -10,6 +10,11 @@ import {
 import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 
 import SupportButton from "../components/SupportButton";
+import { localizeLogoUrl } from "../utils/espnLogos";
+import {
+  getCatalog, playerFileForPair,
+  type CfbCatalog, type FileItem,
+} from "../lib/cfbData";
 
 type LiveGame = {
   id: string;
@@ -78,51 +83,6 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
 //   import.meta.glob("../data/**/scores/*.CSV",     { as: "raw", eager: true }),
 //   import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "raw", eager: true })
 // ) as Record<string, string>;
-
-const RAW = {} as Record<string,string>;
-
-const URLS = Object.assign(
-  {},
-  import.meta.glob("../data/**/scores/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/scores/*.CSV.CSV", { as: "url", eager: true })
-) as Record<string, string>;
-
-/* ---------- discover players CSVs ---------- */
-// const P_RAW = Object.assign(
-//   {},
-//   import.meta.glob("../data/**/players/*.csv",     { as: "raw", eager: true }),
-//   import.meta.glob("../data/**/players/*.csv.csv", { as: "raw", eager: true }),
-//   import.meta.glob("../data/**/players/*.CSV",     { as: "raw", eager: true }),
-//   import.meta.glob("../data/**/players/*.CSV.CSV", { as: "raw", eager: true })
-// ) as Record<string, string>;
-
-const P_RAW = {} as Record<string, string>;
-
-const P_URL = Object.assign(
-  {},
-  import.meta.glob("../data/**/players/*.csv",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.csv.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV",     { as: "url", eager: true }),
-  import.meta.glob("../data/**/players/*.CSV.CSV", { as: "url", eager: true })
-) as Record<string, string>;
-
-/* ---------- discover week games CSVs (date/time, spreads, totals) ---------- */
-// const G_RAW = Object.assign(
-//   {},
-//   import.meta.glob("../data/**/week*_games*.csv", { as: "raw", eager: true }),
-//   import.meta.glob("../data/**/games*.csv",       { as: "raw", eager: true }) // optional fallback
-// ) as Record<string, string>;
-
-const G_RAW = {} as Record<string, string>;
-
-const G_URL = Object.assign(
-  {},
-  import.meta.glob("../data/**/week*_games*.csv", { as: "url", eager: true }),
-  import.meta.glob("../data/**/games*.csv",       { as: "url", eager: true })
-) as Record<string, string>;
-
 
 /* ---------- file helpers ---------- */
 
@@ -211,28 +171,46 @@ function pickNum(row: any, keys: string[]): number | undefined {
   return undefined;
 }
 
-type FileInfo = { path: string; week: string; file: string; raw?: string; url?: string };
-const normPath = (s: string) => s.replace(/\\/g, "/");
-const weekFrom = (p: string) =>
-  normPath(p).match(/\/(week[^/]+)\//i)?.[1].toLowerCase()
-  ?? normPath(p).match(/\/data\/([^/]+)\//i)?.[1].toLowerCase()
-  ?? "root";
+/* ---- Player sims -> nested lookup (team > player > role > stat > values) ---- */
+const PLAYER_META_KEYS = new Set([
+  "team","Team","school","School","player","Player","name","Name",
+  "opp","Opp","role","Role","position","Position","pos","Pos",
+  "stat","Stat","metric","Metric","category","Category",
+  "value","Value","amount","Amount","val","Val",
+]);
 
-function buildFiles(raw: Record<string,string>, urls: Record<string,string>): FileInfo[] {
-  const paths = Array.from(new Set([...Object.keys(raw), ...Object.keys(urls)]));
-  return paths
-    .map((p) => ({
-      path: p,
-      week: weekFrom(p),
-      file: p.split("/").pop() || p,
-      raw: raw[p],
-      url: urls[p],
-    }))
-    .sort((a, b) => a.file.localeCompare(b.file));
+function buildPlayerMap(data: any[]): PlayerMap {
+  const out: PlayerObs[] = [];
+  for (const raw of data) {
+    if (!raw) continue;
+    const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
+    const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
+    if (!team || !player) continue;
+
+    const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
+
+    const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
+    const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
+    if (statKey != null && valKey != null && isFinite(Number(valKey))) {
+      const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
+      if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
+      continue;
+    }
+    for (const k of Object.keys(raw)) {
+      if (PLAYER_META_KEYS.has(k)) continue;
+      const v = Number(raw[k]); if (!Number.isFinite(v)) continue;
+      const r = roleFromField ?? canonicalRoleFromValueKey(k); if (!r) continue;
+      out.push({ team, player, role: r, stat: k, value: v });
+    }
+  }
+
+  const pmap: PlayerMap = {};
+  for (const o of out) {
+    if (!o.role) continue;
+    ((((pmap[o.team] ||= {})[o.player] ||= {})[o.role] ||= {})[o.stat] ||= []).push(o.value);
+  }
+  return pmap;
 }
-const scoreFilesAll = buildFiles(RAW, URLS);
-const gamesFilesAll = buildFiles(G_RAW, G_URL);
-const playerFilesAll = buildFiles(P_RAW, P_URL);
 
 /* --------------------- Team logo & conference lookup --------------------- */
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
@@ -242,20 +220,12 @@ const LOGO_MAP: Record<string, string> = {};
 function normTeamKey(t: string) {
   return t.toLowerCase().replace(/&/g, "and").replace(/\bst\.\b/g, "state").replace(/[^a-z0-9]+/g, "");
 }
-function fixLogoUrl(u?: string) {
-  if (!u) return undefined;
-  let s = u.trim();
-  if (!s) return undefined;
-  if (s.startsWith("//")) s = "https:" + s;
-  if (s.startsWith("http://")) s = "https://" + s.slice(7);
-  return s;
-}
 function firstLogoFromCell(cell?: string) {
   if (!cell) return undefined;
   const parts = String(cell).split(/[|,;\s]+/).filter(Boolean);
   for (const p of parts) {
-    const fixed = fixLogoUrl(p);
-    if (fixed?.startsWith("https://")) return fixed;
+    const fixed = localizeLogoUrl(p);
+    if (fixed?.startsWith("/logos/") || fixed?.startsWith("https://")) return fixed;
   }
   return undefined;
 }
@@ -563,18 +533,44 @@ export default function Scoreboard() {
     [liveMap]
   );
 
-  // derive weeks
-  const weeks = useMemo(() => {
-    const s = new Set<string>([...scoreFilesAll, ...gamesFilesAll, ...playerFilesAll].map((f) => f.week));
-    return Array.from(s).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  /* ---- Dataset catalog (weeks + file URLs, fetched at runtime) ---- */
+  const [catalog, setCatalog] = useState<CfbCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getCatalog()
+      .then((c) => { if (alive) setCatalog(c); })
+      .catch((e) => { if (alive) setCatalogError(String(e?.message ?? e)); });
+    return () => { alive = false; };
   }, []);
 
-  const [selectedWeek, setSelectedWeek] = useState(weeks[0] ?? "");
+  const weeks = useMemo(
+    () => (catalog?.weeks ?? []).map((w) => w.legacyKey),
+    [catalog]
+  );
+
+  const scoreFileByWeek = useMemo(() => {
+    const m: Record<string, FileItem> = {};
+    for (const f of catalog?.scoreFiles ?? []) m[f.week] = f;
+    return m;
+  }, [catalog]);
+
+  const gamesFileByWeek = useMemo(() => {
+    const m: Record<string, FileItem> = {};
+    for (const f of catalog?.gamesFiles ?? []) m[f.week] = f;
+    return m;
+  }, [catalog]);
+
+  const [selectedWeek, setSelectedWeek] = useState("");
+  useEffect(() => {
+    if (!selectedWeek && weeks.length) setSelectedWeek(weeks[0]);
+  }, [weeks, selectedWeek]);
+
   const [loading, setLoading] = useState(false);
 
   const [games, setGames] = useState<GameMap>({});
   const [meta, setMeta]   = useState<GameMetaMap>({});
-  const [players, setPlayers] = useState<PlayerMap>({});
 
   type SortBy = "kickoff" | "spread_conf" | "total_conf";
   const [sortBy, setSortBy] = useState<SortBy>("kickoff");
@@ -625,15 +621,15 @@ export default function Scoreboard() {
   const confOf = (team?: string) => (team ? teamToConf[normTeamKey(team)] ?? teamToConf[normTeamKey(team.replace(/\s+/g,""))] : undefined);
 
   useEffect(() => {
-    if (!selectedWeek) { setGames({}); setMeta({}); setPlayers({}); return; }
+    if (!selectedWeek) { setGames({}); setMeta({}); return; }
 
     async function loadWeek() {
       setLoading(true);
       try {
-        /* ---- sims ---- */
-        const sFiles = scoreFilesAll.filter(f => f.week === selectedWeek);
+        /* ---- sims (one bundled file per week) ---- */
+        const bundle = scoreFileByWeek[selectedWeek];
         const simArrays = await Promise.all(
-          sFiles.map(async (item) => {
+          (bundle ? [bundle] : []).map(async (item) => {
             const rows = await parseCsvFromItemSafe<any>(item);
             return rows
               .filter((r: any) => r && r.team != null && r.opp != null && r.pts != null && r.opp_pts != null)
@@ -666,9 +662,9 @@ export default function Scoreboard() {
         setGames(map);
 
         /* ---- week games (date/time + book lines) ---- */
-        const gFiles = gamesFilesAll.filter(f => f.week === selectedWeek);
+        const gamesFile = gamesFileByWeek[selectedWeek];
         const metaArrays = await Promise.all(
-          gFiles.map((item) => parseCsvFromItemSafe<any>(item))
+          (gamesFile ? [gamesFile] : []).map((item) => parseCsvFromItemSafe<any>(item))
         );
 
         const m: GameMetaMap = {};
@@ -704,59 +700,14 @@ export default function Scoreboard() {
           }
         }
         setMeta(m);
-
-        /* ---- players (per role) ---- */
-        const pFiles = playerFilesAll.filter(f => f.week === selectedWeek);
-        const playerArrays = await Promise.all(
-          pFiles.map(async (item) => {
-            const data = await parseCsvFromItemSafe<any>(item);
-            const out: PlayerObs[] = [];
-            const metaKeys = new Set([
-              "team","Team","school","School","player","Player","name","Name",
-              "opp","Opp","role","Role","position","Position","pos","Pos",
-              "stat","Stat","metric","Metric","category","Category",
-              "value","Value","amount","Amount","val","Val",
-            ]);
-            for (const raw of data) {
-              if (!raw) continue;
-              const team = String(raw.team ?? raw.Team ?? raw.school ?? raw.School ?? "");
-              const player = String(raw.player ?? raw.Player ?? raw.name ?? raw.Name ?? "");
-              if (!team || !player) continue;
-
-              const roleFromField = normalizeRole(raw.role ?? raw.Role ?? raw.position ?? raw.Position ?? raw.pos ?? raw.Pos);
-
-              const statKey = raw.stat ?? raw.Stat ?? raw.metric ?? raw.Metric ?? raw.category ?? raw.Category;
-              const valKey  = raw.value ?? raw.Value ?? raw.amount ?? raw.Amount ?? raw.val ?? raw.Val;
-              if (statKey != null && valKey != null && isFinite(Number(valKey))) {
-                const r = roleFromField ?? canonicalRoleFromValueKey(String(statKey));
-                if (r) out.push({ team, player, role: r, stat: String(statKey), value: Number(valKey) });
-                continue;
-              }
-              for (const k of Object.keys(raw)) {
-                if (metaKeys.has(k)) continue;
-                const v = Number(raw[k]); if (!Number.isFinite(v)) continue;
-                const r = roleFromField ?? canonicalRoleFromValueKey(k); if (!r) continue;
-                out.push({ team, player, role: r, stat: k, value: v });
-              }
-            }
-            return out;
-          })
-        );
-
-        const pmap: PlayerMap = {};
-        for (const arr of playerArrays) {
-          for (const o of arr) {
-            if (!o.role) continue;
-            ((((pmap[o.team] ||= {})[o.player] ||= {})[o.role] ||= {})[o.stat] ||= []).push(o.value);
-          }
-        }
-        setPlayers(pmap);
+        // Player sims are no longer loaded per week (~50MB). Each card fetches
+        // its own matchup on demand when its player panel is opened.
       } finally {
         setLoading(false);
       }
     }
     loadWeek();
-  }, [selectedWeek]);
+  }, [selectedWeek, scoreFileByWeek, gamesFileByWeek]);
 
   /* ---------- cards (join sims with meta, compute picks, sort by kickoff) ---------- */
   const cards: CardGame[] = useMemo(() => {
@@ -1127,7 +1078,7 @@ export default function Scoreboard() {
             key={c.key}
             card={c}
             gdata={games[c.key]}
-            players={players}
+            week={selectedWeek}
             useMean={useMean}
           />
         ))}
@@ -1172,7 +1123,7 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 // }
 
 
-function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gdata: GameData; players: PlayerMap; useMean?: boolean }) {
+function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata: GameData; week: string; useMean?: boolean }) {
   const aColors = getTeamColors(card.teamA);
   const bColors = getTeamColors(card.teamB);
   const aLogo = getTeamLogo(card.teamA);
@@ -1180,6 +1131,32 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
 
   const [showScores, setShowScores] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
+
+  /* Player sims for THIS matchup, fetched the first time the panel is opened. */
+  const [players, setPlayers] = useState<PlayerMap>({});
+  const [playersLoading, setPlayersLoading] = useState(false);
+  const [playersError, setPlayersError] = useState(false);
+
+  useEffect(() => {
+    if (!showPlayers || !week) return;
+    if (playersLoading || playersError || Object.keys(players).length) return;
+
+    let alive = true;
+    setPlayersLoading(true);
+    (async () => {
+      try {
+        const item = await playerFileForPair(week, card.teamA, card.teamB);
+        if (!item) { if (alive) setPlayersError(true); return; }
+        const data = await parseCsvFromItemSafe<any>(item);
+        if (alive) setPlayers(buildPlayerMap(data));
+      } catch {
+        if (alive) setPlayersError(true);
+      } finally {
+        if (alive) setPlayersLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [showPlayers, week, card.teamA, card.teamB]);
 
   /* ----- SCORE PANEL STATE ----- */
   const [metric, setMetric] = useState<Metric>("spread");
