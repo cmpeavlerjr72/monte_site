@@ -42,6 +42,9 @@ import CollegeBaseballGame from "./pages/CollegeBaseballGame";
 import HubHome from "./pages/HubHome";
 import CBBComingSoon from "./pages/CBBComingSoon";
 
+// Hidden pages (no nav entry — direct URL only)
+import TestVisual from "./pages/TestVisual";
+
 
 export default function App() {
   return (
@@ -94,6 +97,9 @@ export default function App() {
           <Route path="/college-baseball" element={<CollegeBaseballScoreboard />} />
           <Route path="/college-baseball/scoreboard" element={<CollegeBaseballScoreboard />} />
           <Route path="/college-baseball/game/:id" element={<CollegeBaseballGame />} />
+
+          {/* Hidden: sim-test scoreboard (direct URL only, no nav link) */}
+          <Route path="/test-visual" element={<TestVisual />} />
 
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />
