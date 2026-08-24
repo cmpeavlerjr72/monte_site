@@ -10,6 +10,13 @@
 // Card ORDER is held fixed across arms — both in the builder and in the sort
 // below, which always keys off the default arm — so flipping between them
 // moves the numbers and nothing else.
+//
+// Player props (2026-08-23): each game also carries hprops/aprops — per
+// player x stat SEED DISTRIBUTIONS (mean/median/p10..p90) plus P(over) at
+// half-point thresholds bracketing the median. The props panel is a second
+// expander alongside the box score, never a replacement for it. When a book
+// line is present (stat.ln, null until a 2026 prop pull exists) the row also
+// shows the market's de-vigged P(over) and the sim's edge at that line.
 
 import { useEffect, useMemo, useState } from "react";
 import { getTeamColors } from "../utils/teamColors";
@@ -17,25 +24,57 @@ import { getEspnTeamsMap, lookupEspnLogo, localizeLogoUrl } from "../utils/espnL
 
 type BoxRow = [string, string, string];
 type TeamBox = { pass_yds: number; rush_yds: number; rows: BoxRow[] };
+type PropLine = {
+  line: number; over_odds: number; under_odds: number | null;
+  p_over_mkt: number; p_over_sim: number; edge: number; src: string;
+};
+type PropStat = {
+  mn: number; md: number; p10: number; p25: number; p75: number; p90: number;
+  sd: number; ov: [number, number][]; ln: PropLine | null;
+};
+type PropRow = { p: string; pos: string; vol: number; s: Record<string, PropStat> };
 type Game = {
   gid?: number;
   date: string; home: string; away: string;
   hs: number; as: number; hw: number;
   spread: number | null; ou: number | null; fpi: number | null;
   hbox: TeamBox; abox: TeamBox;
+  hprops?: PropRow[]; aprops?: PropRow[];
 };
 type RunMeta = {
-  tag: string; label: string; n_games: number;
+  tag: string; label: string; n_games: number; src?: string;
   slope_fpi: number; slope_mkt: number; mae_mkt: number; gt14: number;
   mean_total: number; tot_vs_ou: number; overs: number; n_ou: number;
+  n_props?: number;
+};
+type PropsMeta = {
+  lines: { source: string; n_markets: number } | null;
+  stats: Record<string, string>;
+  filters: Record<string, number>;
 };
 type Payload = {
   meta: {
     tag: string; generated: string; season: number; week: number;
-    n_games: number; runs?: RunMeta[];
+    n_games: number; runs?: RunMeta[]; note?: string; props?: PropsMeta;
   };
   runs?: Record<string, Game[]>;
   games: Game[];
+};
+
+// Stat display order + grouping, mirroring build_test_visual.py's STAT_DEFS.
+const STAT_ORDER = ["pass_yards", "completions", "pass_att", "pass_td", "ints",
+  "rush_yards", "rush_att", "rush_td", "rec_yards", "receptions", "rec_td"];
+const STAT_GROUP: Record<string, "pass" | "rush" | "rec"> = {
+  pass_yards: "pass", completions: "pass", pass_att: "pass",
+  pass_td: "pass", ints: "pass",
+  rush_yards: "rush", rush_att: "rush", rush_td: "rush",
+  rec_yards: "rec", receptions: "rec", rec_td: "rec",
+};
+const FALLBACK_LABEL: Record<string, string> = {
+  pass_yards: "Pass Yds", completions: "Comp", pass_att: "Pass Att",
+  pass_td: "Pass TD", ints: "INT", rush_yards: "Rush Yds",
+  rush_att: "Rush Att", rush_td: "Rush TD", rec_yards: "Rec Yds",
+  receptions: "Rec", rec_td: "Rec TD",
 };
 
 const WIN = "color-mix(in oklab, #16a34a 22%, white)";
@@ -105,11 +144,180 @@ function BoxTable({ name, box }: { name: string; box: TeamBox }) {
   );
 }
 
-function GameCard({ g, other, otherLabel, logos }: {
+// ---- player props ----------------------------------------------------
+
+/** Density ramp on |p − 0.5|: a coin-flip is pale, a near-lock is saturated. */
+function probBg(p: number): string {
+  const w = Math.round(6 + Math.abs(p - 0.5) * 2 * 30);
+  return `color-mix(in oklab, var(--brand) ${w}%, white)`;
+}
+function num(v: number): string {
+  const a = Math.abs(v);
+  return a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2);
+}
+/** Percentile range; negatives get spaces so "-15.3–-8.7" stays readable. */
+function rng(a: number, b: number): string {
+  return a < 0 || b < 0 ? `${num(a)} – ${num(b)}` : `${num(a)}–${num(b)}`;
+}
+/** Sim edge vs the de-vigged book price: green = sim likes the over. */
+function edgeBg(e: number): string {
+  return e > 0.03 ? WIN : e < -0.03 ? LOSS : NEUTRAL;
+}
+
+function StatRow({ stat, d, o, label }: {
+  stat: string; d: PropStat; o?: PropStat; label: string;
+}) {
+  // Chip lines are pinned to the default arm by the builder, so the other
+  // run's probability at index i is priced at the same number — but verify
+  // the line before showing it rather than trusting position.
+  const oProb = (i: number, t: number): number | null => {
+    const c = o?.ov?.[i];
+    return c && c[0] === t ? c[1] : (o?.ov?.find(x => x[0] === t)?.[1] ?? null);
+  };
+  return (
+    <tr style={{ borderTop: "1px solid var(--border)" }}>
+      <td style={{ padding: "3px 6px 3px 0", fontWeight: 700, whiteSpace: "nowrap" }}>
+        {label}
+      </td>
+      <td style={{ padding: "3px 6px", textAlign: "right", fontWeight: 700 }}>
+        {num(d.mn)}
+        {o && (
+          <div style={{ fontSize: 11, fontWeight: 700,
+                        color: Math.abs(d.mn - o.mn) < 1e-9 ? "var(--muted)"
+                               : d.mn > o.mn ? "#166534" : "#991b1b" }}>
+            {fmt(d.mn - o.mn, Math.abs(d.mn - o.mn) >= 10 ? 1 : 2)}
+          </div>
+        )}
+      </td>
+      <td style={{ padding: "3px 6px", textAlign: "right" }}>{num(d.md)}</td>
+      <td style={{ padding: "3px 6px", textAlign: "right", color: "var(--muted)",
+                   whiteSpace: "nowrap" }}>
+        {rng(d.p25, d.p75)}
+      </td>
+      <td style={{ padding: "3px 6px", textAlign: "right", color: "var(--muted)",
+                   whiteSpace: "nowrap" }}>
+        {rng(d.p10, d.p90)}
+      </td>
+      <td style={{ padding: "3px 0 3px 6px" }}>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {d.ov.map(([t, p], i) => {
+            const op = o ? oProb(i, t) : null;
+            return (
+              <span key={`${stat}-${t}`}
+                title={`P(over ${t}) = ${(p * 100).toFixed(1)}%`
+                       + (op == null ? "" : ` · other run ${(op * 100).toFixed(1)}%`)}
+                style={{ fontSize: 11, padding: "2px 6px", borderRadius: 999,
+                         border: "1px solid var(--border)", background: probBg(p),
+                         whiteSpace: "nowrap" }}>
+                o{t} <b>{(p * 100).toFixed(0)}%</b>
+                {op != null && (
+                  <span style={{ color: "var(--muted)", marginLeft: 3 }}>
+                    ({(op * 100).toFixed(0)})
+                  </span>
+                )}
+              </span>
+            );
+          })}
+          {d.ln && (
+            <span title={`book line ${d.ln.line} (${d.ln.src}); market de-vigged `
+                         + `P(over) ${(d.ln.p_over_mkt * 100).toFixed(1)}%`}
+              style={{ fontSize: 11, padding: "2px 6px", borderRadius: 999,
+                       fontWeight: 700, border: "1px solid var(--border)",
+                       background: edgeBg(d.ln.edge) }}>
+              book {d.ln.line} · mkt {(d.ln.p_over_mkt * 100).toFixed(0)}%
+              {" · sim "}{(d.ln.p_over_sim * 100).toFixed(0)}%
+              {" · edge "}{fmt(d.ln.edge * 100, 1)}
+            </span>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+export function PropsTable({ name, rows, other, otherLabel, labels, group }: {
+  name: string; rows: PropRow[]; other?: PropRow[]; otherLabel?: string;
+  labels: Record<string, string>;
+  group: "all" | "pass" | "rush" | "rec";
+}) {
+  const otherByPlayer = useMemo(() => {
+    const m = new Map<string, PropRow>();
+    for (const r of other ?? []) m.set(r.p, r);
+    return m;
+  }, [other]);
+  if (!rows.length) return (
+    <div style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0" }}>
+      {name}: no prop-volume players
+    </div>
+  );
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontWeight: 800, fontSize: 13, margin: "8px 0 2px" }}>
+        {name}
+        {other && (
+          <span style={{ color: "var(--muted)", fontWeight: 600, marginLeft: 8,
+                         fontSize: 11 }}>
+            small figures = Δ mean and (P%) vs {otherLabel}
+          </span>
+        )}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12,
+                        minWidth: 520 }}>
+          <thead>
+            <tr style={{ color: "var(--muted)", fontSize: 11, textAlign: "right" }}>
+              <th style={{ textAlign: "left", padding: "0 6px 2px 0" }}>Stat</th>
+              <th style={{ padding: "0 6px 2px" }}>Mean</th>
+              <th style={{ padding: "0 6px 2px" }}>Med</th>
+              <th style={{ padding: "0 6px 2px" }}>p25–75</th>
+              <th style={{ padding: "0 6px 2px" }}>p10–90</th>
+              <th style={{ textAlign: "left", padding: "0 0 2px 6px" }}>
+                P(over) by line
+              </th>
+            </tr>
+          </thead>
+          {rows.map(r => {
+            const stats = STAT_ORDER.filter(
+              s => r.s[s] && (group === "all" || STAT_GROUP[s] === group));
+            if (!stats.length) return null;
+            const or = otherByPlayer.get(r.p);
+            return (
+              <tbody key={r.p}>
+                <tr>
+                  <td colSpan={6} style={{ padding: "8px 0 1px", fontWeight: 800 }}>
+                    <span style={{ color: "var(--muted)", fontWeight: 700,
+                                   marginRight: 6 }}>{r.pos}</span>
+                    {r.p}
+                    {other && !or && (
+                      <span style={{ color: "#92400e", fontWeight: 700, fontSize: 11,
+                                     marginLeft: 8 }}>
+                        not in {otherLabel}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+                {stats.map(s => (
+                  <StatRow key={s} stat={s} d={r.s[s]} o={or?.s[s]}
+                           label={labels[s] ?? FALLBACK_LABEL[s] ?? s} />
+                ))}
+              </tbody>
+            );
+          })}
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export function GameCard({ g, other, otherLabel, logos, labels, group }: {
   g: Game; other?: Game; otherLabel?: string;
   logos: Map<string, { id: string; logo: string }>;
+  labels: Record<string, string>;
+  group: "all" | "pass" | "rush" | "rec";
 }) {
   const [open, setOpen] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(false);
+  const hasProps = !!(g.hprops?.length || g.aprops?.length);
   const hc = getTeamColors(g.home)?.primary;
   const ac = getTeamColors(g.away)?.primary;
   const hLogo = localizeLogoUrl(lookupEspnLogo(logos as any, g.home)?.logo);
@@ -140,7 +348,10 @@ function GameCard({ g, other, otherLabel, logos }: {
         border: sideFlip ? "1px solid #f59e0b" : "1px solid var(--border)",
         background: "var(--card)",
         display: "grid", gridTemplateRows: "auto auto auto", gap: 8,
-        contentVisibility: "auto", containIntrinsicSize: "300px" } as any}>
+        // props tables need room: an opened card takes the full grid width
+        gridColumn: propsOpen ? "1 / -1" : undefined,
+        contentVisibility: propsOpen ? "visible" : "auto",
+        containIntrinsicSize: "300px" } as any}>
       <div style={{ fontSize: 12, color: "var(--muted)", display: "flex",
                     justifyContent: "space-between" }}>
         <span>{g.date}</span>
@@ -204,12 +415,34 @@ function GameCard({ g, other, otherLabel, logos }: {
                    color: open ? "var(--brand-contrast)" : "var(--text)" }}>
           {open ? "Hide Box Score" : "Box Score"}
         </button>
+        {hasProps && (
+          <button onClick={() => setPropsOpen(o => !o)}
+            style={{ font: "inherit", fontSize: 13, padding: "6px 10px", borderRadius: 8,
+                     border: "1px solid var(--border)", cursor: "pointer",
+                     background: propsOpen ? "var(--brand)" : "var(--card)",
+                     color: propsOpen ? "var(--brand-contrast)" : "var(--text)" }}>
+            {propsOpen ? "Hide Player Props" : "Player Props"}
+          </button>
+        )}
       </div>
 
       {open && (
         <div className="card" style={{ padding: 10, marginTop: 6 }}>
           <BoxTable name={g.away} box={g.abox} />
           <BoxTable name={g.home} box={g.hbox} />
+        </div>
+      )}
+
+      {propsOpen && (
+        <div className="card" style={{ padding: 10, marginTop: 6 }}>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 2 }}>
+            Seed distribution per player · Mean/Med/percentiles are the sim's
+            own spread · o&lt;line&gt; chips are P(stat &gt; line)
+          </div>
+          <PropsTable name={g.away} rows={g.aprops ?? []} other={other?.aprops}
+                      otherLabel={otherLabel} labels={labels} group={group} />
+          <PropsTable name={g.home} rows={g.hprops ?? []} other={other?.hprops}
+                      otherLabel={otherLabel} labels={labels} group={group} />
         </div>
       )}
     </article>
@@ -227,6 +460,7 @@ function MetricStrip({ r, base }: { r: RunMeta; base?: RunMeta }) {
     ["total − o/u", r.tot_vs_ou.toFixed(2), base ? fmt(r.tot_vs_ou - base.tot_vs_ou, 2) : null],
     ["OVER picks", `${r.overs}/${r.n_ou}`, null],
   ];
+  if (r.n_props) cells.push(["prop players", String(r.n_props), null]);
   return (
     <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12 }}>
       {cells.map(([lab, v, d]) => (
@@ -250,6 +484,7 @@ export default function TestVisual() {
   const [sort, setSort] = useState<"kick" | "spread" | "disagree">("kick");
   const [run, setRun] = useState<string | null>(null);
   const [compare, setCompare] = useState(true);
+  const [group, setGroup] = useState<"all" | "pass" | "rush" | "rec">("all");
 
   useEffect(() => {
     fetch("/data/test-visual.json")
@@ -300,6 +535,9 @@ export default function TestVisual() {
 
   const activeMeta = runsMeta.find(r => r.tag === active);
   const otherMeta = runsMeta.find(r => r.tag === otherTag);
+  const propsMeta = data.meta.props;
+  const labels = propsMeta?.stats ?? FALLBACK_LABEL;
+  const anyProps = games.some(g => g.hprops?.length || g.aprops?.length);
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: 16 }}>
@@ -314,6 +552,19 @@ export default function TestVisual() {
             · scores are sim means · Δ = sim minus market
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
+            {anyProps && (
+              <>
+                <label style={{ fontSize: 12, color: "var(--muted)" }}>Props</label>
+                <select value={group} onChange={e => setGroup(e.target.value as any)}
+                  style={{ padding: "6px 10px", borderRadius: 8,
+                           border: "1px solid #e2e8f0", background: "#fff" }}>
+                  <option value="all">All stats</option>
+                  <option value="pass">Passing</option>
+                  <option value="rush">Rushing</option>
+                  <option value="rec">Receiving</option>
+                </select>
+              </>
+            )}
             <label style={{ fontSize: 12, color: "var(--muted)" }}>Sort by</label>
             <select value={sort} onChange={e => setSort(e.target.value as any)}
               style={{ padding: "6px 10px", borderRadius: 8,
@@ -324,6 +575,32 @@ export default function TestVisual() {
             </select>
           </div>
         </div>
+
+        {/* What this run IS — the guard against reading stale data as new. */}
+        {data.meta.note && (
+          <div style={{ fontSize: 13, fontWeight: 700, padding: "8px 10px",
+                        borderRadius: 8, border: "1px solid #f59e0b",
+                        background: "color-mix(in oklab, #f59e0b 16%, white)",
+                        color: "#7c2d12" }}>
+            {data.meta.note}
+          </div>
+        )}
+        {runsMeta.length === 1 && (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            Run <b style={{ color: "var(--text)" }}>{runsMeta[0].label}</b>
+            {runsMeta[0].src ? ` · ${runsMeta[0].src}` : ""}
+          </div>
+        )}
+        {anyProps && (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            Player props: {propsMeta?.lines
+              ? `book lines from ${propsMeta.lines.source} `
+                + `(${propsMeta.lines.n_markets.toLocaleString()} markets) — `
+                + "chips show market P(over) and the sim's edge"
+              : "no 2026 book lines available — distribution-only view "
+                + "(P(over) at sim-chosen half-point lines)"}
+          </div>
+        )}
 
         {runsMeta.length > 1 && (
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -358,7 +635,7 @@ export default function TestVisual() {
         {games.map((g, i) => (
           <GameCard key={g.gid ?? i} g={g} logos={logos}
                     other={g.gid != null ? otherByGid.get(g.gid) : undefined}
-                    otherLabel={otherLabel} />
+                    otherLabel={otherLabel} labels={labels} group={group} />
         ))}
       </div>
     </div>
