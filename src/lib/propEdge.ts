@@ -67,6 +67,12 @@ export function propEdge(
   if (!pmf || !pmf.size) return null;
   if (!(row.fair_over > 0 && row.fair_over < 1)) return null;
 
+  // Defensive zero-stat filter. A player the sim never gives this stat to has
+  // all PMF mass at 0, so any over line reads as a ~100% under "edge" — the
+  // King Miller case. The publisher is dropping these at the source; the site
+  // must not surface one from a stale or hand-edited file either.
+  if (pmfPOver(pmf, 0) === 0) return null;
+
   const simOver = pmfPOver(pmf, row.line);
   const side: PropSide = simOver > row.fair_over ? "over" : "under";
 

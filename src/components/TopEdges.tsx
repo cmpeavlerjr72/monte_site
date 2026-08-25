@@ -1,22 +1,19 @@
 // src/components/TopEdges.tsx
 //
-// The slate's biggest edges, in three lists: game lines, everything merged,
-// and player props.
+// The slate's biggest edges, in two tables: game lines and player props.
 //
-// All three rank by SIGNED edge — "where does the sim like a bet more than the
+// Both rank by SIGNED edge — "where does the sim like a bet more than the
 // market" — and every row is a real, placeable bet: the market's own line, one
 // side of it, both sources' price for that exact bet.
 //
-// One asymmetry worth knowing when reading the OVERALL column: a prop's side
-// is CHOSEN as whichever way the sim leans, so prop edges are non-negative by
-// construction, while a game edge is pinned to the book's line and can be
-// negative. Props therefore crowd the merged list. That is a property of the
-// definitions, not a bug.
+// Logo rule: a win or spread row is a bet ON one team, so it badges that team
+// alone; a total is a bet on the game, so it shows both. Anything else would
+// imply a side the row does not take.
 
 import { useMemo } from "react";
 import {
-  rankEdges, rankProps, rankOverall, pricedRowCount, hoursSince,
-  type SlateScan, type EdgeEntry, type OverallEntry,
+  rankEdges, rankProps, pricedRowCount, hoursSince,
+  type SlateScan, type EdgeEntry,
 } from "../lib/edges";
 import { americanOdds, pctText } from "../lib/marketEdge";
 import { propLabel, type PropEdge } from "../lib/propEdge";
@@ -30,7 +27,7 @@ type Props = {
   onClose: () => void;
 };
 
-/** Overlapped pair for a game, single badge for a player. */
+/** One badge per team; an overlapped pair when a row covers both. */
 function Logos({ teams, size = 18 }: { teams: string[]; size?: number }) {
   const found = teams.map((t) => getTeamLogo(t)).filter(Boolean) as string[];
   if (!found.length) return <span style={{ width: size + 8, flexShrink: 0 }} aria-hidden />;
@@ -69,7 +66,7 @@ function Column({
       <div className="edge-col__body">
         {loading
           ? <div style={{ display: "grid", gap: 5 }}>
-              {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} height={30} radius={7} />)}
+              {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} height={30} radius={7} />)}
             </div>
           : children}
       </div>
@@ -79,21 +76,21 @@ function Column({
 }
 
 /* ------------------------------- game rows -------------------------------- */
-function GameRow({ e, rank, onPick, tag }: {
-  e: EdgeEntry; rank: number; onPick: (slug: string) => void; tag?: boolean;
+function GameRow({ e, rank, onPick }: {
+  e: EdgeEntry; rank: number; onPick: (slug: string) => void;
 }) {
+  // A total is a bet on the game (both logos); win/spread take one side.
+  const teams = e.row.sideTeam ? [e.row.sideTeam] : [e.teamB, e.teamA];
   return (
     <button type="button" className="edge-row" onClick={() => onPick(e.slug)}
       title={`Go to ${e.teamB} @ ${e.teamA}`}>
       <span className="edge-row__rank">{rank}</span>
-      <Logos teams={[e.teamB, e.teamA]} />
+      <Logos teams={teams} />
       <span className="edge-row__main">
-        <span className="edge-row__t1">
-          {tag && <span className="edge-tag" data-kind="game">LINE</span>}
-          {e.row.market}
-        </span>
+        <span className="edge-row__t1">{e.row.market}</span>
         <span className="edge-row__t2">
           {shortTeam(e.teamB)} @ {shortTeam(e.teamA)}
+          {e.row.approxNote ? ` · ${e.row.approxNote}` : ""}
         </span>
       </span>
       <span className="edge-row__num">
@@ -108,8 +105,8 @@ function GameRow({ e, rank, onPick, tag }: {
 }
 
 /* ------------------------------- prop rows -------------------------------- */
-function PropRow({ p, rank, onPick, tag }: {
-  p: PropEdge; rank: number; onPick: (slug: string) => void; tag?: boolean;
+function PropRow({ p, rank, onPick }: {
+  p: PropEdge; rank: number; onPick: (slug: string) => void;
 }) {
   return (
     <button type="button" className="edge-row" onClick={() => onPick(p.slug)}
@@ -118,7 +115,6 @@ function PropRow({ p, rank, onPick, tag }: {
       <Logos teams={[p.playerTeam]} />
       <span className="edge-row__main">
         <span className="edge-row__t1">
-          {tag && <span className="edge-tag" data-kind="prop">PROP</span>}
           {propLabel(p)}
           {p.flagged && (
             <span
@@ -130,8 +126,9 @@ function PropRow({ p, rank, onPick, tag }: {
           )}
         </span>
         <span className="edge-row__t2">
+          {/* The book is named once in the column footer, not per row. */}
           {p.price !== undefined
-            ? <>{p.price > 0 ? `+${p.price}` : p.price}{p.book ? ` · ${p.book}` : ""}</>
+            ? `${p.price > 0 ? "+" : ""}${p.price}`
             : shortTeam(p.playerTeam)}
         </span>
       </span>
@@ -149,23 +146,27 @@ function PropRow({ p, rank, onPick, tag }: {
 export default function TopEdges({ scan, loading, onPick, onClose }: Props) {
   const games = useMemo(() => (scan ? rankEdges(scan.byGame, 10) : []), [scan]);
   const props = useMemo(() => (scan ? rankProps(scan.props, 10) : []), [scan]);
-  const overall = useMemo(
-    () => (scan ? rankOverall(scan.byGame, scan.props, 10) : []),
-    [scan]
-  );
   const counts = useMemo(() => (scan ? pricedRowCount(scan.byGame) : null), [scan]);
 
-  /** Props footer: missing file, staleness, or a short count. */
+  /** Props footer: which book, how old, and whether the list came up short. */
   const propsFooter = useMemo(() => {
     if (!scan) return null;
     if (scan.propsStatus === "missing") return "Props odds not published for this week yet.";
     if (scan.propsStatus === "error") return "Props odds unavailable right now.";
-    const age = hoursSince(scan.propsUpdated);
-    const stale = age !== null && age > 36 && scan.propsUpdated
-      ? `Odds as of ${new Date(scan.propsUpdated).toLocaleDateString("en-US", { month: "short", day: "numeric" })}.`
+
+    const when = scan.propsUpdated
+      ? new Date(scan.propsUpdated).toLocaleDateString("en-US", { month: "short", day: "numeric" })
       : null;
-    const short = props.length < 10 ? `Only ${props.length} prop edge${props.length === 1 ? "" : "s"} priced.` : null;
-    return [short, stale].filter(Boolean).join(" ") || null;
+    const age = hoursSince(scan.propsUpdated);
+    const parts: string[] = [];
+
+    if (scan.propsBook) parts.push(`odds: ${scan.propsBook}${when ? `, as of ${when}` : ""}`);
+    else if (when) parts.push(`odds as of ${when}`);
+
+    // Anything older than a day and a half is worth calling out explicitly.
+    if (age !== null && age > 36) parts.push("(stale)");
+    if (props.length < 10) parts.push(`only ${props.length} prop edge${props.length === 1 ? "" : "s"} priced`);
+    return parts.join(" · ") || null;
   }, [scan, props.length]);
 
   const gamesFooter = counts && counts.priced < counts.total
@@ -195,18 +196,6 @@ export default function TopEdges({ scan, loading, onPick, onClose }: Props) {
                 <GameRow key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1} onPick={onPick} />
               ))
             : <div className="edge-col__empty">No game-line edges could be priced.</div>}
-        </Column>
-
-        <Column title="Overall" count={overall.length ? `${overall.length}` : undefined}
-          loading={loading}
-          footer={scan?.propsStatus !== "ok" ? "Game lines only until props publish." : null}>
-          {overall.length
-            ? overall.map((o: OverallEntry, i) =>
-                o.kind === "game"
-                  ? <GameRow key={`o-g-${o.game.slug}:${o.game.row.key}`} e={o.game} rank={i + 1} onPick={onPick} tag />
-                  : <PropRow key={`o-p-${o.prop.slug}:${o.prop.player}:${o.prop.stat}`} p={o.prop} rank={i + 1} onPick={onPick} tag />
-              )
-            : <div className="edge-col__empty">Nothing priced yet.</div>}
         </Column>
 
         <Column title="Player props" count={props.length ? `${props.length}` : undefined}

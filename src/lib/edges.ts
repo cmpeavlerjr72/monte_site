@@ -42,6 +42,8 @@ export type SlateScan = {
   propsStatus: "ok" | "missing" | "error";
   /** props_odds.json `updated`, for the staleness note. */
   propsUpdated: string | null;
+  /** Single-book exports name the book once; shown in the column footer. */
+  propsBook: string | null;
 };
 
 export type GameEdges = {
@@ -150,7 +152,11 @@ export async function ensureSlateEdges(
     })
   );
 
-  return { byGame: out, props, propsStatus, propsUpdated: propsOdds?.updated ?? null };
+  return {
+    byGame: out, props, propsStatus,
+    propsUpdated: propsOdds?.updated ?? null,
+    propsBook: propsOdds?.book ?? null,
+  };
 }
 
 /**
@@ -190,26 +196,6 @@ export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
   return [...props].sort((a, b) => b.edge - a.edge).slice(0, limit);
 }
 
-/** One row of the merged "overall" list: a game market or a player prop. */
-export type OverallEntry =
-  | { kind: "game"; edge: number; game: EdgeEntry }
-  | { kind: "prop"; edge: number; prop: PropEdge };
-
-/** Both pools merged and ranked by signed edge descending. */
-export function rankOverall(
-  edges: Map<string, GameEdges>,
-  props: PropEdge[],
-  limit = 10
-): OverallEntry[] {
-  const all: OverallEntry[] = [
-    ...rankEdges(edges, Number.MAX_SAFE_INTEGER).map(
-      (g): OverallEntry => ({ kind: "game", edge: g.edge, game: g })
-    ),
-    ...props.map((p): OverallEntry => ({ kind: "prop", edge: p.edge, prop: p })),
-  ];
-  all.sort((a, b) => b.edge - a.edge);
-  return all.slice(0, limit);
-}
 
 /** Hours since the props file was published, for the staleness note. */
 export function hoursSince(iso: string | null): number | null {

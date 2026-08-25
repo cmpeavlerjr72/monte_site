@@ -13,6 +13,14 @@ export type MarketRow = {
   simP: number | null;
   mktP: number | null;
   approxNote?: string;
+  /**
+   * The team whose side this row takes, for the row's logo.
+   *
+   * Win and spread rows are a bet ON one team, so they badge that team alone.
+   * A total is a bet on the GAME, so it stays undefined and callers show both
+   * logos — otherwise a "Total u49.5" row would imply a side it does not take.
+   */
+  sideTeam?: string;
 };
 
 export const pctText = (p: number) => `${(p * 100).toFixed(0)}%`;
@@ -64,7 +72,7 @@ export function buildMarketRows({
       const team = homeFav ? teamA : teamB;
       const simP = homeFav ? pHome : 1 - pHome;
       const mkt = homeFav ? kalshi?.winner.teamA_price : kalshi?.winner.teamB_price;
-      out.push({ key: "win", market: `Win · ${team}`, simP, mktP: mkt ?? null });
+      out.push({ key: "win", market: `Win · ${team}`, simP, mktP: mkt ?? null, sideTeam: team });
     }
 
     /* ---- SPREAD: anchored to the book's line ---- */
@@ -75,8 +83,8 @@ export function buildMarketRows({
       // Which side does the sim's median margin land on?
       const simLeansHome = (simMargin as number) > needed;
       const side = simLeansHome
-        ? { label: `${teamA} ${signedNum(L)}`, simP: pHomeCover }
-        : { label: `${teamB} ${signedNum(-L)}`, simP: 1 - pHomeCover };
+        ? { label: `${teamA} ${signedNum(L)}`, simP: pHomeCover, team: teamA }
+        : { label: `${teamB} ${signedNum(-L)}`, simP: 1 - pHomeCover, team: teamB };
 
       const match = rungAt(kalshi?.spread_ladder, L);
       let mktP: number | null = null;
@@ -86,7 +94,7 @@ export function buildMarketRows({
         mktP = simLeansHome ? match.rung.yes_price : 1 - match.rung.yes_price;
         if (match.approx) approxNote = `@Kalshi ${signedNum(match.rung.line)}`;
       }
-      out.push({ key: "spread", market: side.label, simP: side.simP, mktP, approxNote });
+      out.push({ key: "spread", market: side.label, simP: side.simP, mktP, approxNote, sideTeam: side.team });
     }
 
     /* ---- TOTAL: anchored to the book's line ---- */

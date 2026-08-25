@@ -560,6 +560,8 @@ export type PropOddsRow = {
 export type PropsOdds = {
   updated: string | null;
   source: string | null;
+  /** Single-book exports name the book once at the top level. */
+  book: string | null;
   byGame: Map<string, PropOddsRow[]>;
 };
 
@@ -607,12 +609,20 @@ export async function getPropsOdds(
   const games = raw?.games ?? {};
   for (const slug of Object.keys(games)) {
     const rows: PropOddsRow[] = [];
+    // The export is moving to single-book (one row per player+stat). While both
+    // shapes are in flight, keep the FIRST row per (player, stat) as listed.
+    // Picking the most extreme instead would be selection bias — we would be
+    // choosing the line that flatters the sim.
+    const seen = new Set<string>();
     for (const p of games[slug]?.props ?? []) {
       const player = String(p?.player ?? "").trim();
       const stat = String(p?.stat ?? "").trim();
       const line = num(p?.line);
       const fair = num(p?.fair_over);
       if (!player || !stat || line === undefined || fair === undefined) continue;
+      const dedupeKey = `${player}|${stat}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
       rows.push({
         player, stat, line,
         fair_over: fair,
@@ -630,6 +640,7 @@ export async function getPropsOdds(
   return {
     updated: raw?.updated != null ? String(raw.updated) : null,
     source: raw?.source != null ? String(raw.source) : null,
+    book: raw?.book != null ? String(raw.book) : null,
     byGame,
   };
 }
