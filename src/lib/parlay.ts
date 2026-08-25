@@ -101,7 +101,8 @@ export type LegSpec =
   | { kind: "spread"; team: TeamRef; line: number }
   | { kind: "total"; side: Side; line: number }
   | { kind: "teamTotal"; team: TeamRef; side: Side; line: number }
-  | { kind: "prop"; player: string; stat: string; side: Side; line: number };
+  /** playerTeam is display-only (the slip's logo); predicates ignore it. */
+  | { kind: "prop"; player: string; stat: string; side: Side; line: number; playerTeam?: string };
 
 export type Leg = {
   id: string;
@@ -136,6 +137,22 @@ export const statLabel = (k: string) =>
 
 /** Lines are half-points in MVP so no leg can push. */
 export const snapHalf = (x: number): number => Math.round(x - 0.5) + 0.5;
+
+/**
+ * Teams to badge a leg with. Total legs involve both sides, so they get both
+ * logos; everything else resolves to one team.
+ */
+export function legTeams(spec: LegSpec, teamA: string, teamB: string): string[] {
+  switch (spec.kind) {
+    case "spread":
+    case "teamTotal":
+      return [spec.team === "A" ? teamA : teamB];
+    case "total":
+      return [teamB, teamA];
+    case "prop":
+      return spec.playerTeam ? [spec.playerTeam] : [];
+  }
+}
 
 export function legLabel(spec: LegSpec, teamA: string, teamB: string): string {
   const t = (r: TeamRef) => (r === "A" ? teamA : teamB);

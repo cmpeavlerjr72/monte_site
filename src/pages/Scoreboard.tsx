@@ -13,6 +13,7 @@ import SupportButton from "../components/SupportButton";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { Skeleton, SkeletonCard, SkeletonChart } from "../components/Skeleton";
 import { useThemeMode, useDensity, type Density } from "../lib/usePrefs";
+import MarketEdge from "../components/MarketEdge";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
   getCatalog, playerFileForPair, resolveLatestSeason, latestWeek,
@@ -227,34 +228,10 @@ function buildPlayerMap(data: any[]): PlayerMap {
 }
 
 /* --------------------- Team logo & conference lookup --------------------- */
+import { getTeamLogo, normTeamKey } from "../utils/teamLogo";
+
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
 const teamInfoRaw = Object.values(TEAM_INFO_RAW)[0] ?? "";
-const LOGO_MAP: Record<string, string> = {};
-
-function normTeamKey(t: string) {
-  return t.toLowerCase().replace(/&/g, "and").replace(/\bst\.\b/g, "state").replace(/[^a-z0-9]+/g, "");
-}
-function firstLogoFromCell(cell?: string) {
-  if (!cell) return undefined;
-  const parts = String(cell).split(/[|,;\s]+/).filter(Boolean);
-  for (const p of parts) {
-    const fixed = localizeLogoUrl(p);
-    if (fixed?.startsWith("/logos/") || fixed?.startsWith("https://")) return fixed;
-  }
-  return undefined;
-}
-if (teamInfoRaw) {
-  const parsed = Papa.parse(teamInfoRaw, { header: true, skipEmptyLines: true });
-  for (const row of (parsed.data as any[])) {
-    if (!row) continue;
-    const name = row.Team ?? row.team ?? row.School ?? row.school ?? row.Name ?? row.name;
-    const key = name ? normTeamKey(String(name)) : "";
-    if (!key) continue;
-    const logo = firstLogoFromCell(row.Logos ?? row.logo ?? row.Logo ?? row.logos);
-    if (logo) LOGO_MAP[key] = logo;
-  }
-}
-function getTeamLogo(name: string) { return LOGO_MAP[normTeamKey(name)]; }
 
 /* --------------------- types & helpers --------------------- */
 
@@ -1746,6 +1723,8 @@ function ScoreboardPage() {
                 onToggle={(kind) => togglePanel(c.key, kind)}
                 weekLabel={weekLabel}
                 condensed={condensed}
+                season={season}
+                onAddLeg={() => togglePanel(c.key, "picker")}
               />
               {openPanel && idx === rowEnd && openCard && (
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -1819,7 +1798,7 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 
 export function GameCard({
   card, gdata, useMean = false, kalshi, parlayOpen, openKind, onToggle,
-  weekLabel, condensed = false,
+  weekLabel, condensed = false, onAddLeg, season,
 }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
@@ -1835,6 +1814,9 @@ export function GameCard({
   /** Real week label, replacing the hardcoded "week" placeholder. */
   weekLabel: string;
   condensed?: boolean;
+  /** Parlay leg picker trigger, now hosted on the header line. */
+  onAddLeg?: () => void;
+  season: Season;
 }) {
   const jsonRow = card.jsonRow;
   const csvCard = !jsonRow;
@@ -1847,14 +1829,6 @@ export function GameCard({
   const bLogo = getTeamLogo(card.teamB);
 
   const expanded = openKind !== null;
-
-  // Mixed against var(--card), never literal white: a pill blended with white
-  // is invisible, and its inherited text unreadable, on a dark card.
-  const pillBg = (result?: "win" | "loss" | "push") => {
-    if (result == "win") return "color-mix(in oklab, var(--pos) 22%, var(--card))";
-    if (result == "loss") return "color-mix(in oklab, var(--neg) 22%, var(--card))";
-    return "color-mix(in oklab, var(--brand) 12%, var(--card))";
-  };
 
   const tabBtn = (kind: PanelKind, label: string, accent = false) => (
     <button
@@ -1907,6 +1881,7 @@ export function GameCard({
             <span
               style={{
                 whiteSpace: "nowrap", fontWeight: isLive || isFinal ? 800 : 400,
+                marginLeft: "auto",
                 color: isLive ? "var(--neg)" : isFinal ? "var(--text)" : "var(--muted)",
               }}
             >
@@ -1918,6 +1893,20 @@ export function GameCard({
               )}
               {status}
             </span>
+
+            {/* Add-leg sits on the status line, brand-filled so it reads as the
+                one primary action on the card while the builder is open. */}
+            {parlayOpen && jsonRow && onAddLeg && (
+              <button
+                type="button"
+                onClick={onAddLeg}
+                className="ui-btn"
+                data-on={openKind === "picker" ? "true" : "false"}
+                style={{ padding: "2px 9px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", letterSpacing: 0.2 }}
+              >
+                {openKind === "picker" ? "Cancel" : "+ Add leg"}
+              </button>
+            )}
           </div>
         );
       })()}
@@ -1994,32 +1983,28 @@ export function GameCard({
 
       <WinProbBar card={card} aColor={aColors?.primary} bColor={bColors?.primary} condensed={condensed} />
 
-      {/* Picks row. Dropped in condensed mode: the win bar and the Sim/Kalshi
-          block already carry the headline numbers. */}
-      {!condensed && (card.pickSpread || card.pickTotal) && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
-          {card.pickSpread && (
-            <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.spreadResult), border: "1px solid var(--border)" }}>
-              Spread: Pick &bull; {card.pickSpread}
-              {typeof card.spreadProb === "number" ? ` (${(card.spreadProb * 100).toFixed(1)}%)` : ""}
-            </span>
-          )}
-          {card.pickTotal && (
-            <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.totalResult), border: "1px solid var(--border)" }}>
-              Total: Pick &bull; {card.pickTotal}
-              {typeof card.totalProb === "number" ? ` (${(card.totalProb * 100).toFixed(1)}%)` : ""}
-            </span>
-          )}
-        </div>
-      )}
 
-      <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />
+      {jsonRow ? (
+        <MarketEdge
+          row={jsonRow}
+          season={season}
+          teamA={card.teamA}
+          teamB={card.teamB}
+          bookSpread={card.oddsSpread}
+          bookTotal={card.oddsTotal}
+          simMargin={useMean ? card.simMeanMargin : card.simMedMargin}
+          simTotal={useMean ? card.simMeanTotal : card.simMedTotal}
+          pHome={card.pHome}
+          kalshi={kalshi}
+        />
+      ) : (
+        <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />
+      )}
 
       {/* action buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
         {canShowScores && tabBtn("scores", "Simulated Scores")}
         {csvCard && tabBtn("players", "Player Stats", true)}
-        {parlayOpen && jsonRow && tabBtn("picker", openKind === "picker" ? "Cancel leg" : "+ Add leg", true)}
         {jsonRow && tabBtn("props", "Player Props")}
         {jsonRow && tabBtn("box", "Box Score", true)}
       </div>

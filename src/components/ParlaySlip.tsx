@@ -7,13 +7,19 @@
 // counted directly off the seed-aligned columns. The naive independent product
 // is shown beside it precisely so the gap is visible — that gap IS the
 // same-game correlation, and it is the whole reason this is worth building.
+//
+// Layout intent: the fair price is the hero, everything else supports it.
+// Legs are chips (logo + market + marginal), each game is a labelled group so
+// same-game correlation is visually obvious, and the maths that qualifies the
+// hero number (naive, CI, edge) sits beneath it in a quieter register.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  getSeeds, priceParlay, americanFromProb, compareToBook,
+  getSeeds, priceParlay, americanFromProb, compareToBook, legTeams,
   THIN_SEED_THRESHOLD,
   type Leg, type SeedsJson, type Pricing,
 } from "../lib/parlay";
+import { getTeamLogo } from "../utils/teamLogo";
 import type { Season } from "../lib/cfbData";
 import { Skeleton } from "./Skeleton";
 
@@ -28,6 +34,29 @@ type Props = {
 };
 
 const pct = (p: number) => `${(p * 100).toFixed(p < 0.01 ? 3 : 1)}%`;
+
+/** 16px team badge; total legs pass both teams and get an overlapped pair. */
+function TeamLogos({ teams }: { teams: string[] }) {
+  const found = teams.map((t) => ({ t, src: getTeamLogo(t) })).filter((x) => x.src);
+  if (!found.length) {
+    return <span style={{ width: 18, flexShrink: 0 }} aria-hidden />;
+  }
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0, width: found.length > 1 ? 28 : 18 }}>
+      {found.map((x, i) => (
+        <img
+          key={x.t + i}
+          src={x.src}
+          alt=""
+          width={17}
+          height={17}
+          loading="lazy"
+          style={{ objectFit: "contain", marginLeft: i ? -6 : 0, zIndex: found.length - i }}
+        />
+      ))}
+    </span>
+  );
+}
 
 export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight }: Props) {
   const rootRef = useRef<HTMLElement | null>(null);
@@ -48,8 +77,6 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight 
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
   const [bookOdds, setBookOdds] = useState("");
 
-  // Load seeds for every game the slip touches. getSeeds is memoized per game,
-  // so re-running this on each slip change costs nothing after the first fetch.
   useEffect(() => {
     if (!legs.length) { setSeedsBySlug(new Map()); setLoadErrors([]); return; }
 
@@ -96,10 +123,13 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight 
 
   return (
     <aside ref={rootRef} className="parlay-slip">
-      {/* header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-        <span style={{ fontWeight: 800, color: "var(--brand-text)" }}>Parlay slip</span>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+      {/* Header: a brand hairline gives the drawer a spine and separates it
+          from the page behind it. */}
+      <div className="parlay-slip__head">
+        <span style={{ fontWeight: 800, color: "var(--brand-text)", letterSpacing: 0.2 }}>
+          Parlay slip
+        </span>
+        <span className="parlay-chip" style={{ fontSize: 11 }}>
           {legs.length} leg{legs.length === 1 ? "" : "s"}
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
@@ -116,9 +146,9 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight 
 
       <div style={{ overflow: "auto", padding: 12, display: "grid", gap: 12 }}>
         {!legs.length && (
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            Open a game card and use <b>+ Add leg</b> to build a parlay. Legs from the
-            same game are priced together, so their correlation is included.
+          <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+            Open a game card and use <b style={{ color: "var(--text)" }}>+ Add leg</b> to build a
+            parlay. Legs from the same game are priced together, so their correlation is included.
           </div>
         )}
 
@@ -133,90 +163,132 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight 
           <div key={i} style={{ fontSize: 12, color: "var(--muted)" }}>{e}</div>
         ))}
 
-        {/* legs, grouped by game */}
+        {/* Legs, grouped by game */}
         {pricing?.blocks.map((b) => (
-          <div key={b.slug} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
-              {b.teamB} @ {b.teamA}
-            </div>
-            {b.legs.map((lp) => (
-              <div key={lp.leg.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 13 }}>
-                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {lp.leg.label}
+          <section key={b.slug} className="parlay-group">
+            <header className="parlay-group__head">
+              <TeamLogos teams={[b.teamB, b.teamA]} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", letterSpacing: 0.2 }}>
+                {b.teamB} @ {b.teamA}
+              </span>
+              {b.legs.length > 1 && (
+                <span className="parlay-chip" style={{ marginLeft: "auto", fontSize: 10 }}>
+                  SGP {b.jointHits}/{b.n}
                 </span>
-                <span style={{ fontVariantNumeric: "tabular-nums", color: lp.error ? "var(--muted)" : "var(--text)" }}>
+              )}
+            </header>
+
+            {b.legs.map((lp) => (
+              <div key={lp.leg.id} className="parlay-leg">
+                <TeamLogos teams={legTeams(lp.leg.spec, lp.leg.teamA, lp.leg.teamB)} />
+                <span className="parlay-leg__text">{lp.leg.label}</span>
+                <span
+                  style={{
+                    fontVariantNumeric: "tabular-nums", fontWeight: 700, fontSize: 12.5,
+                    color: lp.error ? "var(--muted)" : "var(--text)",
+                  }}
+                >
                   {lp.error ? "n/a" : pct(lp.p ?? 0)}
                 </span>
-                <button type="button" className="ui-btn" onClick={() => onRemove(lp.leg.id)}
-                  aria-label={`Remove ${lp.leg.label}`}
-                  style={{ padding: "1px 7px", fontSize: 12 }}>
+                <button type="button" className="parlay-leg__x" onClick={() => onRemove(lp.leg.id)}
+                  aria-label={`Remove ${lp.leg.label}`}>
                   ×
                 </button>
               </div>
             ))}
+
             {b.legs.length > 1 && (
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, paddingTop: 4, borderTop: "1px dashed var(--border)" }}>
-                same-game joint: <b style={{ color: "var(--text)" }}>{b.jointHits}</b> / {b.n} seeds ({pct(b.jointP)})
+              <div style={{ fontSize: 10.5, color: "var(--muted)", padding: "5px 8px 0" }}>
+                same-game joint {pct(b.jointP)} — correlation priced in
               </div>
             )}
-          </div>
+          </section>
         ))}
 
-        {/* price */}
+        {/* Price */}
         {pricing && (
           pricing.thin ? (
             // HONESTY GATE: below this many hits the point estimate is noise.
-            <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, background: "color-mix(in oklab, var(--accent) 10%, transparent)" }}>
-              <div style={{ fontWeight: 800, marginBottom: 4 }}>Too thin to price</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            <div className="parlay-notice">
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span aria-hidden style={{ fontSize: 13 }}>⚠</span>
+                <b style={{ fontSize: 13 }}>Too thin to price</b>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.45 }}>
                 Only <b style={{ color: "var(--text)" }}>{pricing.minBlockHits}</b> of{" "}
-                {pricing.blocks[0]?.n ?? 0} seeds hit the thinnest game block
-                (need ≥ {THIN_SEED_THRESHOLD}). At this sim count the fair price
-                would be noise, so it is not shown.
+                {pricing.blocks[0]?.n ?? 0} seeds hit the thinnest game block (need ≥{" "}
+                {THIN_SEED_THRESHOLD}). At this sim count the fair price would be noise, so it is
+                not shown.
               </div>
             </div>
           ) : (
-            <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Fair</span>
-                <span style={{ fontSize: 22, fontWeight: 800 }}>{americanFromProb(pricing.jointP)}</span>
-                <span style={{ fontSize: 13, color: "var(--muted)" }}>{pct(pricing.jointP)}</span>
+            <div className="parlay-total">
+              <div className="parlay-hero">
+                <div>
+                  <div style={{ fontSize: 10, letterSpacing: 0.6, color: "var(--muted)", textTransform: "uppercase" }}>
+                    Fair odds
+                  </div>
+                  <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.05, letterSpacing: -0.5 }}>
+                    {americanFromProb(pricing.jointP)}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10, letterSpacing: 0.6, color: "var(--muted)", textTransform: "uppercase" }}>
+                    Hit rate
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
+                    {pct(pricing.jointP)}
+                  </div>
+                </div>
               </div>
 
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                if independent: <b style={{ color: "var(--text)" }}>{americanFromProb(pricing.naiveP)}</b>{" "}
-                ({pct(pricing.naiveP)})
-                {legs.length > 1 && (
-                  <span> — the gap is the same-game correlation</span>
-                )}
-              </div>
+              <dl className="parlay-meta">
+                <div>
+                  <dt>If independent</dt>
+                  <dd>{americanFromProb(pricing.naiveP)} <span style={{ color: "var(--muted)" }}>({pct(pricing.naiveP)})</span></dd>
+                </div>
+                <div>
+                  <dt>95% CI</dt>
+                  <dd>
+                    {pct(pricing.ciLo)} – {pct(pricing.ciHi)}
+                    <span style={{ color: "var(--muted)" }}>{pricing.ciApprox ? " approx" : ""}</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Seeds hit</dt>
+                  <dd>{pricing.minBlockHits}</dd>
+                </div>
+              </dl>
 
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                95% CI {pct(pricing.ciLo)} – {pct(pricing.ciHi)}
-                {pricing.ciApprox ? " (approx, cross-game)" : " (Wilson)"}
-                {" · "}{pricing.minBlockHits} hits
-              </div>
+              {legs.length > 1 && (
+                <div style={{ fontSize: 10.5, color: "var(--muted)", padding: "0 10px 8px" }}>
+                  The gap between fair and “if independent” is the same-game correlation.
+                </div>
+              )}
 
-              {/* book comparison */}
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", paddingTop: 4, borderTop: "1px dashed var(--border)" }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Book odds:</span>
+              {/* Book comparison */}
+              <div className="parlay-book">
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>Book odds</span>
                 <input
                   type="text" inputMode="numeric" placeholder="+650"
                   value={bookOdds} onChange={(e) => setBookOdds(e.target.value)}
                   aria-label="Book odds, American"
-                  style={{ width: 90 }}
+                  style={{ width: 84 }}
                 />
                 {book && (
-                  <span style={{ fontSize: 12 }}>
-                    <span style={{ color: "var(--muted)" }}>implied </span>
-                    {pct(book.bookProb)}
-                    <span style={{ color: "var(--muted)" }}> · edge </span>
-                    <b style={{ color: book.edge > 0 ? "var(--pos)" : "var(--neg)" }}>
+                  <span style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "baseline", fontSize: 12 }}>
+                    <span style={{ color: "var(--muted)" }}>{pct(book.bookProb)}</span>
+                    <b
+                      className="parlay-edge"
+                      data-sign={book.edge >= 0 ? "pos" : "neg"}
+                    >
                       {book.edge > 0 ? "+" : ""}{(book.edge * 100).toFixed(1)} pts
                     </b>
-                    <span style={{ color: "var(--muted)" }}> · EV </span>
-                    <b style={{ color: book.evPerDollar > 0 ? "var(--pos)" : "var(--neg)" }}>
-                      {book.evPerDollar > 0 ? "+" : ""}{book.evPerDollar.toFixed(3)}/$1
+                    <b
+                      className="parlay-edge"
+                      data-sign={book.evPerDollar >= 0 ? "pos" : "neg"}
+                    >
+                      {book.evPerDollar > 0 ? "+" : ""}{book.evPerDollar.toFixed(2)}/$1
                     </b>
                   </span>
                 )}
@@ -226,10 +298,10 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight 
         )}
 
         {pricing && pricing.blocks.length > 1 && (
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>
-            Legs within a game are counted together on the same simulated seeds, so
-            their correlation is priced in. Different games are separate simulation
-            runs and are multiplied as independent.
+          <div style={{ fontSize: 10.5, color: "var(--muted)", lineHeight: 1.45 }}>
+            Legs within a game are counted on the same simulated seeds, so their correlation is
+            priced in. Different games are separate simulation runs and are multiplied as
+            independent.
           </div>
         )}
 

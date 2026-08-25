@@ -280,6 +280,138 @@ input:focus, select:focus, textarea:focus {
   }
 }
 
+/* Header: a brand hairline gives the drawer a spine. */
+.parlay-slip__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  border-top: 3px solid var(--brand);
+  background: color-mix(in oklab, var(--brand) 6%, var(--card));
+  border-radius: 12px 0 0 0;
+}
+@media (max-width: 720px) {
+  .parlay-slip__head { border-radius: 12px 12px 0 0; }
+}
+
+.parlay-chip {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--muted);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* One game = one group, so same-game legs read as a unit. */
+.parlay-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--border) 14%, var(--card));
+}
+.parlay-group__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.parlay-leg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.parlay-leg:last-of-type { border-bottom: none; }
+.parlay-leg__text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.parlay-leg__x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 6px;
+}
+.parlay-leg__x:hover { color: var(--neg); background: color-mix(in oklab, var(--neg) 12%, transparent); }
+
+/* Totals: the fair price is the hero, the maths that qualifies it is quieter. */
+.parlay-total {
+  border: 1px solid var(--brand);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.parlay-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  background: color-mix(in oklab, var(--brand) 10%, var(--card));
+  border-bottom: 1px solid var(--border);
+}
+.parlay-meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+}
+.parlay-meta div { min-width: 0; }
+.parlay-meta dt {
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.parlay-meta dd {
+  margin: 1px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.parlay-book {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+}
+.parlay-edge {
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.parlay-edge[data-sign="pos"] { color: var(--pos); background: color-mix(in oklab, var(--pos) 14%, var(--card)); }
+.parlay-edge[data-sign="neg"] { color: var(--neg); background: color-mix(in oklab, var(--neg) 14%, var(--card)); }
+
+/* The honesty gate reads as a real notice, not a paragraph. */
+.parlay-notice {
+  border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--border));
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: color-mix(in oklab, var(--accent) 10%, var(--card));
+}
+
 /* ============================== Skeletons ==================================
    Async states reserve their final height as grey blocks instead of printing a
    sentence, so nothing reflows when the data lands.

@@ -834,6 +834,27 @@ function pickLadderRung(markets) {
     pool.sort((a, b) => b.oi - a.oi || Math.abs(a.price - 0.5) - Math.abs(b.price - 0.5));
     return pool[0];
 }
+/** Prices this far out are noise, not a line; keeps the payload small too. */
+const LADDER_MIN_PRICE = 0.03;
+const LADDER_MAX_PRICE = 0.97;
+/** Every usefully-priced rung of a ladder, ascending by line. */
+function buildLadder(markets, toLine, toPrice) {
+    const out = [];
+    for (const m of markets) {
+        const price = marketPrice(m);
+        if (price === null || price < LADDER_MIN_PRICE || price > LADDER_MAX_PRICE)
+            continue;
+        const line = toLine(m);
+        const yes = toPrice(m, price);
+        if (line === null || yes === null)
+            continue;
+        // 3dp keeps a 30-rung ladder under ~600 bytes.
+        out.push({ line, yes_price: Math.round(yes * 1000) / 1000 });
+    }
+    out.sort((a, b) => a.line - b.line);
+    // Collapse duplicate strikes (defensive: one rung per line).
+    return out.filter((r, i) => i === 0 || r.line !== out[i - 1].line);
+}
 async function kalshiJson(path, signal) {
     const r = await fetchWithTimeout(`${KALSHI_BASE}${path}`, { headers: { accept: "application/json", "user-agent": "monte-site" }, signal }, 12_000);
     if (!r.ok)
@@ -965,6 +986,8 @@ async function buildKalshiCfb(season, week) {
             winner: { teamA_price: null, teamB_price: null },
             total: { line: null, yes_price: null },
             spread: { line: null, yes_price: null },
+            total_ladder: [],
+            spread_ladder: [],
         };
         const keyA = cfbNameKey(teamA);
         const keyB = cfbNameKey(teamB);
@@ -978,7 +1001,24 @@ async function buildKalshiCfb(season, week) {
                 out.winner.teamB_price = price;
         }
         // Total: "Over X.5 points scored"; floor_strike is the line.
-        const totRung = pickLadderRung(totBy.get(`KXNCAAFTOTAL-${suffix}`) ?? []);
+        const totalMarkets = totBy.get(`KXNCAAFTOTAL-${suffix}`) ?? [];
+        const spreadMarkets = sprBy.get(`KXNCAAFSPREAD-${suffix}`) ?? [];
+        // Totals: floor_strike is the line, yes = P(over).
+        out.total_ladder = buildLadder(totalMarkets, (m) => dollars(m?.floor_strike), (_m, price) => price);
+        // Spreads: each rung reads "<Team> wins by over X.5". Normalise to
+        // home-perspective so a rung is always "P(home covers line)":
+        // a rung naming the away team is mirrored (line flips sign, price -> 1-p).
+        out.spread_ladder = buildLadder(spreadMarkets, (m) => {
+            const floor = dollars(m?.floor_strike);
+            if (floor === null)
+                return null;
+            const who = cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");
+            return who === keyA ? -floor : floor;
+        }, (m, price) => {
+            const who = cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");
+            return who === keyA ? price : 1 - price;
+        });
+        const totRung = pickLadderRung(totalMarkets);
         if (totRung) {
             out.total.line = dollars(totRung.m?.floor_strike);
             out.total.yes_price = totRung.price;
@@ -986,7 +1026,7 @@ async function buildKalshiCfb(season, week) {
         // Spread: "<Team> wins by over X.5". Reported HOME-perspective to match
         // the sim's convention (negative = home favored), so a rung naming the
         // away team flips sign.
-        const sprRung = pickLadderRung(sprBy.get(`KXNCAAFSPREAD-${suffix}`) ?? []);
+        const sprRung = pickLadderRung(spreadMarkets);
         if (sprRung) {
             const floor = dollars(sprRung.m?.floor_strike);
             const who = cfbNameKey(String(sprRung.m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");

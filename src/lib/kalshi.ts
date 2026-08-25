@@ -7,6 +7,9 @@
 
 export type KalshiSide = { line: number | null; yes_price: number | null };
 
+/** One strike of a ladder. See the server for the sign conventions. */
+export type KalshiRung = { line: number; yes_price: number };
+
 export type KalshiGame = {
   slug: string;
   event_ticker: string;
@@ -16,7 +19,35 @@ export type KalshiGame = {
   total: KalshiSide;
   /** line is HOME-perspective (negative = home favored). */
   spread: KalshiSide;
+  /** Every priced strike, so we can quote the BOOK's line rather than Kalshi's. */
+  total_ladder: KalshiRung[];
+  spread_ladder: KalshiRung[];
 };
+
+export type RungMatch = {
+  rung: KalshiRung;
+  /** True when we had to settle for a neighbouring strike. */
+  approx: boolean;
+};
+
+/**
+ * The rung at `line`, or the nearest one within `tol`.
+ *
+ * Books and Kalshi do not always list the same strike; quoting Kalshi's own
+ * line next to the book's would compare two different bets, so a near miss is
+ * returned flagged and the UI annotates it.
+ */
+export function rungAt(ladder: KalshiRung[] | undefined, line: number, tol = 1.0): RungMatch | null {
+  if (!ladder || !ladder.length || !Number.isFinite(line)) return null;
+  let best: KalshiRung | null = null;
+  let bestDist = Infinity;
+  for (const r of ladder) {
+    const d = Math.abs(r.line - line);
+    if (d < bestDist) { best = r; bestDist = d; }
+  }
+  if (!best || bestDist > tol) return null;
+  return { rung: best, approx: bestDist > 1e-9 };
+}
 
 export type KalshiPayload = {
   available: boolean;

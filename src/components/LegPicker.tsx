@@ -174,8 +174,9 @@ export default function LegPicker({
       return { kind: "teamTotal", team, side, line: L };
     }
     if (!playerName) return null;
-    return { kind: "prop", player: playerName, stat, side, line: L };
-  }, [lineOk, lineNum, betType, market, team, side, playerName, stat]);
+    const owner = playerOptions.find((o) => o.name === playerName)?.team;
+    return { kind: "prop", player: playerName, stat, side, line: L, playerTeam: owner || undefined };
+  }, [lineOk, lineNum, betType, market, team, side, playerName, stat, playerOptions]);
 
   const marginal = useMemo(
     () => (seeds && spec ? legMarginal(seeds, spec) : null),

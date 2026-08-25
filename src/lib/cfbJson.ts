@@ -272,6 +272,22 @@ export type CompactJson = {
   hist?: Record<string, { start: number; end: number; count: number }[]>;
 };
 
+/** Per-game memo: the market block and the distribution panel both want this
+ *  file, and it is the largest thing a card fetches. */
+const compactCache = new Map<string, Promise<CompactJson>>();
+
+export function getCompactCached(row: JsonWeekRow, season: Season): Promise<CompactJson> {
+  const key = `${season}/${row.compact_path}`;
+  const memo = compactCache.get(key);
+  if (memo) return memo;
+  const promise = getCompactJson(row, season).catch((err) => {
+    compactCache.delete(key);
+    throw err;
+  });
+  compactCache.set(key, promise);
+  return promise;
+}
+
 export async function getCompactJson(
   row: JsonWeekRow,
   season: Season,
