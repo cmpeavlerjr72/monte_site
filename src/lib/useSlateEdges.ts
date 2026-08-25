@@ -30,7 +30,7 @@
 // the cycle in the first place, and rule 1 alone would only mask it.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ensureSlateEdges, type EdgeInput, type GameEdges } from "./edges";
+import { ensureSlateEdges, type EdgeInput, type SlateScan } from "./edges";
 import type { KalshiGame } from "./kalshi";
 import type { Season } from "./cfbData";
 
@@ -49,7 +49,8 @@ type Params = {
 };
 
 export type SlateEdgesResult = {
-  edges: Map<string, GameEdges> | null;
+  /** Game markets AND player props from one scan; null until it resolves. */
+  scan: SlateScan | null;
   loading: boolean;
 };
 
@@ -57,7 +58,7 @@ export function useSlateEdges({
   inputs, kalshiBySlug, kalshiStamp, season, weekKey, useMean, enabled,
 }: Params): SlateEdgesResult {
   // Results carry the signature they belong to, so a stale map is never shown.
-  const [state, setState] = useState<{ sig: string; map: Map<string, GameEdges> } | null>(null);
+  const [state, setState] = useState<{ sig: string; scan: SlateScan } | null>(null);
   const [loading, setLoading] = useState(false);
 
   /**
@@ -95,9 +96,11 @@ export function useSlateEdges({
     let alive = true;
     setLoading(true);
 
-    ensureSlateEdges(inputsRef.current, kalshiRef.current, season, ac.signal)
-      .then((map) => {
-        if (alive) setState({ sig: signature, map });
+    // weekKey is already inside `signature`; passing it explicitly keeps the
+    // props file (a week-level fetch) keyed to the same scan.
+    ensureSlateEdges(inputsRef.current, kalshiRef.current, season, weekKey, ac.signal)
+      .then((scan) => {
+        if (alive) setState({ sig: signature, scan });
       })
       .catch((err) => {
         if ((err as any)?.name !== "AbortError") {
@@ -114,12 +117,13 @@ export function useSlateEdges({
       alive = false;
       ac.abort();
     };
-    // season is captured for the call; it is already inside `signature`.
+    // season and weekKey are captured for the call; both are already inside
+    // `signature`, so the dependency list stays exactly [signature].
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
   return {
-    edges: state && state.sig === signature ? state.map : null,
+    scan: state && state.sig === signature ? state.scan : null,
     loading: loading && !(state && state.sig === signature),
   };
 }

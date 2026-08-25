@@ -529,3 +529,122 @@ export function pmfBins(pmf: Pmf, width: number): DistBin[] {
   }
   return bins;
 }
+
+/* ============================ props_odds.json ==============================
+ * Consensus prop lines for a whole week, published by the props pipeline.
+ *
+ *   { updated, source, season, week,
+ *     games: { "<slug>": { props: [ { player, stat, line, fair_over,
+ *                                     n_books, best_over:{price,book},
+ *                                     best_under:{...}, vol_tercile } ] } } }
+ *
+ * `player` is the CANONICAL sim name, so it joins players_dist.json keys
+ * verbatim — no normalization anywhere in this path.
+ * ========================================================================= */
+
+export type PropPrice = { price: number; book: string };
+
+export type PropOddsRow = {
+  player: string;
+  stat: string;
+  line: number;
+  /** Consensus de-vigged P(over). */
+  fair_over: number;
+  n_books?: number;
+  best_over?: PropPrice;
+  best_under?: PropPrice;
+  /** Usage volatility bucket; T3 overs carry a known over-projection caveat. */
+  vol_tercile?: "T1" | "T2" | "T3";
+};
+
+export type PropsOdds = {
+  updated: string | null;
+  source: string | null;
+  byGame: Map<string, PropOddsRow[]>;
+};
+
+/** Thrown when the week predates the props export, so callers can say so. */
+export class PropsNotPublished extends Error {
+  constructor(path: string) {
+    super(`props_odds.json not published (${path})`);
+    this.name = "PropsNotPublished";
+  }
+}
+
+function parsePropPrice(raw: any): PropPrice | undefined {
+  const price = num(raw?.price);
+  const book = raw?.book != null ? String(raw.book) : "";
+  return price === undefined ? undefined : { price, book };
+}
+
+const propsCache = new Map<string, Promise<PropsOdds>>();
+
+export function getPropsOddsCached(season: Season, weekId: string): Promise<PropsOdds> {
+  const key = `${season}/${weekId}`;
+  const memo = propsCache.get(key);
+  if (memo) return memo;
+  const promise = getPropsOdds(season, weekId).catch((err) => {
+    propsCache.delete(key);
+    throw err;
+  });
+  propsCache.set(key, promise);
+  return promise;
+}
+
+export async function getPropsOdds(
+  season: Season,
+  weekId: string,
+  signal?: AbortSignal
+): Promise<PropsOdds> {
+  const rel = `weeks/${weekId}/props_odds.json`;
+  const url = await dataUrl(rel, season);
+  const res = await fetch(url, { signal });
+  if (res.status === 404) throw new PropsNotPublished(rel);
+  if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
+  const raw = await res.json();
+
+  const byGame = new Map<string, PropOddsRow[]>();
+  const games = raw?.games ?? {};
+  for (const slug of Object.keys(games)) {
+    const rows: PropOddsRow[] = [];
+    for (const p of games[slug]?.props ?? []) {
+      const player = String(p?.player ?? "").trim();
+      const stat = String(p?.stat ?? "").trim();
+      const line = num(p?.line);
+      const fair = num(p?.fair_over);
+      if (!player || !stat || line === undefined || fair === undefined) continue;
+      rows.push({
+        player, stat, line,
+        fair_over: fair,
+        n_books: num(p?.n_books),
+        best_over: parsePropPrice(p?.best_over),
+        best_under: parsePropPrice(p?.best_under),
+        vol_tercile: p?.vol_tercile === "T1" || p?.vol_tercile === "T2" || p?.vol_tercile === "T3"
+          ? p.vol_tercile
+          : undefined,
+      });
+    }
+    if (rows.length) byGame.set(slug, rows);
+  }
+
+  return {
+    updated: raw?.updated != null ? String(raw.updated) : null,
+    source: raw?.source != null ? String(raw.source) : null,
+    byGame,
+  };
+}
+
+/** Memoized players_dist, shared by the props panel and the slate edge scan. */
+const distCache = new Map<string, Promise<PlayersDistJson>>();
+
+export function getPlayersDistCached(row: JsonWeekRow, season: Season): Promise<PlayersDistJson> {
+  const key = `${season}/${row.dist_path}`;
+  const memo = distCache.get(key);
+  if (memo) return memo;
+  const promise = getPlayersDistJson(row, season).catch((err) => {
+    distCache.delete(key);
+    throw err;
+  });
+  distCache.set(key, promise);
+  return promise;
+}

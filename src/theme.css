@@ -531,6 +531,134 @@ input:focus, select:focus, textarea:focus {
   .top-edges__market { display: none; }
 }
 
+/* Three-column edge board: game lines | overall | player props. */
+.edge-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+}
+@media (max-width: 1100px) {
+  .edge-cols { grid-template-columns: 1fr; }
+}
+
+.edge-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--card);
+}
+.edge-col__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--border) 22%, var(--card));
+}
+.edge-col__title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.edge-col__body { padding: 6px; display: grid; gap: 2px; align-content: start; }
+.edge-col__empty { font-size: 11.5px; color: var(--muted); padding: 8px 4px; }
+.edge-col__foot {
+  margin-top: auto;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+  line-height: 1.4;
+}
+
+.edge-row {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) 46px 46px 50px;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.edge-row:hover {
+  background: color-mix(in oklab, var(--brand) 7%, var(--card));
+  border-color: var(--border);
+}
+.edge-row__rank {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.edge-row__main { min-width: 0; line-height: 1.2; }
+.edge-row__t1 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edge-row__t2 {
+  display: block;
+  font-size: 9.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edge-row__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.edge-row__num b { display: block; font-size: 11.5px; font-weight: 700; }
+.edge-row__num i { display: block; font-size: 9px; font-style: normal; color: var(--muted); }
+
+.edge-tag {
+  flex-shrink: 0;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--fill);
+  color: var(--muted);
+}
+.edge-tag[data-kind="prop"] {
+  background: color-mix(in oklab, var(--accent) 22%, var(--card));
+  color: var(--accent-contrast);
+}
+
+/* Documented over-projection caveat on high-usage overs (INV-69). */
+.edge-flag {
+  flex-shrink: 0;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in oklab, var(--accent) 45%, var(--border));
+  background: color-mix(in oklab, var(--accent) 12%, var(--card));
+  color: var(--muted);
+  cursor: help;
+}
+
 /* A card jumped to from the Top Edges list pulses so the eye finds it. */
 @keyframes card-flash {
   0%, 100% { box-shadow: 0 0 0 0 transparent; }

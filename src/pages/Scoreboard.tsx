@@ -1512,7 +1512,7 @@ function ScoreboardPage() {
     [baseCards, useMean]
   );
 
-  const { edges: slateEdges, loading: edgesLoading } = useSlateEdges({
+  const { scan: slateScan, loading: edgesLoading } = useSlateEdges({
     inputs: edgeInputs,
     kalshiBySlug,
     kalshiStamp,
@@ -1521,6 +1521,13 @@ function ScoreboardPage() {
     useMean,
     enabled: sortBy === "edge" || showTopEdges,
   });
+
+  /**
+   * Card sort key. Game markets ONLY — prop edges are deliberately kept out of
+   * the card ordering this phase, so a game does not climb the slate on the
+   * strength of a single player line.
+   */
+  const slateEdges = slateScan?.byGame ?? null;
 
   const cards = useMemo(
     () => sortCards(baseCards, sortBy, slateEdges),
@@ -1795,8 +1802,8 @@ function ScoreboardPage() {
 
       {showTopEdges && (
         <TopEdges
-          edges={slateEdges}
-          loading={edgesLoading && !slateEdges}
+          scan={slateScan}
+          loading={edgesLoading && !slateScan}
           onPick={jumpToGame}
           onClose={() => setShowTopEdges(false)}
         />

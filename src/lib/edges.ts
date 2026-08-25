@@ -10,7 +10,11 @@
 // ~8 games x ~19KB is a rounding error; a 60-game slate would be ~1MB, which
 // is why this is opt-in (triggered by the sort or the panel) rather than eager.
 
-import { getCompactCached, type JsonWeekRow } from "./cfbJson";
+import {
+  getCompactCached, getPlayersDistCached, getPropsOddsCached, PropsNotPublished,
+  type JsonWeekRow,
+} from "./cfbJson";
+import { propEdge, type PropEdge } from "./propEdge";
 import { buildMarketRows, makeSeedCounts, rowEdge, type MarketRow } from "./marketEdge";
 import type { KalshiGame } from "./kalshi";
 import type { Season } from "./cfbData";
@@ -27,6 +31,17 @@ export type EdgeInput = {
   simTotal?: number;
   pHome?: number;
   kickoffMs?: number;
+};
+
+/** Everything one slate scan produces: game markets AND player props. */
+export type SlateScan = {
+  byGame: Map<string, GameEdges>;
+  /** All priced prop edges on the slate, unsorted. */
+  props: PropEdge[];
+  /** "ok" once the file loads; "missing" is the expected pre-publish state. */
+  propsStatus: "ok" | "missing" | "error";
+  /** props_odds.json `updated`, for the staleness note. */
+  propsUpdated: string | null;
 };
 
 export type GameEdges = {
@@ -57,9 +72,27 @@ export async function ensureSlateEdges(
   inputs: EdgeInput[],
   kalshiBySlug: Map<string, KalshiGame>,
   season: Season,
+  weekId: string,
   signal?: AbortSignal
-): Promise<Map<string, GameEdges>> {
+): Promise<SlateScan> {
   const out = new Map<string, GameEdges>();
+
+  // Week-level props file, fetched once for the whole slate. A 404 is the
+  // expected state until the props pipeline publishes, not a failure.
+  let propsOdds: Awaited<ReturnType<typeof getPropsOddsCached>> | null = null;
+  let propsStatus: SlateScan["propsStatus"] = "missing";
+  try {
+    propsOdds = await getPropsOddsCached(season, weekId);
+    propsStatus = "ok";
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") throw err;
+    if (!(err instanceof PropsNotPublished) && (err as any)?.name !== "PropsNotPublished") {
+      console.warn("[edges] props_odds failed:", err);
+      propsStatus = "error";
+    }
+  }
+
+  const props: PropEdge[] = [];
 
   await Promise.all(
     inputs.map(async (g) => {
@@ -93,10 +126,31 @@ export async function ensureSlateEdges(
       }
 
       out.set(g.slug, { slug: g.slug, teamA: g.teamA, teamB: g.teamB, rows, bestSigned });
+
+      // Props for this game, if the week's file quoted any. players_dist is
+      // only fetched for games that actually have prop rows.
+      const propRows = propsOdds?.byGame.get(g.slug);
+      if (!propRows?.length) return;
+      try {
+        const dist = await getPlayersDistCached(g.row, season);
+        if (signal?.aborted) return;
+        const byPlayer = new Map(dist.players.map((pl) => [pl.player, pl]));
+        for (const row of propRows) {
+          const pl = byPlayer.get(row.player);   // canonical name, joins verbatim
+          if (!pl) continue;
+          const e = propEdge(row, pl.stats[row.stat], {
+            slug: g.slug, teamA: g.teamA, teamB: g.teamB, playerTeam: pl.team,
+          });
+          if (e) props.push(e);
+        }
+      } catch (err) {
+        if ((err as any)?.name === "AbortError") throw err;
+        console.warn(`[edges] players_dist failed for ${g.slug}:`, err);
+      }
     })
   );
 
-  return out;
+  return { byGame: out, props, propsStatus, propsUpdated: propsOdds?.updated ?? null };
 }
 
 /**
@@ -129,4 +183,38 @@ export function pricedRowCount(edges: Map<string, GameEdges>): { priced: number;
     }
   }
   return { priced, total };
+}
+
+/** Prop edges ranked by edge descending. */
+export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
+  return [...props].sort((a, b) => b.edge - a.edge).slice(0, limit);
+}
+
+/** One row of the merged "overall" list: a game market or a player prop. */
+export type OverallEntry =
+  | { kind: "game"; edge: number; game: EdgeEntry }
+  | { kind: "prop"; edge: number; prop: PropEdge };
+
+/** Both pools merged and ranked by signed edge descending. */
+export function rankOverall(
+  edges: Map<string, GameEdges>,
+  props: PropEdge[],
+  limit = 10
+): OverallEntry[] {
+  const all: OverallEntry[] = [
+    ...rankEdges(edges, Number.MAX_SAFE_INTEGER).map(
+      (g): OverallEntry => ({ kind: "game", edge: g.edge, game: g })
+    ),
+    ...props.map((p): OverallEntry => ({ kind: "prop", edge: p.edge, prop: p })),
+  ];
+  all.sort((a, b) => b.edge - a.edge);
+  return all.slice(0, limit);
+}
+
+/** Hours since the props file was published, for the staleness note. */
+export function hoursSince(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return (Date.now() - t) / 3_600_000;
 }

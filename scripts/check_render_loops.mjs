@@ -291,7 +291,9 @@ function checkPageSource() {
   }
 
   // No effect on the page may take the scan's inputs or output as a dependency.
-  const banned = ["edgeInputs", "slateEdges"];
+  // slateScan is the scan's raw output; slateEdges is derived from it. Neither
+  // may ever become an effect dependency, or the Phase-7 cycle returns.
+  const banned = ["edgeInputs", "slateEdges", "slateScan"];
   const offenders = [];
   for (const m of src.matchAll(/useEffect\(\(\) => \{[\s\S]*?\n  \}, \[([^\]]*)\]\);/g)) {
     const deps = depTokens(m[1]);
