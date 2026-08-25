@@ -8,24 +8,41 @@
 // is shown beside it precisely so the gap is visible — that gap IS the
 // same-game correlation, and it is the whole reason this is worth building.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getSeeds, priceParlay, americanFromProb, compareToBook,
   THIN_SEED_THRESHOLD,
   type Leg, type SeedsJson, type Pricing,
 } from "../lib/parlay";
 import type { Season } from "../lib/cfbData";
+import { Skeleton } from "./Skeleton";
 
 type Props = {
   legs: Leg[];
   onRemove: (id: string) => void;
   onClear: () => void;
   onClose: () => void;
+  /** Reports the drawer's rendered height so the page can reserve exactly that
+   *  much space and never let the fixed sheet cover the last cards. */
+  onHeight?: (h: number) => void;
 };
 
 const pct = (p: number) => `${(p * 100).toFixed(p < 0.01 ? 3 : 1)}%`;
 
-export default function ParlaySlip({ legs, onRemove, onClear, onClose }: Props) {
+export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight }: Props) {
+  const rootRef = useRef<HTMLElement | null>(null);
+
+  // Measure rather than guess: the sheet is 420px wide on desktop and
+  // full-width under 720px, so a hardcoded reserve would be wrong somewhere.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || !onHeight || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => onHeight(el.getBoundingClientRect().height));
+    ro.observe(el);
+    onHeight(el.getBoundingClientRect().height);
+    return () => { ro.disconnect(); onHeight(0); };
+  }, [onHeight]);
+
   const [seedsBySlug, setSeedsBySlug] = useState<Map<string, SeedsJson>>(new Map());
   const [loading, setLoading] = useState(false);
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
@@ -78,29 +95,20 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose }: Props) 
   }, [pricing, bookOdds]);
 
   return (
-    <aside
-      style={{
-        position: "fixed", right: 0, bottom: 0, zIndex: 50,
-        width: "min(420px, 100vw)", maxHeight: "min(70vh, 720px)",
-        display: "flex", flexDirection: "column",
-        background: "var(--card)", color: "var(--text)",
-        border: "1px solid var(--border)", borderRadius: "12px 0 0 0",
-        boxShadow: "0 -4px 24px rgba(0,0,0,0.25)",
-      }}
-    >
+    <aside ref={rootRef} className="parlay-slip">
       {/* header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-        <span style={{ fontWeight: 800, color: "var(--brand)" }}>Parlay slip</span>
+        <span style={{ fontWeight: 800, color: "var(--brand-text)" }}>Parlay slip</span>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>
           {legs.length} leg{legs.length === 1 ? "" : "s"}
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          <button type="button" onClick={onClear} disabled={!legs.length}
-            style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", fontSize: 12 }}>
+          <button type="button" className="ui-btn" onClick={onClear} disabled={!legs.length}
+            style={{ padding: "4px 10px", fontSize: 12 }}>
             Clear
           </button>
-          <button type="button" onClick={onClose}
-            style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", fontSize: 12 }}>
+          <button type="button" className="ui-btn" onClick={onClose}
+            style={{ padding: "4px 10px", fontSize: 12 }}>
             Close
           </button>
         </div>
@@ -115,7 +123,10 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose }: Props) 
         )}
 
         {loading && !pricing && (
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>Loading simulated seeds…</div>
+          <div style={{ display: "grid", gap: 10 }}>
+            <Skeleton height={64} />
+            <Skeleton height={96} />
+          </div>
         )}
 
         {loadErrors.map((e, i) => (
@@ -136,8 +147,9 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose }: Props) 
                 <span style={{ fontVariantNumeric: "tabular-nums", color: lp.error ? "var(--muted)" : "var(--text)" }}>
                   {lp.error ? "n/a" : pct(lp.p ?? 0)}
                 </span>
-                <button type="button" onClick={() => onRemove(lp.leg.id)}
-                  style={{ padding: "1px 7px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", fontSize: 12 }}>
+                <button type="button" className="ui-btn" onClick={() => onRemove(lp.leg.id)}
+                  aria-label={`Remove ${lp.leg.label}`}
+                  style={{ padding: "1px 7px", fontSize: 12 }}>
                   ×
                 </button>
               </div>
@@ -191,18 +203,19 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose }: Props) 
                 <input
                   type="text" inputMode="numeric" placeholder="+650"
                   value={bookOdds} onChange={(e) => setBookOdds(e.target.value)}
-                  style={{ width: 90, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+                  aria-label="Book odds, American"
+                  style={{ width: 90 }}
                 />
                 {book && (
                   <span style={{ fontSize: 12 }}>
                     <span style={{ color: "var(--muted)" }}>implied </span>
                     {pct(book.bookProb)}
                     <span style={{ color: "var(--muted)" }}> · edge </span>
-                    <b style={{ color: book.edge > 0 ? "#16a34a" : "#ef4444" }}>
+                    <b style={{ color: book.edge > 0 ? "var(--pos)" : "var(--neg)" }}>
                       {book.edge > 0 ? "+" : ""}{(book.edge * 100).toFixed(1)} pts
                     </b>
                     <span style={{ color: "var(--muted)" }}> · EV </span>
-                    <b style={{ color: book.evPerDollar > 0 ? "#16a34a" : "#ef4444" }}>
+                    <b style={{ color: book.evPerDollar > 0 ? "var(--pos)" : "var(--neg)" }}>
                       {book.evPerDollar > 0 ? "+" : ""}{book.evPerDollar.toFixed(3)}/$1
                     </b>
                   </span>

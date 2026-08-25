@@ -15,6 +15,7 @@ import {
   getPlayersJson, type JsonWeekRow, type PlayerJson, type PlayersJson, type StatDist,
 } from "../lib/cfbJson";
 import type { Season } from "../lib/cfbData";
+import { SkeletonBoxScore } from "./Skeleton";
 
 type Props = {
   row: JsonWeekRow;
@@ -434,13 +435,7 @@ export default function BoxScore({ row, season, ...rest }: Props) {
     return () => { alive = false; ac.abort(); };
   }, [row, season]);
 
-  if (loading) {
-    return (
-      <div className="card" style={{ padding: 12, marginTop: 6, fontSize: 13, color: "var(--muted)" }}>
-        Loading projected box score…
-      </div>
-    );
-  }
+  if (loading) return <SkeletonBoxScore />;
 
   if (error) {
     return (

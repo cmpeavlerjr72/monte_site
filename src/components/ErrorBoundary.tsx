@@ -41,7 +41,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           background: "var(--card)",
         }}
       >
-        <h2 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 800, color: "var(--brand)" }}>
+        <h2 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 800, color: "var(--brand-text)" }}>
           {this.props.label ? `${this.props.label} hit an error` : "Something went wrong"}
         </h2>
         <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--muted)" }}>
@@ -68,27 +68,15 @@ export default class ErrorBoundary extends Component<Props, State> {
           <button
             type="button"
             onClick={() => this.setState({ error: null })}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "var(--brand)",
-              color: "var(--brand-contrast)",
-              fontWeight: 700,
-            }}
+            className="ui-btn" data-on="true"
+            style={{ padding: "8px 14px", fontWeight: 700 }}
           >
             Try again
           </button>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "var(--card)",
-              color: "var(--text)",
-            }}
+            className="ui-btn" style={{ padding: "8px 14px" }}
           >
             Reload page
           </button>

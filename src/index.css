@@ -1,4 +1,4 @@
-:root { color-scheme: light dark; }
+/* color-scheme is owned by theme.css so an explicit data-theme wins. */
 body { margin: 0; }
 a { color: inherit; text-decoration: none; }
 

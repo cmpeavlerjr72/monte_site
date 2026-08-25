@@ -15,6 +15,7 @@ import {
 } from "../lib/parlay";
 import { getPlayersJson, type JsonWeekRow, type PlayersJson } from "../lib/cfbJson";
 import type { Season } from "../lib/cfbData";
+import { Skeleton, SkeletonLines } from "./Skeleton";
 
 type Props = {
   row: JsonWeekRow;
@@ -32,18 +33,9 @@ type Props = {
 type BetType = "game" | "prop";
 type GameMarket = "spread" | "total" | "teamTotal";
 
-const selectStyle = {
-  padding: "6px 10px", borderRadius: 8,
-  border: "1px solid var(--border)", background: "var(--card)", minWidth: 0,
-} as const;
+const selectStyle = { minWidth: 0 } as const;
 
-const btn = (active: boolean) => ({
-  padding: "6px 10px", borderRadius: 8,
-  border: `1px solid ${active ? "var(--brand)" : "var(--border)"}`,
-  background: active ? "var(--brand)" : "var(--card)",
-  color: active ? "var(--brand-contrast)" : "var(--text)",
-  fontSize: 13,
-});
+
 
 /** Median of a numeric column, for pre-filling a line with no market number. */
 function medianOf(xs: number[]): number {
@@ -197,7 +189,17 @@ export default function LegPicker({
   };
 
   if (loading) {
-    return <Shell onClose={onClose}><span style={{ color: "var(--muted)", fontSize: 13 }}>Loading simulated seeds…</span></Shell>;
+    return (
+      <Shell onClose={onClose}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <Skeleton height={30} width={96} /><Skeleton height={30} width={96} />
+          </div>
+          <SkeletonLines rows={2} height={30} gap={8} />
+          <Skeleton height={34} width="60%" />
+        </div>
+      </Shell>
+    );
   }
   if (notPublished) {
     return <Shell onClose={onClose}><span style={{ color: "var(--muted)", fontSize: 13 }}>Parlay pricing not available for this week.</span></Shell>;
@@ -211,26 +213,26 @@ export default function LegPicker({
       <div style={{ display: "grid", gap: 8 }}>
         {/* bet type */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => { setBetType("game"); setLineTouched(false); }} style={btn(betType === "game")}>Game line</button>
-          <button type="button" onClick={() => { setBetType("prop"); setLineTouched(false); }} style={btn(betType === "prop")}>Player prop</button>
+          <button type="button" className="ui-btn" data-on={betType === "game" ? "true" : "false"} onClick={() => { setBetType("game"); setLineTouched(false); }}>Game line</button>
+          <button type="button" className="ui-btn" data-on={betType === "prop" ? "true" : "false"} onClick={() => { setBetType("prop"); setLineTouched(false); }}>Player prop</button>
         </div>
 
         {/* cascade */}
         {betType === "game" ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <select value={market} onChange={(e) => { setMarket(e.target.value as GameMarket); setLineTouched(false); }} style={selectStyle}>
+            <select value={market} onChange={(e) => { setMarket(e.target.value as GameMarket); setLineTouched(false); }} className="ui-sel" style={selectStyle}>
               <option value="spread">Spread</option>
               <option value="total">Total</option>
               <option value="teamTotal">Team total</option>
             </select>
             {(market === "spread" || market === "teamTotal") && (
-              <select value={team} onChange={(e) => { setTeam(e.target.value as TeamRef); setLineTouched(false); }} style={selectStyle}>
+              <select value={team} onChange={(e) => { setTeam(e.target.value as TeamRef); setLineTouched(false); }} className="ui-sel" style={selectStyle}>
                 <option value="A">{teamA}</option>
                 <option value="B">{teamB}</option>
               </select>
             )}
             {(market === "total" || market === "teamTotal") && (
-              <select value={side} onChange={(e) => setSide(e.target.value as Side)} style={selectStyle}>
+              <select value={side} onChange={(e) => setSide(e.target.value as Side)} className="ui-sel" style={selectStyle}>
                 <option value="over">Over</option>
                 <option value="under">Under</option>
               </select>
@@ -241,7 +243,7 @@ export default function LegPicker({
             <select
               value={playerName}
               onChange={(e) => { setPlayerName(e.target.value); setLineTouched(false); }}
-              style={{ ...selectStyle, maxWidth: 240 }}
+              className="ui-sel" style={{ ...selectStyle, maxWidth: 240 }}
             >
               {playerOptions.map((p) => (
                 <option key={p.name} value={p.name}>
@@ -249,10 +251,10 @@ export default function LegPicker({
                 </option>
               ))}
             </select>
-            <select value={stat} onChange={(e) => { setStat(e.target.value); setLineTouched(false); }} style={selectStyle}>
+            <select value={stat} onChange={(e) => { setStat(e.target.value); setLineTouched(false); }} className="ui-sel" style={selectStyle}>
               {statOptions.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
             </select>
-            <select value={side} onChange={(e) => setSide(e.target.value as Side)} style={selectStyle}>
+            <select value={side} onChange={(e) => setSide(e.target.value as Side)} className="ui-sel" style={selectStyle}>
               <option value="over">Over</option>
               <option value="under">Under</option>
             </select>
@@ -263,14 +265,14 @@ export default function LegPicker({
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>Line:</span>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <button type="button" onClick={() => bump(-1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>−</button>
+            <button type="button" className="ui-btn" aria-label="Decrease line" onClick={() => bump(-1)} style={{ padding: "3px 8px" }}>−</button>
             <input
               type="number" step={1} value={line} inputMode="decimal"
               onChange={(e) => { setLine(e.target.value); setLineTouched(true); }}
               onBlur={() => { if (lineOk) setLine(String(snapHalf(lineNum))); }}
               style={{ width: 92, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             />
-            <button type="button" onClick={() => bump(1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>+</button>
+            <button type="button" className="ui-btn" aria-label="Increase line" onClick={() => bump(1)} style={{ padding: "3px 8px" }}>+</button>
           </div>
           <span style={{ fontSize: 11, color: "var(--muted)" }}>half-points only</span>
 
@@ -300,11 +302,9 @@ export default function LegPicker({
               });
               onClose();
             }}
-            style={{
-              padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border)",
-              background: spec ? "var(--brand)" : "var(--card)",
-              color: spec ? "var(--brand-contrast)" : "var(--muted)", fontWeight: 700,
-            }}
+            className="ui-btn"
+            data-on={spec ? "true" : "false"}
+            style={{ padding: "8px 14px", fontWeight: 700 }}
           >
             Add to slip
           </button>
@@ -323,10 +323,10 @@ function Shell({ children, onClose }: { children: React.ReactNode; onClose: () =
   return (
     <div className="card" style={{ padding: 10, marginTop: 6 }}>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 800, color: "var(--brand)", letterSpacing: 0.4 }}>ADD LEG</span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: "var(--brand-text)", letterSpacing: 0.4 }}>ADD LEG</span>
         <button
-          type="button" onClick={onClose}
-          style={{ marginLeft: "auto", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", fontSize: 12 }}
+          type="button" onClick={onClose} className="ui-btn"
+          style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 12 }}
         >
           Close
         </button>

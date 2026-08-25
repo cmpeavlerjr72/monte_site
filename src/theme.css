@@ -1,103 +1,312 @@
-/* Base tokens */
+/* ============================================================================
+   Design tokens
+   ----------------------------------------------------------------------------
+   Every surface colour in the app resolves through these tokens, which is what
+   makes a single dark palette flip the whole page. Two rules keep it honest:
+
+     1. Never give a colour its ONLY definition inside a media/[data-theme]
+        block — light is defined on bare :root, dark only redefines.
+     2. Never color-mix against a literal `white`/`black`. Mix against
+        var(--card) or var(--text) so the blend follows the theme. A pill mixed
+        with literal white is invisible on a dark card.
+
+   Theme resolution: no data-theme attribute => follow the OS. An explicit
+   choice stamps data-theme="light" | "dark" on <html> and wins in both
+   directions.
+   ========================================================================= */
+
 :root {
-    --brand: #0b2d4b;          /* navy */
-    --brand-contrast: #ffffff; /* text on brand */
-    --accent: #c59b2b;         /* gold */
-    --text: #111827;           /* near-black */
-    --muted: #6b7280;
-    --bg: #f8fafc;             /* page background */
-    --card: #ffffff;
-    --border: #e2e8f0;
-  }
-  
-  /* Georgia Southern palette (default) */
-  .theme-blue-gold {
-    --brand: #0b2d4b;
-    --brand-contrast: #ffffff;
-    --accent: #c59b2b;
-  }
-  
-  /* (Optional) Alabama palette you can toggle to later */
-  .theme-crimson-white {
-    --brand: #9e1b32;          /* crimson */
-    --brand-contrast: #ffffff;
-    --accent: #bfbfbf;         /* subtle silver accent */
-  }
-  
-  /* Light styling helpers */
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
-  }
-  
-  .header {
-    background: var(--brand);
-    color: var(--brand-contrast);
-    border-bottom: 1px solid color-mix(in oklab, var(--brand) 80%, white);
-  }
-  .header a { color: var(--brand-contrast); text-decoration: none; }
-  .header a:hover { opacity: .85; }
-  
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-  }
-  
-  .btn {
-    background: var(--brand);
-    color: var(--brand-contrast);
-    border: 1px solid color-mix(in oklab, var(--brand) 70%, white);
-    padding: 8px 12px; border-radius: 10px; cursor: pointer;
-  }
-  .btn.secondary {
-    background: var(--accent);
-    color: #091016;
-    border: 1px solid color-mix(in oklab, var(--accent) 70%, black);
-  }
-  :root { color-scheme: light; }  /* tell the browser to render controls in light mode */
+  --brand: #0b2d4b;          /* navy */
+  --brand-contrast: #ffffff; /* text on brand */
+  --accent: #c59b2b;         /* gold */
+  --accent-contrast: #091016;
+  --text: #111827;           /* near-black */
+  --muted: #6b7280;
+  --bg: #f8fafc;             /* page background */
+  --card: #ffffff;
+  --border: #e2e8f0;
 
-/* ---------- Form controls: consistent light styling ---------- */
+  /* Semantic result colours — themed so win/loss read on either background. */
+  --pos: #15803d;
+  --neg: #dc2626;
+
+  /* Brand as TEXT. On dark, the brand that works as a button surface (white on
+     #3178c6 = 4.53) is only 3.8 as small text on the card, so text gets its
+     own lighter value. In light they are the same colour. */
+  --brand-text: var(--brand);
+
+  /* The site header is its own surface: in dark it must NOT become a bright
+     brand-coloured bar across the top. */
+  --header-bg: var(--brand);
+  --header-fg: var(--brand-contrast);
+
+  /* Neutral raised fill (chips, table heads, skeletons). */
+  --fill: color-mix(in oklab, var(--border) 55%, transparent);
+  --shadow: rgba(15, 23, 42, 0.18);
+
+  color-scheme: light;
+}
+
+/* Georgia Southern palette (default) */
+.theme-blue-gold {
+  --brand: #0b2d4b;
+  --brand-contrast: #ffffff;
+  --accent: #c59b2b;
+}
+
+/* (Optional) Alabama palette you can toggle to later */
+.theme-crimson-white {
+  --brand: #9e1b32;          /* crimson */
+  --brand-contrast: #ffffff;
+  --accent: #bfbfbf;         /* subtle silver accent */
+}
+
+/* ---------------------------------------------------------------- dark ---- */
+/* Brand lightens in dark so it works BOTH as a button surface (white text on
+   #3178c6 clears AA) and as heading text on the page background. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --brand: #3178c6;
+    --brand-contrast: #ffffff;
+    --accent: #d3a83f;
+    --accent-contrast: #10151b;
+    --text: #e6edf3;
+    --muted: #97a5b6;
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #2b3440;
+    --pos: #3fb950;
+    --neg: #f85149;
+    --brand-text: #6cb0f5;
+    --header-bg: #10161f;
+    --header-fg: #e6edf3;
+    --shadow: rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
+  }
+  /* Brand palettes must lighten too, or they win the cascade and go dark. */
+  :root:not([data-theme="light"]) .theme-blue-gold { --brand: #3178c6; --accent: #d3a83f; }
+  :root:not([data-theme="light"]) .theme-crimson-white { --brand: #d2465c; --accent: #cfcfcf; }
+}
+
+:root[data-theme="dark"] {
+  --brand: #3178c6;
+  --brand-contrast: #ffffff;
+  --accent: #d3a83f;
+  --accent-contrast: #10151b;
+  --text: #e6edf3;
+  --muted: #97a5b6;
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #2b3440;
+  --pos: #3fb950;
+  --neg: #f85149;
+    --brand-text: #6cb0f5;
+  --header-bg: #10161f;
+  --header-fg: #e6edf3;
+  --shadow: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+:root[data-theme="dark"] .theme-blue-gold { --brand: #3178c6; --accent: #d3a83f; }
+:root[data-theme="dark"] .theme-crimson-white { --brand: #d2465c; --accent: #cfcfcf; }
+
+/* ------------------------------------------------------------ surfaces ---- */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
+.header {
+  background: var(--header-bg);
+  color: var(--header-fg);
+  border-bottom: 1px solid var(--border);
+}
+.header a { color: var(--header-fg); text-decoration: none; }
+.header a:hover { opacity: .85; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.btn {
+  background: var(--brand);
+  color: var(--brand-contrast);
+  border: 1px solid color-mix(in oklab, var(--brand) 70%, var(--card));
+  padding: 8px 12px; border-radius: 10px; cursor: pointer;
+}
+.btn.secondary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: 1px solid color-mix(in oklab, var(--accent) 70%, var(--text));
+}
+
+/* ======================= Shared interactive controls =======================
+   `.ui-btn` / `.ui-sel` carry hover, active and focus for every control on the
+   scoreboard so ~30 call sites stop hand-rolling them inline. State comes from
+   data attributes, not inline colours:
+     data-on="true"        -> selected/active
+     data-tone="accent"    -> use the accent instead of brand when active
+   The bare element rules below the classes are the safety net: any control
+   that has not been converted still gets hover feedback and a focus ring.
+   ========================================================================= */
+.ui-btn {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease, transform .06s ease;
+}
+.ui-btn:hover:not(:disabled) {
+  border-color: var(--brand);
+  background: color-mix(in oklab, var(--brand) 8%, var(--card));
+}
+.ui-btn:active:not(:disabled) { transform: translateY(1px); }
+.ui-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.ui-btn[data-on="true"] {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-contrast);
+}
+.ui-btn[data-on="true"]:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--brand) 85%, var(--text));
+}
+.ui-btn[data-tone="accent"][data-on="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+.ui-btn[data-tone="accent"][data-on="true"]:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 85%, var(--text));
+}
+
+/* Compact icon-only variant (theme / density toggles). */
+.ui-btn.icon { padding: 5px 8px; min-width: 30px; text-align: center; }
+
+.ui-sel {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .12s ease;
+}
+.ui-sel:hover { border-color: var(--brand); }
+
+/* Safety net + visible keyboard focus everywhere. :focus-visible only paints
+   for keyboard users, so mouse clicks stay clean. */
+button { cursor: pointer; }
+button:hover:not(:disabled):not(.ui-btn) { border-color: var(--brand); }
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+/* ---------- Form controls: follow the theme ---------- */
 input, select, textarea {
-    color: var(--text) !important;
-    background-color: var(--card) !important;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px 10px;
-  }
-  
-  /* Options menu colors (where supported) */
-  select option {
-    color: var(--text);
-    background-color: var(--card);
-  }
-  
-  /* Placeholder color */
-  input::placeholder, textarea::placeholder {
-    color: var(--muted);
-    opacity: 1;
-  }
-  
-  /* Safari/iOS: keep text dark even when OS is dark */
-  @supports (-webkit-touch-callout: none) {
-    input, select, textarea {
-      -webkit-text-fill-color: var(--text);
-    }
-  
-    /* tame Safari's yellow autofill */
-    input:-webkit-autofill, textarea:-webkit-autofill, select:-webkit-autofill {
-      -webkit-text-fill-color: var(--text) !important;
-      transition: background-color 5000s ease-in-out 0s;
-    }
-  }
-  
-  /* Focus ring (brand-colored) */
-  input:focus, select:focus, textarea:focus {
-    outline: none;
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, white);
-    border-color: var(--brand);
-  }
-  
+  color: var(--text) !important;
+  background-color: var(--card) !important;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
 
-  
+select option {
+  color: var(--text);
+  background-color: var(--card);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea { -webkit-text-fill-color: var(--text); }
+  input:-webkit-autofill, textarea:-webkit-autofill, select:-webkit-autofill {
+    -webkit-text-fill-color: var(--text) !important;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 25%, var(--card));
+  border-color: var(--brand);
+}
+
+/* ============================= Parlay slip =================================
+   A right-anchored drawer on desktop, a full-width bottom sheet on phones.
+   The page reserves the drawer's measured height while it is open, so the
+   sheet can never sit on top of the last row of cards.
+   ========================================================================= */
+.parlay-slip {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  width: min(420px, 100vw);
+  max-height: min(70vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px 0 0 0;
+  box-shadow: 0 -4px 24px var(--shadow);
+}
+
+@media (max-width: 720px) {
+  .parlay-slip {
+    width: 100vw;
+    max-height: 55vh;
+    border-radius: 12px 12px 0 0;
+  }
+}
+
+/* ============================== Skeletons ==================================
+   Async states reserve their final height as grey blocks instead of printing a
+   sentence, so nothing reflows when the data lands.
+   ========================================================================= */
+.skel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--border) 70%, var(--card));
+}
+.skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--card) 70%, transparent),
+    transparent
+  );
+  animation: skel-shimmer 1.35s ease-in-out infinite;
+}
+@keyframes skel-shimmer {
+  100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel::after { animation: none; }
+  .ui-btn { transition: none; }
+}

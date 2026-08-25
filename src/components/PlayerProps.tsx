@@ -21,6 +21,7 @@ import {
   type JsonWeekRow, type PlayerDist, type PlayersDistJson,
 } from "../lib/cfbJson";
 import type { Season } from "../lib/cfbData";
+import { SkeletonChart } from "./Skeleton";
 
 type Props = {
   row: JsonWeekRow;
@@ -76,24 +77,20 @@ function NumberSpinner({
   };
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <button type="button" onClick={() => bump(-1)}
-        style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>−</button>
+      <button type="button" className="ui-btn" aria-label="Decrease line" onClick={() => bump(-1)}
+        style={{ padding: "3px 8px" }}>−</button>
       <input
         type="number" step={step} min={0} value={value} inputMode="decimal"
         onChange={(e) => onChange(e.target.value)}
-        style={{ width: 90, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+        style={{ width: 90 }}
       />
-      <button type="button" onClick={() => bump(1)}
-        style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>+</button>
+      <button type="button" className="ui-btn" aria-label="Increase line" onClick={() => bump(1)}
+        style={{ padding: "3px 8px" }}>+</button>
     </div>
   );
 }
 
-const selectStyle = {
-  padding: "6px 10px", borderRadius: 8,
-  border: "1px solid var(--border)", background: "var(--card)",
-  minWidth: 0,
-} as const;
+const selectStyle = { minWidth: 0 } as const;
 
 export default function PlayerProps({ row, season, teamA, teamB, colorFor }: Props) {
   const [data, setData] = useState<PlayersDistJson | null>(null);
@@ -185,13 +182,39 @@ export default function PlayerProps({ row, season, teamA, teamB, colorFor }: Pro
     [pmf, stat]
   );
 
-  if (loading) {
+  /**
+   * ~5 evenly spaced real tick values plus the median, which is drawn in the
+   * brand colour and bold. The axis previously labelled nothing at all.
+   */
+  const tickPlan = useMemo(() => {
+    const plan = new Map<string, { text: string; strong: boolean }>();
+    if (!bins.length) return plan;
+    const n = Math.min(5, bins.length);
+    for (let i = 0; i < n; i++) {
+      const idx = n === 1 ? 0 : Math.round((i * (bins.length - 1)) / (n - 1));
+      plan.set(bins[idx].label, { text: String(bins[idx].start), strong: false });
+    }
+    if (summary) {
+      const medBin = bins.find((b) => summary.median >= b.start && summary.median < b.end);
+      if (medBin) plan.set(medBin.label, { text: String(summary.median), strong: true });
+    }
+    return plan;
+  }, [bins, summary]);
+
+  const renderTick = (props: any) => {
+    const { x, y, payload } = props;
+    const hit = tickPlan.get(payload?.value);
+    if (!hit) return <g />;
     return (
-      <div className="card" style={{ padding: 12, marginTop: 6, fontSize: 13, color: "var(--muted)" }}>
-        Loading simulated player distributions…
-      </div>
+      <text x={x} y={y + 10} textAnchor="middle" fontSize={11}
+        fill={hit.strong ? "var(--brand-text)" : "var(--muted)"}
+        fontWeight={hit.strong ? 700 : 400}>
+        {hit.text}
+      </text>
     );
-  }
+  };
+
+  if (loading) return <SkeletonChart height={190} />;
   if (notPublished) {
     return (
       <div className="card" style={{ padding: 12, marginTop: 6, fontSize: 13, color: "var(--muted)" }}>
@@ -227,7 +250,7 @@ export default function PlayerProps({ row, season, teamA, teamB, colorFor }: Pro
         <select
           value={player.player}
           onChange={(e) => { setPlayerName(e.target.value); setStatKey(""); setLineTouched(false); }}
-          style={selectStyle}
+          className="ui-sel" style={selectStyle}
         >
           {players.map((p) => (
             <option key={`${p.team}__${p.player}`} value={p.player}>
@@ -239,7 +262,7 @@ export default function PlayerProps({ row, season, teamA, teamB, colorFor }: Pro
         <select
           value={stat.key}
           onChange={(e) => { setStatKey(e.target.value); setLineTouched(false); }}
-          style={selectStyle}
+          className="ui-sel" style={selectStyle}
         >
           {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
         </select>
@@ -256,12 +279,8 @@ export default function PlayerProps({ row, season, teamA, teamB, colorFor }: Pro
           <BarChart data={bins} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
             <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
             <XAxis
-              dataKey="label"
-              interval="preserveStartEnd"
-              height={20}
-              tickLine={false}
-              axisLine={false}
-              tick={{ fontSize: 11 }}
+              dataKey="label" interval={0} height={22}
+              tickLine={false} axisLine={false} tick={renderTick}
             />
             <YAxis allowDecimals={false} width={30} tick={{ fontSize: 11 }} />
             <Tooltip

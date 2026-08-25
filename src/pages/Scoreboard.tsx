@@ -11,6 +11,8 @@ import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 
 import SupportButton from "../components/SupportButton";
 import ErrorBoundary from "../components/ErrorBoundary";
+import { Skeleton, SkeletonCard, SkeletonChart } from "../components/Skeleton";
+import { useThemeMode, useDensity, type Density } from "../lib/usePrefs";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
   getCatalog, playerFileForPair, resolveLatestSeason, latestWeek,
@@ -507,20 +509,75 @@ function NumberSpinner({
   };
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <button type="button" onClick={() => bump(-1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>−</button>
+      <button type="button" className="ui-btn" aria-label="Decrease" onClick={() => bump(-1)} style={{ padding: "3px 8px" }}>−</button>
       <input type="number" step={step} min={min} max={max} value={value} placeholder={placeholder}
         inputMode="decimal" onChange={(e) => onChange(e.target.value)}
-        style={{ width, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }} />
+        style={{ width }} />
       <button type="button" onClick={() => bump(1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background:"var(--card)" }}>+</button>
     </div>
   );
+}
+
+/* --------------------- histogram ticks ---------------------
+ * The axes used to label ONLY q1/median/q3 and return "" for every other tick,
+ * so a 30-bar chart showed three floating numbers and read as unlabelled.
+ * Now: ~5 evenly spaced real values across the range, PLUS the quartiles,
+ * with quartiles drawn in the brand colour and bold so they stay legible as
+ * distribution landmarks rather than blending into the scale.
+ */
+type TickInfo = { text: string; quartile: boolean };
+
+const fmtTick = (v: number) =>
+  Number.isInteger(v) ? String(v) : Math.abs(v) < 10 ? v.toFixed(1) : v.toFixed(0);
+
+function buildTickPlan(
+  hist: HistBin[],
+  q: { q1: number; med: number; q3: number } | null,
+  count = 5
+): Map<string, TickInfo> {
+  const plan = new Map<string, TickInfo>();
+  if (!hist.length) return plan;
+
+  const n = Math.min(count, hist.length);
+  for (let i = 0; i < n; i++) {
+    const idx = n === 1 ? 0 : Math.round((i * (hist.length - 1)) / (n - 1));
+    const b = hist[idx];
+    plan.set(b.bin, { text: fmtTick(b.start), quartile: false });
+  }
+  if (q) {
+    for (const v of [q.q1, q.med, q.q3]) {
+      const label = findBinLabelForValue(hist, v);
+      if (label) plan.set(label, { text: fmtTick(v), quartile: true });
+    }
+  }
+  return plan;
+}
+
+/** Recharts tick renderer honouring a plan; unplanned ticks render nothing. */
+function planTick(plan: Map<string, TickInfo>) {
+  return (props: any) => {
+    const { x, y, payload } = props;
+    const hit = plan.get(payload?.value);
+    if (!hit) return <g />;
+    return (
+      <text
+        x={x} y={y + 10} textAnchor="middle" fontSize={11}
+        fill={hit.quartile ? "var(--brand-text)" : "var(--muted)"}
+        fontWeight={hit.quartile ? 700 : 400}
+      >
+        {hit.text}
+      </text>
+    );
+  };
 }
 
 /* --------------------- expandable panels --------------------- */
 /** Which drill-down a card currently owns. Only one is open page-wide. */
 export type PanelKind = "scores" | "players" | "box" | "props" | "picker";
 
-/** Must mirror the grid CSS below so the break-out row lands in the right place. */
+/** Must mirror the grid CSS below so the break-out row lands in the right place.
+ *  Condensed narrows the track so a 1400px viewport fits 5 columns instead of 4. */
+const GRID_MIN: Record<Density, number> = { comfortable: 320, condensed: 250 };
 const GRID_MIN_COL = 320;
 const GRID_GAP = 16;
 
@@ -917,6 +974,12 @@ function ScoreboardPage() {
     return () => { alive = false; ac.abort(); };
   }, [season, selectedWeek, weekOptions, scoreFileByWeek, gamesFileByWeek]);
 
+  /* ---- Viewer preferences (item 10 + 13). Both persist in localStorage,
+   * guarded inside usePrefs so a blocked-storage browser just gets defaults. */
+  const { resolved: themeResolved, cycle: cycleTheme, mode: themeMode } = useThemeMode();
+  const { density, toggle: toggleDensity } = useDensity();
+  const condensed = density === "condensed";
+
   /* ---- Expanded panel. Lifted out of the card so the panel can render as a
    * separate full-width grid item: a card must never change size because
    * something inside it opened. ---- */
@@ -940,17 +1003,19 @@ function ScoreboardPage() {
     if (!el || typeof ResizeObserver === "undefined") return;
     const measure = () => {
       const w = el.clientWidth;
-      setGridCols(gridColumnsFor(w));
+      setGridCols(gridColumnsFor(w, GRID_MIN[density]));
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // Density changes the track width, so the column count must be re-measured.
+  }, [density]);
 
   /* ---- Parlay slip. Lives at page level so it survives week/season switches;
    * each leg carries its own game/season identity. ---- */
   const [parlayOpen, setParlayOpen] = useState(false);
+  const [slipHeight, setSlipHeight] = useState(0);
   const [legs, setLegs] = useState<Leg[]>([]);
 
   const addLeg = useCallback((leg: Leg) => {
@@ -1435,6 +1500,12 @@ function ScoreboardPage() {
     return cards.filter(c => (confOf(c.teamA) === confFilter) || (confOf(c.teamB) === confFilter));
   }, [cards, confFilter, teamToConf]);
 
+  /** Human week label for the card header (replaces the hardcoded "week"). */
+  const weekLabel = useMemo(
+    () => weekOptions.find((w) => w.legacyKey === selectedWeek)?.label ?? selectedWeek,
+    [weekOptions, selectedWeek]
+  );
+
   /** Index of the expanded card in the filtered list, and the card itself. */
   const openIdx = useMemo(
     () => (openPanel ? filteredCards.findIndex((c) => c.key === openPanel.key) : -1),
@@ -1448,12 +1519,9 @@ function ScoreboardPage() {
   }, [openPanel, openIdx]);
 
   // Compact toolbar tokens — the row must fit on one line at desktop widths.
-  const CTL = {
-    padding: "5px 8px", borderRadius: 8, border: "1px solid var(--border)",
-    background: "var(--card)", fontSize: 13, maxWidth: 190,
-  } as const;
+  const CTL = { maxWidth: 190 } as const;
   const LBL = { fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" } as const;
-  const HDG = { margin: 0, fontSize: 14, fontWeight: 800, color: "var(--brand)", whiteSpace: "nowrap" } as const;
+  const HDG = { margin: 0, fontSize: 14, fontWeight: 800, color: "var(--brand-text)", whiteSpace: "nowrap" } as const;
 
   const statusText = catalogLoading
     ? "Loading seasons…"
@@ -1465,8 +1533,17 @@ function ScoreboardPage() {
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
-      {/* Season + Week selector */}
-      <section className="card" style={{ padding: 12, marginBottom: 16 }}>
+      {/* Season + Week selector. Sticky so week/sort stay reachable on a
+          60-game slate; the opaque background stops cards showing through. */}
+      <section
+        className="card"
+        style={{
+          padding: 10, marginBottom: 16,
+          position: "sticky", top: 0, zIndex: 30,
+          background: "var(--card)",
+          boxShadow: "0 2px 10px var(--shadow)",
+        }}
+      >
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", minWidth: 0 }}>
             <h2 style={HDG}>Season</h2>
@@ -1474,7 +1551,7 @@ function ScoreboardPage() {
               value={season}
               onChange={(e) => { deepWeekUsed.current = true; setSelectedWeek(""); setSeason(e.target.value); }}
               disabled={catalogLoading && !season}
-              style={CTL}
+              className="ui-sel" style={CTL}
             >
               {!season && <option value="">…</option>}
               {SEASONS.map((s) => (<option key={s} value={s}>{s}</option>))}
@@ -1485,7 +1562,7 @@ function ScoreboardPage() {
               value={selectedWeek}
               onChange={(e) => setSelectedWeek(e.target.value)}
               disabled={!weekOptions.length}
-              style={CTL}
+              className="ui-sel" style={CTL}
             >
               {!weekOptions.length && <option value="">—</option>}
               {weekOptions.map((w) => (
@@ -1501,22 +1578,39 @@ function ScoreboardPage() {
             <button
               type="button"
               onClick={() => setParlayOpen((v) => !v)}
-              style={{
-                padding: "5px 10px", borderRadius: 8, border: "1px solid var(--border)",
-                background: parlayOpen ? "var(--brand)" : "var(--card)",
-                color: parlayOpen ? "var(--brand-contrast)" : "var(--text)",
-                fontWeight: 700, fontSize: 13, whiteSpace: "nowrap",
-              }}
+              className="ui-btn"
+              data-on={parlayOpen ? "true" : "false"}
+              style={{ fontWeight: 700, whiteSpace: "nowrap" }}
             >
               {parlayOpen ? "Close Parlay Builder" : "Parlay Builder"}
               {legs.length > 0 && ` (${legs.length})`}
+            </button>
+
+            <button
+              type="button"
+              className="ui-btn icon"
+              onClick={toggleDensity}
+              title={`Density: ${density} (click to switch)`}
+              aria-label={`Card density: ${density}`}
+            >
+              {condensed ? "\u25A4" : "\u25A6"}
+            </button>
+
+            <button
+              type="button"
+              className="ui-btn icon"
+              onClick={cycleTheme}
+              title={`Theme: ${themeMode}${themeMode === "system" ? ` (${themeResolved})` : ""} \u2014 click to change`}
+              aria-label={`Theme: ${themeMode}`}
+            >
+              {themeMode === "system" ? "\u25D1" : themeResolved === "dark" ? "\u263E" : "\u2600"}
             </button>
 
             <label style={LBL}>Conf:</label>
             <select
               value={confFilter}
               onChange={(e)=>setConfFilter(e.target.value)}
-              style={CTL}
+              className="ui-sel" style={CTL}
             >
               <option value="all">All conferences</option>
               {confOptions.map(c => <option key={c} value={c}>{c}</option>)}
@@ -1526,7 +1620,7 @@ function ScoreboardPage() {
             <select
               value={sortBy}
               onChange={(e)=>setSortBy(e.target.value as any)}
-              style={CTL}
+              className="ui-sel" style={CTL}
             >
               <option value="kickoff">Kickoff time</option>
               <option value="spread_conf">Spread confidence</option>
@@ -1537,7 +1631,7 @@ function ScoreboardPage() {
             <select
               value={useMean ? "mean" : "median"}
               onChange={(e)=>setUseMean(e.target.value === "mean")}
-              style={CTL}
+              className="ui-sel" style={CTL}
             >
               <option value="median">Median</option>
               <option value="mean">Mean</option>
@@ -1561,10 +1655,8 @@ function ScoreboardPage() {
           <button
             type="button"
             onClick={retryCatalog}
-            style={{
-              padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border)",
-              background: "var(--brand)", color: "var(--brand-contrast)", fontWeight: 700,
-            }}
+            className="ui-btn" data-on="true"
+            style={{ padding: "8px 14px", fontWeight: 700 }}
           >
             Retry
           </button>
@@ -1583,14 +1675,24 @@ function ScoreboardPage() {
           <button
             type="button"
             onClick={() => setReloadTick((t) => t + 1)}
-            style={{
-              padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border)",
-              background: "var(--brand)", color: "var(--brand-contrast)", fontWeight: 700,
-            }}
+            className="ui-btn" data-on="true"
+            style={{ padding: "8px 14px", fontWeight: 700 }}
           >
             Retry
           </button>
         </section>
+      )}
+
+      {(loading || catalogLoading) && !filteredCards.length && (
+        <div
+          style={{
+            display: "grid", gap: GRID_GAP,
+            gridTemplateColumns: `repeat(auto-fit, minmax(${GRID_MIN[density]}px, 1fr))`,
+            marginBottom: 16,
+          }}
+        >
+          {Array.from({ length: 6 }, (_, i) => <SkeletonCard key={i} />)}
+        </div>
       )}
 
       {!catalogError && !weekError && !loading && !catalogLoading && !filteredCards.length && (
@@ -1599,12 +1701,17 @@ function ScoreboardPage() {
         </section>
       )}
 
+      {/* Reserve room for the fixed slip so it can never sit on top of the
+          last cards (it is a full-width bottom sheet under 720px). */}
+      {parlayOpen && slipHeight > 0 && <div aria-hidden style={{ height: slipHeight + 16 }} />}
+
       {parlayOpen && (
         <ParlaySlip
           legs={legs}
           onRemove={removeLeg}
           onClear={() => setLegs([])}
           onClose={() => setParlayOpen(false)}
+          onHeight={setSlipHeight}
         />
       )}
 
@@ -1618,7 +1725,7 @@ function ScoreboardPage() {
         style={{
           display: "grid",
           gap: GRID_GAP,
-          gridTemplateColumns: `repeat(auto-fit, minmax(${GRID_MIN_COL}px, 1fr))`,
+          gridTemplateColumns: `repeat(auto-fit, minmax(${GRID_MIN[density]}px, 1fr))`,
           alignItems: "stretch",
         }}
       >
@@ -1637,6 +1744,8 @@ function ScoreboardPage() {
                 parlayOpen={parlayOpen}
                 openKind={isOpen ? openPanel!.kind : null}
                 onToggle={(kind) => togglePanel(c.key, kind)}
+                weekLabel={weekLabel}
+                condensed={condensed}
               />
               {openPanel && idx === rowEnd && openCard && (
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -1710,6 +1819,7 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 
 export function GameCard({
   card, gdata, useMean = false, kalshi, parlayOpen, openKind, onToggle,
+  weekLabel, condensed = false,
 }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
@@ -1722,6 +1832,9 @@ export function GameCard({
    *  card (full grid width) so expanding one never resizes the card itself. */
   openKind: PanelKind | null;
   onToggle: (kind: PanelKind) => void;
+  /** Real week label, replacing the hardcoded "week" placeholder. */
+  weekLabel: string;
+  condensed?: boolean;
 }) {
   const jsonRow = card.jsonRow;
   const csvCard = !jsonRow;
@@ -1735,49 +1848,79 @@ export function GameCard({
 
   const expanded = openKind !== null;
 
+  // Mixed against var(--card), never literal white: a pill blended with white
+  // is invisible, and its inherited text unreadable, on a dark card.
   const pillBg = (result?: "win" | "loss" | "push") => {
-    if (result == "win") return "color-mix(in oklab, #16a34a 22%, white)";
-    if (result == "loss") return "color-mix(in oklab, #ef4444 22%, white)";
-    return "color-mix(in oklab, var(--brand) 12%, white)"
+    if (result == "win") return "color-mix(in oklab, var(--pos) 22%, var(--card))";
+    if (result == "loss") return "color-mix(in oklab, var(--neg) 22%, var(--card))";
+    return "color-mix(in oklab, var(--brand) 12%, var(--card))";
   };
 
-  const tabBtn = (kind: PanelKind, label: string, accent = false) => {
-    const on = openKind === kind;
-    return (
-      <button
-        onClick={() => onToggle(kind)}
-        style={{
-          padding: "6px 10px", borderRadius: 8,
-          border: `1px solid ${on ? (accent ? "var(--accent)" : "var(--brand)") : "var(--border)"}`,
-          background: on ? (accent ? "var(--accent)" : "var(--brand)") : "var(--card)",
-          color: on ? "var(--brand-contrast)" : "var(--text)",
-          fontSize: 13,
-        }}
-      >
-        {label}
-      </button>
-    );
-  };
+  const tabBtn = (kind: PanelKind, label: string, accent = false) => (
+    <button
+      className="ui-btn"
+      data-on={openKind === kind ? "true" : "false"}
+      data-tone={accent ? "accent" : undefined}
+      onClick={() => onToggle(kind)}
+      style={condensed ? { padding: "4px 8px", fontSize: 12 } : undefined}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <article
       className="card"
       style={{
-        padding: 12, borderRadius: 12,
+        padding: condensed ? 8 : 12,
+        borderRadius: 12,
         // The open card keeps a highlighted border so it stays visually tied
         // to its panel, which now sits on its own full-width row below.
         border: `1px solid ${expanded ? "var(--brand)" : "var(--border)"}`,
+        // Home team's primary as a left accent turns a uniform grid into
+        // something scannable; falls back to the brand when unknown.
+        borderLeft: `3px solid ${expanded ? "var(--brand)" : (aColors?.primary ?? "var(--brand)")}`,
         boxShadow: expanded ? "0 0 0 1px var(--brand)" : "none",
         background: "var(--card)",
-        display: "grid", gridTemplateRows: "auto auto auto", gap: 8,
+        display: "grid", gap: condensed ? 6 : 8,
         alignContent: "start",
       }}
     >
-      {/* header */}
-      <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between" }}>
-        <span>week</span>
-        <span>{card.kickoffLabel ?? "TBD"}</span>
-      </div>
+      {/* Header: real week label + a genuine status.
+          Was a hardcoded lowercase "week" and a bare "TBD". */}
+      {(() => {
+        const isFinal = card.scoreSource === "CSV_FINALS";
+        const isLive = Boolean(card.liveInProgress);
+        const status = isFinal
+          ? "Final"
+          : isLive
+          ? (card.liveStatusText || "In progress")
+          : card.scoreSource === "LIVE" && card.liveStatusText
+          ? card.liveStatusText
+          : card.kickoffLabel ?? "Scheduled";
+
+        return (
+          <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+            <span style={{ letterSpacing: 0.3, textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {weekLabel}
+            </span>
+            <span
+              style={{
+                whiteSpace: "nowrap", fontWeight: isLive || isFinal ? 800 : 400,
+                color: isLive ? "var(--neg)" : isFinal ? "var(--text)" : "var(--muted)",
+              }}
+            >
+              {isLive && (
+                <span style={{
+                  display: "inline-block", width: 6, height: 6, borderRadius: 999,
+                  background: "var(--neg)", marginRight: 5, verticalAlign: "middle",
+                }} />
+              )}
+              {status}
+            </span>
+          </div>
+        );
+      })()}
 
       {/* teams + scores (stacked with Projected / Actual) */}
       {(() => {
@@ -1785,62 +1928,75 @@ export function GameCard({
         const projB = useMean ? card.meanB : card.medB;
         const hasFinalA = Number.isFinite(card.finalA);
         const hasFinalB = Number.isFinite(card.finalB);
+        // Typography hierarchy: the projected score is the headline, team names
+        // step back to 600, captions shrink and mute.
+        const scoreSize = condensed ? 17 : 24;
+        const nameSize = condensed ? 13 : 14;
+        const logoPx = condensed ? 18 : 24;
+        const colW = condensed ? 56 : 74;
+        const capStyle = {
+          fontSize: 10, color: "var(--muted)", textAlign: "center",
+          letterSpacing: 0.4, textTransform: "uppercase",
+        } as const;
 
         return (
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "minmax(0,1fr) 90px 90px",
-              rowGap: 6, columnGap: 8, alignItems: "center",
+              gridTemplateColumns: `minmax(0,1fr) ${colW}px ${colW}px`,
+              rowGap: condensed ? 3 : 6, columnGap: 8, alignItems: "center",
             }}
           >
             <div />
-            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Projected</div>
-            <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
-              {card.scoreSource === "LIVE" ? "Current" : "Actual"}
+            <div style={capStyle}>Proj</div>
+            <div style={capStyle}>
+              {card.scoreSource === "LIVE" ? "Now" : "Final"}
             </div>
 
             {/* Team B (top) */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
               {bLogo ? (
-                <img src={bLogo} alt={`${card.teamB} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
+                <img src={bLogo} alt="" width={logoPx} height={logoPx} style={{ objectFit: "contain" }} loading="lazy" />
               ) : (
-                <div style={{ width: 24, height: 24, borderRadius: 6, background: bColors?.primary ?? "var(--accent)" }} />
+                <div style={{ width: logoPx, height: logoPx, borderRadius: 6, background: bColors?.primary ?? "var(--accent)" }} />
               )}
-              <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ fontWeight: 600, fontSize: nameSize, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamB}
               </div>
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: bColors?.primary ?? "var(--text)" }}>
+            <div style={{ fontWeight: 800, fontSize: scoreSize, lineHeight: 1, textAlign: "center", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
               {projB}
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+            <div style={{ fontWeight: 700, fontSize: scoreSize, lineHeight: 1, textAlign: "center", fontVariantNumeric: "tabular-nums", color: "var(--muted)" }}>
               {hasFinalB ? card.finalB : "\u2013"}
             </div>
 
             {/* Team A (bottom) */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
               {aLogo ? (
-                <img src={aLogo} alt={`${card.teamA} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
+                <img src={aLogo} alt="" width={logoPx} height={logoPx} style={{ objectFit: "contain" }} loading="lazy" />
               ) : (
-                <div style={{ width: 24, height: 24, borderRadius: 6, background: aColors?.primary ?? "var(--brand)" }} />
+                <div style={{ width: logoPx, height: logoPx, borderRadius: 6, background: aColors?.primary ?? "var(--brand)" }} />
               )}
-              <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ fontWeight: 600, fontSize: nameSize, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamA}
               </div>
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: aColors?.primary ?? "var(--text)" }}>
+            <div style={{ fontWeight: 800, fontSize: scoreSize, lineHeight: 1, textAlign: "center", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
               {projA}
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
+            <div style={{ fontWeight: 700, fontSize: scoreSize, lineHeight: 1, textAlign: "center", fontVariantNumeric: "tabular-nums", color: "var(--muted)" }}>
               {hasFinalA ? card.finalA : "\u2013"}
             </div>
           </div>
         );
       })()}
 
-      {/* picks row */}
-      {(card.pickSpread || card.pickTotal || typeof card.mlPickProb === "number") && (
+      <WinProbBar card={card} aColor={aColors?.primary} bColor={bColors?.primary} condensed={condensed} />
+
+      {/* Picks row. Dropped in condensed mode: the win bar and the Sim/Kalshi
+          block already carry the headline numbers. */}
+      {!condensed && (card.pickSpread || card.pickTotal) && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
           {card.pickSpread && (
             <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.spreadResult), border: "1px solid var(--border)" }}>
@@ -1852,11 +2008,6 @@ export function GameCard({
             <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.totalResult), border: "1px solid var(--border)" }}>
               Total: Pick &bull; {card.pickTotal}
               {typeof card.totalProb === "number" ? ` (${(card.totalProb * 100).toFixed(1)}%)` : ""}
-            </span>
-          )}
-          {typeof card.mlPickProb === "number" && card.mlPickTeam && card.mlFair && (
-            <span style={{ fontSize: 12, padding: "4px 8px", borderRadius: 999, background: pillBg(card.mlResult), border: "1px solid var(--border)" }}>
-              ML: Pick &bull; {card.mlPickTeam} ({(card.mlPickProb * 100).toFixed(1)}%) &bull; Fair {card.mlFair}
             </span>
           )}
         </div>
@@ -1873,6 +2024,46 @@ export function GameCard({
         {jsonRow && tabBtn("box", "Box Score", true)}
       </div>
     </article>
+  );
+}
+
+/* ============================== Win prob bar ================================
+ * The headline number of a simulation was buried in a pill among three others.
+ * A single split bar in team colours reads at a glance, and it replaces the ML
+ * pill entirely (the fair price still shows in the Sim/Kalshi block).
+ * ========================================================================= */
+export function WinProbBar({ card, aColor, bColor, condensed = false }: {
+  card: CardGame; aColor?: string; bColor?: string; condensed?: boolean;
+}) {
+  // pHome is the sim's own P(home). Fall back to the ML pick when a CSV-season
+  // card has no pHome but does carry a moneyline probability.
+  let pA = card.pHome;
+  if (typeof pA !== "number" && typeof card.mlPickProb === "number" && card.mlPickTeam) {
+    pA = card.mlPickTeam === card.teamA ? card.mlPickProb : 1 - card.mlPickProb;
+  }
+  if (typeof pA !== "number" || !(pA >= 0 && pA <= 1)) return null;
+
+  const pctA = Math.round(pA * 100);
+  const home = aColor ?? "var(--brand)";
+  const away = bColor ?? "var(--accent)";
+  const h = condensed ? 6 : 8;
+
+  return (
+    <div style={{ display: "grid", gap: 3 }}>
+      <div
+        style={{ display: "flex", height: h, borderRadius: 999, overflow: "hidden", background: "var(--fill)" }}
+        role="img"
+        aria-label={`${card.teamA} ${pctA}% to win, ${card.teamB} ${100 - pctA}%`}
+      >
+        <div style={{ width: `${100 - pctA}%`, background: away }} />
+        <div style={{ width: `${pctA}%`, background: home }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}>
+        <span>{100 - pctA}%</span>
+        <span style={{ letterSpacing: 0.3 }}>WIN PROB</span>
+        <span>{pctA}%</span>
+      </div>
+    </div>
   );
 }
 
@@ -1967,7 +2158,7 @@ export function SimVsKalshi({ card, kalshi, useMean }: {
                   style={{
                     display: "inline-block", padding: "1px 5px", borderRadius: 6,
                     fontSize: 11, fontVariantNumeric: "tabular-nums",
-                    background: "color-mix(in oklab, var(--border) 55%, transparent)",
+                    background: "var(--fill)",
                     color: "var(--muted)",
                   }}
                 >
@@ -2017,13 +2208,13 @@ function CardPanelHost({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 800, color: "var(--brand)" }}>
+        <span style={{ fontSize: 12, fontWeight: 800, color: "var(--brand-text)" }}>
           {card.teamB} @ {card.teamA}
         </span>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>{title}</span>
         <button
-          type="button" onClick={onClose}
-          style={{ marginLeft: "auto", padding: "3px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", fontSize: 12 }}
+          type="button" onClick={onClose} className="ui-btn"
+          style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12 }}
         >
           Close
         </button>
@@ -2122,14 +2313,6 @@ function ScoresPanel({ card, gdata, season }: {
     const opts:any = {}; if (bins!=="auto") opts.bins = Math.max(1, Number(bins));
     return computeHistogram(series, opts);
   }, [series, bins]);
-  const scoreTickLabels = useMemo(()=>{
-    if (!hist.length || !qScore) return {q1Label:undefined, medLabel:undefined, q3Label:undefined};
-    return {
-      q1Label: findBinLabelForValue(hist, qScore.q1),
-      medLabel: findBinLabelForValue(hist, qScore.med),
-      q3Label: findBinLabelForValue(hist, qScore.q3),
-    };
-  }, [hist, qScore]);
   const teamProb = useMemo(() => {
     if (!series.length) return null as null | { under:number; at:number; over:number; line:number };
     const L = Number(teamLine); if (!Number.isFinite(L)) return null;
@@ -2141,6 +2324,7 @@ function ScoresPanel({ card, gdata, season }: {
     () => (teamProb && hist.length ? findBinLabelForValue(hist, teamProb.line) : undefined),
     [teamProb, hist]
   );
+  const tickPlan = useMemo(() => buildTickPlan(hist, qScore), [hist, qScore]);
 
   const leftColor  = (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
   const rightColor = (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
@@ -2164,10 +2348,11 @@ function ScoresPanel({ card, gdata, season }: {
     return hist.map(() => "var(--brand)");
   }, [hist, metric, leftColor, rightColor, qScore?.med]);
 
-  if (compactLoading || compactError) {
+  if (compactLoading) return <SkeletonChart height={220} />;
+  if (compactError) {
     return (
       <div style={{ fontSize: 13, color: "var(--muted)", padding: 6 }}>
-        {compactLoading ? "Loading simulated distribution\u2026" : `Couldn\u2019t load the distribution: ${compactError}`}
+        Couldn\u2019t load the distribution: {compactError}
       </div>
     );
   }
@@ -2179,21 +2364,16 @@ function ScoresPanel({ card, gdata, season }: {
     <div>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
         {(["spread","total","teamLeft","teamRight"] as Metric[]).map(m => (
-          <button key={m} onClick={()=>setMetric(m)}
-            style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${metric===m?"var(--brand)":"var(--border)"}`, background: metric===m?"var(--brand)":"var(--card)", color: metric===m?"var(--brand-contrast)":"var(--text)" }}>
+          <button key={m} className="ui-btn" data-on={metric===m ? "true" : "false"} onClick={()=>setMetric(m)}>
             {m==="spread"?"Spread":m==="total"?"Total":m==="teamLeft"?`${panelData.teamA} total`:`${panelData.teamB} total`}
           </button>
         ))}
         <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <button
-            onClick={()=>setTeamOrder(t=>t===0?1:0)}
-            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
-          >
+          <button className="ui-btn" onClick={()=>setTeamOrder(t=>t===0?1:0)}>
             {teamOrder===0 ? `${panelData.teamA} vs ${panelData.teamB}` : `${panelData.teamB} vs ${panelData.teamA}`}
           </button>
           <label style={{ fontSize:12, color:"var(--muted)" }}>Bins:</label>
-          <select value={String(bins)} onChange={(e)=>setBins(e.target.value==="auto" ? "auto" : Number(e.target.value))}
-            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+          <select className="ui-sel" value={String(bins)} onChange={(e)=>setBins(e.target.value==="auto" ? "auto" : Number(e.target.value))}>
             <option value="auto">Auto</option><option value="20">20</option><option value="30">30</option><option value="40">40</option>
           </select>
           <label style={{ fontSize:12, color:"var(--muted)" }}>Line:</label>
@@ -2206,15 +2386,8 @@ function ScoresPanel({ card, gdata, season }: {
           <BarChart data={hist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
             <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
             <XAxis
-              dataKey="bin" interval={0} height={20} tickLine={false} axisLine={false} tick={{ fontSize: 11 }}
-              tickFormatter={(label: string) => {
-                if (!qScore) return "";
-                const { q1Label, medLabel, q3Label } = scoreTickLabels;
-                if (label === q1Label) return qScore.q1.toFixed(1);
-                if (label === medLabel) return qScore.med.toFixed(1);
-                if (label === q3Label) return qScore.q3.toFixed(1);
-                return "";
-              }}
+              dataKey="bin" interval={0} height={22} tickLine={false} axisLine={false}
+              tick={planTick(tickPlan)}
             />
             <YAxis allowDecimals={false} width={28} tick={{ fontSize: 11 }} />
             <Tooltip
@@ -2294,14 +2467,6 @@ function PlayersPanel({ card, week, season }: {
   const pValues = players[pTeam]?.[pPlayer]?.[pRole]?.[pStat] || [];
   const qPlayer = useMemo(()=> quantiles(pValues), [pValues]);
   const pHist = useMemo(() => computeHistogram(pValues, { bins: 20 }), [pValues]);
-  const pTickLabels = useMemo(()=>{
-    if (!pHist.length || !qPlayer) return {q1Label:undefined, medLabel:undefined, q3Label:undefined};
-    return {
-      q1Label: findBinLabelForValue(pHist, qPlayer.q1),
-      medLabel: findBinLabelForValue(pHist, qPlayer.med),
-      q3Label: findBinLabelForValue(pHist, qPlayer.q3),
-    };
-  }, [pHist, qPlayer]);
 
   const [playerLine, setPlayerLine] = useState<string>("");
   const pProb = useMemo(() => {
@@ -2311,6 +2476,7 @@ function PlayersPanel({ card, week, season }: {
     const n = pValues.length; return { under:u/n, at:a/n, over:o/n, line:L };
   }, [pValues, playerLine]);
   const pLbl = useMemo(()=> (pProb && pHist.length ? findBinLabelForValue(pHist, pProb.line) : undefined), [pProb, pHist]);
+  const pTickPlan = useMemo(() => buildTickPlan(pHist, qPlayer), [pHist, qPlayer]);
 
   const pretty = (s: string) => {
     const key = norm(s);
@@ -2323,9 +2489,7 @@ function PlayersPanel({ card, week, season }: {
     return back[STAT_SYNONYMS[key] ?? key] ?? s;
   };
 
-  if (playersLoading) {
-    return <div style={{ fontSize: 13, color: "var(--muted)", padding: 6 }}>Loading player sims\u2026</div>;
-  }
+  if (playersLoading) return <SkeletonChart height={220} />;
   if (playersError) {
     return <div style={{ fontSize: 13, color: "var(--muted)", padding: 6 }}>No player sims for this matchup.</div>;
   }
@@ -2334,19 +2498,19 @@ function PlayersPanel({ card, week, season }: {
     <div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px,1fr))", gap:8 }}>
         <select value={pTeam} onChange={e=>setPTeam(e.target.value)}
-          style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+          className="ui-sel">
           {[card.teamA, card.teamB].map(t=> <option key={t} value={t}>{t}</option>)}
         </select>
         <select value={pRole} onChange={e=>setPRole(e.target.value as Role)}
-          style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+          className="ui-sel">
           <option>QB</option><option>Rusher</option><option>Receiver</option>
         </select>
         <select value={pPlayer} onChange={e=>setPPlayer(e.target.value)}
-          style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+          className="ui-sel">
           {teamPlayersByRole(pTeam, pRole).map(n=> <option key={n} value={n}>{n}</option>)}
         </select>
         <select value={pStat} onChange={e=>setPStat(e.target.value)}
-          style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}>
+          className="ui-sel">
           {statsFor(pTeam, pPlayer, pRole).map(s=> <option key={s} value={s}>{pretty(s)}</option>)}
         </select>
         <div style={{ display:"flex", alignItems:"center", gap:6 }}>
@@ -2364,15 +2528,8 @@ function PlayersPanel({ card, week, season }: {
               <BarChart data={pHist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
                 <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
                 <XAxis
-                  dataKey="bin" interval={0} height={20} tickLine={false} axisLine={false} tick={{ fontSize: 11 }}
-                  tickFormatter={(label: string) => {
-                    if (!qPlayer) return "";
-                    const { q1Label, medLabel, q3Label } = pTickLabels;
-                    if (label === q1Label) return qPlayer.q1.toFixed(1);
-                    if (label === medLabel) return qPlayer.med.toFixed(1);
-                    if (label === q3Label) return qPlayer.q3.toFixed(1);
-                    return "";
-                  }}
+                  dataKey="bin" interval={0} height={22} tickLine={false} axisLine={false}
+                  tick={planTick(pTickPlan)}
                 />
                 <YAxis allowDecimals={false} width={28} tick={{ fontSize: 11 }} />
                 <Tooltip
