@@ -24,6 +24,9 @@ import {
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
+import LegPicker from "../components/LegPicker";
+import ParlaySlip from "../components/ParlaySlip";
+import type { Leg } from "../lib/parlay";
 
 type LiveGame = {
   id: string;
@@ -300,6 +303,9 @@ type CardGame = {
   jsonRow?: JsonWeekRow;
   /** P(home wins) straight from the sim, for side-by-side with the market. */
   pHome?: number;
+  /** Book numbers (home-perspective spread, game total) for line pre-fill. */
+  oddsSpread?: number;
+  oddsTotal?: number;
 };
 
 const median = (arr: number[]) => {
@@ -877,6 +883,24 @@ function ScoreboardPage() {
     return () => { alive = false; ac.abort(); };
   }, [season, selectedWeek, weekOptions, scoreFileByWeek, gamesFileByWeek]);
 
+  /* ---- Parlay slip. Lives at page level so it survives week/season switches;
+   * each leg carries its own game/season identity. ---- */
+  const [parlayOpen, setParlayOpen] = useState(false);
+  const [legs, setLegs] = useState<Leg[]>([]);
+
+  const addLeg = useCallback((leg: Leg) => {
+    setLegs((prev) => (prev.some((l) => l.id === leg.id) ? prev : [...prev, leg]));
+  }, []);
+  const removeLeg = useCallback((id: string) => {
+    setLegs((prev) => prev.filter((l) => l.id !== id));
+  }, []);
+
+  /** Dataset directory for the selected week (e.g. "week00"). */
+  const weekId = useMemo(
+    () => weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek,
+    [weekOptions, selectedWeek]
+  );
+
   /* ---- Kalshi market data for this week (slim side-by-side on each card) ----
    * Server-cached 45s and mapped to our slugs there; the row simply does not
    * render when the feed is unavailable or a game is not listed. */
@@ -1321,6 +1345,8 @@ function ScoreboardPage() {
         liveB: bScore,
         jsonRow: row,
         pHome: typeof pA === "number" ? pA : undefined,
+        oddsSpread: Number.isFinite(spread) ? (spread as number) : undefined,
+        oddsTotal: Number.isFinite(totalLine) ? (totalLine as number) : undefined,
       });
     }
 
@@ -1383,6 +1409,20 @@ function ScoreboardPage() {
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             {/* NEW: Conference filter */}
+            <button
+              type="button"
+              onClick={() => setParlayOpen((v) => !v)}
+              style={{
+                padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)",
+                background: parlayOpen ? "var(--brand)" : "var(--card)",
+                color: parlayOpen ? "var(--brand-contrast)" : "var(--text)",
+                fontWeight: 700, fontSize: 13,
+              }}
+            >
+              {parlayOpen ? "Close Parlay Builder" : "Parlay Builder"}
+              {legs.length > 0 && ` (${legs.length})`}
+            </button>
+
             <label style={{ fontSize: 12, color: "var(--muted)" }}>Conference:</label>
             <select
               value={confFilter}
@@ -1470,6 +1510,15 @@ function ScoreboardPage() {
         </section>
       )}
 
+      {parlayOpen && (
+        <ParlaySlip
+          legs={legs}
+          onRemove={removeLeg}
+          onClear={() => setLegs([])}
+          onClose={() => setParlayOpen(false)}
+        />
+      )}
+
       {/* Cards grid */}
       <div
         style={{
@@ -1488,6 +1537,9 @@ function ScoreboardPage() {
             season={season}
             useMean={useMean}
             kalshi={c.jsonRow ? kalshiBySlug.get(c.key) : undefined}
+            weekId={weekId}
+            parlayOpen={parlayOpen}
+            onAddLeg={addLeg}
           />
         ))}
       </div>
@@ -1542,7 +1594,7 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 // }
 
 
-function GameCard({ card, gdata, week, season, useMean = false, kalshi }: {
+function GameCard({ card, gdata, week, season, useMean = false, kalshi, weekId, parlayOpen, onAddLeg }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
   gdata?: GameData;
@@ -1551,6 +1603,10 @@ function GameCard({ card, gdata, week, season, useMean = false, kalshi }: {
   useMean?: boolean;
   /** Kalshi market data for this game, when the feed lists it. */
   kalshi?: KalshiGame;
+  /** Dataset week directory, carried on any leg added from this card. */
+  weekId: string;
+  parlayOpen: boolean;
+  onAddLeg: (leg: Leg) => void;
 }) {
   // Distribution panels need per-seed rows. The CSV path already holds them in
   // memory; the JSON path keeps them in compact.json (~8KB) and fetches it the
@@ -1569,6 +1625,7 @@ function GameCard({ card, gdata, week, season, useMean = false, kalshi }: {
   const [showPlayers, setShowPlayers] = useState(false);
   const [showBox, setShowBox] = useState(false);
   const [showProps, setShowProps] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
 
   /* Player sims for THIS matchup, fetched the first time the panel is opened. */
   const [players, setPlayers] = useState<PlayerMap>({});
@@ -1942,9 +1999,19 @@ function GameCard({ card, gdata, week, season, useMean = false, kalshi }: {
             {showPlayers ? "Hide Player Stats" : "Detailed Simulated Player Stats"}
           </button>
         )}
+        {/* Parlay: the click IS the game selection, so the picker opens already
+            scoped to this game. Only shown while the slip drawer is open. */}
+        {parlayOpen && jsonRow && (
+          <button
+            onClick={()=>{ setShowPicker(v=>!v); setShowScores(false); setShowPlayers(false); setShowBox(false); setShowProps(false); }}
+            style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${showPicker ? "var(--accent)" : "var(--border)"}`, background: showPicker ? "var(--accent)" : "var(--card)", color: showPicker ? "var(--brand-contrast)" : "var(--text)", fontWeight: 700 }}
+          >
+            {showPicker ? "Cancel leg" : "+ Add leg"}
+          </button>
+        )}
         {jsonRow && (
           <button
-            onClick={()=>{ setShowProps(v=>!v); setShowScores(false); setShowPlayers(false); setShowBox(false); }}
+            onClick={()=>{ setShowProps(v=>!v); setShowScores(false); setShowPlayers(false); setShowBox(false); setShowPicker(false); }}
             style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showProps ? "var(--brand)" : "var(--card)", color: showProps ? "var(--brand-contrast)" : "var(--text)" }}
           >
             {showProps ? "Hide Player Props" : "Detailed Player Props"}
@@ -1959,6 +2026,21 @@ function GameCard({ card, gdata, week, season, useMean = false, kalshi }: {
           </button>
         )}
       </div>
+
+      {/* LEG PICKER — scoped to this game; seeds.json fetched on first open. */}
+      {jsonRow && parlayOpen && showPicker && (
+        <LegPicker
+          row={jsonRow}
+          season={season}
+          weekId={weekId}
+          teamA={card.teamA}
+          teamB={card.teamB}
+          marketSpread={card.oddsSpread}
+          marketTotal={card.oddsTotal}
+          onAdd={onAddLeg}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
 
       {/* PLAYER PROPS PANEL — players_dist.json fetched on first open. */}
       {jsonRow && showProps && (

@@ -42,6 +42,8 @@ export type JsonWeekRow = {
   players_path: string;
   /** Per-player simulated distributions (sparse integer PMFs). */
   dist_path: string;
+  /** Seed-aligned raw columns, for same-game parlay joints. */
+  seeds_path: string;
 };
 
 /** games/<slug>/summary.json. */
@@ -132,6 +134,10 @@ function parseWeekRow(raw: any, weekId: string): JsonWeekRow | null {
     dist_path: stripSlashes(
       String(raw.players_dist_path ?? raw.dist_path ?? "").trim() ||
         summaryPath.replace(/summary\.json$/i, "players_dist.json")
+    ),
+    seeds_path: stripSlashes(
+      String(raw.seeds_path ?? raw.seedsPath ?? "").trim() ||
+        summaryPath.replace(/summary\.json$/i, "seeds.json")
     ),
   };
 }
