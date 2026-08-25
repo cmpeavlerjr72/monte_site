@@ -89,3 +89,23 @@ so these games silently show no projection:
 
 This predates the migration. Fix the spellings in the source `games.csv` (or add
 normalization to the join) when preparing 2026.
+
+## Pre-commit check: render loops on the scoreboard
+
+```bash
+node scripts/check_render_loops.mjs
+```
+
+Run this before committing any change to the effects/memos in
+`src/pages/Scoreboard.tsx` or `src/lib/useSlateEdges.ts`. No dependencies, no build,
+no test runner — plain node, exits non-zero on failure.
+
+It guards the bug that froze the browser when "Top Edges" was clicked: the slate-edge
+scan wrote state that fed a memo chain back into its own effect dependencies
+(`setSlateEdges` → `cards` → `edgeInputs` → the effect), which re-ran the scan forever
+— 399 scans per game before the render cap tripped. The check runs the broken graph as
+a fixture (it must still be detected as looping, which is what proves the check has
+teeth), runs the shipped graph (must settle), and then asserts statically that the real
+source still obeys the two rules that make the loop impossible: the scan effect depends
+on exactly one primitive `signature`, and `edgeInputs` is derived from the unsorted card
+list rather than from `cards`.
