@@ -14,7 +14,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCompactCached, type CompactJson, type JsonWeekRow } from "../lib/cfbJson";
-import { rungAt, type KalshiGame } from "../lib/kalshi";
+import { type KalshiGame } from "../lib/kalshi";
+import {
+  buildMarketRows, makeSeedCounts, rowEdge, americanOdds, pctText,
+  type MarketRow,
+} from "../lib/marketEdge";
 import type { Season } from "../lib/cfbData";
 import { Skeleton } from "./Skeleton";
 
@@ -32,114 +36,6 @@ type Props = {
   pHome?: number;             // sim P(home wins), exact from summary
   kalshi?: KalshiGame;
 };
-
-type Row = {
-  key: string;
-  market: string;             // "Total u49.5"
-  simP: number | null;
-  mktP: number | null;
-  approxNote?: string;
-};
-
-const pct = (p: number) => `${(p * 100).toFixed(0)}%`;
-const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-
-/** Fair American odds, shown under the percentage as the bettor's unit. */
-function american(p: number): string {
-  if (!(p > 0 && p < 1)) return "—";
-  return p >= 0.5 ? String(Math.round((-p / (1 - p)) * 100)) : `+${Math.round(((1 - p) / p) * 100)}`;
-}
-
-
-/** Per-seed counters over compact.json's index-aligned point columns. */
-export type SeedCounts = {
-  n: number;
-  totalUnder: (L: number) => number;
-  totalOver: (L: number) => number;
-  marginOver: (m: number) => number;
-};
-
-export function makeSeedCounts(compact: { A_pts: number[]; B_pts: number[] } | null | undefined): SeedCounts | null {
-  if (!compact) return null;
-  const n = Math.min(compact.A_pts.length, compact.B_pts.length);
-  if (!n) return null;
-  return {
-    n,
-    totalUnder: (L) => { let k = 0; for (let i = 0; i < n; i++) if (compact.A_pts[i] + compact.B_pts[i] < L) k++; return k / n; },
-    totalOver: (L) => { let k = 0; for (let i = 0; i < n; i++) if (compact.A_pts[i] + compact.B_pts[i] > L) k++; return k / n; },
-    marginOver: (m) => { let k = 0; for (let i = 0; i < n; i++) if (compact.A_pts[i] - compact.B_pts[i] > m) k++; return k / n; },
-  };
-}
-
-/**
- * Build the market rows. Pure, so the exact numbers the card prints can be
- * verified straight off the seed arrays without rendering anything.
- */
-export function buildMarketRows({
-  counts, teamA, teamB, bookSpread, bookTotal, simMargin, simTotal, pHome, kalshi,
-}: {
-  counts: SeedCounts | null;
-  teamA: string; teamB: string;
-  bookSpread?: number; bookTotal?: number;
-  simMargin?: number; simTotal?: number; pHome?: number;
-  kalshi?: KalshiGame;
-}): Row[] {
-  const out: Row[] = [];
-
-    /* ---- WIN: side = whoever the sim favours ---- */
-    if (typeof pHome === "number") {
-      const homeFav = pHome >= 0.5;
-      const team = homeFav ? teamA : teamB;
-      const simP = homeFav ? pHome : 1 - pHome;
-      const mkt = homeFav ? kalshi?.winner.teamA_price : kalshi?.winner.teamB_price;
-      out.push({ key: "win", market: `Win · ${team}`, simP, mktP: mkt ?? null });
-    }
-
-    /* ---- SPREAD: anchored to the book's line ---- */
-    if (Number.isFinite(bookSpread) && counts && Number.isFinite(simMargin)) {
-      const L = bookSpread as number;            // home-perspective
-      const needed = -L;                          // home must win by more than this
-      const pHomeCover = counts.marginOver(needed);
-      // Which side does the sim's median margin land on?
-      const simLeansHome = (simMargin as number) > needed;
-      const side = simLeansHome
-        ? { label: `${teamA} ${signed(L)}`, simP: pHomeCover }
-        : { label: `${teamB} ${signed(-L)}`, simP: 1 - pHomeCover };
-
-      const match = rungAt(kalshi?.spread_ladder, L);
-      let mktP: number | null = null;
-      let approxNote: string | undefined;
-      if (match) {
-        // Ladder rungs are P(home covers line); mirror for the away side.
-        mktP = simLeansHome ? match.rung.yes_price : 1 - match.rung.yes_price;
-        if (match.approx) approxNote = `@Kalshi ${signed(match.rung.line)}`;
-      }
-      out.push({ key: "spread", market: side.label, simP: side.simP, mktP, approxNote });
-    }
-
-    /* ---- TOTAL: anchored to the book's line ---- */
-    if (Number.isFinite(bookTotal) && counts && Number.isFinite(simTotal)) {
-      const L = bookTotal as number;
-      const under = (simTotal as number) < L;
-      const simP = under ? counts.totalUnder(L) : counts.totalOver(L);
-
-      const match = rungAt(kalshi?.total_ladder, L);
-      let mktP: number | null = null;
-      let approxNote: string | undefined;
-      if (match) {
-        // Ladder rungs are P(over line).
-        mktP = under ? 1 - match.rung.yes_price : match.rung.yes_price;
-        if (match.approx) approxNote = `@Kalshi ${match.rung.line}`;
-      }
-      out.push({
-        key: "total",
-        market: `Total ${under ? "u" : "o"}${L}`,
-        simP, mktP, approxNote,
-      });
-    }
-
-  return out;
-}
 
 export default function MarketEdge({
   row, season, teamA, teamB, bookSpread, bookTotal, simMargin, simTotal, pHome, kalshi,
@@ -176,7 +72,7 @@ export default function MarketEdge({
   /** Per-seed counters. Half-point lines mean no seed ever sits on the line. */
   const counts = useMemo(() => makeSeedCounts(compact), [compact]);
 
-  const rows: Row[] = useMemo(
+  const rows: MarketRow[] = useMemo(
     () => buildMarketRows({ counts, teamA, teamB, bookSpread, bookTotal, simMargin, simTotal, pHome, kalshi }),
     [pHome, teamA, teamB, kalshi, bookSpread, bookTotal, counts, simMargin, simTotal]
   );
@@ -199,7 +95,7 @@ export default function MarketEdge({
           <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, color: "var(--muted)", textTransform: "uppercase" }}>
             Market
           </div>
-          <div style={headCell}>Sim</div>
+          <div style={headCell} title={counts ? `${counts.n.toLocaleString("en-US")} simulated games` : undefined}>Sim</div>
           <div style={headCell}>Kalshi</div>
           <div style={headCell} title="Sim probability minus Kalshi implied">Edge</div>
 
@@ -216,7 +112,7 @@ export default function MarketEdge({
 }
 
 function MarketRow({ row, edge, numCell }: {
-  row: Row;
+  row: MarketRow;
   edge: number | null;
   numCell: React.CSSProperties;
 }) {
@@ -236,8 +132,8 @@ function MarketRow({ row, edge, numCell }: {
           <span style={{ color: "var(--muted)" }}>—</span>
         ) : (
           <>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{pct(row.simP)}</div>
-            <div style={{ fontSize: 9.5, color: "var(--muted)" }}>{american(row.simP)}</div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>{pctText(row.simP)}</div>
+            <div style={{ fontSize: 9.5, color: "var(--muted)" }}>{americanOdds(row.simP)}</div>
           </>
         )}
       </div>
@@ -247,8 +143,8 @@ function MarketRow({ row, edge, numCell }: {
           <span style={{ color: "var(--muted)" }}>—</span>
         ) : (
           <>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{pct(row.mktP)}</div>
-            <div style={{ fontSize: 9.5, color: "var(--muted)" }}>{american(row.mktP)}</div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>{pctText(row.mktP)}</div>
+            <div style={{ fontSize: 9.5, color: "var(--muted)" }}>{americanOdds(row.mktP)}</div>
           </>
         )}
       </div>

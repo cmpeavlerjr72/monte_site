@@ -190,6 +190,33 @@ body {
 /* Compact icon-only variant (theme / density toggles). */
 .ui-btn.icon { padding: 5px 8px; min-width: 30px; text-align: center; }
 
+/**
+ * Primary call-to-action: ALWAYS filled, independent of any toggle state.
+ *
+ * `data-on` means "this toggle is currently active", which is exactly wrong
+ * for a button like "+ Add leg" — its resting state is the one that has to
+ * shout, so binding it to data-on left it rendering as a plain outline until
+ * you had already clicked it.
+ */
+.ui-btn.primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-contrast);
+  font-weight: 800;
+  box-shadow: 0 1px 2px var(--shadow);
+}
+.ui-btn.primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--brand) 84%, var(--text));
+  border-color: color-mix(in oklab, var(--brand) 84%, var(--text));
+}
+.ui-btn.primary[data-on="true"] {
+  /* Active = the picker is open, so the button becomes a quiet "Cancel". */
+  background: var(--card);
+  border-color: var(--brand);
+  color: var(--brand-text);
+  box-shadow: none;
+}
+
 .ui-sel {
   font: inherit;
   font-size: 13px;
@@ -402,6 +429,117 @@ input:focus, select:focus, textarea:focus {
 }
 .parlay-edge[data-sign="pos"] { color: var(--pos); background: color-mix(in oklab, var(--pos) 14%, var(--card)); }
 .parlay-edge[data-sign="neg"] { color: var(--neg); background: color-mix(in oklab, var(--neg) 14%, var(--card)); }
+
+/* ============================== Top edges ==================================
+   Headline panel: the slate's biggest edges, one placeable bet per row.
+   ========================================================================= */
+.top-edges {
+  border: 1px solid var(--brand);
+  border-radius: 12px;
+  background: var(--card);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.top-edges__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  border-top: 3px solid var(--brand);
+  background: color-mix(in oklab, var(--brand) 8%, var(--card));
+}
+.top-edges__body { padding: 8px; }
+
+.top-edges__row {
+  display: grid;
+  grid-template-columns: 22px 30px minmax(0, 1.35fr) minmax(0, 1fr) 62px 62px 58px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 8px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+}
+.top-edges__row--head {
+  font-size: 9.5px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 2px;
+}
+.top-edges__row--item {
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.top-edges__row--item:hover {
+  background: color-mix(in oklab, var(--brand) 7%, var(--card));
+  border-color: var(--border);
+}
+
+.top-edges__rank {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.top-edges__game,
+.top-edges__market {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.top-edges__game { font-weight: 600; }
+.top-edges__market { color: var(--muted); }
+
+.top-edges__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.top-edges__num b { display: block; font-size: 12.5px; font-weight: 700; }
+.top-edges__num i { display: block; font-size: 9.5px; font-style: normal; color: var(--muted); }
+
+.top-edges__edge {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.top-edges__edge[data-sign="pos"] { color: var(--pos); background: color-mix(in oklab, var(--pos) 14%, var(--card)); }
+.top-edges__edge[data-sign="neg"] { color: var(--neg); background: color-mix(in oklab, var(--neg) 14%, var(--card)); }
+
+.top-edges__foot {
+  font-size: 10.5px;
+  color: var(--muted);
+  padding: 8px 6px 2px;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+
+@media (max-width: 640px) {
+  .top-edges__row { grid-template-columns: 20px 26px minmax(0, 1fr) 54px 54px 52px; }
+  .top-edges__market { display: none; }
+}
+
+/* A card jumped to from the Top Edges list pulses so the eye finds it. */
+@keyframes card-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  25%, 75% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 55%, transparent); }
+}
+.card-flash { animation: card-flash 1.6s ease-in-out 1; }
+@media (prefers-reduced-motion: reduce) {
+  .card-flash { animation: none; outline: 2px solid var(--brand); outline-offset: 2px; }
+}
 
 /* The honesty gate reads as a real notice, not a paragraph. */
 .parlay-notice {

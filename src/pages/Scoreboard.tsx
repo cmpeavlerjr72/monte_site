@@ -14,6 +14,8 @@ import ErrorBoundary from "../components/ErrorBoundary";
 import { Skeleton, SkeletonCard, SkeletonChart } from "../components/Skeleton";
 import { useThemeMode, useDensity, type Density } from "../lib/usePrefs";
 import MarketEdge from "../components/MarketEdge";
+import TopEdges from "../components/TopEdges";
+import { ensureSlateEdges, type EdgeInput, type GameEdges } from "../lib/edges";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
   getCatalog, playerFileForPair, resolveLatestSeason, latestWeek,
@@ -282,6 +284,8 @@ type CardGame = {
   jsonRow?: JsonWeekRow;
   /** P(home wins) straight from the sim, for side-by-side with the market. */
   pHome?: number;
+  /** Seeds behind this game, surfaced in the toolbar so a re-publish is visible. */
+  nsims?: number;
   /** Book numbers (home-perspective spread, game total) for line pre-fill. */
   oddsSpread?: number;
   oddsTotal?: number;
@@ -579,9 +583,14 @@ export function panelRowEnd(openIdx: number, cols: number, total: number): numbe
 }
 
 /* --------------------- card sorting (shared by both season formats) --------------------- */
-type SortBy = "kickoff" | "spread_conf" | "total_conf";
+/** "edge" ranks by the biggest absolute market edge the game can show. */
+type SortBy = "kickoff" | "edge";
 
-function sortCards(cards: CardGame[], sortBy: SortBy): CardGame[] {
+function sortCards(
+  cards: CardGame[],
+  sortBy: SortBy,
+  edges?: Map<string, GameEdges> | null
+): CardGame[] {
   const out = [...cards];
   out.sort((x, y) => {
     if (sortBy === "kickoff") {
@@ -590,19 +599,15 @@ function sortCards(cards: CardGame[], sortBy: SortBy): CardGame[] {
       if (ax !== ay) return ax - ay;
       return x.teamA.localeCompare(y.teamA);
     }
-    if (sortBy === "spread_conf") {
-      const ax = (typeof x.spreadProb === "number") ? x.spreadProb : -1;
-      const ay = (typeof y.spreadProb === "number") ? y.spreadProb : -1;
-      if (ay !== ax) return ay - ax; // DESC
-      const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
-      const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
-      if (kx !== ky) return kx - ky;
-      return x.teamA.localeCompare(y.teamA);
-    }
-    // total_conf
-    const ax = (typeof x.totalProb === "number") ? x.totalProb : -1;
-    const ay = (typeof y.totalProb === "number") ? y.totalProb : -1;
-    if (ay !== ax) return ay - ax;   // DESC
+    // Edge: biggest |edge| first. Games Kalshi cannot price have no edge at
+    // all, so they sink to the bottom rather than being dropped.
+    const best = (c: CardGame) => {
+      const e = edges?.get(c.key)?.bestAbs;
+      return typeof e === "number" ? e : -1;
+    };
+    const ax = best(x);
+    const ay = best(y);
+    if (ay !== ax) return ay - ax;
     const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
     const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
     if (kx !== ky) return kx - ky;
@@ -988,6 +993,15 @@ function ScoreboardPage() {
     return () => ro.disconnect();
     // Density changes the track width, so the column count must be re-measured.
   }, [density]);
+
+  /* ---- Slate-wide edges (item 3 + 4). Opt-in: the cards load their own
+   * compacts lazily, so this only runs when the Edge sort or the Top Edges
+   * panel actually needs the whole slate. Everything goes through the same
+   * caches, so already-visible games cost nothing. ---- */
+  const [slateEdges, setSlateEdges] = useState<Map<string, GameEdges> | null>(null);
+  const [edgesLoading, setEdgesLoading] = useState(false);
+  const [showTopEdges, setShowTopEdges] = useState(false);
+  const [flashKey, setFlashKey] = useState<string | null>(null);
 
   /* ---- Parlay slip. Lives at page level so it survives week/season switches;
    * each leg carries its own game/season identity. ---- */
@@ -1452,6 +1466,7 @@ function ScoreboardPage() {
         liveB: bScore,
         jsonRow: row,
         pHome: typeof pA === "number" ? pA : undefined,
+        nsims: summary.nsims,
         oddsSpread: Number.isFinite(spread) ? (spread as number) : undefined,
         oddsTotal: Number.isFinite(totalLine) ? (totalLine as number) : undefined,
         simMedMargin: Number.isFinite(margin) ? (margin as number) : undefined,
@@ -1467,15 +1482,57 @@ function ScoreboardPage() {
   // Whichever path produced rows for this week. Both cannot be populated at
   // once: the loader clears one before filling the other.
   const cards = useMemo(
-    () => sortCards(cardsJson.length ? cardsJson : cards2025, sortBy),
-    [cardsJson, cards2025, sortBy]
+    () => sortCards(cardsJson.length ? cardsJson : cards2025, sortBy, slateEdges),
+    [cardsJson, cards2025, sortBy, slateEdges]
   );
+
+  /** Inputs for the slate scan: only JSON-season cards can be priced. */
+  const edgeInputs: EdgeInput[] = useMemo(
+    () => cards.filter((c) => c.jsonRow).map((c) => ({
+      slug: c.key, teamA: c.teamA, teamB: c.teamB, row: c.jsonRow!,
+      bookSpread: c.oddsSpread, bookTotal: c.oddsTotal,
+      simMargin: useMean ? c.simMeanMargin : c.simMedMargin,
+      simTotal: useMean ? c.simMeanTotal : c.simMedTotal,
+      pHome: c.pHome, kickoffMs: c.kickoffMs,
+    })),
+    [cards, useMean]
+  );
+
+  const wantEdges = sortBy === "edge" || showTopEdges;
+
+  useEffect(() => {
+    if (!wantEdges || !edgeInputs.length || !season) return;
+    const ac = new AbortController();
+    let alive = true;
+    setEdgesLoading(true);
+    ensureSlateEdges(edgeInputs, kalshiBySlug, season, ac.signal)
+      .then((m) => { if (alive) setSlateEdges(m); })
+      .catch((e) => { if (e?.name !== "AbortError") console.warn("[edges] scan failed:", e); })
+      .finally(() => { if (alive) setEdgesLoading(false); });
+    return () => { alive = false; ac.abort(); };
+  }, [wantEdges, edgeInputs, kalshiBySlug, season]);
+
+  // A new week invalidates the previous slate's edges.
+  useEffect(() => { setSlateEdges(null); }, [season, selectedWeek]);
 
   // Apply conference filter (game shows if either team is in selected conference)
   const filteredCards = useMemo(() => {
     if (confFilter === "all") return cards;
     return cards.filter(c => (confOf(c.teamA) === confFilter) || (confOf(c.teamB) === confFilter));
   }, [cards, confFilter, teamToConf]);
+
+  /** Scroll to a game's card and flash it, from the Top Edges list. */
+  const jumpToGame = useCallback((slug: string) => {
+    setShowTopEdges(false);
+    // Let the panel unmount first so the card lands at a stable offset.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`game-${slug}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setFlashKey(slug);
+      window.setTimeout(() => setFlashKey((k) => (k === slug ? null : k)), 1800);
+    });
+  }, []);
 
   /** Human week label for the card header (replaces the hardcoded "week"). */
   const weekLabel = useMemo(
@@ -1495,6 +1552,20 @@ function ScoreboardPage() {
     if (openPanel && openIdx < 0) setOpenPanel(null);
   }, [openPanel, openIdx]);
 
+  /**
+   * Sim counts across the slate: one number when uniform, a min-max range when
+   * mixed. Makes a re-publish (200 -> 1,000 -> 10,000 seeds) visible at a
+   * glance without opening a card.
+   */
+  const simsText = useMemo(() => {
+    const ns = filteredCards.map((c) => c.nsims).filter((n): n is number => Number.isFinite(n) && (n as number) > 0);
+    if (!ns.length) return "";
+    const lo = Math.min(...ns);
+    const hi = Math.max(...ns);
+    const fmt = (n: number) => n.toLocaleString("en-US");
+    return lo === hi ? ` \u00b7 ${fmt(lo)} sims` : ` \u00b7 ${fmt(lo)}\u2013${fmt(hi)} sims`;
+  }, [filteredCards]);
+
   // Compact toolbar tokens — the row must fit on one line at desktop widths.
   const CTL = { maxWidth: 190 } as const;
   const LBL = { fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" } as const;
@@ -1506,7 +1577,7 @@ function ScoreboardPage() {
     ? "Dataset unavailable"
     : loading
     ? "Loading…"
-    : `${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}`;
+    : `${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}${simsText}`;
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
@@ -1565,6 +1636,16 @@ function ScoreboardPage() {
 
             <button
               type="button"
+              className="ui-btn"
+              data-on={showTopEdges ? "true" : "false"}
+              onClick={() => setShowTopEdges((v) => !v)}
+              style={{ fontWeight: 700, whiteSpace: "nowrap" }}
+            >
+              Top Edges
+            </button>
+
+            <button
+              type="button"
               className="ui-btn icon"
               onClick={toggleDensity}
               title={`Density: ${density} (click to switch)`}
@@ -1600,9 +1681,16 @@ function ScoreboardPage() {
               className="ui-sel" style={CTL}
             >
               <option value="kickoff">Kickoff time</option>
-              <option value="spread_conf">Spread confidence</option>
-              <option value="total_conf">Total confidence</option>
+              <option value="edge">Edge</option>
             </select>
+            {sortBy === "edge" && edgesLoading && (
+              <span
+                style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}
+                role="status"
+              >
+                computing…
+              </span>
+            )}
 
             <label style={LBL}>Score:</label>
             <select
@@ -1692,6 +1780,15 @@ function ScoreboardPage() {
         />
       )}
 
+      {showTopEdges && (
+        <TopEdges
+          edges={slateEdges}
+          loading={edgesLoading && !slateEdges}
+          onPick={jumpToGame}
+          onClose={() => setShowTopEdges(false)}
+        />
+      )}
+
       {/* Cards grid.
           Cards are fixed-size grid items; an expanded panel is a SEPARATE
           full-width item (grid-column 1/-1) placed after the last card of the
@@ -1725,6 +1822,7 @@ function ScoreboardPage() {
                 condensed={condensed}
                 season={season}
                 onAddLeg={() => togglePanel(c.key, "picker")}
+                flash={flashKey === c.key}
               />
               {openPanel && idx === rowEnd && openCard && (
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -1798,7 +1896,7 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 
 export function GameCard({
   card, gdata, useMean = false, kalshi, parlayOpen, openKind, onToggle,
-  weekLabel, condensed = false, onAddLeg, season,
+  weekLabel, condensed = false, onAddLeg, season, flash = false,
 }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
@@ -1817,6 +1915,8 @@ export function GameCard({
   /** Parlay leg picker trigger, now hosted on the header line. */
   onAddLeg?: () => void;
   season: Season;
+  /** Pulse after being jumped to from the Top Edges list. */
+  flash?: boolean;
 }) {
   const jsonRow = card.jsonRow;
   const csvCard = !jsonRow;
@@ -1844,7 +1944,8 @@ export function GameCard({
 
   return (
     <article
-      className="card"
+      id={`game-${card.key}`}
+      className={flash ? "card card-flash" : "card"}
       style={{
         padding: condensed ? 8 : 12,
         borderRadius: 12,
@@ -1900,9 +2001,9 @@ export function GameCard({
               <button
                 type="button"
                 onClick={onAddLeg}
-                className="ui-btn"
+                className="ui-btn primary"
                 data-on={openKind === "picker" ? "true" : "false"}
-                style={{ padding: "2px 9px", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", letterSpacing: 0.2 }}
+                style={{ padding: "3px 11px", fontSize: 11.5, whiteSpace: "nowrap", letterSpacing: 0.2, borderRadius: 999 }}
               >
                 {openKind === "picker" ? "Cancel" : "+ Add leg"}
               </button>
