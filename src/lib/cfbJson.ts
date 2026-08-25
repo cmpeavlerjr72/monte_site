@@ -92,7 +92,7 @@ const num = (v: any): number | undefined => {
 };
 
 async function fetchJson(url: string, signal?: AbortSignal): Promise<any> {
-  const res = await fetch(url, { signal });
+  const res = await fetch(url, { signal, cache: "no-store" });
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
   return res.json();
 }
@@ -416,7 +416,7 @@ export async function getPlayersDistJson(
   signal?: AbortSignal
 ): Promise<PlayersDistJson> {
   const url = await dataUrl(row.dist_path, season);
-  const res = await fetch(url, { signal });
+  const res = await fetch(url, { signal, cache: "no-store" });
   // 404 is the expected answer for a week the exporter has not reached yet.
   if (res.status === 404) throw new DistNotPublished(row.dist_path);
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);

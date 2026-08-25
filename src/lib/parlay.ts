@@ -59,7 +59,7 @@ export async function getSeeds(
 
   const promise = (async () => {
     const url = await dataUrl(path, season);
-    const res = await fetch(url, { signal });
+    const res = await fetch(url, { signal, cache: "no-store" });
     if (res.status === 404) throw new SeedsNotPublished(path);
     if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
     const raw = await res.json();
