@@ -15,8 +15,9 @@ import {
   rankEdges, rankProps, pricedRowCount, hoursSince,
   type SlateScan, type EdgeEntry,
 } from "../lib/edges";
-import { americanOdds, pctText } from "../lib/marketEdge";
+import { americanOdds, pctText, type MarketRow } from "../lib/marketEdge";
 import { propLabel, type PropEdge } from "../lib/propEdge";
+import { snapHalf, type LegSpec, type TeamRef } from "../lib/parlay";
 import { getTeamLogo } from "../utils/teamLogo";
 import { Skeleton } from "./Skeleton";
 
@@ -25,7 +26,67 @@ type Props = {
   loading: boolean;
   onPick: (slug: string) => void;
   onClose: () => void;
+  /** Quick-add a leg straight from a row, bypassing LegPicker entirely. */
+  onAddLeg: (slug: string, spec: LegSpec) => void;
 };
+
+/*
+ * Row -> LegSpec mapping (the ONLY place this decision is made).
+ *
+ * - Spread row -> spread leg for the row's own side, at the row's own line.
+ *   `row.line` is already oriented to `row.sideTeam` (see marketEdge.ts), the
+ *   same convention LegSpec.spread.line uses, so it carries straight over.
+ * - Total row -> total leg at the row's side + line.
+ * - WIN row -> there is no moneyline LegSpec kind. A win is encoded as a
+ *   SPREAD leg at -0.5 for the picked team: game margins are integers, so
+ *   "covers a -0.5 line" is exactly "wins outright," and a half-point line
+ *   can never push. This is exact, not an approximation.
+ *
+ * Lines are snapped to the half-point grid with the same `snapHalf` LegPicker
+ * uses, so a row added here and the "equivalent" leg built by hand in
+ * LegPicker land on the identical LegSpec (and therefore the identical slip
+ * dedupe id).
+ */
+function legSpecForGameRow(row: MarketRow, teamA: string, teamB: string): LegSpec | null {
+  if (row.key === "total") {
+    if (row.line === undefined || !row.side) return null;
+    return { kind: "total", side: row.side, line: snapHalf(row.line) };
+  }
+  if (!row.sideTeam) return null;
+  const team: TeamRef = row.sideTeam === teamA ? "A" : row.sideTeam === teamB ? "B" : "A";
+  if (row.key === "win") return { kind: "spread", team, line: -0.5 };
+  if (row.key === "spread" && row.line !== undefined) {
+    return { kind: "spread", team, line: snapHalf(row.line) };
+  }
+  return null;
+}
+
+function legSpecForPropRow(p: PropEdge): LegSpec {
+  return {
+    kind: "prop",
+    player: p.player,
+    stat: p.stat,
+    side: p.side,
+    line: snapHalf(p.line),
+    playerTeam: p.playerTeam,
+  };
+}
+
+/** Small "+" quick-add, right-aligned, from the shared .ui-btn family. */
+function AddLegButton({ label, onAdd }: { label: string; onAdd: () => void }) {
+  return (
+    <button
+      type="button"
+      className="ui-btn edge-row__add"
+      aria-label={`Add ${label} to parlay slip`}
+      title={`Add ${label} to parlay slip`}
+      onClick={(ev) => { ev.stopPropagation(); onAdd(); }}
+      onKeyDown={(ev) => ev.stopPropagation()}
+    >
+      +
+    </button>
+  );
+}
 
 /** One badge per team; an overlapped pair when a row covers both. */
 function Logos({ teams, size = 18 }: { teams: string[]; size?: number }) {
@@ -76,14 +137,25 @@ function Column({
 }
 
 /* ------------------------------- game rows -------------------------------- */
-function GameRow({ e, rank, onPick }: {
+function GameRow({ e, rank, onPick, onAddLeg }: {
   e: EdgeEntry; rank: number; onPick: (slug: string) => void;
+  onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
   // A total is a bet on the game (both logos); win/spread take one side.
   const teams = e.row.sideTeam ? [e.row.sideTeam] : [e.teamB, e.teamA];
+  const spec = legSpecForGameRow(e.row, e.teamA, e.teamB);
   return (
-    <button type="button" className="edge-row" onClick={() => onPick(e.slug)}
-      title={`Go to ${e.teamB} @ ${e.teamA}`}>
+    // A row body click scrolls to the card; the "+" is a separate control, so
+    // this is a div (a <button> cannot nest a <button>), not the original
+    // <button>. role="button" + tabIndex + onKeyDown keep it keyboard-operable.
+    <div
+      className="edge-row" role="button" tabIndex={0}
+      onClick={() => onPick(e.slug)}
+      onKeyDown={(ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onPick(e.slug); }
+      }}
+      title={`Go to ${e.teamB} @ ${e.teamA}`}
+    >
       <span className="edge-row__rank">{rank}</span>
       <Logos teams={teams} />
       <span className="edge-row__main">
@@ -100,17 +172,27 @@ function GameRow({ e, rank, onPick }: {
         <b>{pctText(e.row.mktP!)}</b><i>{americanOdds(e.row.mktP!)}</i>
       </span>
       <EdgePill edge={e.edge} />
-    </button>
+      {spec
+        ? <AddLegButton label={`${e.row.market} (${e.teamB} @ ${e.teamA})`} onAdd={() => onAddLeg(e.slug, spec)} />
+        : <span aria-hidden />}
+    </div>
   );
 }
 
 /* ------------------------------- prop rows -------------------------------- */
-function PropRow({ p, rank, onPick }: {
+function PropRow({ p, rank, onPick, onAddLeg }: {
   p: PropEdge; rank: number; onPick: (slug: string) => void;
+  onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
   return (
-    <button type="button" className="edge-row" onClick={() => onPick(p.slug)}
-      title={`Go to ${p.teamB} @ ${p.teamA}`}>
+    <div
+      className="edge-row" role="button" tabIndex={0}
+      onClick={() => onPick(p.slug)}
+      onKeyDown={(ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onPick(p.slug); }
+      }}
+      title={`Go to ${p.teamB} @ ${p.teamA}`}
+    >
       <span className="edge-row__rank">{rank}</span>
       <Logos teams={[p.playerTeam]} />
       <span className="edge-row__main">
@@ -139,11 +221,12 @@ function PropRow({ p, rank, onPick }: {
         <b>{pctText(p.fairP)}</b><i>{americanOdds(p.fairP)}</i>
       </span>
       <EdgePill edge={p.edge} />
-    </button>
+      <AddLegButton label={propLabel(p)} onAdd={() => onAddLeg(p.slug, legSpecForPropRow(p))} />
+    </div>
   );
 }
 
-export default function TopEdges({ scan, loading, onPick, onClose }: Props) {
+export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: Props) {
   const games = useMemo(() => (scan ? rankEdges(scan.byGame, 10) : []), [scan]);
   const props = useMemo(() => (scan ? rankProps(scan.props, 10) : []), [scan]);
   const counts = useMemo(() => (scan ? pricedRowCount(scan.byGame) : null), [scan]);
@@ -193,7 +276,7 @@ export default function TopEdges({ scan, loading, onPick, onClose }: Props) {
           loading={loading} footer={gamesFooter}>
           {games.length
             ? games.map((e, i) => (
-                <GameRow key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1} onPick={onPick} />
+                <GameRow key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1} onPick={onPick} onAddLeg={onAddLeg} />
               ))
             : <div className="edge-col__empty">No game-line edges could be priced.</div>}
         </Column>
@@ -202,7 +285,7 @@ export default function TopEdges({ scan, loading, onPick, onClose }: Props) {
           loading={loading} footer={propsFooter}>
           {props.length
             ? props.map((p, i) => (
-                <PropRow key={`${p.slug}:${p.player}:${p.stat}:${p.line}`} p={p} rank={i + 1} onPick={onPick} />
+                <PropRow key={`${p.slug}:${p.player}:${p.stat}:${p.line}`} p={p} rank={i + 1} onPick={onPick} onAddLeg={onAddLeg} />
               ))
             : <div className="edge-col__empty">
                 {scan?.propsStatus === "missing"

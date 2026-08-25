@@ -31,6 +31,9 @@ type Props = {
   /** Reports the drawer's rendered height so the page can reserve exactly that
    *  much space and never let the fixed sheet cover the last cards. */
   onHeight?: (h: number) => void;
+  /** Leg id to briefly pulse — a fresh add, or the row a duplicate quick-add
+   *  from Top Edges resolved to (see Scoreboard's addLegFromTopEdges). */
+  flashLegId?: string | null;
 };
 
 const pct = (p: number) => `${(p * 100).toFixed(p < 0.01 ? 3 : 1)}%`;
@@ -58,7 +61,7 @@ function TeamLogos({ teams }: { teams: string[] }) {
   );
 }
 
-export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight }: Props) {
+export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight, flashLegId }: Props) {
   const rootRef = useRef<HTMLElement | null>(null);
 
   // Measure rather than guess: the sheet is 420px wide on desktop and
@@ -179,7 +182,10 @@ export default function ParlaySlip({ legs, onRemove, onClear, onClose, onHeight 
             </header>
 
             {b.legs.map((lp) => (
-              <div key={lp.leg.id} className="parlay-leg">
+              <div
+                key={lp.leg.id}
+                className={lp.leg.id === flashLegId ? "parlay-leg card-flash" : "parlay-leg"}
+              >
                 <TeamLogos teams={legTeams(lp.leg.spec, lp.leg.teamA, lp.leg.teamB)} />
                 <span className="parlay-leg__text">{lp.leg.label}</span>
                 <span

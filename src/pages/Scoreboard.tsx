@@ -32,7 +32,7 @@ import PlayerProps from "../components/PlayerProps";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import LegPicker from "../components/LegPicker";
 import ParlaySlip from "../components/ParlaySlip";
-import type { Leg } from "../lib/parlay";
+import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
 
 type LiveGame = {
   id: string;
@@ -1010,6 +1010,9 @@ function ScoreboardPage() {
   const [parlayOpen, setParlayOpen] = useState(false);
   const [slipHeight, setSlipHeight] = useState(0);
   const [legs, setLegs] = useState<Leg[]>([]);
+  /** Briefly highlights one slip row — a fresh add, or the existing row a
+   *  duplicate quick-add resolved to. See addLegFromTopEdges below. */
+  const [flashLegId, setFlashLegId] = useState<string | null>(null);
 
   const addLeg = useCallback((leg: Leg) => {
     setLegs((prev) => (prev.some((l) => l.id === leg.id) ? prev : [...prev, leg]));
@@ -1495,6 +1498,31 @@ function ScoreboardPage() {
   );
 
   /**
+   * Quick-add a leg straight from a Top Edges row: build the Leg exactly the
+   * way LegPicker would for the same bet (same id shape — slug:JSON(spec) —
+   * so a row here and its "equivalent" leg added by hand through LegPicker
+   * dedupe to the SAME slip row), push it, open the drawer, and flash it.
+   * Never scrolls — that stays on the row body's onPick.
+   */
+  const addLegFromTopEdges = useCallback((slug: string, spec: LegSpec) => {
+    const card = baseCards.find((c) => c.key === slug);
+    if (!card?.jsonRow) return;
+    const id = `${card.jsonRow.slug}:${JSON.stringify(spec)}`;
+    setParlayOpen(true);
+    setLegs((prev) => {
+      if (prev.some((l) => l.id === id)) return prev; // dedupe: no-op
+      const leg: Leg = {
+        id, season, weekId, slug: card.jsonRow!.slug,
+        teamA: card.teamA, teamB: card.teamB, row: card.jsonRow!,
+        spec, label: legLabel(spec, card.teamA, card.teamB),
+      };
+      return [...prev, leg];
+    });
+    setFlashLegId(id);
+    window.setTimeout(() => setFlashLegId((k) => (k === id ? null : k)), 1800);
+  }, [baseCards, season, weekId]);
+
+  /**
    * Inputs for the slate scan.
    *
    * Derived from the UNSORTED card list on purpose. `cards` below is sorted
@@ -1797,6 +1825,7 @@ function ScoreboardPage() {
           onClear={() => setLegs([])}
           onClose={() => setParlayOpen(false)}
           onHeight={setSlipHeight}
+          flashLegId={flashLegId}
         />
       )}
 
@@ -1806,6 +1835,7 @@ function ScoreboardPage() {
           loading={edgesLoading && !slateScan}
           onPick={jumpToGame}
           onClose={() => setShowTopEdges(false)}
+          onAddLeg={addLegFromTopEdges}
         />
       )}
 

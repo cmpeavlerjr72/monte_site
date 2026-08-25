@@ -576,7 +576,7 @@ input:focus, select:focus, textarea:focus {
 
 .edge-row {
   display: grid;
-  grid-template-columns: 16px auto minmax(0, 1fr) 46px 46px 50px;
+  grid-template-columns: 16px auto minmax(0, 1fr) 46px 46px 50px 24px;
   gap: 6px;
   align-items: center;
   width: 100%;
@@ -629,6 +629,22 @@ input:focus, select:focus, textarea:focus {
 }
 .edge-row__num b { display: block; font-size: 11.5px; font-weight: 700; }
 .edge-row__num i { display: block; font-size: 9px; font-style: normal; color: var(--muted); }
+
+/* Quick-add "+": a row-scoped action, not the row-click (which scrolls). */
+.edge-row__add {
+  justify-self: end;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
 
 
 /* Documented over-projection caveat on high-usage overs (INV-69). */

@@ -21,6 +21,18 @@ export type MarketRow = {
    * logos — otherwise a "Total u49.5" row would imply a side it does not take.
    */
   sideTeam?: string;
+  /**
+   * The raw number behind `market`, for callers (e.g. the Top Edges "+"
+   * quick-add) that need to build a parlay LegSpec rather than just display
+   * the row. Spread rows: oriented to `sideTeam`, same sign convention as
+   * LegSpec's spread.line (own margin > -line) — i.e. this IS the number
+   * printed in `market`'s "+7.5" (not always the raw book spread; it is
+   * negated for the away side). Total rows: the book total itself, un-negated.
+   * Win rows carry no line — see propEdge/TopEdges' win -> spread(-0.5) note.
+   */
+  line?: number;
+  /** Total rows only — which side of `line` this row bets. */
+  side?: "over" | "under";
 };
 
 export const pctText = (p: number) => `${(p * 100).toFixed(0)}%`;
@@ -94,7 +106,11 @@ export function buildMarketRows({
         mktP = simLeansHome ? match.rung.yes_price : 1 - match.rung.yes_price;
         if (match.approx) approxNote = `@Kalshi ${signedNum(match.rung.line)}`;
       }
-      out.push({ key: "spread", market: side.label, simP: side.simP, mktP, approxNote, sideTeam: side.team });
+      const sideLine = simLeansHome ? L : -L;
+      out.push({
+        key: "spread", market: side.label, simP: side.simP, mktP, approxNote,
+        sideTeam: side.team, line: sideLine,
+      });
     }
 
     /* ---- TOTAL: anchored to the book's line ---- */
@@ -115,6 +131,7 @@ export function buildMarketRows({
         key: "total",
         market: `Total ${under ? "u" : "o"}${L}`,
         simP, mktP, approxNote,
+        line: L, side: under ? "under" : "over",
       });
     }
 
