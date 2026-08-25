@@ -58,3 +58,12 @@ fallback. NOTHING bundles data into the frontend.
 `node scripts/check_render_loops.mjs` · SSR words-screenshot for UI
 changes · no hardcoded colors · report ≤300 words + gate table unless
 findings warrant more.
+
+## Token discipline (mandatory)
+
+- `src/pages/Scoreboard.tsx` is ~2,300 lines (~30k tokens). NEVER read it
+  whole more than once. Grep for the symbol first, then read ONLY the
+  offset range you need. After an Edit, do NOT re-read the file to verify
+  — the edit result already confirms it.
+- Same rule for any file >500 lines. Prefer Grep + ranged Read everywhere.
+- Build/tsc output: tail it, don't dump it.
