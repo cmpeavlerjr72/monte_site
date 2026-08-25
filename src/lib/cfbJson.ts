@@ -40,6 +40,8 @@ export type JsonWeekRow = {
   summary_path: string;
   compact_path: string;
   players_path: string;
+  /** Per-player simulated distributions (sparse integer PMFs). */
+  dist_path: string;
 };
 
 /** games/<slug>/summary.json. */
@@ -126,6 +128,10 @@ function parseWeekRow(raw: any, weekId: string): JsonWeekRow | null {
     players_path: stripSlashes(
       String(raw.players_path ?? raw.playersPath ?? "").trim() ||
         summaryPath.replace(/summary\.json$/i, "players.json")
+    ),
+    dist_path: stripSlashes(
+      String(raw.players_dist_path ?? raw.dist_path ?? "").trim() ||
+        summaryPath.replace(/summary\.json$/i, "players_dist.json")
     ),
   };
 }
@@ -353,4 +359,147 @@ export async function getPlayersJson(
     statKeys: Array.isArray(raw?.stat_keys) ? raw.stat_keys.map(String) : [],
     players,
   };
+}
+
+/* ---------------------------- players_dist.json ---------------------------- */
+//
+// Sparse integer PMFs per player-stat: { "<int value>": count }, counts summing
+// to nsims. Exact for .5 betting lines — P(over L) is just the counts strictly
+// above L, no interpolation and no distributional assumption.
+
+/** value -> count. Keys are integers-as-strings in the wire format. */
+export type Pmf = Map<number, number>;
+
+export type PlayerDist = {
+  player: string;
+  team: string;
+  role?: string;
+  stats: Record<string, Pmf>;
+};
+
+export type PlayersDistJson = {
+  nsims: number;
+  players: PlayerDist[];
+};
+
+/** Thrown when the file simply is not published yet, so callers can tell a
+ *  missing export apart from a real failure. */
+export class DistNotPublished extends Error {
+  constructor(path: string) {
+    super(`players_dist.json not published (${path})`);
+    this.name = "DistNotPublished";
+  }
+}
+
+function parsePmf(raw: any): Pmf {
+  const out: Pmf = new Map();
+  const src = raw?.pmf ?? raw;
+  if (!src || typeof src !== "object") return out;
+  for (const k of Object.keys(src)) {
+    const v = Number(k);
+    const c = Number(src[k]);
+    if (!Number.isFinite(v) || !Number.isFinite(c) || c <= 0) continue;
+    out.set(v, (out.get(v) ?? 0) + c);
+  }
+  return out;
+}
+
+export async function getPlayersDistJson(
+  row: JsonWeekRow,
+  season: Season,
+  signal?: AbortSignal
+): Promise<PlayersDistJson> {
+  const url = await dataUrl(row.dist_path, season);
+  const res = await fetch(url, { signal });
+  // 404 is the expected answer for a week the exporter has not reached yet.
+  if (res.status === 404) throw new DistNotPublished(row.dist_path);
+  if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
+  const raw = await res.json();
+
+  const players: PlayerDist[] = ((raw?.players ?? []) as any[])
+    .map((p): PlayerDist | null => {
+      const name = String(p?.player ?? "").trim();
+      const team = String(p?.team ?? "").trim();
+      if (!name || !team) return null;
+      const stats: Record<string, Pmf> = {};
+      const src = p?.stats ?? {};
+      for (const k of Object.keys(src)) {
+        const pmf = parsePmf(src[k]);
+        if (pmf.size) stats[k] = pmf;
+      }
+      return { player: name, team, role: p?.role != null ? String(p.role) : undefined, stats };
+    })
+    .filter((p): p is PlayerDist => p !== null);
+
+  return { nsims: num(raw?.nsims) ?? num(raw?.n_sims) ?? 0, players };
+}
+
+/* ---- PMF math. Pure and exported so it can be checked against real data. ---- */
+
+/** Total count in a PMF (should equal nsims). */
+export function pmfTotal(pmf: Pmf): number {
+  let n = 0;
+  for (const c of pmf.values()) n += c;
+  return n;
+}
+
+/** P(value > line). Exact for half-point lines. */
+export function pmfPOver(pmf: Pmf, line: number): number {
+  const n = pmfTotal(pmf);
+  if (!n) return 0;
+  let over = 0;
+  for (const [v, c] of pmf) if (v > line) over += c;
+  return over / n;
+}
+
+export function pmfMean(pmf: Pmf): number {
+  const n = pmfTotal(pmf);
+  if (!n) return 0;
+  let s = 0;
+  for (const [v, c] of pmf) s += v * c;
+  return s / n;
+}
+
+/** Lower median: smallest value whose cumulative count reaches half. */
+export function pmfMedian(pmf: Pmf): number {
+  const n = pmfTotal(pmf);
+  if (!n) return 0;
+  const vals = [...pmf.keys()].sort((a, b) => a - b);
+  const half = n / 2;
+  let cum = 0;
+  for (const v of vals) {
+    cum += pmf.get(v)!;
+    if (cum >= half) return v;
+  }
+  return vals[vals.length - 1];
+}
+
+export type DistBin = { start: number; end: number; count: number; mid: number; label: string };
+
+/** Bucket a PMF into fixed-width bins aligned to multiples of `width`. */
+export function pmfBins(pmf: Pmf, width: number): DistBin[] {
+  if (!pmf.size) return [];
+  const vals = [...pmf.keys()];
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const start = Math.floor(lo / width) * width;
+  const end = Math.floor(hi / width) * width + width;
+
+  const bins: DistBin[] = [];
+  for (let s = start; s < end; s += width) {
+    bins.push({
+      start: s,
+      end: s + width,
+      count: 0,
+      mid: s + width / 2,
+      label: width === 1 ? String(s) : `${s}–${s + width}`,
+    });
+  }
+  for (const [v, c] of pmf) {
+    let i = Math.floor((v - start) / width);
+    if (i < 0) i = 0;
+    if (i >= bins.length) i = bins.length - 1;
+    bins[i].count += c;
+  }
+  return bins;
 }

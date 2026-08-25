@@ -736,6 +736,322 @@ app.get("/api/data/:repo/*", asyncRoute(async (req, res) => {
     }
 }));
 // ----------------------------------------------------------------------------
+// Kalshi CFB market data
+//
+// Read-only market data for the current CFB slate, mapped onto OUR game slugs
+// so the scoreboard can print market-implied numbers beside the sim's.
+//
+// AUTH: none. Kalshi's market-data endpoints (/series, /events, /markets) serve
+// unauthenticated, which is all this route needs. No API key, no PEM, and no
+// account identifier is read, stored, or referenced anywhere in this repo. If
+// Kalshi ever gates these endpoints this route degrades to
+// {available:false, reason:"upstream_unavailable"} rather than acquiring
+// credentials.
+//
+// Three series carry a game (all share one event suffix, e.g. 26AUG29UNCTCU):
+//   KXNCAAFGAME-<suffix>    one binary market per team  -> winner
+//   KXNCAAFTOTAL-<suffix>   ladder of "Over X.5 points" -> total
+//   KXNCAAFSPREAD-<suffix>  ladder of "<Team> wins by over X.5" -> spread
+// ----------------------------------------------------------------------------
+const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const KALSHI_GAME_SERIES = "KXNCAAFGAME";
+const KALSHI_TTL_MS = 45_000;
+/**
+ * Team-name key shared with the client's nameKey, plus the two normalizations
+ * Kalshi's naming forces: accent folding ("San José State") and the trailing
+ * "St."/"St" abbreviation ("Florida St." -> "Florida State").
+ */
+function cfbNameKey(s) {
+    const base = String(s || "")
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "") // José -> Jose
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/\bst\.?\b/g, " state ") // trailing "St."; \b keeps Stanford safe
+        .replace(/\buniversity\b/g, " ")
+        .replace(/[^a-z0-9]+/g, "");
+    return KALSHI_TEAM_ALIASES[base] ?? base;
+}
+/** Canonical forms where Kalshi and the sim disagree on the school's name. */
+const KALSHI_TEAM_ALIASES = {
+    ncstate: "northcarolinastate",
+    nc: "northcarolina",
+    southerncal: "usc",
+    southerncalifornia: "usc",
+    hawaii: "hawaii",
+    miamifl: "miami",
+    miamiflorida: "miami",
+    louisianalafayette: "louisiana",
+    texasam: "texasandm",
+};
+const pairKeyOf = (a, b) => [cfbNameKey(a), cfbNameKey(b)].sort().join("__");
+const MONTH3 = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+/** "2026-08-29" -> "26AUG29", matching Kalshi's event-ticker date segment. */
+function kalshiDateToken(isoDate) {
+    const m = String(isoDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m)
+        return null;
+    return `${m[1].slice(2)}${MONTH3[Number(m[2]) - 1]}${m[3]}`;
+}
+/** Kalshi publishes prices as decimal-dollar strings ("0.7400"). */
+const dollars = (v) => {
+    if (v === null || v === undefined || v === "")
+        return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+};
+/** Mid of the book when both sides quote, else the last trade. */
+function marketPrice(m) {
+    const bid = dollars(m?.yes_bid_dollars);
+    const ask = dollars(m?.yes_ask_dollars);
+    if (bid !== null && ask !== null && (bid > 0 || ask > 0))
+        return (bid + ask) / 2;
+    const last = dollars(m?.last_price_dollars);
+    return last !== null && last > 0 ? last : null;
+}
+const openInterest = (m) => Number(m?.open_interest_fp ?? 0) || 0;
+/**
+ * Pick the rung of a strike ladder that represents "the market's line".
+ *
+ * Neither obvious criterion works alone. Pure "closest to 50c" picks a thin
+ * rung one tick off the real line. Pure "most open interest" picked a 32.5
+ * total priced at 91c for EMU/Sacramento St. — a deep contract that had simply
+ * accumulated the most volume, which is not a line at all.
+ *
+ * So: restrict to rungs actually priced like a line (25c-75c) when any exist,
+ * then take the most-traded of those, tie-broken toward a coin flip.
+ */
+const LINE_BAND_LO = 0.25;
+const LINE_BAND_HI = 0.75;
+function pickLadderRung(markets) {
+    const priced = markets
+        .map((m) => ({ m, price: marketPrice(m), oi: openInterest(m) }))
+        .filter((x) => x.price !== null);
+    if (!priced.length)
+        return null;
+    const inBand = priced.filter((x) => x.price >= LINE_BAND_LO && x.price <= LINE_BAND_HI);
+    const pool = inBand.length ? inBand : priced;
+    pool.sort((a, b) => b.oi - a.oi || Math.abs(a.price - 0.5) - Math.abs(b.price - 0.5));
+    return pool[0];
+}
+async function kalshiJson(path, signal) {
+    const r = await fetchWithTimeout(`${KALSHI_BASE}${path}`, { headers: { accept: "application/json", "user-agent": "monte-site" }, signal }, 12_000);
+    if (!r.ok)
+        throw new Error(`kalshi ${path} -> HTTP ${r.status}`);
+    return r.json();
+}
+/** All open events in a series, following the cursor. */
+async function kalshiEvents(series) {
+    const out = [];
+    let cursor = "";
+    for (let page = 0; page < 10; page++) {
+        const q = `/events?series_ticker=${series}&limit=200&status=open${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+        const j = await kalshiJson(q);
+        out.push(...(j?.events ?? []));
+        cursor = j?.cursor || "";
+        if (!cursor)
+            break;
+    }
+    return out;
+}
+/**
+ * Every open market in a series, grouped by event ticker.
+ *
+ * Deliberately bulk rather than one request per game: fetching each game's
+ * three series separately was ~25 calls per refresh, and Kalshi rate-limited
+ * the tail of them — which showed up as games silently missing their prices
+ * while the first few looked fine. Whole-series paging is 5 calls for the
+ * entire slate.
+ */
+async function kalshiMarketsBySeries(series) {
+    const byEvent = new Map();
+    let cursor = "";
+    for (let page = 0; page < 8; page++) {
+        const q = `/markets?series_ticker=${series}&status=open&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+        const j = await kalshiJson(q);
+        for (const m of j?.markets ?? []) {
+            const ev = String(m?.event_ticker ?? "");
+            if (!ev)
+                continue;
+            const list = byEvent.get(ev);
+            if (list)
+                list.push(m);
+            else
+                byEvent.set(ev, [m]);
+        }
+        cursor = j?.cursor || "";
+        if (!cursor)
+            break;
+    }
+    return byEvent;
+}
+/** Our slate for a season/week, straight from the dataset week index. */
+async function ourWeekGames(season, week) {
+    const repo = `cfb-sims-${season}`;
+    if (!HF_ARCHIVE_REPOS.has(repo) && !HF_LIVE_REPOS.has(repo))
+        return [];
+    // Same dual probe the client uses: 2026 publishes the new index at
+    // weeks/<id>/index.json, 2025 at weeks/<id>/games/index.json.
+    for (const rel of [`weeks/${week}/index.json`, `weeks/${week}/games/index.json`]) {
+        try {
+            const url = `https://huggingface.co/datasets/${HF_OWNER}/${repo}/resolve/main/${season}/${rel}`;
+            const r = await fetchWithTimeout(url, { headers: { "user-agent": "monte-site-proxy" }, redirect: "follow" }, 12_000);
+            if (!r.ok)
+                continue;
+            const j = await r.json();
+            const games = (j?.games ?? [])
+                .map((g) => ({
+                slug: String(g?.slug ?? ""),
+                teamA: String(g?.teamA ?? ""),
+                teamB: String(g?.teamB ?? ""),
+                date: g?.date ? String(g.date) : undefined,
+            }))
+                .filter((g) => g.slug && g.teamA && g.teamB);
+            if (games.length)
+                return games;
+        }
+        catch {
+            /* try the next candidate */
+        }
+    }
+    return [];
+}
+async function buildKalshiCfb(season, week) {
+    const updated = new Date().toISOString();
+    const ours = await ourWeekGames(season, week);
+    if (!ours.length) {
+        return { available: false, reason: "no_slate", updated, season, week, games: [] };
+    }
+    const events = await kalshiEvents(KALSHI_GAME_SERIES);
+    if (!events.length) {
+        return { available: false, reason: "no_markets_listed", updated, season, week, games: [] };
+    }
+    // Index Kalshi events by unordered team pair + date. Titles read
+    // "<away> vs <home>"; the date lives in the ticker (…-26AUG29UNCTCU).
+    const byPair = new Map();
+    for (const e of events) {
+        const title = String(e?.title ?? "");
+        const parts = title.split(/\s+vs\.?\s+/i);
+        if (parts.length !== 2)
+            continue;
+        const dateTok = (String(e?.event_ticker ?? "").match(/-(\d{2}[A-Z]{3}\d{2})/) || [])[1] || "";
+        byPair.set(`${pairKeyOf(parts[0], parts[1])}@${dateTok}`, e);
+    }
+    const matches = [];
+    const unmatched = [];
+    for (const g of ours) {
+        const tok = kalshiDateToken(g.date) || "";
+        const ev = byPair.get(`${pairKeyOf(g.teamA, g.teamB)}@${tok}`) ??
+            // Kalshi can shift a listing by a day for late kicks; retry undated.
+            [...byPair.entries()].find(([k]) => k.startsWith(`${pairKeyOf(g.teamA, g.teamB)}@`))?.[1];
+        if (ev)
+            matches.push({ slug: g.slug, ev, teamA: g.teamA, teamB: g.teamB });
+        else
+            unmatched.push(`${g.teamB} @ ${g.teamA}`);
+    }
+    if (unmatched.length) {
+        console.log(`[kalshi] ${matches.length}/${ours.length} matched; unmatched: ${unmatched.join(" | ")}`);
+    }
+    const [winBy, totBy, sprBy] = await Promise.all([
+        kalshiMarketsBySeries("KXNCAAFGAME"),
+        kalshiMarketsBySeries("KXNCAAFTOTAL"),
+        kalshiMarketsBySeries("KXNCAAFSPREAD"),
+    ]);
+    const games = matches.map(({ slug, ev, teamA, teamB }) => {
+        const suffix = String(ev.event_ticker).replace(/^KXNCAAFGAME-/, "");
+        const out = {
+            slug,
+            event_ticker: ev.event_ticker,
+            winner: { teamA_price: null, teamB_price: null },
+            total: { line: null, yes_price: null },
+            spread: { line: null, yes_price: null },
+        };
+        const keyA = cfbNameKey(teamA);
+        const keyB = cfbNameKey(teamB);
+        // Winner: one binary market per team, identified by yes_sub_title.
+        for (const m of winBy.get(`KXNCAAFGAME-${suffix}`) ?? []) {
+            const k = cfbNameKey(m?.yes_sub_title ?? "");
+            const price = marketPrice(m);
+            if (k === keyA)
+                out.winner.teamA_price = price;
+            else if (k === keyB)
+                out.winner.teamB_price = price;
+        }
+        // Total: "Over X.5 points scored"; floor_strike is the line.
+        const totRung = pickLadderRung(totBy.get(`KXNCAAFTOTAL-${suffix}`) ?? []);
+        if (totRung) {
+            out.total.line = dollars(totRung.m?.floor_strike);
+            out.total.yes_price = totRung.price;
+        }
+        // Spread: "<Team> wins by over X.5". Reported HOME-perspective to match
+        // the sim's convention (negative = home favored), so a rung naming the
+        // away team flips sign.
+        const sprRung = pickLadderRung(sprBy.get(`KXNCAAFSPREAD-${suffix}`) ?? []);
+        if (sprRung) {
+            const floor = dollars(sprRung.m?.floor_strike);
+            const who = cfbNameKey(String(sprRung.m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");
+            if (floor !== null)
+                out.spread.line = who === keyA ? -floor : floor;
+            out.spread.yes_price = sprRung.price;
+        }
+        return out;
+    });
+    return {
+        available: games.length > 0,
+        reason: games.length ? undefined : "no_games_matched",
+        updated,
+        season,
+        week,
+        matched: games.length,
+        unmatched,
+        games,
+    };
+}
+// 45s TTL + in-flight coalescing, same discipline as the scoreboard cache.
+const KALSHI_CACHE = new Map();
+const KALSHI_INFLIGHT = new Map();
+app.get("/api/kalshi/cfb", asyncRoute(async (req, res) => {
+    const season = /^\d{4}$/.test(String(req.query.season || "")) ? String(req.query.season) : "2026";
+    const week = /^week\d{2}$/.test(String(req.query.week || "")) ? String(req.query.week) : "week00";
+    const key = `${season}:${week}`;
+    res.set("Cache-Control", "public, max-age=45");
+    const hit = KALSHI_CACHE.get(key);
+    if (hit && Date.now() - hit.at < KALSHI_TTL_MS) {
+        res.json(hit.payload);
+        return;
+    }
+    let work = KALSHI_INFLIGHT.get(key);
+    if (!work) {
+        work = buildKalshiCfb(season, week)
+            .then((payload) => {
+            KALSHI_CACHE.set(key, { at: Date.now(), payload });
+            if (KALSHI_CACHE.size > 8) {
+                const oldest = KALSHI_CACHE.keys().next().value;
+                if (oldest !== undefined)
+                    KALSHI_CACHE.delete(oldest);
+            }
+            return payload;
+        })
+            .finally(() => KALSHI_INFLIGHT.delete(key));
+        KALSHI_INFLIGHT.set(key, work);
+    }
+    try {
+        res.json(await work);
+    }
+    catch (err) {
+        console.error("[/api/kalshi/cfb] failed:", err?.message ?? err);
+        // Never throw at the client: an unavailable market feed just hides the row.
+        res.json({
+            available: false,
+            reason: "upstream_unavailable",
+            updated: new Date().toISOString(),
+            season,
+            week,
+            games: [],
+        });
+    }
+}));
+// ----------------------------------------------------------------------------
 // Static React build
 // ----------------------------------------------------------------------------
 const __filename = fileURLToPath(import.meta.url);

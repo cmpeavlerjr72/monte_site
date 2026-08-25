@@ -22,6 +22,8 @@ import {
   type JsonGame, type JsonWeekRow,
 } from "../lib/cfbJson";
 import BoxScore from "../components/BoxScore";
+import PlayerProps from "../components/PlayerProps";
+import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 
 type LiveGame = {
   id: string;
@@ -296,6 +298,8 @@ type CardGame = {
   liveB?: number;
   /** Small-JSON path only — the index row, for lazy compact/players fetches. */
   jsonRow?: JsonWeekRow;
+  /** P(home wins) straight from the sim, for side-by-side with the market. */
+  pHome?: number;
 };
 
 const median = (arr: number[]) => {
@@ -873,6 +877,30 @@ function ScoreboardPage() {
     return () => { alive = false; ac.abort(); };
   }, [season, selectedWeek, weekOptions, scoreFileByWeek, gamesFileByWeek]);
 
+  /* ---- Kalshi market data for this week (slim side-by-side on each card) ----
+   * Server-cached 45s and mapped to our slugs there; the row simply does not
+   * render when the feed is unavailable or a game is not listed. */
+  const [kalshiBySlug, setKalshiBySlug] = useState<Map<string, KalshiGame>>(new Map());
+
+  useEffect(() => {
+    if (!season || !selectedWeek) { setKalshiBySlug(new Map()); return; }
+    const weekId =
+      weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
+
+    const ac = new AbortController();
+    let alive = true;
+    (async () => {
+      try {
+        const payload = await getKalshiCfb(season, weekId, ac.signal);
+        if (alive) setKalshiBySlug(indexKalshiBySlug(payload));
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        if (alive) setKalshiBySlug(new Map());
+      }
+    })();
+    return () => { alive = false; ac.abort(); };
+  }, [season, selectedWeek, weekOptions]);
+
   /* ---------- cards, CSV seasons (join per-seed sims with meta, compute picks) ---------- */
   const cards2025: CardGame[] = useMemo(() => {
     const out: CardGame[] = [];
@@ -1292,6 +1320,7 @@ function ScoreboardPage() {
         liveA: aScore,
         liveB: bScore,
         jsonRow: row,
+        pHome: typeof pA === "number" ? pA : undefined,
       });
     }
 
@@ -1458,6 +1487,7 @@ function ScoreboardPage() {
             week={selectedWeek}
             season={season}
             useMean={useMean}
+            kalshi={c.jsonRow ? kalshiBySlug.get(c.key) : undefined}
           />
         ))}
       </div>
@@ -1512,13 +1542,15 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 // }
 
 
-function GameCard({ card, gdata, week, season, useMean = false }: {
+function GameCard({ card, gdata, week, season, useMean = false, kalshi }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
   gdata?: GameData;
   week: string;
   season: Season;
   useMean?: boolean;
+  /** Kalshi market data for this game, when the feed lists it. */
+  kalshi?: KalshiGame;
 }) {
   // Distribution panels need per-seed rows. The CSV path already holds them in
   // memory; the JSON path keeps them in compact.json (~8KB) and fetches it the
@@ -1536,6 +1568,7 @@ function GameCard({ card, gdata, week, season, useMean = false }: {
   const [showScores, setShowScores] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
   const [showBox, setShowBox] = useState(false);
+  const [showProps, setShowProps] = useState(false);
 
   /* Player sims for THIS matchup, fetched the first time the panel is opened. */
   const [players, setPlayers] = useState<PlayerMap>({});
@@ -1836,11 +1869,66 @@ function GameCard({ card, gdata, week, season, useMean = false }: {
         </div>
       )}
 
+      {/* Kalshi market row — sim number vs market-implied, side by side.
+          No edge logic yet, just the two numbers. Hidden entirely when the
+          feed is unavailable or this game is not listed. */}
+      {(() => {
+        if (!kalshi) return null;
+        const winMkt = kalshi.winner.teamA_price;   // implied P(home)
+        const totLine = kalshi.total.line;
+        const totOver = kalshi.total.yes_price;
+        if (winMkt == null && totLine == null) return null;
+
+        const simTotal = useMean ? card.meanA + card.meanB : card.medA + card.medB;
+        const pctOf = (x?: number | null) =>
+          x == null ? "—" : `${(x * 100).toFixed(0)}%`;
+
+        return (
+          <div
+            style={{
+              display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline",
+              marginTop: 4, paddingTop: 6, borderTop: "1px dashed var(--border)",
+              fontSize: 12, color: "var(--muted)",
+            }}
+          >
+            <span style={{ fontWeight: 800, letterSpacing: 0.4, color: "var(--text)" }}>
+              Kalshi
+            </span>
+
+            {winMkt != null && (
+              <span>
+                {card.teamA} win{" "}
+                <b style={{ color: "var(--text)" }}>{pctOf(winMkt)}</b>
+                {typeof card.pHome === "number" && (
+                  <span style={{ opacity: 0.8 }}> · sim {pctOf(card.pHome)}</span>
+                )}
+              </span>
+            )}
+
+            {totLine != null && (
+              <span>
+                Total <b style={{ color: "var(--text)" }}>{totLine}</b>
+                {totOver != null && <> · over {pctOf(totOver)}</>}
+                <span style={{ opacity: 0.8 }}> · sim {simTotal}</span>
+              </span>
+            )}
+
+            {kalshi.spread.line != null && (
+              <span>
+                Spread <b style={{ color: "var(--text)" }}>
+                  {kalshi.spread.line > 0 ? `+${kalshi.spread.line}` : kalshi.spread.line}
+                </b>
+              </span>
+            )}
+          </div>
+        );
+      })()}
+
       {/* action buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
         {canShowScores && (
           <button
-            onClick={()=>{ setShowScores(s=>!s); setShowPlayers(false); }}
+            onClick={()=>{ setShowScores(s=>!s); setShowPlayers(false); setShowBox(false); setShowProps(false); }}
             style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showScores ? "var(--brand)" : "var(--card)", color: showScores ? "var(--brand-contrast)" : "var(--text)" }}
           >
             {showScores ? "Hide Scores" : "Detailed Simulated Scores"}
@@ -1856,13 +1944,32 @@ function GameCard({ card, gdata, week, season, useMean = false }: {
         )}
         {jsonRow && (
           <button
-            onClick={()=>{ setShowBox(b=>!b); setShowScores(false); setShowPlayers(false); }}
+            onClick={()=>{ setShowProps(v=>!v); setShowScores(false); setShowPlayers(false); setShowBox(false); }}
+            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showProps ? "var(--brand)" : "var(--card)", color: showProps ? "var(--brand-contrast)" : "var(--text)" }}
+          >
+            {showProps ? "Hide Player Props" : "Detailed Player Props"}
+          </button>
+        )}
+        {jsonRow && (
+          <button
+            onClick={()=>{ setShowBox(b=>!b); setShowScores(false); setShowPlayers(false); setShowProps(false); }}
             style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showBox ? "var(--accent)" : "var(--card)", color: showBox ? "var(--brand-contrast)" : "var(--text)" }}
           >
             {showBox ? "Hide Box Score" : "Box Score"}
           </button>
         )}
       </div>
+
+      {/* PLAYER PROPS PANEL — players_dist.json fetched on first open. */}
+      {jsonRow && showProps && (
+        <PlayerProps
+          row={jsonRow}
+          season={season}
+          teamA={card.teamA}
+          teamB={card.teamB}
+          colorFor={(t) => getTeamColors(t)?.primary}
+        />
+      )}
 
       {/* BOX SCORE PANEL — players.json is fetched on first open and kept
           mounted afterwards so toggling does not refetch. */}

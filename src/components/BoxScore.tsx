@@ -38,7 +38,19 @@ const val = (s: StatDist | undefined, useMean: boolean): number => {
   return Number.isFinite(v) ? (v as number) : 0;
 };
 
+/**
+ * TD and INT ALWAYS read the mean, in both toggle states.
+ *
+ * These are small integer counts, so their median is a whole number for
+ * essentially every player — a 0.4-TD projection and a 0.0-TD projection both
+ * render as "0" in median mode, which erases the entire betting signal. The
+ * mean at one decimal is the only readout that carries it.
+ */
+const meanVal = (s: StatDist | undefined): number =>
+  Number.isFinite(s?.mean) ? (s!.mean as number) : 0;
+
 const r0 = (n: number) => Math.round(n);
+const d1 = (n: number) => n.toFixed(1);
 
 const MAX_ROWS = 6;
 
@@ -50,14 +62,14 @@ function passingRows(players: PlayerJson[], useMean: boolean): Row[] {
       const att = val(p.stats.pass_att, useMean);
       const cmp = val(p.stats.pass_comp, useMean);
       const yds = val(p.stats.pass_yds, useMean);
-      const td = val(p.stats.pass_td, useMean);
-      const int = val(p.stats.int, useMean);
+      const td = meanVal(p.stats.pass_td);   // always mean — see meanVal
+      const int = meanVal(p.stats.int);      // always mean — see meanVal
       return {
         key: p.player,
         name: p.player,
-        cells: [`${r0(cmp)}/${r0(att)}`, r0(yds), r0(td), r0(int)],
+        cells: [`${r0(cmp)}/${r0(att)}`, r0(yds), d1(td), d1(int)],
         sortBy: yds,
-        drop: r0(att) === 0 && r0(yds) === 0 && r0(td) === 0 && r0(int) === 0,
+        drop: r0(att) === 0 && r0(yds) === 0 && td === 0 && int === 0,
       };
     })
     .filter((r) => !r.drop)
@@ -70,13 +82,13 @@ function rushingRows(players: PlayerJson[], useMean: boolean): Row[] {
     .map((p) => {
       const att = val(p.stats.rush_att, useMean);
       const yds = val(p.stats.rush_yds, useMean);
-      const td = val(p.stats.rush_td, useMean);
+      const td = meanVal(p.stats.rush_td);   // always mean — see meanVal
       return {
         key: p.player,
         name: p.player,
-        cells: [r0(att), r0(yds), r0(td)],
+        cells: [r0(att), r0(yds), d1(td)],
         sortBy: yds,
-        drop: r0(att) === 0 && r0(yds) === 0 && r0(td) === 0,
+        drop: r0(att) === 0 && r0(yds) === 0 && td === 0,
       };
     })
     .filter((r) => !r.drop)
@@ -89,13 +101,13 @@ function receivingRows(players: PlayerJson[], useMean: boolean): Row[] {
     .map((p) => {
       const rec = val(p.stats.rec, useMean);
       const yds = val(p.stats.rec_yds, useMean);
-      const td = val(p.stats.rec_td, useMean);
+      const td = meanVal(p.stats.rec_td);    // always mean — see meanVal
       return {
         key: p.player,
         name: p.player,
-        cells: [r0(rec), r0(yds), r0(td)],
+        cells: [r0(rec), r0(yds), d1(td)],
         sortBy: yds,
-        drop: r0(rec) === 0 && r0(yds) === 0 && r0(td) === 0,
+        drop: r0(rec) === 0 && r0(yds) === 0 && td === 0,
       };
     })
     .filter((r) => !r.drop)
@@ -383,6 +395,10 @@ export function BoxScoreView({
       >
         {column(byTeam.away, teamB, "left", ptsB)}
         {column(byTeam.home, teamA, "right", ptsA)}
+      </div>
+
+      <div style={{ fontSize: 11, color: "var(--muted)", paddingTop: 4 }}>
+        TD &amp; INT are averages across sims.
       </div>
     </div>
   );
