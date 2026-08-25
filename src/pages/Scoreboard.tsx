@@ -15,7 +15,8 @@ import { Skeleton, SkeletonCard, SkeletonChart } from "../components/Skeleton";
 import { useThemeMode, useDensity, type Density } from "../lib/usePrefs";
 import MarketEdge from "../components/MarketEdge";
 import TopEdges from "../components/TopEdges";
-import { ensureSlateEdges, type EdgeInput, type GameEdges } from "../lib/edges";
+import { type EdgeInput, type GameEdges } from "../lib/edges";
+import { useSlateEdges } from "../lib/useSlateEdges";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
   getCatalog, playerFileForPair, resolveLatestSeason, latestWeek,
@@ -998,9 +999,9 @@ function ScoreboardPage() {
   /* ---- Slate-wide edges (item 3 + 4). Opt-in: the cards load their own
    * compacts lazily, so this only runs when the Edge sort or the Top Edges
    * panel actually needs the whole slate. Everything goes through the same
-   * caches, so already-visible games cost nothing. ---- */
-  const [slateEdges, setSlateEdges] = useState<Map<string, GameEdges> | null>(null);
-  const [edgesLoading, setEdgesLoading] = useState(false);
+   * caches, so already-visible games cost nothing.
+   * The scan itself lives in useSlateEdges — see that file for why it must
+   * not be wired inline here. ---- */
   const [showTopEdges, setShowTopEdges] = useState(false);
   const [flashKey, setFlashKey] = useState<string | null>(null);
 
@@ -1027,6 +1028,8 @@ function ScoreboardPage() {
    * Server-cached 45s and mapped to our slugs there; the row simply does not
    * render when the feed is unavailable or a game is not listed. */
   const [kalshiBySlug, setKalshiBySlug] = useState<Map<string, KalshiGame>>(new Map());
+  /** Primitive that changes with the Kalshi payload, for the scan signature. */
+  const [kalshiStamp, setKalshiStamp] = useState("");
 
   useEffect(() => {
     if (!season || !selectedWeek) { setKalshiBySlug(new Map()); return; }
@@ -1038,10 +1041,13 @@ function ScoreboardPage() {
     (async () => {
       try {
         const payload = await getKalshiCfb(season, weekId, ac.signal);
-        if (alive) setKalshiBySlug(indexKalshiBySlug(payload));
+        if (alive) {
+          setKalshiBySlug(indexKalshiBySlug(payload));
+          setKalshiStamp(`${payload.updated}|${payload.games.length}`);
+        }
       } catch (e: any) {
         if (e?.name === "AbortError") return;
-        if (alive) setKalshiBySlug(new Map());
+        if (alive) { setKalshiBySlug(new Map()); setKalshiStamp(""); }
       }
     })();
     return () => { alive = false; ac.abort(); };
@@ -1482,39 +1488,45 @@ function ScoreboardPage() {
 
   // Whichever path produced rows for this week. Both cannot be populated at
   // once: the loader clears one before filling the other.
-  const cards = useMemo(
-    () => sortCards(cardsJson.length ? cardsJson : cards2025, sortBy, slateEdges),
-    [cardsJson, cards2025, sortBy, slateEdges]
+  /** Unsorted slate. The scan reads THIS; only the display list is sorted. */
+  const baseCards = useMemo(
+    () => (cardsJson.length ? cardsJson : cards2025),
+    [cardsJson, cards2025]
   );
 
-  /** Inputs for the slate scan: only JSON-season cards can be priced. */
+  /**
+   * Inputs for the slate scan.
+   *
+   * Derived from the UNSORTED card list on purpose. `cards` below is sorted
+   * with `slateEdges`, so deriving the scan's inputs from it made the scan
+   * depend on its own output — the cycle that froze the tab.
+   */
   const edgeInputs: EdgeInput[] = useMemo(
-    () => cards.filter((c) => c.jsonRow).map((c) => ({
+    () => baseCards.filter((c) => c.jsonRow).map((c) => ({
       slug: c.key, teamA: c.teamA, teamB: c.teamB, row: c.jsonRow!,
       bookSpread: c.oddsSpread, bookTotal: c.oddsTotal,
       simMargin: useMean ? c.simMeanMargin : c.simMedMargin,
       simTotal: useMean ? c.simMeanTotal : c.simMedTotal,
       pHome: c.pHome, kickoffMs: c.kickoffMs,
     })),
-    [cards, useMean]
+    [baseCards, useMean]
   );
 
-  const wantEdges = sortBy === "edge" || showTopEdges;
+  const { edges: slateEdges, loading: edgesLoading } = useSlateEdges({
+    inputs: edgeInputs,
+    kalshiBySlug,
+    kalshiStamp,
+    season,
+    weekKey: weekId,
+    useMean,
+    enabled: sortBy === "edge" || showTopEdges,
+  });
 
-  useEffect(() => {
-    if (!wantEdges || !edgeInputs.length || !season) return;
-    const ac = new AbortController();
-    let alive = true;
-    setEdgesLoading(true);
-    ensureSlateEdges(edgeInputs, kalshiBySlug, season, ac.signal)
-      .then((m) => { if (alive) setSlateEdges(m); })
-      .catch((e) => { if (e?.name !== "AbortError") console.warn("[edges] scan failed:", e); })
-      .finally(() => { if (alive) setEdgesLoading(false); });
-    return () => { alive = false; ac.abort(); };
-  }, [wantEdges, edgeInputs, kalshiBySlug, season]);
+  const cards = useMemo(
+    () => sortCards(baseCards, sortBy, slateEdges),
+    [baseCards, sortBy, slateEdges]
+  );
 
-  // A new week invalidates the previous slate's edges.
-  useEffect(() => { setSlateEdges(null); }, [season, selectedWeek]);
 
   // Apply conference filter (game shows if either team is in selected conference)
   const filteredCards = useMemo(() => {
