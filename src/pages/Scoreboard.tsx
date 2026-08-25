@@ -599,11 +599,12 @@ function sortCards(
       if (ax !== ay) return ax - ay;
       return x.teamA.localeCompare(y.teamA);
     }
-    // Edge: biggest |edge| first. Games Kalshi cannot price have no edge at
-    // all, so they sink to the bottom rather than being dropped.
+    // Edge: best SIGNED edge first, matching the Top Edges panel. A game whose
+    // only big edge is negative sorts low, not high. Games Kalshi cannot price
+    // have no edge at all and sink below even the negative ones.
     const best = (c: CardGame) => {
-      const e = edges?.get(c.key)?.bestAbs;
-      return typeof e === "number" ? e : -1;
+      const e = edges?.get(c.key)?.bestSigned;
+      return typeof e === "number" ? e : Number.NEGATIVE_INFINITY;
     };
     const ax = best(x);
     const ay = best(y);

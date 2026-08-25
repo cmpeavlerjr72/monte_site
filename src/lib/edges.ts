@@ -34,8 +34,14 @@ export type GameEdges = {
   teamA: string;
   teamB: string;
   rows: MarketRow[];
-  /** Largest |edge| across this game's rows; null when Kalshi priced none. */
-  bestAbs: number | null;
+  /**
+   * Best SIGNED edge across this game's rows; null when Kalshi priced none.
+   *
+   * Signed, not absolute: a game whose only large edge is negative means the
+   * market likes it more than we do, which is not a reason to surface it. It
+   * should sort low, not high.
+   */
+  bestSigned: number | null;
 };
 
 /** One row lifted out of its game, for the ranked list. */
@@ -79,15 +85,14 @@ export async function ensureSlateEdges(
         kalshi: kalshiBySlug.get(g.slug),
       });
 
-      let bestAbs: number | null = null;
+      let bestSigned: number | null = null;
       for (const r of rows) {
         const e = rowEdge(r);
         if (e === null) continue;
-        const a = Math.abs(e);
-        if (bestAbs === null || a > bestAbs) bestAbs = a;
+        if (bestSigned === null || e > bestSigned) bestSigned = e;
       }
 
-      out.set(g.slug, { slug: g.slug, teamA: g.teamA, teamB: g.teamB, rows, bestAbs });
+      out.set(g.slug, { slug: g.slug, teamA: g.teamA, teamB: g.teamB, rows, bestSigned });
     })
   );
 
