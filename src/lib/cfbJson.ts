@@ -59,6 +59,8 @@ export type GameSummaryJson = {
   median_B_pts?: number;
   mean_A_pts?: number;
   mean_B_pts?: number;
+  mean_margin?: number;
+  mean_total?: number;
   p25_margin?: number;
   p75_margin?: number;
   p25_total?: number;
@@ -155,6 +157,8 @@ function parseSummary(raw: any): GameSummaryJson | null {
     median_B_pts: num(raw.median_B_pts),
     mean_A_pts: num(raw.mean_A_pts),
     mean_B_pts: num(raw.mean_B_pts),
+    mean_margin: num(raw.mean_margin),
+    mean_total: num(raw.mean_total),
     p25_margin: num(raw.p25_margin),
     p75_margin: num(raw.p75_margin),
     p25_total: num(raw.p25_total),
