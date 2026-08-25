@@ -13,6 +13,15 @@
 // A single-run payload still renders exactly as it always has (the compare
 // layout is guarded behind runs.length >= 2).
 //
+// Mean|Median (2026-08-24): the scoreboard switches between the seed MEAN
+// (hs/as) and the seed MEDIAN (hs_med/as_med, tot_med) of each score. Medians
+// read like real football scores (whole or .5) where means read like
+// estimators. The switch moves the per-run score columns, the Total row and
+// the Δ between them; the market column, the spread/total pills and the
+// metric strip stay on the means they were computed from. The choice persists
+// in localStorage. A payload without the _med fields hides the control and
+// renders exactly as before.
+//
 // Player props (2026-08-23): each game also carries hprops/aprops — per
 // player x stat SEED DISTRIBUTIONS (mean/median/p10..p90) plus P(over) at
 // half-point thresholds bracketing the median. The props panel is a second
@@ -39,6 +48,9 @@ type Game = {
   gid?: number;
   date: string; home: string; away: string;
   hs: number; as: number; hw: number;
+  // seed medians (added 2026-08-24; absent in older payloads).
+  // tot_med is the median of the per-seed TOTAL, not hs_med + as_med.
+  hs_med?: number; as_med?: number; tot_med?: number;
   spread: number | null; ou: number | null; fpi: number | null;
   hbox: TeamBox; abox: TeamBox;
   hprops?: PropRow[]; aprops?: PropRow[];
@@ -96,6 +108,24 @@ const HOT_SCORE = 3;
 /** A prop median moves "a lot" at 15% of the larger of the two medians. */
 const HOT_MED_FRAC = 0.15;
 
+/** Which statistic the scoreboard shows. */
+type ScoreStat = "mean" | "med";
+const STAT_KEY = "testVisual.scoreStat";
+/** localStorage is unavailable in private modes / sandboxed frames — default. */
+function loadScoreStat(): ScoreStat {
+  try {
+    return window.localStorage.getItem(STAT_KEY) === "med" ? "med" : "mean";
+  } catch { return "mean"; }
+}
+function saveScoreStat(s: ScoreStat): void {
+  try { window.localStorage.setItem(STAT_KEY, s); } catch { /* non-fatal */ }
+}
+/** A median of integer scores lands on a whole or half point: print it like a
+ *  scoreboard (34, 34.5) rather than like a statistic (34.0). */
+function score(x: number): string {
+  return Number.isInteger(x) ? x.toFixed(0) : x.toFixed(1);
+}
+
 function pillBg(delta: number | null, tight: number, wide: number): string {
   if (delta == null) return NEUTRAL;
   const a = Math.abs(delta);
@@ -129,9 +159,10 @@ function gameKey(g: Game): string {
   return g.gid != null ? `#${g.gid}` : `${g.date}|${g.home}|${g.away}`;
 }
 
-/** Signed Δ, tabular figures, muted until it crosses the emphasis threshold. */
-function Delta({ v, hot, d = 1, size = 14 }: {
-  v: number | null; hot: boolean; d?: number; size?: number;
+/** Signed Δ, tabular figures, muted until it crosses the emphasis threshold.
+ *  `asScore` prints it on the median's whole/half grid instead of fixed dp. */
+function Delta({ v, hot, d = 1, size = 14, asScore = false }: {
+  v: number | null; hot: boolean; d?: number; size?: number; asScore?: boolean;
 }) {
   if (v == null) return <span style={{ color: "var(--muted)" }}>–</span>;
   return (
@@ -144,7 +175,7 @@ function Delta({ v, hot, d = 1, size = 14 }: {
       border: `1px solid ${hot ? HOT_BORDER : "transparent"}`,
       borderRadius: 6, padding: hot ? "1px 5px" : "1px 0",
     }}>
-      {fmt(v, d)}
+      {asScore ? `${v >= 0 ? "+" : ""}${score(v)}` : fmt(v, d)}
     </span>
   );
 }
@@ -160,10 +191,40 @@ function RunTag({ short, label }: { short: string; label: string }) {
   );
 }
 
-function TeamRow({ name, scores, delta, showDelta, hot, mkt, logo, color, size }: {
+/** Mean|Median switch, sized to sit beside the page's select controls. */
+function StatSwitch({ value, onChange }: {
+  value: ScoreStat; onChange: (v: ScoreStat) => void;
+}) {
+  const opts: [ScoreStat, string][] = [["mean", "Mean"], ["med", "Median"]];
+  return (
+    <div role="group" aria-label="Scoreboard statistic"
+         style={{ display: "flex", borderRadius: 8, overflow: "hidden",
+                  border: "1px solid #e2e8f0", background: "#fff" }}>
+      {opts.map(([v, lab]) => {
+        const on = value === v;
+        return (
+          <button key={v} type="button" onClick={() => onChange(v)}
+            aria-pressed={on}
+            title={v === "med" ? "Median score across seeds — reads like a real "
+                                + "final score (whole or .5)"
+                              : "Mean score across seeds"}
+            style={{ font: "inherit", fontSize: 13, fontWeight: on ? 800 : 600,
+                     padding: "6px 10px", border: "none", cursor: "pointer",
+                     background: on ? "var(--brand)" : "transparent",
+                     color: on ? "var(--brand-contrast)" : "var(--text)" }}>
+            {lab}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TeamRow({ name, scores, delta, showDelta, hot, mkt, logo, color, size,
+                   med }: {
   name: string; scores: (number | null)[];
   delta: number | null; showDelta: boolean; hot: boolean;
-  mkt: string; logo?: string; color?: string; size: number;
+  mkt: string; logo?: string; color?: string; size: number; med: boolean;
 }) {
   return (
     <>
@@ -182,11 +243,13 @@ function TeamRow({ name, scores, delta, showDelta, hot, mkt, logo, color, size }
         <div key={i} style={{ fontWeight: 800, fontSize: size, lineHeight: 1,
                               textAlign: "center", fontVariantNumeric: "tabular-nums",
                               color: color ?? "var(--text)" }}>
-          {s == null ? "–" : s.toFixed(1)}
+          {s == null ? "–" : med ? score(s) : s.toFixed(1)}
         </div>
       ))}
       {showDelta && (
-        <div style={{ textAlign: "center" }}><Delta v={delta} hot={hot} /></div>
+        <div style={{ textAlign: "center" }}>
+          <Delta v={delta} hot={hot} asScore={med} />
+        </div>
       )}
       <div style={{ fontWeight: 800, fontSize: size, lineHeight: 1, textAlign: "center",
                     fontVariantNumeric: "tabular-nums" }}>
@@ -524,11 +587,14 @@ export function PropsTable({ name, runs, showDelta, labels, group }: {
   );
 }
 
-export function GameCard({ g, views, showDelta, logos, labels, group }: {
+export function GameCard({ g, views, showDelta, logos, labels, group,
+                           med = false }: {
   g: Game; views: RunView[]; showDelta: boolean;
   logos: Map<string, { id: string; logo: string }>;
   labels: Record<string, string>;
   group: "all" | "pass" | "rush" | "rec";
+  /** Show seed medians instead of seed means on the scoreboard. */
+  med?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [propsOpen, setPropsOpen] = useState(false);
@@ -552,9 +618,12 @@ export function GameCard({ g, views, showDelta, logos, labels, group }: {
   const favName = mktMargin == null ? "" : (mktMargin >= 0 ? g.home : g.away);
 
   // ---- paired columns --------------------------------------------------
-  const home = views.map(v => v.g?.hs ?? null);
-  const away = views.map(v => v.g?.as ?? null);
-  const total = views.map(v => (v.g ? v.g.hs + v.g.as : null));
+  // Mean or median per the page switch. The median TOTAL is its own field —
+  // median(home + away) per seed, which is not hs_med + as_med.
+  const home = views.map(v => (v.g ? (med ? v.g.hs_med ?? null : v.g.hs) : null));
+  const away = views.map(v => (v.g ? (med ? v.g.as_med ?? null : v.g.as) : null));
+  const total = views.map(v =>
+    v.g ? (med ? v.g.tot_med ?? null : v.g.hs + v.g.as) : null);
   const gap = (xs: (number | null)[]): number | null =>
     showDelta && xs[0] != null && xs[1] != null ? xs[0]! - xs[1]! : null;
   const dHome = gap(home), dAway = gap(away), dTotal = gap(total);
@@ -592,10 +661,10 @@ export function GameCard({ g, views, showDelta, logos, labels, group }: {
       <div style={hdr}>Market</div>
       <TeamRow name={g.away} scores={away} delta={dAway} showDelta={showDelta}
                hot={hot(dAway)} mkt={mktScore("a")} logo={aLogo} color={ac}
-               size={scoreSize} />
+               size={scoreSize} med={med} />
       <TeamRow name={g.home} scores={home} delta={dHome} showDelta={showDelta}
                hot={hot(dHome)} mkt={mktScore("h")} logo={hLogo} color={hc}
-               size={scoreSize} />
+               size={scoreSize} med={med} />
       {multi && (
         <>
           <div style={{ fontWeight: 800, fontSize: 13, color: "var(--muted)",
@@ -604,12 +673,12 @@ export function GameCard({ g, views, showDelta, logos, labels, group }: {
             <div key={i} style={{ fontWeight: 800, fontSize: scoreSize, lineHeight: 1,
                                   textAlign: "center",
                                   fontVariantNumeric: "tabular-nums" }}>
-              {t == null ? "–" : t.toFixed(1)}
+              {t == null ? "–" : med ? score(t) : t.toFixed(1)}
             </div>
           ))}
           {showDelta && (
             <div style={{ textAlign: "center" }}>
-              <Delta v={dTotal} hot={hot(dTotal)} />
+              <Delta v={dTotal} hot={hot(dTotal)} asScore={med} />
             </div>
           )}
           <div style={{ fontWeight: 800, fontSize: scoreSize, lineHeight: 1,
@@ -768,6 +837,8 @@ export default function TestVisual() {
   const [logos, setLogos] = useState<Map<string, any> | null>(null);
   const [sort, setSort] = useState<"kick" | "spread" | "disagree">("kick");
   const [group, setGroup] = useState<"all" | "pass" | "rush" | "rec">("all");
+  const [scoreStat, setScoreStat] = useState<ScoreStat>(loadScoreStat);
+  const pickStat = (s: ScoreStat) => { setScoreStat(s); saveScoreStat(s); };
 
   useEffect(() => {
     fetch("/data/test-visual.json")
@@ -811,6 +882,15 @@ export default function TestVisual() {
     return gs;
   }, [data, sort, baseTag]);
 
+  // The switch appears only when EVERY game of EVERY arm carries the medians;
+  // an older payload (or a half-built one) renders exactly as it did before.
+  const hasMed = useMemo(() => {
+    const all = Object.values(runMap).flat();
+    return all.length > 0 && all.every(
+      x => x.hs_med != null && x.as_med != null && x.tot_med != null);
+  }, [data]);
+  const med = hasMed && scoreStat === "med";
+
   const byRun = useMemo(() => runInfos.map(r => {
     const m = new Map<string, Game>();
     for (const g of runMap[r.tag] ?? []) m.set(gameKey(g), g);
@@ -835,9 +915,15 @@ export default function TestVisual() {
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>
             {data.meta.generated} · {data.meta.n_games} games
-            · scores are sim means · Δ = sim minus market
+            · scores are sim {med ? "medians" : "means"} · Δ = sim minus market
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
+            {hasMed && (
+              <>
+                <label style={{ fontSize: 12, color: "var(--muted)" }}>Scores</label>
+                <StatSwitch value={scoreStat} onChange={pickStat} />
+              </>
+            )}
             {anyProps && (
               <>
                 <label style={{ fontSize: 12, color: "var(--muted)" }}>Props</label>
@@ -933,7 +1019,7 @@ export default function TestVisual() {
           }));
           return (
             <GameCard key={g.gid ?? i} g={g} views={views} showDelta={showDelta}
-                      logos={logos} labels={labels} group={group} />
+                      logos={logos} labels={labels} group={group} med={med} />
           );
         })}
       </div>
