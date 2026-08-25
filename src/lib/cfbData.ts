@@ -7,12 +7,28 @@
 // Requests go through our own origin (/api/data/...) because some networks block
 // huggingface.co; the direct Hub URL is only a fallback for deployments that
 // serve the static build without the Express server.
+//
+// One dataset repo per season, same layout in each:
+//   <season>/season_index.json
+//   <season>/weeks/weekNN/{index.json,scores_bundle.csv,games.csv,open.csv,...}
+// Season "2025" -> repo cfb-sims-2025, season "2026" -> repo cfb-sims-2026.
+//
+// Every exported function takes `season` as an OPTIONAL LAST argument that
+// defaults to DEFAULT_SEASON, so pages that have not been season-aware'd yet
+// keep their existing behavior unchanged.
 
-const REPO = "cfb-sims-2025";
-const SEASON = "2025";
+/** Seasons the UI offers, newest first. */
+export const SEASONS = ["2026", "2025"] as const;
+export type Season = string;
 
-const PROXY_BASE = `/api/data/${REPO}/${SEASON}`;
-const HUB_BASE = `https://huggingface.co/datasets/mvpeav/${REPO}/resolve/main/${SEASON}`;
+/** What an un-parameterized getCatalog() call resolves to. */
+export const DEFAULT_SEASON: Season = "2025";
+
+const repoForSeason = (season: Season) => `cfb-sims-${season}`;
+const proxyBase = (season: Season) =>
+  `/api/data/${repoForSeason(season)}/${season}`;
+const hubBase = (season: Season) =>
+  `https://huggingface.co/datasets/mvpeav/${repoForSeason(season)}/resolve/main/${season}`;
 
 export type WeekMeta = {
   /** Directory name in the dataset, e.g. "week05". */
@@ -43,6 +59,8 @@ export type GameMeta = {
 };
 
 export type CfbCatalog = {
+  /** Which season this catalog describes. */
+  season: Season;
   weeks: WeekMeta[];
   /** One bundled file per week containing every game's score sims. */
   scoreFiles: FileItem[];
@@ -52,48 +70,103 @@ export type CfbCatalog = {
   gamesAndOpenFiles: FileItem[];
 };
 
-let base: string | null = null;
-let catalogPromise: Promise<CfbCatalog> | null = null;
+/** Per-season memo of which origin answered (proxy preferred, hub fallback). */
+const baseBySeason = new Map<Season, string>();
+/** Per-season catalog promise. Cleared on failure so a remount can retry. */
+const catalogBySeason = new Map<Season, Promise<CfbCatalog>>();
+/** Week index promises, keyed "<season>/<weekId>". */
 const weekIndexCache = new Map<string, Promise<GameMeta[]>>();
 
-/** Resolve which origin serves the dataset, preferring our own. */
-async function resolveBase(): Promise<string> {
-  if (base) return base;
-  for (const candidate of [PROXY_BASE, HUB_BASE]) {
+/** Resolve which origin serves a season's dataset, preferring our own. */
+async function resolveBase(season: Season = DEFAULT_SEASON): Promise<string> {
+  const memo = baseBySeason.get(season);
+  if (memo) return memo;
+
+  for (const candidate of [proxyBase(season), hubBase(season)]) {
     try {
       const res = await fetch(`${candidate}/season_index.json`, { redirect: "follow" });
       if (res.ok) {
-        base = candidate;
-        return base;
+        baseBySeason.set(season, candidate);
+        return candidate;
       }
     } catch {
       /* try the next candidate */
     }
   }
-  throw new Error("cfb dataset unreachable (proxy and hub both failed)");
+  throw new Error(
+    `cfb ${season} dataset unreachable (proxy and hub both failed)`
+  );
 }
 
-export async function dataUrl(path: string): Promise<string> {
-  return `${await resolveBase()}/${path}`;
+export async function dataUrl(
+  path: string,
+  season: Season = DEFAULT_SEASON
+): Promise<string> {
+  return `${await resolveBase(season)}/${path}`;
 }
 
-export async function getCatalog(): Promise<CfbCatalog> {
-  if (catalogPromise) return catalogPromise;
+/** Two-digit dataset directory id for a week number, e.g. 0 -> "week00". */
+const weekDirFromNumber = (n: number) =>
+  `week${String(Math.max(0, Math.trunc(n))).padStart(2, "0")}`;
 
-  catalogPromise = (async () => {
-    const root = await resolveBase();
+/**
+ * Read one entry out of season_index.json.
+ *
+ * Tolerant on purpose: the 2025 archive carries id/dir/legacy_key explicitly,
+ * but a freshly uploaded season may only carry `dir` (or just `week`), and a
+ * missing id used to produce a literal "undefined" in every file URL.
+ */
+function parseWeekEntry(w: any): WeekMeta | null {
+  if (!w) return null;
+
+  const weekNum = Number(w.week);
+  const dirRaw = String(w.dir ?? "").trim();
+  const dirLeaf = dirRaw ? dirRaw.split("/").filter(Boolean).pop() ?? "" : "";
+
+  const id =
+    String(w.id ?? "").trim() ||
+    dirLeaf ||
+    (Number.isFinite(weekNum) ? weekDirFromNumber(weekNum) : "");
+  if (!id) return null;
+
+  const week = Number.isFinite(weekNum)
+    ? weekNum
+    : Number(String(id).replace(/[^0-9]/g, ""));
+
+  const label = String(w.label ?? `Week ${Number.isFinite(week) ? week : id}`);
+  // legacy_key is what ?week= deep links carry; fall back to the label the old
+  // glob produced ("week5"), then to the directory id.
+  const legacyKey = String(
+    w.legacy_key ??
+      w.legacyKey ??
+      (Number.isFinite(week) ? `week${week}` : id)
+  ).toLowerCase();
+
+  return {
+    id,
+    week: Number.isFinite(week) ? week : 0,
+    label,
+    legacyKey,
+    nGames: Number(w.n_games ?? w.nGames ?? 0),
+    hasOpen: Boolean(w.has_open ?? w.hasOpen),
+  };
+}
+
+export async function getCatalog(
+  season: Season = DEFAULT_SEASON
+): Promise<CfbCatalog> {
+  const memo = catalogBySeason.get(season);
+  if (memo) return memo;
+
+  const promise = (async () => {
+    const root = await resolveBase(season);
     const res = await fetch(`${root}/season_index.json`);
-    if (!res.ok) throw new Error(`season_index ${res.status}`);
+    if (!res.ok) throw new Error(`season_index ${season} ${res.status}`);
     const json = await res.json();
 
-    const weeks: WeekMeta[] = (json?.weeks ?? []).map((w: any) => ({
-      id: String(w.id),
-      week: Number(w.week),
-      label: String(w.label),
-      legacyKey: String(w.legacy_key ?? w.id),
-      nGames: Number(w.n_games ?? 0),
-      hasOpen: Boolean(w.has_open),
-    }));
+    const weeks: WeekMeta[] = ((json?.weeks ?? []) as any[])
+      .map(parseWeekEntry)
+      .filter((w): w is WeekMeta => w !== null);
 
     const scoreFiles: FileItem[] = weeks.map((w) => ({
       week: w.legacyKey,
@@ -114,6 +187,7 @@ export async function getCatalog(): Promise<CfbCatalog> {
       }));
 
     return {
+      season,
       weeks,
       scoreFiles,
       gamesFiles,
@@ -121,48 +195,99 @@ export async function getCatalog(): Promise<CfbCatalog> {
       gamesAndOpenFiles: [...gamesFiles, ...openFiles],
     };
   })().catch((err) => {
-    catalogPromise = null; // let a later mount retry
+    catalogBySeason.delete(season); // let a later mount (or Retry) try again
+    baseBySeason.delete(season);
     throw err;
   });
 
-  return catalogPromise;
+  catalogBySeason.set(season, promise);
+  return promise;
+}
+
+/** Drop memoized state for a season so the next getCatalog() refetches. */
+export function invalidateSeason(season: Season = DEFAULT_SEASON): void {
+  catalogBySeason.delete(season);
+  baseBySeason.delete(season);
+  for (const key of [...weekIndexCache.keys()]) {
+    if (key.startsWith(`${season}/`)) weekIndexCache.delete(key);
+  }
+}
+
+/** The newest week in a catalog (highest week number; ties -> last listed). */
+export function latestWeek(catalog: CfbCatalog | null | undefined): WeekMeta | null {
+  const weeks = catalog?.weeks ?? [];
+  if (!weeks.length) return null;
+  return weeks.reduce((best, w) => (w.week >= best.week ? w : best), weeks[0]);
+}
+
+/**
+ * The newest season whose catalog actually loads, newest-first.
+ *
+ * 2026 is uploaded in-season; until it lands, its season_index.json is a 404
+ * (or a 401 while the repo is still private) and we quietly fall back to 2025.
+ */
+export async function resolveLatestSeason(
+  candidates: readonly Season[] = SEASONS
+): Promise<{ season: Season; catalog: CfbCatalog }> {
+  let lastErr: unknown = null;
+  for (const season of candidates) {
+    try {
+      const catalog = await getCatalog(season);
+      if (catalog.weeks.length) return { season, catalog };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error("no cfb season catalog could be loaded");
 }
 
 /** Map a legacy week key (or dataset id) to the dataset directory name. */
-export async function resolveWeekId(weekKey: string): Promise<string | null> {
-  const { weeks } = await getCatalog();
+export async function resolveWeekId(
+  weekKey: string,
+  season: Season = DEFAULT_SEASON
+): Promise<string | null> {
+  const { weeks } = await getCatalog(season);
   const k = (weekKey || "").trim().toLowerCase();
   return weeks.find((w) => w.legacyKey === k || w.id === k)?.id ?? null;
 }
 
-/** Per-week game list (slugs + team names). Cached per week. */
-export async function getWeekGames(weekKey: string): Promise<GameMeta[]> {
-  const id = await resolveWeekId(weekKey);
+/** Per-week game list (slugs + team names). Cached per season+week. */
+export async function getWeekGames(
+  weekKey: string,
+  season: Season = DEFAULT_SEASON
+): Promise<GameMeta[]> {
+  const id = await resolveWeekId(weekKey, season);
   if (!id) return [];
-  const cached = weekIndexCache.get(id);
+  const cacheKey = `${season}/${id}`;
+  const cached = weekIndexCache.get(cacheKey);
   if (cached) return cached;
 
   const promise = (async () => {
-    const root = await resolveBase();
+    const root = await resolveBase(season);
     const res = await fetch(`${root}/weeks/${id}/index.json`);
-    if (!res.ok) throw new Error(`week index ${id} ${res.status}`);
+    if (!res.ok) throw new Error(`week index ${season}/${id} ${res.status}`);
     const json = await res.json();
     return (json?.games ?? []) as GameMeta[];
   })().catch((err) => {
-    weekIndexCache.delete(id);
+    weekIndexCache.delete(cacheKey);
     throw err;
   });
 
-  weekIndexCache.set(id, promise);
+  weekIndexCache.set(cacheKey, promise);
   return promise;
 }
 
 /** Every player-sims file for a week. Heavy (~50MB) — prefer playerFileForPair. */
-export async function getPlayerFiles(weekKey: string): Promise<FileItem[]> {
-  const id = await resolveWeekId(weekKey);
+export async function getPlayerFiles(
+  weekKey: string,
+  season: Season = DEFAULT_SEASON
+): Promise<FileItem[]> {
+  const id = await resolveWeekId(weekKey, season);
   if (!id) return [];
-  const root = await resolveBase();
-  const games = await getWeekGames(weekKey);
+  const root = await resolveBase(season);
+  const games = await getWeekGames(weekKey, season);
   return games
     .filter((g) => g.players)
     .map((g) => ({
@@ -182,11 +307,12 @@ const nameKey = (s: string) =>
 export async function playerFileForPair(
   weekKey: string,
   teamA: string,
-  teamB: string
+  teamB: string,
+  season: Season = DEFAULT_SEASON
 ): Promise<FileItem | null> {
-  const id = await resolveWeekId(weekKey);
+  const id = await resolveWeekId(weekKey, season);
   if (!id) return null;
-  const games = await getWeekGames(weekKey);
+  const games = await getWeekGames(weekKey, season);
   const want = [nameKey(teamA), nameKey(teamB)].sort().join("__");
 
   const hit = games.find((g) => {
@@ -198,7 +324,7 @@ export async function playerFileForPair(
   });
   if (!hit) return null;
 
-  const root = await resolveBase();
+  const root = await resolveBase(season);
   return {
     week: weekKey,
     file: `players_${hit.slug}.csv`,
@@ -210,11 +336,12 @@ export async function playerFileForPair(
 export async function scoreFileForPair(
   weekKey: string,
   teamA: string,
-  teamB: string
+  teamB: string,
+  season: Season = DEFAULT_SEASON
 ): Promise<FileItem | null> {
-  const id = await resolveWeekId(weekKey);
+  const id = await resolveWeekId(weekKey, season);
   if (!id) return null;
-  const games = await getWeekGames(weekKey);
+  const games = await getWeekGames(weekKey, season);
   const want = [nameKey(teamA), nameKey(teamB)].sort().join("__");
   const hit = games.find(
     (g) =>
@@ -224,7 +351,7 @@ export async function scoreFileForPair(
   );
   if (!hit?.scores) return null;
 
-  const root = await resolveBase();
+  const root = await resolveBase(season);
   return {
     week: weekKey,
     file: `scores_${hit.slug}.csv`,

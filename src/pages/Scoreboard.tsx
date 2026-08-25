@@ -1,5 +1,5 @@
 // src/pages/Scoreboard.tsx
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as Papa from "papaparse";
 import { getTeamColors } from "../utils/teamColors";
 import {
@@ -10,11 +10,18 @@ import {
 import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 
 import SupportButton from "../components/SupportButton";
+import ErrorBoundary from "../components/ErrorBoundary";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
-  getCatalog, playerFileForPair,
-  type CfbCatalog, type FileItem,
+  getCatalog, playerFileForPair, resolveLatestSeason, latestWeek,
+  invalidateSeason, SEASONS,
+  type CfbCatalog, type FileItem, type Season,
 } from "../lib/cfbData";
+import {
+  getJsonWeekGames, getCompactJson,
+  type JsonGame, type JsonWeekRow,
+} from "../lib/cfbJson";
+import BoxScore from "../components/BoxScore";
 
 type LiveGame = {
   id: string;
@@ -287,6 +294,8 @@ type CardGame = {
   liveStatusText?: string;
   liveA?: number;
   liveB?: number;
+  /** Small-JSON path only — the index row, for lazy compact/players fetches. */
+  jsonRow?: JsonWeekRow;
 };
 
 const median = (arr: number[]) => {
@@ -491,8 +500,52 @@ function NumberSpinner({
   );
 }
 
+/* --------------------- card sorting (shared by both season formats) --------------------- */
+type SortBy = "kickoff" | "spread_conf" | "total_conf";
+
+function sortCards(cards: CardGame[], sortBy: SortBy): CardGame[] {
+  const out = [...cards];
+  out.sort((x, y) => {
+    if (sortBy === "kickoff") {
+      const ax = x.kickoffMs ?? Number.POSITIVE_INFINITY;
+      const ay = y.kickoffMs ?? Number.POSITIVE_INFINITY;
+      if (ax !== ay) return ax - ay;
+      return x.teamA.localeCompare(y.teamA);
+    }
+    if (sortBy === "spread_conf") {
+      const ax = (typeof x.spreadProb === "number") ? x.spreadProb : -1;
+      const ay = (typeof y.spreadProb === "number") ? y.spreadProb : -1;
+      if (ay !== ax) return ay - ax; // DESC
+      const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
+      const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
+      if (kx !== ky) return kx - ky;
+      return x.teamA.localeCompare(y.teamA);
+    }
+    // total_conf
+    const ax = (typeof x.totalProb === "number") ? x.totalProb : -1;
+    const ay = (typeof y.totalProb === "number") ? y.totalProb : -1;
+    if (ay !== ax) return ay - ax;   // DESC
+    const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
+    const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
+    if (kx !== ky) return kx - ky;
+    return x.teamA.localeCompare(y.teamA);
+  });
+  return out;
+}
+
+/* --------------------- URL deep links (?season= / ?week=) --------------------- */
+// Read once at module load, same pattern GameCenter.tsx uses. An explicit deep
+// link beats the "latest season / latest week" default, but only on first
+// resolve — switching the dropdowns afterwards must not snap back to the URL.
+const getSearchParam = (name: string) =>
+  typeof window === "undefined"
+    ? null
+    : new URLSearchParams(window.location.search).get(name);
+const URL_SEASON = (getSearchParam("season") || "").trim();
+const URL_WEEK = (getSearchParam("week") || "").trim().toLowerCase();
+
 /* --------------------- page --------------------- */
-export default function Scoreboard() {
+function ScoreboardPage() {
 
   // --- LIVE: inside Scoreboard() component, just above the cards useMemo ---
   const todayET = useMemo(
@@ -533,22 +586,55 @@ export default function Scoreboard() {
     [liveMap]
   );
 
-  /* ---- Dataset catalog (weeks + file URLs, fetched at runtime) ---- */
+  /* ---- Season + dataset catalog (weeks, fetched at runtime) ----
+   *
+   * Season "" means "not resolved yet": on a cold load with no ?season= we ask
+   * for the newest season whose catalog actually answers, so the page lands on
+   * 2026 once that dataset is published and quietly stays on 2025 until then.
+   */
+  const [season, setSeason] = useState<Season>(
+    (SEASONS as readonly string[]).includes(URL_SEASON) ? URL_SEASON : ""
+  );
   const [catalog, setCatalog] = useState<CfbCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    getCatalog()
-      .then((c) => { if (alive) setCatalog(c); })
-      .catch((e) => { if (alive) setCatalogError(String(e?.message ?? e)); });
-    return () => { alive = false; };
-  }, []);
+    setCatalogLoading(true);
+    setCatalogError(null);
+    setCatalog(null);
 
-  const weeks = useMemo(
-    () => (catalog?.weeks ?? []).map((w) => w.legacyKey),
-    [catalog]
-  );
+    (async () => {
+      try {
+        if (season) {
+          const c = await getCatalog(season);
+          if (alive) setCatalog(c);
+        } else {
+          const { season: resolved, catalog: c } = await resolveLatestSeason();
+          if (!alive) return;
+          setSeason(resolved);
+          setCatalog(c);
+        }
+      } catch (e: any) {
+        if (alive) setCatalogError(String(e?.message ?? e));
+      } finally {
+        if (alive) setCatalogLoading(false);
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [season, reloadTick]);
+
+  const retryCatalog = useCallback(() => {
+    if (season) invalidateSeason(season);
+    for (const s of SEASONS) invalidateSeason(s);
+    setReloadTick((t) => t + 1);
+  }, [season]);
+
+  /** Week dropdown options, straight from this season's season_index.json. */
+  const weekOptions = useMemo(() => catalog?.weeks ?? [], [catalog]);
 
   const scoreFileByWeek = useMemo(() => {
     const m: Record<string, FileItem> = {};
@@ -563,16 +649,52 @@ export default function Scoreboard() {
   }, [catalog]);
 
   const [selectedWeek, setSelectedWeek] = useState("");
+  // ?week= applies to the first resolved season only; after that the dropdown
+  // owns the selection and switching seasons must not snap back to the URL.
+  const deepWeekUsed = useRef(false);
+
   useEffect(() => {
-    if (!selectedWeek && weeks.length) setSelectedWeek(weeks[0]);
-  }, [weeks, selectedWeek]);
+    if (!weekOptions.length) { setSelectedWeek(""); return; }
+
+    setSelectedWeek((prev) => {
+      if (prev && weekOptions.some((w) => w.legacyKey === prev)) return prev;
+
+      if (!deepWeekUsed.current && URL_WEEK) {
+        const hit = weekOptions.find(
+          (w) => w.legacyKey === URL_WEEK || w.id === URL_WEEK
+        );
+        deepWeekUsed.current = true;
+        if (hit) return hit.legacyKey;
+      }
+      deepWeekUsed.current = true;
+
+      // Default = latest available week of this season. (The old code took
+      // weeks[0], which in an ascending season_index is the OLDEST week —
+      // 2025 opened on Week 0's four games.)
+      const last = latestWeek(catalog);
+      return last?.legacyKey ?? weekOptions[weekOptions.length - 1].legacyKey;
+    });
+  }, [weekOptions, catalog]);
+
+  /** Keep the address bar shareable without touching the router. */
+  useEffect(() => {
+    if (typeof window === "undefined" || !season || !selectedWeek) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("season", season);
+    params.set("week", selectedWeek);
+    const next = `${window.location.pathname}?${params.toString()}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) {
+      window.history.replaceState(null, "", next);
+    }
+  }, [season, selectedWeek]);
 
   const [loading, setLoading] = useState(false);
+  const [weekError, setWeekError] = useState<string | null>(null);
 
-  const [games, setGames] = useState<GameMap>({});
-  const [meta, setMeta]   = useState<GameMetaMap>({});
+  const [games, setGames] = useState<GameMap>({});        // per-seed rows (CSV seasons)
+  const [meta, setMeta]   = useState<GameMetaMap>({});    // games.csv (CSV seasons)
+  const [jsonGames, setJsonGames] = useState<JsonGame[]>([]);  // small-JSON path
 
-  type SortBy = "kickoff" | "spread_conf" | "total_conf";
   const [sortBy, setSortBy] = useState<SortBy>("kickoff");
 
   const [useMean, setUseMean] = useState(false); // false = show medians (current), true = show means
@@ -620,12 +742,28 @@ export default function Scoreboard() {
 
   const confOf = (team?: string) => (team ? teamToConf[normTeamKey(team)] ?? teamToConf[normTeamKey(team.replace(/\s+/g,""))] : undefined);
 
+  /* ---- Week data: small JSON first, per-week CSV bundle only as a fallback ----
+   *
+   * Both seasons are migrating to the JSON contract. getJsonWeekGames returns
+   * null when a week has no new-contract index yet, and only then do we pull
+   * the ~1.5MB scores_bundle.csv. Once the 2025 export lands, this page stops
+   * touching CSV entirely with no code change.
+   */
   useEffect(() => {
-    if (!selectedWeek) { setGames({}); setMeta({}); return; }
+    if (!season || !selectedWeek) {
+      setGames({}); setMeta({}); setJsonGames([]);
+      return;
+    }
 
-    async function loadWeek() {
-      setLoading(true);
-      try {
+    const weekId =
+      weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
+
+    const ac = new AbortController();
+    let alive = true;
+    setLoading(true);
+    setWeekError(null);
+
+    async function loadCsvWeek() {
         /* ---- sims (one bundled file per week) ---- */
         const bundle = scoreFileByWeek[selectedWeek];
         const simArrays = await Promise.all(
@@ -702,15 +840,41 @@ export default function Scoreboard() {
         setMeta(m);
         // Player sims are no longer loaded per week (~50MB). Each card fetches
         // its own matchup on demand when its player panel is opened.
-      } finally {
-        setLoading(false);
-      }
     }
-    loadWeek();
-  }, [selectedWeek, scoreFileByWeek, gamesFileByWeek]);
 
-  /* ---------- cards (join sims with meta, compute picks, sort by kickoff) ---------- */
-  const cards: CardGame[] = useMemo(() => {
+    (async () => {
+      try {
+        const rows = await getJsonWeekGames(weekId, season, ac.signal);
+        if (!alive) return;
+
+        if (rows) {
+          setJsonGames(rows);
+          setGames({});
+          setMeta({});
+          return;
+        }
+
+        // No new-contract index for this week yet — legacy CSV path.
+        setJsonGames([]);
+        await loadCsvWeek();
+      } catch (e: any) {
+        if (e?.name === "AbortError" || !alive) return;
+        // A failed load used to leave the page stuck on "Loading…" forever.
+        console.error("[Scoreboard] week load failed:", e);
+        setGames({});
+        setMeta({});
+        setJsonGames([]);
+        setWeekError(String(e?.message ?? e));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+
+    return () => { alive = false; ac.abort(); };
+  }, [season, selectedWeek, weekOptions, scoreFileByWeek, gamesFileByWeek]);
+
+  /* ---------- cards, CSV seasons (join per-seed sims with meta, compute picks) ---------- */
+  const cards2025: CardGame[] = useMemo(() => {
     const out: CardGame[] = [];
     for (const [key, g] of Object.entries(games)) {
       const Avals = g.rowsA.map((r) => r.pts);
@@ -972,35 +1136,174 @@ export default function Scoreboard() {
       });
     }
 
-    // sort
-    out.sort((x, y) => {
-      if (sortBy === "kickoff") {
-        const ax = x.kickoffMs ?? Number.POSITIVE_INFINITY;
-        const ay = y.kickoffMs ?? Number.POSITIVE_INFINITY;
-        if (ax !== ay) return ax - ay;
-        return x.teamA.localeCompare(y.teamA);
+    return out;
+  }, [games, meta, getCardLive, selectedWeek]);
+
+  /* ---------- cards, JSON seasons (one summary.json per game) ----------
+   *
+   * summary.json carries headline numbers, not per-seed rows. It publishes the
+   * per-team medians directly — which matters, because median(A) + median(B)
+   * is not median(total), so recovering points from margin+total would print
+   * a score the sim never produced (TCU/UNC: 24-17 exact vs 25-19 derived).
+   *
+   * spreadProb/totalProb are deliberately left undefined. The exact cover/over
+   * rates need the per-seed arrays in compact.json, and pulling one compact per
+   * game just to fill the card list would rebuild the ~MB-per-week fetch this
+   * layout exists to avoid. A normal approximation off p25/p75 in their place
+   * would be inventing a number the sim never produced.
+   */
+  const cardsJson: CardGame[] = useMemo(() => {
+    const out: CardGame[] = [];
+
+    for (const { row, summary } of jsonGames) {
+      if (!summary) continue;
+
+      const teamA = summary.teamA || row.teamA;   // home
+      const teamB = summary.teamB || row.teamB;   // away
+
+      const margin = summary.median_margin;       // home - away
+      const total = summary.median_total;
+
+      // Exact medians when present; fall back to the margin/total pair only if
+      // an older export lacks them.
+      let medA = summary.median_A_pts;
+      let medB = summary.median_B_pts;
+      if (!Number.isFinite(medA) || !Number.isFinite(medB)) {
+        if (!Number.isFinite(margin) || !Number.isFinite(total)) continue;
+        medA = ((total as number) + (margin as number)) / 2;
+        medB = ((total as number) - (margin as number)) / 2;
       }
-      if (sortBy === "spread_conf") {
-        const ax = (typeof x.spreadProb === "number") ? x.spreadProb : -1;
-        const ay = (typeof y.spreadProb === "number") ? y.spreadProb : -1;
-        if (ay !== ax) return ay - ax; // DESC
-        const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
-        const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
-        if (kx !== ky) return kx - ky;
-        return x.teamA.localeCompare(y.teamA);
+      medA = Math.round(medA as number);
+      medB = Math.round(medB as number);
+
+      const meanA = Number.isFinite(summary.mean_A_pts)
+        ? Math.round(summary.mean_A_pts as number)
+        : medA;
+      const meanB = Number.isFinite(summary.mean_B_pts)
+        ? Math.round(summary.mean_B_pts as number)
+        : medB;
+
+      const { lg, inProgress, aScore, bScore, statusText } = getCardLive({ teamA, teamB });
+
+      const { ms, label } = parseKickoffMs(row.date, undefined, row.time_utc);
+
+      // Prefer the OPEN line: bets go in early in the week, so the open is the
+      // number the pick is judged against.
+      const o = summary.odds ?? null;
+      const spread = o?.spread_open ?? o?.spread_current ?? undefined;   // home perspective
+      const totalLine = o?.over_under_open ?? o?.over_under_current ?? undefined;
+
+      let pickSpread: string | undefined;
+      if (Number.isFinite(spread)) {
+        const s = spread as number;
+        const diff = (medA + s) - medB;
+        if (Math.abs(diff) < 1e-9) pickSpread = `Push @ ${s > 0 ? `+${s}` : `${s}`}`;
+        else if (diff > 0) pickSpread = `${teamA} ${s > 0 ? `+${s}` : `${s}`}`;
+        else pickSpread = `${teamB} ${(-s) > 0 ? `+${-s}` : `${-s}`}`;
       }
-      // total_conf
-      const ax = (typeof x.totalProb === "number") ? x.totalProb : -1;
-      const ay = (typeof y.totalProb === "number") ? y.totalProb : -1;
-      if (ay !== ax) return ay - ax;   // DESC
-      const kx = x.kickoffMs ?? Number.POSITIVE_INFINITY;
-      const ky = y.kickoffMs ?? Number.POSITIVE_INFINITY;
-      if (kx !== ky) return kx - ky;
-      return x.teamA.localeCompare(y.teamA);
-    });
+
+      let pickTotal: string | undefined;
+      if (Number.isFinite(totalLine)) {
+        pickTotal = (medA + medB) > (totalLine as number)
+          ? `Over ${totalLine}`
+          : `Under ${totalLine}`;
+      }
+
+      // A_win_prob is P(home) and comes straight from the sim — exact, unlike
+      // the derived spread/total probabilities above.
+      let mlPickTeam: string | undefined;
+      let mlPickProb: number | undefined;
+      let mlFair: string | undefined;
+      const pA = summary.A_win_prob;
+      if (typeof pA === "number" && pA >= 0 && pA <= 1) {
+        const pickA = pA >= 0.5;
+        mlPickTeam = pickA ? teamA : teamB;
+        mlPickProb = pickA ? pA : 1 - pA;
+        mlFair = americanOdds(mlPickProb);
+      }
+
+      const fA = summary.finalA;
+      const fB = summary.finalB;
+      const hasFinals = Number.isFinite(fA) && Number.isFinite(fB);
+
+      let dispFinalA: number | undefined;
+      let dispFinalB: number | undefined;
+      let scoreSource: "CSV_FINALS" | "LIVE" | "UPCOMING" = "UPCOMING";
+      if (hasFinals) {
+        dispFinalA = fA as number;
+        dispFinalB = fB as number;
+        scoreSource = "CSV_FINALS";
+      } else if (Number.isFinite(aScore) && Number.isFinite(bScore)) {
+        dispFinalA = aScore as number;
+        dispFinalB = bScore as number;
+        scoreSource = "LIVE";
+      }
+
+      let spreadResult: "win" | "loss" | "push" | undefined;
+      let totalResult: "win" | "loss" | "push" | undefined;
+      let mlResult: "win" | "loss" | "push" | undefined;
+
+      if (hasFinals) {
+        const finA = fA as number;
+        const finB = fB as number;
+
+        if (Number.isFinite(spread)) {
+          const s = spread as number;
+          const coverA = (finA + s) > finB ? 1 : (finA + s) < finB ? -1 : 0;
+          const pickedA = ((medA + s) - medB) > 0;
+          spreadResult = coverA === 0
+            ? "push"
+            : ((coverA > 0 && pickedA) || (coverA < 0 && !pickedA)) ? "win" : "loss";
+        }
+
+        if (Number.isFinite(totalLine)) {
+          const lineT = totalLine as number;
+          const gameTotal = finA + finB;
+          const predTotal = medA + medB;
+          const actualSide = gameTotal > lineT ? "Over" : gameTotal < lineT ? "Under" : "Push";
+          const predictedSide = predTotal > lineT ? "Over" : predTotal < lineT ? "Under" : "Push";
+          totalResult = (actualSide === "Push" || predictedSide === "Push")
+            ? "push"
+            : (actualSide === predictedSide ? "win" : "loss");
+        }
+
+        if (typeof mlPickTeam === "string") {
+          if (finA === finB) mlResult = "push";
+          else mlResult = ((finA > finB ? teamA : teamB) === mlPickTeam) ? "win" : "loss";
+        }
+      }
+
+      out.push({
+        key: row.slug,
+        teamA, teamB,
+        medA, medB,
+        meanA, meanB,
+        kickoffLabel: label,
+        kickoffMs: Number.isFinite(ms) ? ms : undefined,
+        pickSpread, pickTotal,
+        spreadProb: undefined, totalProb: undefined,
+        spreadResult, totalResult,
+        finalA: dispFinalA,
+        finalB: dispFinalB,
+        mlPickTeam, mlPickProb, mlFair, mlResult,
+        scoreSource,
+        liveInProgress: inProgress,
+        liveStatusText: statusText ?? lg?.statusText,
+        liveA: aScore,
+        liveB: bScore,
+        jsonRow: row,
+      });
+    }
 
     return out;
-  }, [games, meta, sortBy]);
+  }, [jsonGames, getCardLive]);
+
+  // Whichever path produced rows for this week. Both cannot be populated at
+  // once: the loader clears one before filling the other.
+  const cards = useMemo(
+    () => sortCards(cardsJson.length ? cardsJson : cards2025, sortBy),
+    [cardsJson, cards2025, sortBy]
+  );
 
   // Apply conference filter (game shows if either team is in selected conference)
   const filteredCards = useMemo(() => {
@@ -1008,24 +1311,45 @@ export default function Scoreboard() {
     return cards.filter(c => (confOf(c.teamA) === confFilter) || (confOf(c.teamB) === confFilter));
   }, [cards, confFilter, teamToConf]);
 
+  const statusText = catalogLoading
+    ? "Loading seasons…"
+    : catalogError
+    ? "Dataset unavailable"
+    : loading
+    ? "Loading…"
+    : `Showing ${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}`;
+
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
-      {/* Week selector */}
+      {/* Season + Week selector */}
       <section className="card" style={{ padding: 12, marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--brand)" }}>Season</h2>
+            <select
+              value={season}
+              onChange={(e) => { deepWeekUsed.current = true; setSelectedWeek(""); setSeason(e.target.value); }}
+              disabled={catalogLoading && !season}
+              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
+            >
+              {!season && <option value="">…</option>}
+              {SEASONS.map((s) => (<option key={s} value={s}>{s}</option>))}
+            </select>
+
             <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "var(--brand)" }}>Week</h2>
             <select
               value={selectedWeek}
               onChange={(e) => setSelectedWeek(e.target.value)}
+              disabled={!weekOptions.length}
               style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
-              {weeks.map((w) => (<option key={w} value={w}>{w}</option>))}
+              {!weekOptions.length && <option value="">—</option>}
+              {weekOptions.map((w) => (
+                <option key={w.id} value={w.legacyKey}>{w.label}</option>
+              ))}
             </select>
 
-            <span style={{ fontSize: 12, opacity: 0.7 }}>
-              {loading ? "Loading…" : `Showing ${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}`}
-            </span>
+            <span style={{ fontSize: 12, opacity: 0.7 }}>{statusText}</span>
 
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -1064,6 +1388,59 @@ export default function Scoreboard() {
         </div>
       </section>
 
+      {/* Failure states — a dead catalog or a dead week must LOOK dead, with a
+          way out. Silently rendering an empty grid is how this page used to
+          read as "broken site". */}
+      {catalogError && (
+        <section
+          className="card"
+          style={{ padding: 16, marginBottom: 16, border: "1px solid var(--border)", background: "var(--card)" }}
+        >
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Couldn’t load the sim dataset</div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+            {catalogError}
+          </div>
+          <button
+            type="button"
+            onClick={retryCatalog}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border)",
+              background: "var(--brand)", color: "var(--brand-contrast)", fontWeight: 700,
+            }}
+          >
+            Retry
+          </button>
+        </section>
+      )}
+
+      {!catalogError && weekError && (
+        <section
+          className="card"
+          style={{ padding: 16, marginBottom: 16, border: "1px solid var(--border)", background: "var(--card)" }}
+        >
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>
+            Couldn’t load {season} {selectedWeek}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>{weekError}</div>
+          <button
+            type="button"
+            onClick={() => setReloadTick((t) => t + 1)}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: "1px solid var(--border)",
+              background: "var(--brand)", color: "var(--brand-contrast)", fontWeight: 700,
+            }}
+          >
+            Retry
+          </button>
+        </section>
+      )}
+
+      {!catalogError && !weekError && !loading && !catalogLoading && !filteredCards.length && (
+        <section className="card" style={{ padding: 16, marginBottom: 16, fontSize: 13, color: "var(--muted)" }}>
+          No games for this selection.
+        </section>
+      )}
+
       {/* Cards grid */}
       <div
         style={{
@@ -1079,11 +1456,23 @@ export default function Scoreboard() {
             card={c}
             gdata={games[c.key]}
             week={selectedWeek}
+            season={season}
             useMean={useMean}
           />
         ))}
       </div>
     </div>
+  );
+}
+
+/* The page can still throw on unexpected data (a malformed CSV row, a summary
+   with a shape we did not anticipate). Without a boundary that unmounts the
+   whole app and shows a white screen. */
+export default function Scoreboard() {
+  return (
+    <ErrorBoundary label="Scoreboard">
+      <ScoreboardPage />
+    </ErrorBoundary>
   );
 }
 
@@ -1123,7 +1512,22 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 // }
 
 
-function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata: GameData; week: string; useMean?: boolean }) {
+function GameCard({ card, gdata, week, season, useMean = false }: {
+  card: CardGame;
+  /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
+  gdata?: GameData;
+  week: string;
+  season: Season;
+  useMean?: boolean;
+}) {
+  // Distribution panels need per-seed rows. The CSV path already holds them in
+  // memory; the JSON path keeps them in compact.json (~8KB) and fetches it the
+  // first time this card's panel is opened.
+  const jsonRow = card.jsonRow;
+  const csvCard = !jsonRow;
+  const hasSeedRows = Boolean(gdata?.rowsA?.length);
+  const canShowScores = hasSeedRows || Boolean(jsonRow);
+
   const aColors = getTeamColors(card.teamA);
   const bColors = getTeamColors(card.teamB);
   const aLogo = getTeamLogo(card.teamA);
@@ -1131,6 +1535,7 @@ function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata
 
   const [showScores, setShowScores] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
+  const [showBox, setShowBox] = useState(false);
 
   /* Player sims for THIS matchup, fetched the first time the panel is opened. */
   const [players, setPlayers] = useState<PlayerMap>({});
@@ -1138,14 +1543,14 @@ function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata
   const [playersError, setPlayersError] = useState(false);
 
   useEffect(() => {
-    if (!showPlayers || !week) return;
+    if (!showPlayers || !week || !csvCard) return;
     if (playersLoading || playersError || Object.keys(players).length) return;
 
     let alive = true;
     setPlayersLoading(true);
     (async () => {
       try {
-        const item = await playerFileForPair(week, card.teamA, card.teamB);
+        const item = await playerFileForPair(week, card.teamA, card.teamB, season);
         if (!item) { if (alive) setPlayersError(true); return; }
         const data = await parseCsvFromItemSafe<any>(item);
         if (alive) setPlayers(buildPlayerMap(data));
@@ -1156,7 +1561,49 @@ function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata
       }
     })();
     return () => { alive = false; };
-  }, [showPlayers, week, card.teamA, card.teamB]);
+  }, [showPlayers, week, season, csvCard, card.teamA, card.teamB]);
+
+  /* ----- Per-seed points for JSON seasons, lazily via compact.json ----- */
+  const [compactData, setCompactData] = useState<GameData | null>(null);
+  const [compactLoading, setCompactLoading] = useState(false);
+  const [compactError, setCompactError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!showScores || hasSeedRows || !jsonRow) return;
+    if (compactData || compactLoading || compactError) return;
+
+    const ac = new AbortController();
+    let alive = true;
+    setCompactLoading(true);
+    (async () => {
+      try {
+        const c = await getCompactJson(jsonRow, season, ac.signal);
+        const n = Math.min(c.A_pts.length, c.B_pts.length);
+        if (!n) throw new Error("no per-seed points in compact.json");
+        const rowsA: SimRow[] = [];
+        for (let i = 0; i < n; i++) {
+          rowsA.push({
+            team: card.teamA,
+            opp: card.teamB,
+            pts: c.A_pts[i],
+            opp_pts: c.B_pts[i],
+          });
+        }
+        if (alive) setCompactData({ teamA: card.teamA, teamB: card.teamB, rowsA });
+      } catch (e: any) {
+        if (e?.name === "AbortError" || !alive) return;
+        console.warn("[Scoreboard] compact load failed:", e);
+        setCompactError(String(e?.message ?? e));
+      } finally {
+        if (alive) setCompactLoading(false);
+      }
+    })();
+
+    return () => { alive = false; ac.abort(); };
+  }, [showScores, hasSeedRows, jsonRow, season, card.teamA, card.teamB]);
+
+  /** Whichever source has the seeds for this card. */
+  const panelData = gdata ?? compactData ?? undefined;
 
   /* ----- SCORE PANEL STATE ----- */
   const [metric, setMetric] = useState<Metric>("spread");
@@ -1170,7 +1617,10 @@ function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata
     return "color-mix(in oklab, var(--brand) 12%, white)"
   };
 
-  const series = useMemo(() => metricSeries(gdata, metric, teamOrder), [gdata, metric, teamOrder]);
+  const series = useMemo(
+    () => (panelData ? metricSeries(panelData, metric, teamOrder) : []),
+    [panelData, metric, teamOrder]
+  );
   const qScore = useMemo(()=> quantiles(series), [series]);
   const hist = useMemo(() => {
     if (!series.length) return [] as HistBin[];
@@ -1388,28 +1838,64 @@ function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata
 
       {/* action buttons */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
-        <button
-          onClick={()=>{ setShowScores(s=>!s); setShowPlayers(false); }}
-          style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showScores ? "var(--brand)" : "var(--card)", color: showScores ? "var(--brand-contrast)" : "var(--text)" }}
-        >
-          {showScores ? "Hide Scores" : "Detailed Simulated Scores"}
-        </button>
-        <button
-          onClick={()=>{ setShowPlayers(p=>!p); setShowScores(false); }}
-          style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showPlayers ? "var(--accent)" : "var(--card)", color: showPlayers ? "var(--brand-contrast)" : "var(--text)" }}
-        >
-          {showPlayers ? "Hide Player Stats" : "Detailed Simulated Player Stats"}
-        </button>
+        {canShowScores && (
+          <button
+            onClick={()=>{ setShowScores(s=>!s); setShowPlayers(false); }}
+            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showScores ? "var(--brand)" : "var(--card)", color: showScores ? "var(--brand-contrast)" : "var(--text)" }}
+          >
+            {showScores ? "Hide Scores" : "Detailed Simulated Scores"}
+          </button>
+        )}
+        {csvCard && (
+          <button
+            onClick={()=>{ setShowPlayers(p=>!p); setShowScores(false); }}
+            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showPlayers ? "var(--accent)" : "var(--card)", color: showPlayers ? "var(--brand-contrast)" : "var(--text)" }}
+          >
+            {showPlayers ? "Hide Player Stats" : "Detailed Simulated Player Stats"}
+          </button>
+        )}
+        {jsonRow && (
+          <button
+            onClick={()=>{ setShowBox(b=>!b); setShowScores(false); setShowPlayers(false); }}
+            style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background: showBox ? "var(--accent)" : "var(--card)", color: showBox ? "var(--brand-contrast)" : "var(--text)" }}
+          >
+            {showBox ? "Hide Box Score" : "Box Score"}
+          </button>
+        )}
       </div>
 
+      {/* BOX SCORE PANEL — players.json is fetched on first open and kept
+          mounted afterwards so toggling does not refetch. */}
+      {jsonRow && showBox && (
+        <BoxScore
+          row={jsonRow}
+          season={season}
+          teamA={card.teamA}
+          teamB={card.teamB}
+          ptsA={useMean ? card.meanA : card.medA}
+          ptsB={useMean ? card.meanB : card.medB}
+          useMean={useMean}
+          logoFor={getTeamLogo}
+          colorFor={(t) => getTeamColors(t)?.primary}
+        />
+      )}
+
       {/* SCORES PANEL */}
-      {showScores && (
+      {showScores && (compactLoading || compactError) && (
+        <div className="card" style={{ padding: 10, marginTop: 6, fontSize: 13, color: "var(--muted)" }}>
+          {compactLoading
+            ? "Loading simulated distribution…"
+            : `Couldn’t load the distribution: ${compactError}`}
+        </div>
+      )}
+
+      {showScores && panelData && (
         <div className="card" style={{ padding: 10, marginTop: 6 }}>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
             {(["spread","total","teamLeft","teamRight"] as Metric[]).map(m => (
               <button key={m} onClick={()=>setMetric(m)}
                 style={{ padding:"6px 10px", borderRadius:8, border:`1px solid ${metric===m?"var(--brand)":"var(--border)"}`, background: metric===m?"var(--brand)":"var(--card)", color: metric===m?"var(--brand-contrast)":"var(--text)" }}>
-                {m==="spread"?"Spread":m==="total"?"Total":m==="teamLeft"?`${gdata.teamA} total`:`${gdata.teamB} total`}
+                {m==="spread"?"Spread":m==="total"?"Total":m==="teamLeft"?`${panelData.teamA} total`:`${panelData.teamB} total`}
               </button>
             ))}
             <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
@@ -1417,7 +1903,7 @@ function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata
                 onClick={()=>setTeamOrder(t=>t===0?1:0)}
                 style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }}
               >
-                {teamOrder===0 ? `${gdata.teamA} vs ${gdata.teamB}` : `${gdata.teamB} vs ${gdata.teamA}`}
+                {teamOrder===0 ? `${panelData.teamA} vs ${panelData.teamB}` : `${panelData.teamB} vs ${panelData.teamA}`}
               </button>
               <label style={{ fontSize:12, color:"var(--muted)" }}>Bins:</label>
               <select value={String(bins)} onChange={(e)=>setBins(e.target.value==="auto" ? "auto" : Number(e.target.value))}
@@ -1482,7 +1968,7 @@ function GameCard({ card, gdata, week, useMean = false}: { card: CardGame; gdata
       )}
 
       {/* PLAYERS PANEL */}
-      {showPlayers && (
+      {showPlayers && csvCard && (
         <div className="card" style={{ padding: 10, marginTop: 6 }}>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4, minmax(0,1fr))", gap:8 }}>
             <select value={pTeam} onChange={e=>setPTeam(e.target.value)}
