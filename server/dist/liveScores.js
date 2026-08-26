@@ -4,6 +4,8 @@ import cors from "cors";
 import fetch from "node-fetch";
 import AbortController from "abort-controller";
 import compression from "compression";
+import crypto from "crypto";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 // Pure, so scripts/check_fcs_names.mjs can verify the Kalshi join against the
@@ -748,12 +750,13 @@ app.get("/api/data/:repo/*", asyncRoute(async (req, res) => {
 // Read-only market data for the current CFB slate, mapped onto OUR game slugs
 // so the scoreboard can print market-implied numbers beside the sim's.
 //
-// AUTH: none. Kalshi's market-data endpoints (/series, /events, /markets) serve
-// unauthenticated, which is all this route needs. No API key, no PEM, and no
-// account identifier is read, stored, or referenced anywhere in this repo. If
-// Kalshi ever gates these endpoints this route degrades to
-// {available:false, reason:"upstream_unavailable"} rather than acquiring
-// credentials.
+// AUTH: none for THIS section. Kalshi's market-data endpoints (/series,
+// /events, /markets) serve unauthenticated, which is all this route needs.
+// (Historical note: this repo once guaranteed "no credentials anywhere"; the
+// owner-only portfolio portal below deliberately amended that on 2026-08-26 —
+// creds live in deployment env vars only, never in code, and market data here
+// remains credential-free.) If Kalshi ever gates these endpoints this route
+// degrades to {available:false, reason:"upstream_unavailable"}.
 //
 // Three series carry a game (all share one event suffix, e.g. 26AUG29UNCTCU):
 //   KXNCAAFGAME-<suffix>    one binary market per team  -> winner
@@ -1088,6 +1091,198 @@ app.get("/api/kalshi/cfb", asyncRoute(async (req, res) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const staticDir = path.resolve(__dirname, "../../dist");
+// ============================================================================
+// My-Kalshi portfolio portal (owner-only, token-gated)
+//
+// Read-only resting orders + fills on the NCAAF market families for the
+// OWNER's Kalshi account, so the scoreboard can pin and badge the games the
+// owner has money on. This deliberately amends the older "no credentials
+// anywhere in this repo" stance (user decision 2026-08-26): credentials are
+// still never in CODE — they arrive only through deployment env vars —
+//   KALSHI_API_KEY_ID       the API key id
+//   KALSHI_PRIVATE_KEY      the RSA PEM inline ("\n"-escaped), or
+//   KALSHI_PRIVATE_KEY_PATH a file path (local dev)
+//   CFB_PORTFOLIO_TOKEN     the shared secret the browser must present
+// and every one of them missing means the route answers 503, never a stack
+// trace and never an open portal. The token check is timing-safe. This route
+// family is where order entry would eventually live, so the auth gate exists
+// BEFORE any mutating endpoint ever does.
+// ============================================================================
+const PORTAL_TOKEN = process.env.CFB_PORTFOLIO_TOKEN || "";
+const PORTAL_KEY_ID = process.env.KALSHI_API_KEY_ID || "";
+const PORTAL_TTL_MS = 20_000;
+const PORTAL_NCAAF = /^KXNCAAF/;
+/** Lazy, cached; null = tried and unavailable (missing/bad env). */
+let portalKeyCache;
+function portalPrivateKey() {
+    if (portalKeyCache !== undefined)
+        return portalKeyCache;
+    try {
+        const inline = process.env.KALSHI_PRIVATE_KEY || "";
+        const p = process.env.KALSHI_PRIVATE_KEY_PATH || "";
+        const pem = inline.includes("BEGIN")
+            ? inline.replace(/\\n/g, "\n")
+            : p ? fs.readFileSync(p, "utf8") : "";
+        portalKeyCache = pem ? crypto.createPrivateKey(pem) : null;
+    }
+    catch (err) {
+        console.error("[portal] private key load failed:", err?.message ?? err);
+        portalKeyCache = null;
+    }
+    return portalKeyCache;
+}
+/** Signed GET against Kalshi's portfolio API (RSA-PSS-SHA256, query
+ *  stripped from the signed path — same scheme as the RFQ dashboard). */
+async function portalGet(apiPath) {
+    const key = portalPrivateKey();
+    if (!key || !PORTAL_KEY_ID)
+        throw new Error("portal_credentials_missing");
+    for (let attempt = 0;; attempt++) {
+        const ts = String(Date.now());
+        const signPath = "/trade-api/v2" + apiPath.split("?", 1)[0];
+        const sig = crypto.sign("sha256", Buffer.from(ts + "GET" + signPath), {
+            key,
+            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+            saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+        });
+        const r = await fetchWithTimeout(`${KALSHI_BASE}${apiPath}`, {
+            headers: {
+                "KALSHI-ACCESS-KEY": PORTAL_KEY_ID,
+                "KALSHI-ACCESS-SIGNATURE": sig.toString("base64"),
+                "KALSHI-ACCESS-TIMESTAMP": ts,
+                accept: "application/json",
+            },
+        }, 10_000);
+        if (r.status === 429 && attempt < 2) {
+            await new Promise((ok) => setTimeout(ok, 600 * (attempt + 1)));
+            continue;
+        }
+        if (!r.ok)
+            throw new Error(`kalshi ${apiPath} -> HTTP ${r.status}`);
+        return r.json();
+    }
+}
+/** This API tier returns fixed-point STRINGS (count_fp, yes_price_dollars,
+ *  fee_cost) — verified live 2026-08-26 on the first CFB maker fills. */
+const portalNum = (v) => {
+    if (v === null || v === undefined || v === "")
+        return null;
+    const n = parseFloat(String(v));
+    return Number.isFinite(n) ? n : null;
+};
+async function portalOrders() {
+    const out = [];
+    let cursor = "";
+    // Cursor ALWAYS drained (kalshi-rfq's 2026-07-22 page-1-only incident).
+    for (let page = 0; page < 10; page++) {
+        const body = await portalGet("/portfolio/orders?status=resting&limit=200" +
+            (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
+        for (const o of body?.orders || []) {
+            const t = String(o.ticker || "");
+            if (!PORTAL_NCAAF.test(t))
+                continue;
+            out.push({
+                ticker: t,
+                order_id: String(o.order_id || ""),
+                side: String(o.outcome_side || o.side || ""),
+                yes_price: portalNum(o.yes_price_dollars),
+                no_price: portalNum(o.no_price_dollars),
+                initial: portalNum(o.initial_count_fp ?? o.initial_count),
+                filled: portalNum(o.fill_count_fp ?? o.fill_count),
+                remaining: portalNum(o.remaining_count_fp ?? o.remaining_count),
+                created_time: String(o.created_time || ""),
+            });
+        }
+        cursor = String(body?.cursor || "");
+        if (!cursor)
+            break;
+    }
+    return out;
+}
+async function portalFills() {
+    const out = [];
+    let cursor = "";
+    for (let page = 0; page < 3; page++) {
+        const body = await portalGet("/portfolio/fills?limit=200" +
+            (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
+        for (const f of body?.fills || []) {
+            const t = String(f.ticker || f.market_ticker || "");
+            if (!PORTAL_NCAAF.test(t))
+                continue;
+            out.push({
+                ticker: t,
+                side: String(f.outcome_side || f.side || ""),
+                action: String(f.action || ""),
+                count: portalNum(f.count_fp ?? f.count),
+                yes_price: portalNum(f.yes_price_dollars),
+                no_price: portalNum(f.no_price_dollars),
+                fee: portalNum(f.fee_cost),
+                is_taker: Boolean(f.is_taker),
+                created_time: String(f.created_time || ""),
+            });
+        }
+        cursor = String(body?.cursor || "");
+        if (!cursor)
+            break;
+    }
+    return out;
+}
+async function portalPositions() {
+    const out = [];
+    let cursor = "";
+    for (let page = 0; page < 5; page++) {
+        const body = await portalGet("/portfolio/positions?limit=200" +
+            (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
+        for (const p of body?.market_positions || body?.positions || []) {
+            const t = String(p.ticker || "");
+            if (!PORTAL_NCAAF.test(t))
+                continue;
+            const pos = portalNum(p.position_fp ?? p.position) ?? 0;
+            if (!pos)
+                continue;
+            const count = Math.abs(pos);
+            const exposure = portalNum(p.market_exposure_dollars);
+            out.push({
+                ticker: t,
+                side: pos > 0 ? "yes" : "no",
+                count,
+                avg_price: exposure !== null && count > 0 ? exposure / count : null,
+                fees: portalNum(p.fees_paid_dollars),
+            });
+        }
+        cursor = String(body?.cursor || "");
+        if (!cursor)
+            break;
+    }
+    return out;
+}
+let portalCache = null;
+app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
+    // Personal financial data: never cacheable by intermediaries.
+    res.set("Cache-Control", "no-store");
+    if (!PORTAL_TOKEN) {
+        res.status(503).json({ error: "portal_not_configured" });
+        return;
+    }
+    const got = Buffer.from(String(req.header("x-cfb-token") || ""), "utf8");
+    const want = Buffer.from(PORTAL_TOKEN, "utf8");
+    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) {
+        res.status(401).json({ error: "bad_token" });
+        return;
+    }
+    if (portalCache && Date.now() - portalCache.at < PORTAL_TTL_MS) {
+        res.json(portalCache.payload);
+        return;
+    }
+    const [orders, fills, positions] = await Promise.all([
+        portalOrders(), portalFills(), portalPositions(),
+    ]);
+    const payload = {
+        fetched_at: new Date().toISOString(), orders, fills, positions,
+    };
+    portalCache = { at: Date.now(), payload };
+    res.json(payload);
+}));
 // Unknown /api routes must answer JSON. Without this the SPA catch-all below
 // serves index.html for a typo'd or removed endpoint, and the client blows up
 // on `JSON.parse("<!doctype html>")` — which looks like a page crash, not a

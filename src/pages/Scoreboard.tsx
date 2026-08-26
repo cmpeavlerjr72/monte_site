@@ -30,6 +30,10 @@ import {
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
+import {
+  readPortalToken, writePortalToken, usePortalBook, groupBookBySlug,
+  type PortalGameBook,
+} from "../lib/kalshiPortal";
 import LegPicker from "../components/LegPicker";
 import ParlaySlip from "../components/ParlaySlip";
 import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
@@ -1317,6 +1321,34 @@ function ScoreboardPage() {
   /** Primitive that changes with the Kalshi payload, for the scan signature. */
   const [kalshiStamp, setKalshiStamp] = useState("");
 
+  /* ---- My-Kalshi portal: the owner's resting orders + fills ----
+   * Token-gated server route; polls only while a token is stored. Games the
+   * owner has money on get a book strip on their card and pin to the top of
+   * the collection. The poll effect lives in usePortalBook and depends only
+   * on the token string (render-loop rule 1). */
+  const [portalToken, setPortalToken] = useState<string>(() => readPortalToken());
+  const [portalUiOpen, setPortalUiOpen] = useState(false);
+  const portal = usePortalBook(portalToken);
+  const portalBook = useMemo(
+    () => groupBookBySlug(portal.payload, kalshiBySlug),
+    [portal.payload, kalshiBySlug]
+  );
+  const portalNote = useMemo(() => {
+    if (!portalToken) return "connect your Kalshi portal token";
+    switch (portal.status) {
+      case "unauthorized": return "token rejected — reconnect";
+      case "unconfigured": return "server portal not configured";
+      case "error": return "portal unreachable — will retry";
+      case "loading": return "connecting…";
+      default: {
+        const o = portal.payload?.orders.length ?? 0;
+        const g = portalBook.bySlug.size;
+        return `${o} resting · ${g} game${g === 1 ? "" : "s"} on this board`
+          + (portalBook.unmatched ? ` · ${portalBook.unmatched} off-slate` : "");
+      }
+    }
+  }, [portalToken, portal.status, portal.payload, portalBook]);
+
   useEffect(() => {
     if (!season || !selectedWeek) { setKalshiBySlug(new Map()); setKalshiStamp(""); return; }
     const weekId =
@@ -1736,10 +1768,16 @@ function ScoreboardPage() {
    */
   const slateEdges = slateScan?.byGame ?? null;
 
-  const cards = useMemo(
-    () => sortCards(baseCards, sortBy, slateEdges),
-    [baseCards, sortBy, slateEdges]
-  );
+  const cards = useMemo(() => {
+    const sorted = sortCards(baseCards, sortBy, slateEdges);
+    // Games the owner has orders or fills on pin to the top, keeping the
+    // chosen sort's order within each half (stable partition).
+    if (!portalBook.bySlug.size) return sorted;
+    return [
+      ...sorted.filter((c) => portalBook.bySlug.has(c.key)),
+      ...sorted.filter((c) => !portalBook.bySlug.has(c.key)),
+    ];
+  }, [baseCards, sortBy, slateEdges, portalBook]);
 
 
   // Apply conference filter (game shows if either team is in selected conference)
@@ -1905,6 +1943,58 @@ function ScoreboardPage() {
             >
               Top Edges
             </button>
+
+            <button
+              type="button"
+              className="ui-btn"
+              data-on={portalToken ? "true" : "false"}
+              onClick={() => setPortalUiOpen((v) => !v)}
+              style={{ whiteSpace: "nowrap" }}
+              title={portalNote}
+            >
+              {portalToken
+                ? portal.status === "ok" ? "My Kalshi ✓" : "My Kalshi…"
+                : "My Kalshi"}
+            </button>
+            {portalUiOpen && (
+              <span className="portal-login">
+                {portalToken ? (
+                  <>
+                    <span className="portal-login__note">{portalNote}</span>
+                    <button
+                      type="button" className="ui-btn"
+                      onClick={() => {
+                        writePortalToken("");
+                        setPortalToken("");
+                        setPortalUiOpen(false);
+                      }}
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                ) : (
+                  <form
+                    className="portal-login__form"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const t = String(new FormData(e.currentTarget).get("tok") || "").trim();
+                      if (t) {
+                        writePortalToken(t);
+                        setPortalToken(t);
+                        setPortalUiOpen(false);
+                      }
+                    }}
+                  >
+                    <input
+                      name="tok" type="password" placeholder="portal token"
+                      className="ui-sel" autoFocus
+                      autoComplete="off"
+                    />
+                    <button type="submit" className="ui-btn">Connect</button>
+                  </form>
+                )}
+              </span>
+            )}
 
             <button
               type="button"
@@ -2087,6 +2177,7 @@ function ScoreboardPage() {
                 gdata={games[c.key]}
                 useMean={useMean}
                 kalshi={c.jsonRow ? kalshiBySlug.get(c.key) : undefined}
+                book={portalBook.bySlug.get(c.key)}
                 parlayOpen={parlayOpen}
                 openKind={isOpen ? openPanel!.kind : null}
                 onToggle={(kind) => togglePanel(c.key, kind)}
@@ -2169,7 +2260,7 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 
 
 export function GameCard({
-  card, gdata, useMean = false, kalshi, parlayOpen, openKind, onToggle,
+  card, gdata, useMean = false, kalshi, book, parlayOpen, openKind, onToggle,
   weekLabel, condensed = false, onAddLeg, season, flash = false,
 }: {
   card: CardGame;
@@ -2178,6 +2269,8 @@ export function GameCard({
   useMean?: boolean;
   /** Kalshi market data for this game, when the feed lists it. */
   kalshi?: KalshiGame;
+  /** The owner's resting orders + filled positions on this game (portal). */
+  book?: PortalGameBook;
   parlayOpen: boolean;
   /** Which panel this card currently owns, or null. Panels render OUTSIDE the
    *  card (full grid width) so expanding one never resizes the card itself. */
@@ -2384,6 +2477,8 @@ export function GameCard({
         <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />
       )}
 
+      {book && <MyBookStrip book={book} />}
+
       {/* Action buttons.
           Player panels are gated on the export's has_players FLAG rather than
           on the 404 the fetch would take: FCS publishes game-level sims only,
@@ -2450,6 +2545,51 @@ export function WinProbBar({ card, aColor, bColor, condensed = false }: {
  * Deliberately neutral coloring — which direction counts as "good" is a
  * betting decision the product has not made yet.
  * ========================================================================= */
+/** "KXNCAAFSPREAD-26AUG27LIUUND-UND25" -> "UND -24.5" (YES phrasing; Kalshi
+ *  strike N means "over N-0.5", team code left verbatim — decoding codes to
+ *  full names would be a second name join, which is exactly what we avoid).
+ *  The side badge next to it names the contract actually held, same
+ *  convention as the Top Edges board. */
+function decodeBookTicker(ticker: string): string {
+  const parts = String(ticker || "").split("-");
+  const fam = (parts[0] || "").replace("KXNCAAF", "");
+  const strike = parts[2] || "";
+  const m = strike.match(/^([A-Z]*?)(\d+)$/);
+  if (!m) return fam || ticker;
+  const code = m[1];
+  const n = Number(m[2]);
+  if (fam === "TOTAL") return `Total o${n - 0.5}`;
+  if (fam === "SPREAD") return `${code} -${n - 0.5}`;
+  if (fam === "GAME") return `${code} ML`;
+  return `${fam} ${strike}`;
+}
+
+const cents = (v: number | null): string =>
+  v === null ? "—" : `${Math.round(v * 100)}¢`;
+
+/** The owner's book on this game: one line per resting order (⏳) and one
+ *  per filled position (✔). Read-only; prices are the held side's. */
+function MyBookStrip({ book }: { book: PortalGameBook }) {
+  return (
+    <div className="mybook" title="Your Kalshi orders and fills on this game">
+      {book.positions.map((p) => (
+        <span key={`f:${p.ticker}:${p.side}`} className="mybook__row mybook__row--filled">
+          <span className="mybook__mark">✔</span>
+          <span className="division-badge">{p.side.toUpperCase()}</span>
+          {decodeBookTicker(p.ticker)} @{cents(p.avg_price)} ×{p.count}
+        </span>
+      ))}
+      {book.orders.map((o) => (
+        <span key={`o:${o.order_id}`} className="mybook__row">
+          <span className="mybook__mark">⏳</span>
+          <span className="division-badge">{o.side.toUpperCase()}</span>
+          {decodeBookTicker(o.ticker)} @{cents(o.side === "no" ? o.no_price : o.yes_price)} ×{o.remaining ?? 0}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function SimVsKalshi({ card, kalshi, useMean }: {
   card: CardGame; kalshi?: KalshiGame; useMean: boolean;
 }) {

@@ -66,6 +66,24 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   bet-style titles ("USC 1H ML", "UNLV u19.5 TT"), oriented to the
   recommended side where the complement is exact (totals/spreads/OT).
 
+## My-Kalshi portal (owner-only)
+
+`/api/portfolio/cfb` (server) — token-gated (`x-cfb-token` vs
+`CFB_PORTFOLIO_TOKEN` env, timing-safe; 503 when unconfigured), signed
+Kalshi portfolio reads via env creds (`KALSHI_API_KEY_ID` +
+`KALSHI_PRIVATE_KEY` inline or `KALSHI_PRIVATE_KEY_PATH`). Returns NCAAF
+resting orders, fills, and positions (positions = ground truth for held
+contracts; fills CANNOT be signed-summed — a NO buy logs as a YES-book
+"sell"). This API tier speaks fp/dollar STRINGS (count_fp,
+yes_price_dollars, fee_cost). Client: `src/lib/kalshiPortal.ts` (poll
+30s keyed on token only), ticker→card join via the event-ticker game-code
+segment against kalshiBySlug — never a second name join. Scoreboard pins
+games with a book and badges them (`MyBookStrip`). Historical note: the
+old "no credentials anywhere in this repo" stance was deliberately
+amended 2026-08-26 (env-only, never code). This route family is where
+order entry would live; the auth gate must ALWAYS predate any mutating
+endpoint.
+
 ## Hard-won rules (each cost a real incident)
 
 1. NEVER retype player/team names — build keys from the data verbatim

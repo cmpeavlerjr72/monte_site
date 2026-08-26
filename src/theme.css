@@ -670,6 +670,37 @@ input:focus, select:focus, textarea:focus {
 }
 
 
+/* My-Kalshi portal: login popover in the controls row + the per-card book
+   strip (owner's resting orders ⏳ and fills ✔). Tokens only. */
+.portal-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.portal-login__note { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.portal-login__form { display: inline-flex; gap: 4px; align-items: center; }
+.portal-login__form input { font-size: 12px; min-width: 150px; }
+
+.mybook {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  margin-top: 5px;
+  padding: 4px 7px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in oklab, var(--brand) 35%, var(--border));
+  background: color-mix(in oklab, var(--brand) 8%, var(--card));
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.mybook__row { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.mybook__row--filled { font-weight: 700; }
+.mybook__mark { font-size: 10px; }
+
 /* Series-family filter chips on the team & game props column. */
 .edge-serieschips { display: flex; flex-wrap: wrap; gap: 3px; padding: 0 2px 5px; }
 .edge-serieschips .ui-btn { font-size: 9.5px; font-weight: 700; padding: 2px 7px; }
