@@ -1051,13 +1051,37 @@ function buildLadder(
 }
 
 async function kalshiJson(path: string, signal?: AbortSignal): Promise<any> {
-  const r = await fetchWithTimeout(
-    `${KALSHI_BASE}${path}`,
-    { headers: { accept: "application/json", "user-agent": "monte-site" }, signal },
-    12_000
-  );
-  if (!r.ok) throw new Error(`kalshi ${path} -> HTTP ${r.status}`);
-  return r.json();
+  // Signed whenever the portal's creds exist: authenticated requests draw on
+  // the API key's rate bucket instead of the shared egress IP's anonymous
+  // one. Production incident 2026-08-26: once the portal added signed calls
+  // from the same IP, these anonymous market-data calls started 429ing and
+  // every card's Kalshi column (and the portal's slate join) went blank.
+  // Market-data endpoints accept signed requests (RFQ dashboard precedent).
+  for (let attempt = 0; ; attempt++) {
+    const headers: Record<string, string> = {
+      accept: "application/json", "user-agent": "monte-site",
+    };
+    const key = portalPrivateKey();
+    if (key && PORTAL_KEY_ID) {
+      const ts = String(Date.now());
+      const sig = crypto.sign("sha256",
+        Buffer.from(ts + "GET" + "/trade-api/v2" + path.split("?", 1)[0]), {
+          key,
+          padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+        });
+      headers["KALSHI-ACCESS-KEY"] = PORTAL_KEY_ID;
+      headers["KALSHI-ACCESS-SIGNATURE"] = sig.toString("base64");
+      headers["KALSHI-ACCESS-TIMESTAMP"] = ts;
+    }
+    const r = await fetchWithTimeout(`${KALSHI_BASE}${path}`, { headers, signal }, 12_000);
+    if (r.status === 429 && attempt < 2) {
+      await new Promise((ok) => setTimeout(ok, 700 * (attempt + 1)));
+      continue;
+    }
+    if (!r.ok) throw new Error(`kalshi ${path} -> HTTP ${r.status}`);
+    return r.json();
+  }
 }
 
 /** All open events in a series, following the cursor. */
