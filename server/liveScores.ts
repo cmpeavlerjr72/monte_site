@@ -1480,6 +1480,8 @@ type PortalOrder = {
   initial: number | null; filled: number | null; remaining: number | null;
   created_time: string;
   legs?: PortalLeg[]; title?: string;
+  /** Live book on the entry's own market, refreshed with the payload. */
+  mkt_yes_bid?: number | null; mkt_yes_ask?: number | null;
 };
 type PortalFill = {
   ticker: string; side: string; action: string;
@@ -1494,6 +1496,7 @@ type PortalPosition = {
   ticker: string; side: string; count: number;
   avg_price: number | null; fees: number | null;
   legs?: PortalLeg[]; title?: string;
+  mkt_yes_bid?: number | null; mkt_yes_ask?: number | null;
 };
 type PortalPayload = {
   fetched_at: string; orders: PortalOrder[]; fills: PortalFill[];
@@ -1618,6 +1621,24 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req: Request, res: Response) => 
   const [orders, fills, positions] = await Promise.all([
     portalOrders(), portalFills(), portalPositions(),
   ]);
+  // Live book per entry ticker, so the client can price EV off Kalshi NOW
+  // (refreshes with every payload build, i.e. every page load past the TTL).
+  const tickers = [...new Set([...orders, ...positions].map((e) => e.ticker))];
+  const books = new Map<string, { bid: number | null; ask: number | null }>();
+  await Promise.all(tickers.map(async (t) => {
+    try {
+      const body = await portalGet(`/markets/${encodeURIComponent(t)}`);
+      const m = body?.market || {};
+      books.set(t, {
+        bid: portalNum(m.yes_bid_dollars),
+        ask: portalNum(m.yes_ask_dollars),
+      });
+    } catch { /* entry just ships without a live book this build */ }
+  }));
+  for (const e of [...orders, ...positions]) {
+    const b = books.get(e.ticker);
+    if (b) { e.mkt_yes_bid = b.bid; e.mkt_yes_ask = b.ask; }
+  }
   const payload: PortalPayload = {
     fetched_at: new Date().toISOString(), orders, fills, positions,
   };

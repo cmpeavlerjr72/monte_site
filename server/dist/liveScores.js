@@ -1350,6 +1350,28 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
     const [orders, fills, positions] = await Promise.all([
         portalOrders(), portalFills(), portalPositions(),
     ]);
+    // Live book per entry ticker, so the client can price EV off Kalshi NOW
+    // (refreshes with every payload build, i.e. every page load past the TTL).
+    const tickers = [...new Set([...orders, ...positions].map((e) => e.ticker))];
+    const books = new Map();
+    await Promise.all(tickers.map(async (t) => {
+        try {
+            const body = await portalGet(`/markets/${encodeURIComponent(t)}`);
+            const m = body?.market || {};
+            books.set(t, {
+                bid: portalNum(m.yes_bid_dollars),
+                ask: portalNum(m.yes_ask_dollars),
+            });
+        }
+        catch { /* entry just ships without a live book this build */ }
+    }));
+    for (const e of [...orders, ...positions]) {
+        const b = books.get(e.ticker);
+        if (b) {
+            e.mkt_yes_bid = b.bid;
+            e.mkt_yes_ask = b.ask;
+        }
+    }
     const payload = {
         fetched_at: new Date().toISOString(), orders, fills, positions,
     };

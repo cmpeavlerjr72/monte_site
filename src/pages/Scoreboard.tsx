@@ -24,15 +24,17 @@ import {
   type CfbCatalog, type Division, type DivisionFilter, type FileItem, type Season,
 } from "../lib/cfbData";
 import {
-  getJsonWeekGames, getCompactJson,
+  getJsonWeekGames, getCompactJson, getCompactCached,
   type JsonGame, type JsonWeekRow,
 } from "../lib/cfbJson";
+import { pctText } from "../lib/marketEdge";
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
-  readPortalToken, writePortalToken, usePortalBook, groupBookBySlug,
-  type PortalGameBook,
+  readPortalToken, writePortalToken, usePortalBook, computePortalBets,
+  parseNcaafTicker, buildCodeToSlug,
+  type PortalBet, type PortalTotals, type SeedPair,
 } from "../lib/kalshiPortal";
 import LegPicker from "../components/LegPicker";
 import ParlaySlip from "../components/ParlaySlip";
@@ -1329,26 +1331,10 @@ function ScoreboardPage() {
   const [portalToken, setPortalToken] = useState<string>(() => readPortalToken());
   const [portalUiOpen, setPortalUiOpen] = useState(false);
   const portal = usePortalBook(portalToken);
-  const portalBook = useMemo(
-    () => groupBookBySlug(portal.payload, kalshiBySlug),
-    [portal.payload, kalshiBySlug]
-  );
-  const portalNote = useMemo(() => {
-    if (!portalToken) return "log in with your portal password";
-    switch (portal.status) {
-      case "unauthorized": return "wrong password — log in again";
-      case "locked": return "too many attempts — wait a minute";
-      case "unconfigured": return "server portal not configured";
-      case "error": return "portal unreachable — will retry";
-      case "loading": return "connecting…";
-      default: {
-        const o = portal.payload?.orders.length ?? 0;
-        const g = portalBook.bySlug.size;
-        return `${o} resting · ${g} game${g === 1 ? "" : "s"} on this board`
-          + (portalBook.unmatched ? ` · ${portalBook.unmatched} off-slate` : "");
-      }
-    }
-  }, [portalToken, portal.status, portal.payload, portalBook]);
+  /** slug -> compact seed arrays for the games the owner has bets on, so
+   *  sim EV can be priced at the bets' own strikes. Filled by an effect
+   *  keyed on a primitive signature (render-loop rule 1). */
+  const [portalSeeds, setPortalSeeds] = useState<Map<string, SeedPair>>(new Map());
 
   useEffect(() => {
     if (!season || !selectedWeek) { setKalshiBySlug(new Map()); setKalshiStamp(""); return; }
@@ -1769,6 +1755,65 @@ function ScoreboardPage() {
    */
   const slateEdges = slateScan?.byGame ?? null;
 
+  /* ---- portal bet metrics (needs baseCards, so it lives here) ---- */
+  const portalSeedRows = useMemo(() => {
+    if (!portal.payload) return [] as { slug: string; row: JsonWeekRow; ns: Season }[];
+    const c2s = buildCodeToSlug(kalshiBySlug);
+    const slugs = new Set<string>();
+    const add = (tk: string) => {
+      const t = parseNcaafTicker(tk);
+      const sl = t && c2s.get(t.code);
+      if (sl) slugs.add(sl);
+    };
+    for (const e of [...portal.payload.orders, ...portal.payload.positions]) {
+      (e.legs?.length ? e.legs.map((l) => l.market_ticker) : [e.ticker]).forEach(add);
+    }
+    return baseCards
+      .filter((c) => slugs.has(c.key) && c.jsonRow)
+      .map((c) => ({ slug: c.key, row: c.jsonRow!, ns: c.ns }));
+  }, [portal.payload, kalshiBySlug, baseCards]);
+  const portalSeedSig = useMemo(
+    () => portalSeedRows.map((r) => r.slug).sort().join("|"),
+    [portalSeedRows]
+  );
+  const portalSeedRowsRef = useRef(portalSeedRows);
+  portalSeedRowsRef.current = portalSeedRows;
+  useEffect(() => {
+    if (!portalSeedSig) { setPortalSeeds(new Map()); return; }
+    let alive = true;
+    (async () => {
+      const m = new Map<string, SeedPair>();
+      for (const r of portalSeedRowsRef.current) {
+        try {
+          const c = await getCompactCached(r.row, r.ns);
+          m.set(r.slug, { A: c.A_pts, B: c.B_pts });
+        } catch { /* that card prices Kalshi EV only */ }
+      }
+      if (alive) setPortalSeeds(m);
+    })();
+    return () => { alive = false; };
+  }, [portalSeedSig]);
+
+  const portalBook = useMemo(
+    () => computePortalBets(portal.payload, kalshiBySlug, portalSeeds),
+    [portal.payload, kalshiBySlug, portalSeeds]
+  );
+  const portalNote = useMemo(() => {
+    if (!portalToken) return "log in with your portal password";
+    switch (portal.status) {
+      case "unauthorized": return "wrong password — log in again";
+      case "locked": return "too many attempts — wait a minute";
+      case "unconfigured": return "server portal not configured";
+      case "error": return "portal unreachable — will retry";
+      case "loading": return "connecting…";
+      default: {
+        const g = portalBook.bySlug.size;
+        return `${portalBook.totals.n} bets · ${g} game${g === 1 ? "" : "s"} on this board`
+          + (portalBook.unmatched ? ` · ${portalBook.unmatched} off-slate` : "");
+      }
+    }
+  }, [portalToken, portal.status, portalBook]);
+
   const cards = useMemo(() => {
     const sorted = sortCards(baseCards, sortBy, slateEdges);
     // Games the owner has orders or fills on pin to the top, keeping the
@@ -1829,7 +1874,7 @@ function ScoreboardPage() {
     const lo = Math.min(...ns);
     const hi = Math.max(...ns);
     const fmt = (n: number) => n.toLocaleString("en-US");
-    return lo === hi ? ` \u00b7 ${fmt(lo)} sims` : ` \u00b7 ${fmt(lo)}\u2013${fmt(hi)} sims`;
+    return lo === hi ? ` · ${fmt(lo)} sims` : ` · ${fmt(lo)}\u2013${fmt(hi)} sims`;
   }, [filteredCards]);
 
   // Compact toolbar tokens — the row must fit on one line at desktop widths.
@@ -2011,7 +2056,7 @@ function ScoreboardPage() {
               type="button"
               className="ui-btn icon"
               onClick={cycleTheme}
-              title={`Theme: ${themeMode}${themeMode === "system" ? ` (${themeResolved})` : ""} \u2014 click to change`}
+              title={`Theme: ${themeMode}${themeMode === "system" ? ` (${themeResolved})` : ""} — click to change`}
               aria-label={`Theme: ${themeMode}`}
             >
               {themeMode === "system" ? "\u25D1" : themeResolved === "dark" ? "\u263E" : "\u2600"}
@@ -2099,6 +2144,10 @@ function ScoreboardPage() {
             Retry
           </button>
         </section>
+      )}
+
+      {portalToken && portalBook.totals.n > 0 && (
+        <MyBookBar totals={portalBook.totals} unmatched={portalBook.unmatched} />
       )}
 
       {(slateLoading || catalogLoading) && !filteredCards.length && (
@@ -2270,8 +2319,8 @@ export function GameCard({
   useMean?: boolean;
   /** Kalshi market data for this game, when the feed lists it. */
   kalshi?: KalshiGame;
-  /** The owner's resting orders + filled positions on this game (portal). */
-  book?: PortalGameBook;
+  /** The owner's bets on this game (portal), with money metrics. */
+  book?: PortalBet[];
   parlayOpen: boolean;
   /** Which panel this card currently owns, or null. Panels render OUTSIDE the
    *  card (full grid width) so expanding one never resizes the card itself. */
@@ -2478,7 +2527,7 @@ export function GameCard({
         <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />
       )}
 
-      {book && <MyBookStrip book={book} />}
+      {book && book.length > 0 && <MyBookStrip bets={book} />}
 
       {/* Action buttons.
           Player panels are gated on the export's has_players FLAG rather than
@@ -2546,69 +2595,65 @@ export function WinProbBar({ card, aColor, bColor, condensed = false }: {
  * Deliberately neutral coloring — which direction counts as "good" is a
  * betting decision the product has not made yet.
  * ========================================================================= */
-/** "KXNCAAFSPREAD-26AUG27LIUUND-UND25" -> "UND -24.5" (YES phrasing; Kalshi
- *  strike N means "over N-0.5", team code left verbatim — decoding codes to
- *  full names would be a second name join, which is exactly what we avoid).
- *  The side badge next to it names the contract actually held, same
- *  convention as the Top Edges board. */
-function decodeBookTicker(ticker: string): string {
-  const parts = String(ticker || "").split("-");
-  const fam = (parts[0] || "").replace("KXNCAAF", "");
-  const strike = parts[2] || "";
-  const m = strike.match(/^([A-Z]*?)(\d+)$/);
-  if (!m) {
-    // Letters-only strike = a winner market's team code ("...-UWGA" -> ML).
-    if (/^[A-Z]+$/.test(strike)) return `${strike} ML`;
-    return fam || ticker;
+/** "$X.XX", sign-aware. */
+const usd = (v: number): string => `${v < 0 ? "−" : ""}$${Math.abs(v).toFixed(2)}`;
+
+/** EV chip: dollars vs the stake, plus the source probability and its
+ *  american odds in small text (same convention as the market rows). */
+function EvChip({ tag, ev, p }: { tag: string; ev: number | null; p: number | null }) {
+  if (ev === null || p === null) {
+    return <span className="mybook__ev"><b>{tag} —</b></span>;
   }
-  const code = m[1];
-  const n = Number(m[2]);
-  if (fam === "TOTAL") return `Total o${n - 0.5}`;
-  if (fam === "SPREAD") return `${code} -${n - 0.5}`;
-  if (fam === "GAME") return `${code} ML`;
-  return `${fam} ${strike}`;
-}
-
-const cents = (v: number | null): string =>
-  v === null ? "—" : `${Math.round(v * 100)}¢`;
-
-/** MVE contract counts can be fractional (45.76 of a combo). */
-const bookCount = (n: number | null): string =>
-  n === null ? "?" : String(Number(n.toFixed(2)));
-
-/** A combo renders every leg ("UWGA ML + UTM -3.5"); the full Kalshi title
- *  stays on hover. A single market is just its own decode. */
-function bookLabel(e: { ticker: string; legs?: { market_ticker: string }[] }): string {
-  if (e.legs?.length) {
-    return e.legs.map((l) => decodeBookTicker(l.market_ticker)).join(" + ");
-  }
-  return decodeBookTicker(e.ticker);
-}
-
-/** The owner's book on this game: one line per resting order (⏳), one per
- *  filled position (✔), combos marked 🔗. Read-only; prices are the held
- *  side's. */
-function MyBookStrip({ book }: { book: PortalGameBook }) {
   return (
-    <div className="mybook" title="Your Kalshi orders and fills on this game">
-      {book.positions.map((p) => (
-        <span
-          key={`f:${p.ticker}:${p.side}`}
-          className="mybook__row mybook__row--filled"
-          title={p.title || undefined}
-        >
-          <span className="mybook__mark">{p.legs?.length ? "🔗" : "✔"}</span>
-          <span className="division-badge">{p.side.toUpperCase()}</span>
-          {bookLabel(p)} @{cents(p.avg_price)} ×{bookCount(p.count)}
-        </span>
+    <span className="mybook__ev" data-neg={ev < 0 ? "true" : undefined}>
+      <b>{tag} {ev >= 0 ? "+" : ""}{usd(ev)}</b>
+      <i>{pctText(p)} {americanOdds(p)}</i>
+    </span>
+  );
+}
+
+/** The owner's book on this game. Labels are CHEER-side (a held NO is
+ *  flipped to the complement bet); each bet shows stake → payout, fees
+ *  paid, and EV under the live Kalshi mid and under the sim. */
+function MyBookStrip({ bets }: { bets: PortalBet[] }) {
+  return (
+    <div className="mybook" title="Your Kalshi book on this game">
+      {bets.map((b) => (
+        <div key={b.key} className="mybook__bet" title={b.title || undefined}>
+          <span className="mybook__l1">
+            <span className="mybook__mark">{b.combo ? "\uD83D\uDD17" : b.kind === "position" ? "\u2714" : "\u23F3"}</span>
+            <b>{b.label}</b>
+            <span className="mybook__ct">×{Number(b.count.toFixed(2))}</span>
+          </span>
+          <span className="mybook__l2">
+            risk {usd(b.risked)} → win {usd(b.toWin)}
+            {b.fees > 0 && <> · fees {usd(b.fees)}</>}
+          </span>
+          <span className="mybook__l3">
+            <EvChip tag="Kalshi EV" ev={b.kalshiEV} p={b.kalshiP} />
+            <EvChip tag="Sim EV" ev={b.simEV} p={b.simP} />
+          </span>
+        </div>
       ))}
-      {book.orders.map((o) => (
-        <span key={`o:${o.order_id}`} className="mybook__row" title={o.title || undefined}>
-          <span className="mybook__mark">{o.legs?.length ? "🔗" : "⏳"}</span>
-          <span className="division-badge">{o.side.toUpperCase()}</span>
-          {bookLabel(o)} @{cents(o.side === "no" ? o.no_price : o.yes_price)} ×{bookCount(o.remaining)}
-        </span>
-      ))}
+    </div>
+  );
+}
+
+/** Cumulative version of the card metrics, directly under the controls. */
+function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatched: number }) {
+  return (
+    <div className="mybook-bar">
+      <b>My book</b>
+      <span>{totals.n} bet{totals.n === 1 ? "" : "s"}</span>
+      <span>risk {usd(totals.risked)} → win {usd(totals.toWin)}</span>
+      <span data-neg={totals.kalshiEV !== null && totals.kalshiEV < 0 ? "true" : undefined}>
+        Kalshi EV {totals.kalshiEV === null ? "—" : (totals.kalshiEV >= 0 ? "+" : "") + usd(totals.kalshiEV)}
+      </span>
+      <span data-neg={totals.simEV !== null && totals.simEV < 0 ? "true" : undefined}>
+        Sim EV {totals.simEV === null ? "—" : (totals.simEV >= 0 ? "+" : "") + usd(totals.simEV)}
+      </span>
+      <span>fees {usd(totals.fees)}</span>
+      {unmatched > 0 && <span className="mybook-bar__dim">{unmatched} off-slate</span>}
     </div>
   );
 }
@@ -2643,7 +2688,7 @@ export function SimVsKalshi({ card, kalshi, useMean }: {
 
   if (winMkt != null && typeof card.pHome === "number") {
     rows.push({
-      label: `Win \u00b7 ${card.teamA}`,
+      label: `Win · ${card.teamA}`,
       sim: `${(card.pHome * 100).toFixed(0)}%`,
       mkt: `${(winMkt * 100).toFixed(0)}%`,
       delta: `${signed((winMkt - card.pHome) * 100, 0)}%`,
@@ -2653,7 +2698,7 @@ export function SimVsKalshi({ card, kalshi, useMean }: {
     rows.push({
       label: "Total",
       sim: num(simTotal),
-      mkt: totOver != null ? `${num(totLine)} \u00b7 o${(totOver * 100).toFixed(0)}%` : num(totLine),
+      mkt: totOver != null ? `${num(totLine)} · o${(totOver * 100).toFixed(0)}%` : num(totLine),
       delta: signed(totLine - simTotal),
     });
   }

@@ -47,6 +47,8 @@ export type PortalOrder = {
   created_time: string;
   /** Present on combo entries; the row renders on EVERY leg's card. */
   legs?: PortalLeg[]; title?: string;
+  /** Live book on the entry's own market, refreshed with each payload. */
+  mkt_yes_bid?: number | null; mkt_yes_ask?: number | null;
 };
 export type PortalFill = {
   ticker: string; side: string; action: string;
@@ -60,6 +62,7 @@ export type PortalPosition = {
   ticker: string; side: string; count: number;
   avg_price: number | null; fees: number | null;
   legs?: PortalLeg[]; title?: string;
+  mkt_yes_bid?: number | null; mkt_yes_ask?: number | null;
 };
 export type PortalPayload = {
   fetched_at: string; orders: PortalOrder[]; fills: PortalFill[];
@@ -72,54 +75,171 @@ export function portalGameCode(ticker: string): string | null {
   return parts.length >= 2 && parts[1] ? parts[1] : null;
 }
 
-/** Everything the scoreboard shows for one game. */
-export type PortalGameBook = {
-  orders: PortalOrder[];
-  positions: PortalPosition[];
-};
+/* ------------------------------ bet metrics ------------------------------ */
 
-/**
- * Group orders/positions by game card key, joining through the slate's own
- * Kalshi map. Tickers whose game code is not on the visible slate (last
- * week's games, a division filtered out) are counted, not shown — the badge
- * strip must never invent a card.
- */
-export function groupBookBySlug(
-  payload: PortalPayload | null,
-  kalshiBySlug: Map<string, KalshiGame>,
-): { bySlug: Map<string, PortalGameBook>; unmatched: number } {
-  const bySlug = new Map<string, PortalGameBook>();
-  if (!payload) return { bySlug, unmatched: 0 };
+export type SeedPair = { A: number[]; B: number[] };
 
-  const codeToSlug = new Map<string, string>();
+/** Decomposed NCAAF game ticker. The event code's team blob is away+home
+ *  concatenated; when the strike names one team, the other is the remainder
+ *  and "ends with" tells us the strike team is HOME. */
+export function parseNcaafTicker(ticker: string) {
+  const p = String(ticker || "").split("-");
+  if (p.length < 2) return null;
+  const fam = p[0].replace("KXNCAAF", "");
+  const code = p[1];
+  const strike = p[2] || "";
+  const m = strike.match(/^([A-Z]*?)(\d+)$/);
+  const strikeTeam = m ? m[1] : (/^[A-Z]+$/.test(strike) ? strike : "");
+  const n = m ? Number(m[2]) : null;
+  const teams = code.replace(/^\d{2}[A-Z]{3}\d{2}/, "");
+  let other = "";
+  let strikeIsHome = false;
+  if (strikeTeam && teams.endsWith(strikeTeam)) {
+    other = teams.slice(0, teams.length - strikeTeam.length);
+    strikeIsHome = true;
+  } else if (strikeTeam && teams.startsWith(strikeTeam)) {
+    other = teams.slice(strikeTeam.length);
+  }
+  return { fam, code, strike, strikeTeam, n, other, strikeIsHome };
+}
+
+/** Label of the outcome the owner is CHEERING for — NO sides are flipped to
+ *  the complement bet ("no UND -24.5" reads "LIU +24.5"). */
+export function cheerLabel(ticker: string, side: string): string {
+  const t = parseNcaafTicker(ticker);
+  if (!t) return ticker;
+  const no = side === "no";
+  const half = t.n !== null ? t.n - 0.5 : null;
+  if (t.fam === "TOTAL" && half !== null) return `Total ${no ? "u" : "o"}${half}`;
+  if (t.fam === "SPREAD" && half !== null) {
+    return no ? `${t.other || "opp"} +${half}` : `${t.strikeTeam} -${half}`;
+  }
+  if (t.fam === "GAME" && t.strikeTeam) {
+    return `${no ? (t.other || "opp") : t.strikeTeam} ML`;
+  }
+  return `${t.fam} ${t.strike}`.trim();
+}
+
+/** P(YES) of one game market under the sim's seed arrays; null = can't. */
+export function simYesP(ticker: string, seeds: SeedPair | undefined): number | null {
+  const t = parseNcaafTicker(ticker);
+  if (!t || !seeds || !seeds.A.length || seeds.A.length !== seeds.B.length) return null;
+  const { A, B } = seeds;
+  let hit = 0;
+  if (t.fam === "TOTAL" && t.n !== null) {
+    const line = t.n - 0.5;
+    for (let i = 0; i < A.length; i++) if (A[i] + B[i] > line) hit++;
+  } else if ((t.fam === "SPREAD" && t.n !== null) || (t.fam === "GAME" && t.strikeTeam)) {
+    const line = t.fam === "SPREAD" ? (t.n as number) - 0.5 : 0;
+    for (let i = 0; i < A.length; i++) {
+      if ((t.strikeIsHome ? A[i] - B[i] : B[i] - A[i]) > line) hit++;
+    }
+  } else return null;
+  return hit / A.length;
+}
+
+export function buildCodeToSlug(kalshiBySlug: Map<string, KalshiGame>): Map<string, string> {
+  const out = new Map<string, string>();
   for (const [slug, kg] of kalshiBySlug) {
     const code = portalGameCode(kg.event_ticker);
-    if (code) codeToSlug.set(code, slug);
+    if (code) out.set(code, slug);
+  }
+  return out;
+}
+
+/** One displayed bet with its money metrics. EVs are $ vs the stake:
+ *  p·count − risked. Kalshi p = live mid of the entry's own market, oriented
+ *  to the held side; sim p multiplies leg probabilities (independence
+ *  approximation on combos). Fees = paid so far (positions only). */
+export type PortalBet = {
+  key: string; kind: "position" | "order"; combo: boolean;
+  label: string; side: string; count: number;
+  risked: number; toWin: number; fees: number;
+  kalshiP: number | null; kalshiEV: number | null;
+  simP: number | null; simEV: number | null;
+  slugs: string[]; title?: string;
+};
+
+export type PortalTotals = {
+  n: number; risked: number; toWin: number; fees: number;
+  kalshiEV: number | null; simEV: number | null;
+};
+
+export function computePortalBets(
+  payload: PortalPayload | null,
+  kalshiBySlug: Map<string, KalshiGame>,
+  seedsBySlug: Map<string, SeedPair>,
+): { bets: PortalBet[]; bySlug: Map<string, PortalBet[]>; unmatched: number; totals: PortalTotals } {
+  const bets: PortalBet[] = [];
+  const bySlug = new Map<string, PortalBet[]>();
+  let unmatched = 0;
+  const codeToSlug = buildCodeToSlug(kalshiBySlug);
+  const slugOf = (tk: string): string | undefined => {
+    const t = parseNcaafTicker(tk);
+    return t ? codeToSlug.get(t.code) : undefined;
+  };
+
+  const push = (
+    e: PortalOrder | PortalPosition, kind: PortalBet["kind"],
+    count: number | null, price: number | null, fees: number,
+  ) => {
+    if (count === null || price === null || count <= 0) return;
+    const legs = e.legs?.length
+      ? e.legs.map((l) => ({ ticker: l.market_ticker, side: l.side }))
+      : [{ ticker: e.ticker, side: e.side }];
+    const slugs = [...new Set(legs.map((l) => slugOf(l.ticker)).filter(Boolean))] as string[];
+    if (!slugs.length) unmatched++;
+    const risked = count * price;
+    const bid = e.mkt_yes_bid ?? null;
+    const ask = e.mkt_yes_ask ?? null;
+    // A 0/1 book is EMPTY (nobody quoting), not a 50% opinion.
+    const degenerate = (bid ?? 0) <= 0.01 && (ask ?? 1) >= 0.99;
+    const mid = degenerate ? null
+      : bid !== null && ask !== null ? (bid + ask) / 2 : bid ?? ask;
+    const kalshiP = mid === null ? null : e.side === "no" ? 1 - mid : mid;
+    let simP: number | null = 1;
+    for (const l of legs) {
+      const s = slugOf(l.ticker);
+      const py = simYesP(l.ticker, s ? seedsBySlug.get(s) : undefined);
+      if (py === null) { simP = null; break; }
+      simP *= l.side === "no" ? 1 - py : py;
+    }
+    if (simP !== null && e.legs?.length && e.side === "no") simP = 1 - simP;
+    const bet: PortalBet = {
+      key: `${kind}:${e.ticker}:${(e as PortalOrder).order_id ?? e.side}`,
+      kind, combo: Boolean(e.legs?.length),
+      label: e.legs?.length
+        ? legs.map((l) => cheerLabel(l.ticker, l.side)).join(" + ")
+        : cheerLabel(e.ticker, e.side),
+      side: e.side, count, risked, toWin: count - risked, fees,
+      kalshiP, kalshiEV: kalshiP === null ? null : kalshiP * count - risked,
+      simP, simEV: simP === null ? null : simP * count - risked,
+      slugs, title: e.title,
+    };
+    bets.push(bet);
+    for (const s of slugs) {
+      const arr = bySlug.get(s) ?? [];
+      arr.push(bet);
+      bySlug.set(s, arr);
+    }
+  };
+
+  if (payload) {
+    for (const p of payload.positions) push(p, "position", p.count, p.avg_price, p.fees ?? 0);
+    for (const o of payload.orders) {
+      push(o, "order", o.remaining, o.side === "no" ? o.no_price : o.yes_price, 0);
+    }
   }
 
-  let unmatched = 0;
-  const bookAt = (slug: string): PortalGameBook => {
-    let b = bySlug.get(slug);
-    if (!b) { b = { orders: [], positions: [] }; bySlug.set(slug, b); }
-    return b;
-  };
-  /** Single market -> its game's book; combo -> the book of EVERY leg whose
-   *  game is on the visible slate. Nothing mapped counts once as off-slate. */
-  const booksFor = (e: { ticker: string; legs?: PortalLeg[] }): PortalGameBook[] => {
-    const tickers = e.legs?.length ? e.legs.map((l) => l.market_ticker) : [e.ticker];
-    const slugs = new Set<string>();
-    for (const t of tickers) {
-      const code = portalGameCode(t);
-      const slug = code ? codeToSlug.get(code) : undefined;
-      if (slug) slugs.add(slug);
-    }
-    if (!slugs.size) { unmatched++; return []; }
-    return [...slugs].map(bookAt);
-  };
-
-  for (const o of payload.orders) for (const b of booksFor(o)) b.orders.push(o);
-  for (const p of payload.positions) for (const b of booksFor(p)) b.positions.push(p);
-  return { bySlug, unmatched };
+  const totals: PortalTotals = { n: bets.length, risked: 0, toWin: 0, fees: 0, kalshiEV: null, simEV: null };
+  for (const b of bets) {
+    totals.risked += b.risked;
+    totals.toWin += b.toWin;
+    totals.fees += b.fees;
+    if (b.kalshiEV !== null) totals.kalshiEV = (totals.kalshiEV ?? 0) + b.kalshiEV;
+    if (b.simEV !== null) totals.simEV = (totals.simEV ?? 0) + b.simEV;
+  }
+  return { bets, bySlug, unmatched, totals };
 }
 
 export type PortalState = {
