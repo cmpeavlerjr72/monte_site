@@ -2,7 +2,9 @@
 //
 // The slate's biggest edges, in three tables: game lines, team & game props
 // (Kalshi team-stat/period markets), and player props — in that order, team
-// markets ranked above player props as a product priority.
+// markets ranked above player props as a product priority. Team-market rows
+// flagged THIN/TAIL/NOISE are never shown (site rule, filtered in edges.ts);
+// the column footer reports how many the rule hid.
 //
 // All three rank by SIGNED edge (team markets rank by fee-adjusted EV, the
 // only one of the three already priced net of the taker fee) — "where does
@@ -16,7 +18,8 @@
 
 import { useMemo, useState } from "react";
 import {
-  rankEdges, rankProps, rankTeamMarkets, pricedRowCount, hoursSince,
+  rankEdges, rankProps, rankTeamMarkets, isTradeableTeamMarket,
+  pricedRowCount, hoursSince,
   type SlateScan, type EdgeEntry,
 } from "../lib/edges";
 import { americanOdds, pctText, type MarketRow } from "../lib/marketEdge";
@@ -294,14 +297,64 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
 }
 
 /* ---------------------------- team-market rows ---------------------------- */
-/** Human tooltip text for the toolkit's flags — the same three every row on
- *  this table can carry, so spelling them out once beats repeating a title
- *  string per flag per row. */
-const TEAM_MKT_FLAG_TITLE: Record<string, string> = {
-  THIN: "thin book — wide bid/ask, the binding filter at 10k sims",
-  TAIL: "tail strike — far from the median, priced but low-volume",
-  NOISE: "edge is within the sim's own noise band at this sample size",
-};
+
+/**
+ * Compact bet-style label for a Kalshi team-market row (user rule
+ * 2026-08-26: "USC wins the 1st half" reads as "USC 1H ML", "UNLV scores
+ * over 19.5 points" as "UNLV u19.5 TT", etc.).
+ *
+ * Orientation: where the NO contract has an exact book-notation complement
+ * (totals -> u, spreads -> opponent +line, OT -> "No OT") the label states
+ * the bet the row actually recommends. Winner and half/full-time markets
+ * have no clean complement, so they keep the YES phrasing and the side
+ * badge names the contract. A title no pattern recognizes falls back to
+ * Kalshi's own sentence — new families render honestly, never blank.
+ */
+function shortTeamMarketTitle(r: TeamMarketRow, teamA: string, teamB: string): string {
+  const t = r.title.trim();
+  const no = r.side === "NO";
+  let m: RegExpExecArray | null;
+
+  // "UNLV scores over 19.5 points" -> "UNLV o19.5 TT" / "UNLV u19.5 TT"
+  if ((m = /^(.+?) scores over ([\d.]+) points$/i.exec(t)))
+    return `${shortTeam(m[1])} ${no ? "u" : "o"}${m[2]} TT`;
+
+  // "USC wins 1H by over 20.5 points" -> "USC 1H -20.5";
+  // NO is the exact complement bet: opponent +20.5 (half-point line).
+  if ((m = /^(.+?) wins (1H|2H) by over ([\d.]+) points$/i.exec(t))) {
+    const [, team, half, pts] = m;
+    if (no) {
+      const key = cfbNameKey(team);
+      const opp = key === cfbNameKey(teamA) ? teamB
+        : key === cfbNameKey(teamB) ? teamA : null;
+      if (opp) return `${shortTeam(opp)} ${half} +${pts}`;
+      // Unresolved name: keep the YES bet, the badge still names the side.
+    }
+    return `${shortTeam(team)} ${half} -${pts}`;
+  }
+
+  // "Over 47.5 1H points scored" -> "1H o47.5" / "1H u47.5"
+  if ((m = /^Over ([\d.]+) (1H|2H) points scored$/i.exec(t)))
+    return `${m[2]} ${no ? "u" : "o"}${m[1]}`;
+
+  // "Stanford wins the 1st half" -> "Stanford 1H ML"; "Tie in the 2nd half"
+  if ((m = /^(.+?) wins the (1st|2nd) half$/i.exec(t)))
+    return `${shortTeam(m[1])} ${m[2] === "1st" ? "1H" : "2H"} ML`;
+  if ((m = /^Tie in the (1st|2nd) half$/i.exec(t)))
+    return `${m[1] === "1st" ? "1H" : "2H"} Tie`;
+
+  // "TCU wins 1st Half / TCU wins game" -> "HT/FT TCU / TCU"
+  if ((m = /^(.+?) wins 1st Half \/ (.+?) wins game$/i.exec(t)))
+    return `HT/FT ${shortTeam(m[1])} / ${shortTeam(m[2])}`;
+  if ((m = /^Tie in 1st Half \/ (.+?) wins game$/i.exec(t)))
+    return `HT/FT Tie / ${shortTeam(m[1])}`;
+
+  // "1+ overtime periods" -> "OT" / "No OT"
+  if ((m = /^(\d)\+ overtime periods$/i.exec(t)))
+    return m[1] === "1" ? (no ? "No OT" : "OT") : `OT ${m[1]}+`;
+
+  return t;
+}
 
 /** Human names for the Kalshi series tickers. An unknown new family — Kalshi
  *  is still adding them — falls back to the ticker minus the exchange prefix,
@@ -351,14 +404,13 @@ function TeamMktRow({ r, teamA, teamB, rank, onPick, onAddLeg }: {
       <span className="edge-row__rank">{rank}</span>
       <Logos teams={[teamB, teamA]} />
       <span className="edge-row__main">
-        {/* Full-sentence Kalshi title gets two lines; the flags live on the
-            meta row below so an ellipsis can never swallow a THIN warning. */}
-        <span className="edge-row__t1 edge-row__t1--wrap">{r.title}</span>
+        {/* Compact bet-style label; Kalshi's full sentence stays reachable on
+            hover. Flagged rows never reach this component (site rule). */}
+        <span className="edge-row__t1 edge-row__t1--wrap" title={r.title}>
+          {shortTeamMarketTitle(r, teamA, teamB)}
+        </span>
         <span className="edge-row__t2">
           <span className="division-badge">{r.side}</span>
-          {r.flags.map((f) => (
-            <span key={f} className="edge-flag" title={TEAM_MKT_FLAG_TITLE[f] ?? f}>{f}</span>
-          ))}
           {shortTeam(teamB)} @ {shortTeam(teamA)}
         </span>
       </span>
@@ -384,9 +436,16 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
    *  carries (week change) falls back to All by derivation — no state write
    *  during render, nothing for an effect to chase. */
   const [teamSeriesRaw, setTeamSeriesRaw] = useState<string | null>(null);
-  const seriesChips = useMemo(
-    () => (scan ? orderedSeries(scan.teamMarkets.map((r) => r.series)) : []),
+  /** Tradeable = unflagged (the site rule lives in edges.ts). Chips only
+   *  offer families that still have rows after the filter, so no chip ever
+   *  opens an empty top 10. */
+  const tradeableTeamMkts = useMemo(
+    () => (scan ? scan.teamMarkets.filter(isTradeableTeamMarket) : []),
     [scan]
+  );
+  const seriesChips = useMemo(
+    () => orderedSeries(tradeableTeamMkts.map((r) => r.series)),
+    [tradeableTeamMkts]
   );
   const teamSeries = teamSeriesRaw !== null && seriesChips.includes(teamSeriesRaw)
     ? teamSeriesRaw : null;
@@ -447,18 +506,21 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
 
     parts.push(`Kalshi${when ? `, as of ${when}` : ""}`);
     if (age !== null && age > 36) parts.push("(stale)");
+    // The site rule's receipt: how many priced rows the flag filter hid.
+    const hidden = scan.teamMarkets.length - tradeableTeamMkts.length;
+    if (hidden > 0) parts.push(`${hidden} hidden (thin/tail/noise)`);
     if (scan.teamMarketsWithheld > 0) {
       parts.push(`${scan.teamMarketsWithheld} withheld (book too thin to price)`);
     }
-    // "shown of pool" counts the family being viewed, not the whole file.
+    // "shown of pool" counts the tradeable family being viewed.
     const pool = teamSeries
-      ? scan.teamMarkets.filter((r) => r.series === teamSeries).length
-      : scan.teamMarkets.length;
+      ? tradeableTeamMkts.filter((r) => r.series === teamSeries).length
+      : tradeableTeamMkts.length;
     if (pool > teamMkts.length) {
       parts.push(`${teamMkts.length} of ${pool}${teamSeries ? ` ${seriesLabel(teamSeries)}` : ""} shown`);
     }
     return parts.join(" · ") || null;
-  }, [scan, teamMkts.length, teamSeries]);
+  }, [scan, teamMkts.length, teamSeries, tradeableTeamMkts]);
 
   return (
     <section className="top-edges" role="dialog" aria-label="Top edges on this slate">
@@ -516,7 +578,9 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
             : <div className="edge-col__empty">
                 {scan?.teamMarketsStatus === "missing"
                   ? "Team markets not published for this week yet."
-                  : "No team-market edges could be priced."}
+                  : scan && scan.teamMarkets.length > 0
+                    ? "No tradeable team-market edges — every current quote is thin, tail, or noise."
+                    : "No team-market edges could be priced."}
               </div>}
         </Column>
 

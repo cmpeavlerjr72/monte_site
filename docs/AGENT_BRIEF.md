@@ -60,6 +60,11 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   `sim_p` = P(YES) (flip when side=NO). FBS-only: the FCS namespace
   404s forever = expected "missing" state (`TeamMarketsNotPublished`).
   Published by cfb-props-sim `kalshi_team_edges.py --publish`.
+  SITE RULE (user 2026-08-26): rows flagged THIN/TAIL/NOISE are never
+  surfaced as edges — filtered in `edges.ts` (math layer, like rule 5);
+  the column footer reports the hidden count. Rows render compact
+  bet-style titles ("USC 1H ML", "UNLV u19.5 TT"), oriented to the
+  recommended side where the complement is exact (totals/spreads/OT).
 
 ## Hard-won rules (each cost a real incident)
 

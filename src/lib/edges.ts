@@ -275,16 +275,32 @@ export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
 }
 
 /**
+ * Site rule (user, 2026-08-26): a market flagged THIN (untradeable quote),
+ * TAIL (strike far from the sim median), or NOISE (edge inside the sim's own
+ * noise band) is never surfaced as an edge — same spirit as rule 5's
+ * zero-stat PMF filter, enforced in the math layer so no view can forget it.
+ * Unknown future flags do NOT block: the toolkit only ships flags that
+ * document a defect in the QUOTE or the ESTIMATE, and a new one must be
+ * added here deliberately.
+ */
+const BLOCKED_TEAM_MARKET_FLAGS = new Set(["THIN", "TAIL", "NOISE"]);
+export const isTradeableTeamMarket = (r: TeamMarketRow): boolean =>
+  !r.flags.some((f) => BLOCKED_TEAM_MARKET_FLAGS.has(f));
+
+/**
  * Team-market rows ranked by fee-adjusted EV descending, optionally within
- * one market family (series). The per-series view exists because a single
- * blowout ladder can own the unfiltered top 10 (four USC 1H rungs on the
- * first real slate) — each family deserves its own top 10.
+ * one market family (series). Flagged rows are dropped here (see the site
+ * rule above), so every caller gets only placeable edges. The per-series
+ * view exists because a single blowout ladder can own the unfiltered top 10
+ * (four USC 1H rungs on the first real slate) — each family deserves its
+ * own top 10.
  *
  * The export already sorts ev_fee desc, but re-sorting here means a caller
  * never has to trust an external file's ordering silently.
  */
 export function rankTeamMarkets(rows: TeamMarketRow[], limit = 10, series?: string): TeamMarketRow[] {
-  const pool = series ? rows.filter((r) => r.series === series) : rows;
+  const pool = rows.filter(isTradeableTeamMarket)
+    .filter((r) => (series ? r.series === series : true));
   return [...pool].sort((a, b) => b.ev_fee - a.ev_fee).slice(0, limit);
 }
 
