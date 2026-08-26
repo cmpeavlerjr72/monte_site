@@ -1339,9 +1339,13 @@ const staticDir = path.resolve(__dirname, "../../dist");
 // anywhere in this repo" stance (user decision 2026-08-26): credentials are
 // still never in CODE — they arrive only through deployment env vars —
 //   KALSHI_API_KEY_ID       the API key id
-//   KALSHI_PRIVATE_KEY      the RSA PEM inline ("\n"-escaped), or
-//   KALSHI_PRIVATE_KEY_PATH a file path (local dev)
-//   CFB_PORTFOLIO_TOKEN     the shared secret the browser must present
+//   KALSHI_PRIVATE_KEY_PATH path to the PEM — THE production pattern
+//                           (owner-proven): upload the key as a host
+//                           Secret File and point here, e.g.
+//                           KALSHI_PRIVATE_KEY_PATH=/etc/secrets/kalshi.pem.
+//                           Inline PEMs in env vars mangle newlines.
+//   KALSHI_PRIVATE_KEY      inline PEM fallback ("\n"-escaped)
+//   CFB_PORTAL_PASSWORD     the owner-chosen login password
 // and every one of them missing means the route answers 503, never a stack
 // trace and never an open portal. The token check is timing-safe. This route
 // family is where order entry would eventually live, so the auth gate exists

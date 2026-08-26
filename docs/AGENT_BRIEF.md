@@ -74,7 +74,10 @@ alias kept; timing-safe; 5 consecutive misses = 60s lockout (429) because
 a human password is guessable where a token was not; 503 when
 unconfigured), signed
 Kalshi portfolio reads via env creds (`KALSHI_API_KEY_ID` +
-`KALSHI_PRIVATE_KEY` inline or `KALSHI_PRIVATE_KEY_PATH`). Returns NCAAF
+`KALSHI_PRIVATE_KEY_PATH` — production pattern is a host Secret File,
+`KALSHI_PRIVATE_KEY_PATH=/etc/secrets/kalshi.pem`; inline
+`KALSHI_PRIVATE_KEY` is a fallback that mangles newlines on some hosts).
+Returns NCAAF
 resting orders, fills, and positions (positions = ground truth for held
 contracts; fills CANNOT be signed-summed — a NO buy logs as a YES-book
 "sell"). This API tier speaks fp/dollar STRINGS (count_fp,
