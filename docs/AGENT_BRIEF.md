@@ -53,6 +53,13 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   parlay joints; index i = same simulated game across ALL arrays.
 - `props_odds.json` — single-book (top-level "book"), one row per
   (player, stat): line, fair_over (de-vig), best_over/under prices.
+- `team_markets.json` — Kalshi NCAAF team-stat/period markets (team
+  totals, 1H/2H winner-spread-total, half/fulltime, OT), one flat
+  `records[]` sorted ev_fee desc; `slug` is already OUR game slug,
+  `title` states the YES event, `side` names the favored contract,
+  `sim_p` = P(YES) (flip when side=NO). FBS-only: the FCS namespace
+  404s forever = expected "missing" state (`TeamMarketsNotPublished`).
+  Published by cfb-props-sim `kalshi_team_edges.py --publish`.
 
 ## Hard-won rules (each cost a real incident)
 

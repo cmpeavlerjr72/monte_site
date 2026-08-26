@@ -674,3 +674,139 @@ export function getPlayersDistCached(row: JsonWeekRow, season: Season): Promise<
   distCache.set(key, promise);
   return promise;
 }
+
+/* ============================ team_markets.json =============================
+ * Kalshi NCAAF team-stat and period markets for the whole week (team total
+ * ladders, 1H/2H winner-spread-total, half/fulltime, OT), published by the
+ * FCS Kalshi MAKER toolkit as one flat array, already sorted ev_fee desc:
+ *
+ *   { generated_utc, tag, season, week, source: "kalshi",
+ *     records: [ { slug, series, market_ticker, title, strike, side,
+ *                  sim_p, se, n_sims, yes_bid, yes_ask, edge, ev_fee,
+ *                  flags[], close_time } ],
+ *     withheld_count, withheld_by_series }
+ *
+ * `slug` is already OUR game slug (the toolkit does the join), so unlike
+ * props_odds.json there is no per-game grouping to do here. FBS-only: the
+ * file lives in the season's main repo, not the fcs-<season> one, so an FCS
+ * namespace 404s here forever — the expected, quiet "no table" state.
+ *
+ * `title` always states the YES side of the contract ("<Team> scores over
+ * 16.5 points" / "USC wins 1H by over 20.5 points"); `side` names which
+ * contract (YES or NO) the sim actually favors. `sim_p` is P(YES) — callers
+ * that want the recommended side's probability must flip it when side is NO.
+ * ========================================================================= */
+
+export type TeamMarketSide = "YES" | "NO";
+
+export type TeamMarketRow = {
+  slug: string;
+  series: string;
+  market_ticker: string;
+  /** Human-readable, always phrased as the YES event (see header note). */
+  title: string;
+  strike: number | null;
+  /** Which contract side the sim actually favors. */
+  side: TeamMarketSide;
+  /** P(YES), 0..1 — not yet oriented to `side`. */
+  sim_p: number;
+  se?: number;
+  n_sims?: number;
+  yes_bid: number;
+  yes_ask: number;
+  edge: number;
+  /** EV per $1 staked on `side`, after Kalshi's fee. Default sort key. */
+  ev_fee: number;
+  /** "THIN" (binding at 10k sims on these wide books) / "TAIL" / "NOISE". */
+  flags: string[];
+  close_time?: string;
+};
+
+export type TeamMarkets = {
+  updated: string | null;
+  tag: string | null;
+  source: string | null;
+  rows: TeamMarketRow[];
+  /** Markets the toolkit priced but withheld (book too thin to quote at all). */
+  withheldCount: number;
+};
+
+/** Thrown when the week/namespace has no team_markets.json — the FCS
+ *  namespace and a week the toolkit has not reached yet both 404 here, and
+ *  neither is a bug. */
+export class TeamMarketsNotPublished extends Error {
+  constructor(path: string) {
+    super(`team_markets.json not published (${path})`);
+    this.name = "TeamMarketsNotPublished";
+  }
+}
+
+function parseTeamMarketRow(raw: any): TeamMarketRow | null {
+  const slug = String(raw?.slug ?? "").trim();
+  const title = String(raw?.title ?? "").trim();
+  const side: TeamMarketSide | null = raw?.side === "YES" || raw?.side === "NO" ? raw.side : null;
+  const sim_p = num(raw?.sim_p);
+  const yes_bid = num(raw?.yes_bid);
+  const yes_ask = num(raw?.yes_ask);
+  const edge = num(raw?.edge);
+  const ev_fee = num(raw?.ev_fee);
+  if (!slug || !title || !side || sim_p === undefined || yes_bid === undefined
+    || yes_ask === undefined || edge === undefined || ev_fee === undefined) return null;
+
+  return {
+    slug,
+    series: String(raw?.series ?? ""),
+    market_ticker: String(raw?.market_ticker ?? ""),
+    title,
+    strike: num(raw?.strike) ?? null,
+    side,
+    sim_p, yes_bid, yes_ask, edge, ev_fee,
+    se: num(raw?.se),
+    n_sims: num(raw?.n_sims),
+    flags: Array.isArray(raw?.flags) ? raw.flags.map((f: any) => String(f)) : [],
+    close_time: raw?.close_time != null ? String(raw.close_time) : undefined,
+  };
+}
+
+const teamMarketsCache = new Map<string, Promise<TeamMarkets>>();
+
+/** Memoized like getPropsOddsCached — one fetch per (season, week), shared by
+ *  every caller in the same scan. */
+export function getTeamMarketsCached(season: Season, weekId: string): Promise<TeamMarkets> {
+  const key = `${season}/${weekId}`;
+  const memo = teamMarketsCache.get(key);
+  if (memo) return memo;
+  const promise = getTeamMarkets(season, weekId).catch((err) => {
+    teamMarketsCache.delete(key); // let a retry work
+    throw err;
+  });
+  teamMarketsCache.set(key, promise);
+  return promise;
+}
+
+export async function getTeamMarkets(
+  season: Season,
+  weekId: string,
+  signal?: AbortSignal
+): Promise<TeamMarkets> {
+  const rel = `weeks/${weekId}/team_markets.json`;
+  const url = await dataUrl(rel, season);
+  // no-store: the established rule (see AGENT_BRIEF #3) — the browser held
+  // stale week files for 15 min without it.
+  const res = await fetch(url, { signal, cache: "no-store" });
+  if (res.status === 404) throw new TeamMarketsNotPublished(rel);
+  if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
+  const raw = await res.json();
+
+  const rows: TeamMarketRow[] = (Array.isArray(raw?.records) ? raw.records : [])
+    .map(parseTeamMarketRow)
+    .filter((r: TeamMarketRow | null): r is TeamMarketRow => r !== null);
+
+  return {
+    updated: raw?.generated_utc != null ? String(raw.generated_utc) : null,
+    tag: raw?.tag != null ? String(raw.tag) : null,
+    source: raw?.source != null ? String(raw.source) : null,
+    rows,
+    withheldCount: num(raw?.withheld_count) ?? 0,
+  };
+}

@@ -12,7 +12,8 @@
 
 import {
   getCompactCached, getPlayersDistCached, getPropsOddsCached, PropsNotPublished,
-  type JsonWeekRow,
+  getTeamMarketsCached, TeamMarketsNotPublished,
+  type JsonWeekRow, type TeamMarketRow,
 } from "./cfbJson";
 import { propEdge, type PropEdge } from "./propEdge";
 import { buildMarketRows, makeSeedCounts, rowEdge, type MarketRow } from "./marketEdge";
@@ -56,6 +57,13 @@ export type SlateScan = {
   propsUpdated: string | null;
   /** Single-book exports name the book once; shown in the column footer. */
   propsBook: string | null;
+  /** Kalshi team-stat/period markets for the week, unsorted. FBS-only — see
+   *  cfbJson's team_markets.json note; "missing" covers the FCS namespace too. */
+  teamMarkets: TeamMarketRow[];
+  teamMarketsStatus: "ok" | "missing" | "error";
+  teamMarketsUpdated: string | null;
+  teamMarketsTag: string | null;
+  teamMarketsWithheld: number;
 };
 
 export type GameEdges = {
@@ -94,12 +102,18 @@ export async function ensureSlateEdges(
 ): Promise<SlateScan> {
   const out = new Map<string, GameEdges>();
 
-  // Week-level props file, fetched once for the whole slate. A 404 is the
-  // expected state until the props pipeline publishes, not a failure.
-  let propsOdds: Awaited<ReturnType<typeof getPropsOddsCached>> | null = null;
+  // Two week-level files, fetched once for the whole slate. Both kicked off
+  // before either is awaited so they run concurrently with each other (and
+  // with the per-game Promise.all below starts right after).
+  const propsPromise = getPropsOddsCached(season, weekId);
+  const teamMarketsPromise = getTeamMarketsCached(season, weekId);
+
+  // Props: a 404 is the expected state until the props pipeline publishes,
+  // not a failure.
+  let propsOdds: Awaited<typeof propsPromise> | null = null;
   let propsStatus: SlateScan["propsStatus"] = "missing";
   try {
-    propsOdds = await getPropsOddsCached(season, weekId);
+    propsOdds = await propsPromise;
     propsStatus = "ok";
   } catch (err) {
     if ((err as any)?.name === "AbortError") throw err;
@@ -114,6 +128,26 @@ export async function ensureSlateEdges(
     if (!notPublished) {
       console.warn("[edges] props_odds failed:", err);
       propsStatus = "error";
+    }
+  }
+
+  // Team markets: FBS-only file, so the FCS namespace 404s here forever —
+  // same "not published" treatment as props.
+  let teamMarketsResult: Awaited<typeof teamMarketsPromise> | null = null;
+  let teamMarketsStatus: SlateScan["teamMarketsStatus"] = "missing";
+  try {
+    teamMarketsResult = await teamMarketsPromise;
+    teamMarketsStatus = "ok";
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") throw err;
+    const notPublished =
+      err instanceof TeamMarketsNotPublished ||
+      (err as any)?.name === "TeamMarketsNotPublished" ||
+      err instanceof DatasetUnavailable ||
+      (err as any)?.name === "DatasetUnavailable";
+    if (!notPublished) {
+      console.warn("[edges] team_markets failed:", err);
+      teamMarketsStatus = "error";
     }
   }
 
@@ -189,6 +223,11 @@ export async function ensureSlateEdges(
     byGame: out, props, propsStatus,
     propsUpdated: propsOdds?.updated ?? null,
     propsBook: propsOdds?.book ?? null,
+    teamMarkets: teamMarketsResult?.rows ?? [],
+    teamMarketsStatus,
+    teamMarketsUpdated: teamMarketsResult?.updated ?? null,
+    teamMarketsTag: teamMarketsResult?.tag ?? null,
+    teamMarketsWithheld: teamMarketsResult?.withheldCount ?? 0,
   };
 }
 
@@ -233,6 +272,20 @@ export function pricedRowCount(edges: Map<string, GameEdges>): { priced: number;
 /** Prop edges ranked by edge descending. */
 export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
   return [...props].sort((a, b) => b.edge - a.edge).slice(0, limit);
+}
+
+/**
+ * Team-market rows ranked by fee-adjusted EV descending, optionally within
+ * one market family (series). The per-series view exists because a single
+ * blowout ladder can own the unfiltered top 10 (four USC 1H rungs on the
+ * first real slate) — each family deserves its own top 10.
+ *
+ * The export already sorts ev_fee desc, but re-sorting here means a caller
+ * never has to trust an external file's ordering silently.
+ */
+export function rankTeamMarkets(rows: TeamMarketRow[], limit = 10, series?: string): TeamMarketRow[] {
+  const pool = series ? rows.filter((r) => r.series === series) : rows;
+  return [...pool].sort((a, b) => b.ev_fee - a.ev_fee).slice(0, limit);
 }
 
 

@@ -1,25 +1,37 @@
 // src/components/TopEdges.tsx
 //
-// The slate's biggest edges, in two tables: game lines and player props.
+// The slate's biggest edges, in three tables: game lines, team & game props
+// (Kalshi team-stat/period markets), and player props — in that order, team
+// markets ranked above player props as a product priority.
 //
-// Both rank by SIGNED edge — "where does the sim like a bet more than the
-// market" — and every row is a real, placeable bet: the market's own line, one
-// side of it, both sources' price for that exact bet.
+// All three rank by SIGNED edge (team markets rank by fee-adjusted EV, the
+// only one of the three already priced net of the taker fee) — "where does
+// the sim like a bet more than the market" — and every row is a real,
+// placeable bet: the market's own line, one side of it, both sources' price
+// for that exact bet.
 //
 // Logo rule: a win or spread row is a bet ON one team, so it badges that team
 // alone; a total is a bet on the game, so it shows both. Anything else would
 // imply a side the row does not take.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
-  rankEdges, rankProps, pricedRowCount, hoursSince,
+  rankEdges, rankProps, rankTeamMarkets, pricedRowCount, hoursSince,
   type SlateScan, type EdgeEntry,
 } from "../lib/edges";
 import { americanOdds, pctText, type MarketRow } from "../lib/marketEdge";
 import { propLabel, type PropEdge } from "../lib/propEdge";
 import { snapHalf, type LegSpec, type TeamRef } from "../lib/parlay";
+import type { TeamMarketRow } from "../lib/cfbJson";
 import { getTeamLogo } from "../utils/teamLogo";
 import { Skeleton } from "./Skeleton";
+// Reused, not reimplemented: the site's ONE Kalshi<->slate team-name join.
+// team_markets.json's titles carry Kalshi's spelling ("North Carolina St."),
+// which is a different string than our own team names ("NC State") for about
+// half of a given slate's games. See server/cfbNames.ts's header for why a
+// second normalizer here would be exactly the collision bug it exists to
+// prevent — this import keeps it a single source of truth instead.
+import { cfbNameKey } from "../../server/cfbNames";
 
 type Props = {
   scan: SlateScan | null;
@@ -70,6 +82,53 @@ function legSpecForPropRow(p: PropEdge): LegSpec {
     line: snapHalf(p.line),
     playerTeam: p.playerTeam,
   };
+}
+
+/**
+ * Team-market row -> LegSpec, for the ONE series the seeds.json builder can
+ * price today: full-game team totals (KXNCAAFTEAMTOTAL). seeds.json publishes
+ * A_pts/B_pts per seed and nothing at the half/period level, so 1H/2H
+ * spread-total-winner, fulltime and OT markets have no seed column to price a
+ * joint against — no LegSpec for those, by design, not an oversight.
+ *
+ * Team-total titles are always phrased as the YES event, "<Team> scores over
+ * <strike> points" (see cfbJson's team_markets note), so side=YES is over and
+ * side=NO is under; strike is already a half-point line.
+ */
+const TEAM_TOTAL_TITLE_RE = /^(.+?) scores over [\d.]+ points$/i;
+
+function legSpecForTeamMarketRow(r: TeamMarketRow, teamA: string, teamB: string): LegSpec | null {
+  if (r.series !== "KXNCAAFTEAMTOTAL" || r.strike === null) return null;
+  const m = TEAM_TOTAL_TITLE_RE.exec(r.title);
+  if (!m) return null;
+
+  const key = cfbNameKey(m[1]);
+  let team: TeamRef;
+  if (key === cfbNameKey(teamA)) team = "A";
+  else if (key === cfbNameKey(teamB)) team = "B";
+  else return null; // unresolved name -> no button; never guess which side
+
+  return {
+    kind: "teamTotal",
+    team,
+    side: r.side === "YES" ? "over" : "under",
+    line: snapHalf(r.strike),
+  };
+}
+
+/** sim_p is P(YES); orient it to the side the row actually recommends. */
+const sideProb = (r: TeamMarketRow) => (r.side === "YES" ? r.sim_p : 1 - r.sim_p);
+
+/**
+ * Executable price for the recommended side, in cents.
+ *
+ * yes_bid/yes_ask price the YES contract; a NO contract at this same strike
+ * costs 1 - the YES side's opposing price (buying NO = selling YES), so the
+ * NO side's bid/ask are the complements taken in the opposite order.
+ */
+function sidePriceCents(r: TeamMarketRow): { bid: number; ask: number } {
+  if (r.side === "YES") return { bid: Math.round(r.yes_bid * 100), ask: Math.round(r.yes_ask * 100) };
+  return { bid: Math.round((1 - r.yes_ask) * 100), ask: Math.round((1 - r.yes_bid) * 100) };
 }
 
 /** Small "+" quick-add, right-aligned, from the shared .ui-btn family. */
@@ -234,9 +293,118 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
   );
 }
 
+/* ---------------------------- team-market rows ---------------------------- */
+/** Human tooltip text for the toolkit's flags — the same three every row on
+ *  this table can carry, so spelling them out once beats repeating a title
+ *  string per flag per row. */
+const TEAM_MKT_FLAG_TITLE: Record<string, string> = {
+  THIN: "thin book — wide bid/ask, the binding filter at 10k sims",
+  TAIL: "tail strike — far from the median, priced but low-volume",
+  NOISE: "edge is within the sim's own noise band at this sample size",
+};
+
+/** Human names for the Kalshi series tickers. An unknown new family — Kalshi
+ *  is still adding them — falls back to the ticker minus the exchange prefix,
+ *  so nothing the toolkit starts pricing later renders blank here. */
+const SERIES_LABEL: Record<string, string> = {
+  KXNCAAFTEAMTOTAL: "Team total",
+  KXNCAAF1H: "1H winner",
+  KXNCAAF1HWINNER: "1H winner",
+  KXNCAAF1HSPREAD: "1H spread",
+  KXNCAAF1HTOTAL: "1H total",
+  KXNCAAF1HFT: "Half/full",
+  KXNCAAF2H: "2H winner",
+  KXNCAAF2HSPREAD: "2H spread",
+  KXNCAAF2HTOTAL: "2H total",
+  KXNCAAFOT: "Overtime",
+};
+const seriesLabel = (s: string) => SERIES_LABEL[s] ?? s.replace(/^KXNCAAF/, "");
+
+/** Chip order: team totals first (the one family the parlay slip can add),
+ *  then game-clock order 1H → half/full → 2H → OT; families the map doesn't
+ *  know yet follow, A–Z. */
+const SERIES_ORDER = Object.keys(SERIES_LABEL);
+function orderedSeries(present: Iterable<string>): string[] {
+  const set = new Set(present);
+  const known = SERIES_ORDER.filter((s) => set.has(s));
+  const unknown = [...set].filter((s) => !SERIES_ORDER.includes(s)).sort();
+  return [...known, ...unknown];
+}
+
+function TeamMktRow({ r, teamA, teamB, rank, onPick, onAddLeg }: {
+  r: TeamMarketRow; teamA: string; teamB: string; rank: number;
+  onPick: (slug: string) => void;
+  onAddLeg: (slug: string, spec: LegSpec) => void;
+}) {
+  const spec = legSpecForTeamMarketRow(r, teamA, teamB);
+  const p = sideProb(r);
+  const { bid, ask } = sidePriceCents(r);
+  return (
+    <div
+      className="edge-row" role="button" tabIndex={0}
+      onClick={() => onPick(r.slug)}
+      onKeyDown={(ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onPick(r.slug); }
+      }}
+      title={`Go to ${teamB} @ ${teamA}`}
+    >
+      <span className="edge-row__rank">{rank}</span>
+      <Logos teams={[teamB, teamA]} />
+      <span className="edge-row__main">
+        {/* Full-sentence Kalshi title gets two lines; the flags live on the
+            meta row below so an ellipsis can never swallow a THIN warning. */}
+        <span className="edge-row__t1 edge-row__t1--wrap">{r.title}</span>
+        <span className="edge-row__t2">
+          <span className="division-badge">{r.side}</span>
+          {r.flags.map((f) => (
+            <span key={f} className="edge-flag" title={TEAM_MKT_FLAG_TITLE[f] ?? f}>{f}</span>
+          ))}
+          {shortTeam(teamB)} @ {shortTeam(teamA)}
+        </span>
+      </span>
+      <span className="edge-row__num">
+        <b>{pctText(p)}</b><i>{americanOdds(p)}</i>
+      </span>
+      <span className="edge-row__num">
+        <b>{ask}¢</b><i>bid {bid}¢</i>
+      </span>
+      <EdgePill edge={r.ev_fee} />
+      {spec
+        ? <AddLegButton label={r.title} onAdd={() => onAddLeg(r.slug, spec)} />
+        : <span aria-hidden />}
+    </div>
+  );
+}
+
 export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: Props) {
   const games = useMemo(() => (scan ? rankEdges(scan.byGame, 10) : []), [scan]);
   const props = useMemo(() => (scan ? rankProps(scan.props, 10) : []), [scan]);
+  /** Market-family filter for the team-markets column: null = all families,
+   *  otherwise one series ticker. A selection the current scan no longer
+   *  carries (week change) falls back to All by derivation — no state write
+   *  during render, nothing for an effect to chase. */
+  const [teamSeriesRaw, setTeamSeriesRaw] = useState<string | null>(null);
+  const seriesChips = useMemo(
+    () => (scan ? orderedSeries(scan.teamMarkets.map((r) => r.series)) : []),
+    [scan]
+  );
+  const teamSeries = teamSeriesRaw !== null && seriesChips.includes(teamSeriesRaw)
+    ? teamSeriesRaw : null;
+
+  /** Ranked rows joined to their matchup via slug (same join every other
+   *  table uses against the week index). A row whose slug is not in byGame —
+   *  should not happen once a week is fully published, but never render an
+   *  "undefined @ undefined" if it somehow does — is dropped rather than
+   *  guessed at. */
+  const teamMkts = useMemo(() => {
+    if (!scan) return [];
+    return rankTeamMarkets(scan.teamMarkets, 10, teamSeries ?? undefined)
+      .map((r) => {
+        const g = scan.byGame.get(r.slug);
+        return g ? { r, teamA: g.teamA, teamB: g.teamB } : null;
+      })
+      .filter((x): x is { r: TeamMarketRow; teamA: string; teamB: string } => x !== null);
+  }, [scan, teamSeries]);
   const counts = useMemo(() => (scan ? pricedRowCount(scan.byGame) : null), [scan]);
 
   /** Props footer: which book, how old, and whether the list came up short. */
@@ -264,6 +432,34 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
     ? `${counts.priced} of ${counts.total} game markets priced — the rest have no matching Kalshi line.`
     : null;
 
+  /** Team-markets footer: source note, staleness, and how many the toolkit
+   *  withheld outright (book too thin to price at all). */
+  const teamMktsFooter = useMemo(() => {
+    if (!scan) return null;
+    if (scan.teamMarketsStatus === "missing") return "Team markets not published for this week yet.";
+    if (scan.teamMarketsStatus === "error") return "Team markets unavailable right now.";
+
+    const when = scan.teamMarketsUpdated
+      ? new Date(scan.teamMarketsUpdated).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      : null;
+    const age = hoursSince(scan.teamMarketsUpdated);
+    const parts: string[] = [];
+
+    parts.push(`Kalshi${when ? `, as of ${when}` : ""}`);
+    if (age !== null && age > 36) parts.push("(stale)");
+    if (scan.teamMarketsWithheld > 0) {
+      parts.push(`${scan.teamMarketsWithheld} withheld (book too thin to price)`);
+    }
+    // "shown of pool" counts the family being viewed, not the whole file.
+    const pool = teamSeries
+      ? scan.teamMarkets.filter((r) => r.series === teamSeries).length
+      : scan.teamMarkets.length;
+    if (pool > teamMkts.length) {
+      parts.push(`${teamMkts.length} of ${pool}${teamSeries ? ` ${seriesLabel(teamSeries)}` : ""} shown`);
+    }
+    return parts.join(" · ") || null;
+  }, [scan, teamMkts.length, teamSeries]);
+
   return (
     <section className="top-edges" role="dialog" aria-label="Top edges on this slate">
       <header className="top-edges__head">
@@ -271,7 +467,7 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
           Top edges
         </span>
         <span className="parlay-chip" style={{ fontSize: 11 }}>
-          {loading ? "computing…" : `${games.length + props.length} priced`}
+          {loading ? "computing…" : `${games.length + props.length + teamMkts.length} priced`}
         </span>
         <button type="button" className="ui-btn" onClick={onClose}
           style={{ marginLeft: "auto", padding: "4px 10px", fontSize: 12 }}>
@@ -287,6 +483,41 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
                 <GameRow key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1} onPick={onPick} onAddLeg={onAddLeg} />
               ))
             : <div className="edge-col__empty">No game-line edges could be priced.</div>}
+        </Column>
+
+        <Column title="Team & game props" count={teamMkts.length ? `${teamMkts.length}` : undefined}
+          loading={loading} footer={teamMktsFooter}>
+          {seriesChips.length > 1 && (
+            <div className="edge-serieschips" aria-label="Market family">
+              <button type="button" className="ui-btn"
+                data-on={teamSeries === null ? "true" : "false"}
+                aria-pressed={teamSeries === null}
+                onClick={() => setTeamSeriesRaw(null)}>
+                All
+              </button>
+              {seriesChips.map((s) => (
+                <button key={s} type="button" className="ui-btn"
+                  data-on={teamSeries === s ? "true" : "false"}
+                  aria-pressed={teamSeries === s}
+                  onClick={() => setTeamSeriesRaw(s)}>
+                  {seriesLabel(s)}
+                </button>
+              ))}
+            </div>
+          )}
+          {teamMkts.length
+            ? teamMkts.map(({ r, teamA, teamB }, i) => (
+                <TeamMktRow
+                  key={`${r.slug}:${r.market_ticker}`}
+                  r={r} teamA={teamA} teamB={teamB} rank={i + 1}
+                  onPick={onPick} onAddLeg={onAddLeg}
+                />
+              ))
+            : <div className="edge-col__empty">
+                {scan?.teamMarketsStatus === "missing"
+                  ? "Team markets not published for this week yet."
+                  : "No team-market edges could be priced."}
+              </div>}
         </Column>
 
         <Column title="Player props" count={props.length ? `${props.length}` : undefined}
