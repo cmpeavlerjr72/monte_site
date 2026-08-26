@@ -14,6 +14,30 @@ Data lives on HuggingFace datasets, fetched at runtime through
 `/api/data/<repo>/<path>` (allowlists in liveScores.ts) with a direct-Hub
 fallback. NOTHING bundles data into the frontend.
 
+## Divisions (FBS + FCS)
+
+FCS is a **separate dataset with an identical layout**, addressed by the
+namespace `fcs-<year>` (repo `cfb-sims-fcs-2026`, root dir `fcs-2026`). The
+fetch layer needed no changes: `Season` is a string NAMESPACE, so
+`repoForSeason`/`dataUrl`/`getJsonWeek*` all resolve from it.
+
+- FCS is **not a season**. It is never in `SEASONS` (that array feeds the
+  season picker AND `resolveLatestSeason`). Division is its own axis and
+  travels with each CARD (`CardGame.ns` / `.division`).
+- Every per-card fetch uses **`card.ns`, not the page's `season`** — a merged
+  "Both" slate holds cards from two datasets at once.
+- FCS card keys are prefixed (`fcs:<slug>`); FBS keeps the bare slug so
+  slug-keyed joins (props_odds.json) are untouched. The Kalshi map is re-keyed
+  to match. Nothing promises the two slug spaces are disjoint.
+- FCS is game-level only: `has_players:false`, no players/props files. UI
+  branches on the FLAG, not on the 404.
+- A missing FCS week/dataset is the EXPECTED pre-publish state → quiet empty
+  state, never `setWeekError`. "Both" degrades to FBS-only.
+- Kalshi joins by normalized team-name pair via `server/cfbNames.ts` (pure, so
+  it is unit-checked). Kalshi's "Youngstown St." already matched our
+  "Youngstown State" via the existing `\bst\.?\b` rule. Parentheticals are
+  deliberately NOT stripped — that would merge "Miami (OH)" into "Miami".
+
 ## Data contracts (HF: mvpeav/cfb-sims-2026, mirrored shape for 2025)
 
 `<season>/season_index.json` → weeks list. Per week `weeks/weekNN/`:
@@ -55,9 +79,16 @@ fallback. NOTHING bundles data into the frontend.
 ## Gates for every change
 
 `npx tsc` (app AND server if touched) · `npm run build` ·
-`node scripts/check_render_loops.mjs` · SSR words-screenshot for UI
+`node scripts/check_render_loops.mjs` (effects/memos) ·
+`node scripts/check_fcs_names.mjs` (server/cfbNames.ts or team_info.csv;
+needs a fresh server/dist) · `node scripts/check_fcs_slate.mjs` (FCS wiring,
+namespaces, empty states, logo assets) · SSR words-screenshot for UI
 changes · no hardcoded colors · report ≤300 words + gate table unless
 findings warrant more.
+
+The two `check_fcs_*` scripts run the SHIPPED code (compiled server module /
+the real `.ts` loaders under node's type stripping) against fixtures, so they
+fail if you skip the `server/` dist rebuild.
 
 ## Token discipline (mandatory)
 

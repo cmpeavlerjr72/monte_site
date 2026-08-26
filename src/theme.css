@@ -322,6 +322,26 @@ input:focus, select:focus, textarea:focus {
   .parlay-slip__head { border-radius: 12px 12px 0 0; }
 }
 
+/* Division tag (FCS). Token-only so it reads in both themes; deliberately
+   quiet — it is a qualifier on a card, not a status. Only non-FBS games are
+   badged, so the default slate looks exactly as it did. */
+.division-badge {
+  display: inline-block;
+  padding: 0 4px;
+  margin-right: 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  line-height: 1.5;
+  text-transform: uppercase;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
 .parlay-chip {
   padding: 1px 7px;
   border-radius: 999px;

@@ -10,9 +10,23 @@ export function espnLogoDarkUrl(espnId: string | number | null | undefined): str
   return `/logos/${espnId}-dark.webp`;
 }
 
-// Rewrite a baked-in ESPN CDN logo URL (e.g. from team_info.csv) to its local
+// Rewrite a baked-in CDN logo URL (e.g. from team_info.csv) to its local
 // copy. Anything we don't recognize is returned unchanged, upgraded to https.
 const ESPN_LOGO_RE = /teamlogos\/ncaa\/(500(?:-dark)?)\/(\d+)\.png/i;
+
+/**
+ * CollegeFootballData's mirror of the same ESPN team ids.
+ *
+ *   .../logos/500/2000.png        -> /logos/2000.webp
+ *   .../logos-dark/500/2000.png   -> /logos/2000-dark.webp
+ *
+ * The FCS rows in team_info.csv carry this host EXCLUSIVELY (the FBS rows are
+ * ESPN URLs), and they list every size from 500 down to 16. Without this
+ * branch every FCS logo fell through to the remote URL below: the self-hosted
+ * copies in public/logos would never be used, which defeats the reason they
+ * exist — the page has to render on networks that block the CDNs.
+ */
+const CFBD_LOGO_RE = /collegefootballdata\.com\/logos(-dark)?\/\d+\/(\d+)\.png/i;
 
 export function localizeLogoUrl(url?: string): string | undefined {
   if (!url) return undefined;
@@ -20,6 +34,8 @@ export function localizeLogoUrl(url?: string): string | undefined {
   if (!s) return undefined;
   const m = s.match(ESPN_LOGO_RE);
   if (m) return `/logos/${m[2]}${m[1].toLowerCase() === "500-dark" ? "-dark" : ""}.webp`;
+  const c = s.match(CFBD_LOGO_RE);
+  if (c) return `/logos/${c[2]}${c[1] ? "-dark" : ""}.webp`;
   if (s.startsWith("//")) s = "https:" + s;
   if (s.startsWith("http://")) s = "https://" + s.slice(7);
   return s;

@@ -104,6 +104,13 @@ function Logos({ teams, size = 18 }: { teams: string[]; size?: number }) {
 
 const shortTeam = (s: string) => (s.length > 13 ? `${s.slice(0, 12)}…` : s);
 
+/** Marks an FCS row on a merged ranking. FBS rows stay unbadged — the default
+ *  slate should not grow a label just because a second division exists. */
+function DivisionTag({ division }: { division?: string }) {
+  if (division !== "fcs") return null;
+  return <span className="division-badge" data-division="fcs">FCS</span>;
+}
+
 function EdgePill({ edge }: { edge: number }) {
   return (
     <span className="top-edges__edge" data-sign={edge >= 0 ? "pos" : "neg"}>
@@ -161,6 +168,7 @@ function GameRow({ e, rank, onPick, onAddLeg }: {
       <span className="edge-row__main">
         <span className="edge-row__t1">{e.row.market}</span>
         <span className="edge-row__t2">
+          <DivisionTag division={e.division} />
           {shortTeam(e.teamB)} @ {shortTeam(e.teamA)}
           {e.row.approxNote ? ` · ${e.row.approxNote}` : ""}
         </span>

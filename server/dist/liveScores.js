@@ -6,6 +6,9 @@ import AbortController from "abort-controller";
 import compression from "compression";
 import path from "path";
 import { fileURLToPath } from "url";
+// Pure, so scripts/check_fcs_names.mjs can verify the Kalshi join against the
+// real FBS + FCS school lists without booting this server.
+import { cfbNameKey, pairKeyOf } from "./cfbNames.js";
 const app = express();
 app.use(cors());
 app.use(compression());
@@ -638,6 +641,10 @@ const HF_LIVE_REPOS = new Set([
     // 2026 CFB sims: in-season, re-uploaded weekly -> live set (5-min TTL).
     // 2025 stays in HF_ARCHIVE_REPOS above and is cached forever.
     "cfb-sims-2026",
+    // FCS 2026 sims: separate public dataset, root dir "fcs-2026". The client
+    // passes the namespace "fcs-2026" wherever a season goes, which makes
+    // repoForSeason() produce this name — no other fetch-layer change needed.
+    "cfb-sims-fcs-2026",
     "cfb-playoff-compacts-2026",
     "cbb-sims-2026",
     "mlb-sims-2026",
@@ -756,35 +763,10 @@ app.get("/api/data/:repo/*", asyncRoute(async (req, res) => {
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 const KALSHI_GAME_SERIES = "KXNCAAFGAME";
 const KALSHI_TTL_MS = 45_000;
-/**
- * Team-name key shared with the client's nameKey, plus the two normalizations
- * Kalshi's naming forces: accent folding ("San José State") and the trailing
- * "St."/"St" abbreviation ("Florida St." -> "Florida State").
- */
-function cfbNameKey(s) {
-    const base = String(s || "")
-        .normalize("NFD")
-        .replace(/[̀-ͯ]/g, "") // José -> Jose
-        .toLowerCase()
-        .replace(/&/g, " and ")
-        .replace(/\bst\.?\b/g, " state ") // trailing "St."; \b keeps Stanford safe
-        .replace(/\buniversity\b/g, " ")
-        .replace(/[^a-z0-9]+/g, "");
-    return KALSHI_TEAM_ALIASES[base] ?? base;
-}
-/** Canonical forms where Kalshi and the sim disagree on the school's name. */
-const KALSHI_TEAM_ALIASES = {
-    ncstate: "northcarolinastate",
-    nc: "northcarolina",
-    southerncal: "usc",
-    southerncalifornia: "usc",
-    hawaii: "hawaii",
-    miamifl: "miami",
-    miamiflorida: "miami",
-    louisianalafayette: "louisiana",
-    texasam: "texasandm",
-};
-const pairKeyOf = (a, b) => [cfbNameKey(a), cfbNameKey(b)].sort().join("__");
+// cfbNameKey / KALSHI_TEAM_ALIASES / pairKeyOf now live in ./cfbNames.ts —
+// pure and unit-checkable (scripts/check_fcs_names.mjs), because the FCS slate
+// joins to Kalshi through exactly this normalization and a collision there
+// would price the wrong game.
 const MONTH3 = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 /** "2026-08-29" -> "26AUG29", matching Kalshi's event-ticker date segment. */
 function kalshiDateToken(isoDate) {
@@ -908,6 +890,9 @@ async function kalshiMarketsBySeries(series) {
 }
 /** Our slate for a season/week, straight from the dataset week index. */
 async function ourWeekGames(season, week) {
+    // `season` is a dataset NAMESPACE, not necessarily a year: "2026" -> repo
+    // cfb-sims-2026 / root dir 2026, "fcs-2026" -> cfb-sims-fcs-2026 / fcs-2026.
+    // Both layouts are identical below this line.
     const repo = `cfb-sims-${season}`;
     if (!HF_ARCHIVE_REPOS.has(repo) && !HF_LIVE_REPOS.has(repo))
         return [];
@@ -1051,7 +1036,13 @@ async function buildKalshiCfb(season, week) {
 const KALSHI_CACHE = new Map();
 const KALSHI_INFLIGHT = new Map();
 app.get("/api/kalshi/cfb", asyncRoute(async (req, res) => {
-    const season = /^\d{4}$/.test(String(req.query.season || "")) ? String(req.query.season) : "2026";
+    // "2026" or the FCS namespace "fcs-2026". Accepting only \d{4} here used
+    // to be a silent trap: an fcs-2026 request fell back to "2026" and came
+    // back with the FBS slate's prices keyed by FBS slugs, which the client
+    // would then have shown against FCS games.
+    const season = /^(?:fcs-)?\d{4}$/.test(String(req.query.season || ""))
+        ? String(req.query.season)
+        : "2026";
     const week = /^week\d{2}$/.test(String(req.query.week || "")) ? String(req.query.week) : "week00";
     const key = `${season}:${week}`;
     res.set("Cache-Control", "public, max-age=45");

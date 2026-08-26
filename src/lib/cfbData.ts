@@ -17,12 +17,53 @@
 // defaults to DEFAULT_SEASON, so pages that have not been season-aware'd yet
 // keep their existing behavior unchanged.
 
-/** Seasons the UI offers, newest first. */
+/**
+ * Seasons the UI offers, newest first.
+ *
+ * FBS ONLY, deliberately. This array feeds the season picker AND
+ * resolveLatestSeason(), so adding the FCS namespace here would put
+ * "fcs-2026" in the dropdown and let a cold load land the whole page on the
+ * FCS dataset. FCS is a DIVISION, not a season — see `namespaceFor` below.
+ */
 export const SEASONS = ["2026", "2025"] as const;
+
+/**
+ * A dataset namespace, not necessarily a year.
+ *
+ * Every fetch in this file keys off it: repoForSeason("fcs-2026") is
+ * cfb-sims-fcs-2026 and the root directory is "fcs-2026", which is exactly
+ * how the FCS dataset is laid out. That is why the FCS slate needed zero
+ * changes below this point.
+ */
 export type Season = string;
 
 /** What an un-parameterized getCatalog() call resolves to. */
 export const DEFAULT_SEASON: Season = "2025";
+
+/* --------------------------------- division -------------------------------
+ * FBS and FCS are published as two separate datasets with an identical
+ * layout. The scoreboard can show either or both, so the division travels
+ * with each GAME (a merged "Both" slate holds cards from both namespaces),
+ * never as a second page-level season.
+ * ------------------------------------------------------------------------ */
+
+/** What the scoreboard's division selector can be set to. */
+export type DivisionFilter = "fbs" | "fcs" | "both";
+
+/** Which dataset a single game came from. */
+export type Division = "fbs" | "fcs";
+
+/** Seasons for which an FCS dataset exists. Kept apart from SEASONS. */
+export const FCS_SEASONS: readonly string[] = ["2026"];
+
+/** Dataset namespace for a division + season year. */
+export function namespaceFor(division: Division, season: Season): Season {
+  return division === "fcs" ? `fcs-${season}` : String(season);
+}
+
+/** True when this season has an FCS dataset to offer at all. */
+export const fcsAvailableFor = (season: Season): boolean =>
+  FCS_SEASONS.includes(String(season));
 
 const repoForSeason = (season: Season) => `cfb-sims-${season}`;
 const proxyBase = (season: Season) =>
@@ -77,6 +118,21 @@ const catalogBySeason = new Map<Season, Promise<CfbCatalog>>();
 /** Week index promises, keyed "<season>/<weekId>". */
 const weekIndexCache = new Map<string, Promise<GameMeta[]>>();
 
+/**
+ * Thrown when neither origin can serve a namespace at all — which for a
+ * not-yet-published dataset (FCS before its first upload) is the EXPECTED
+ * answer, not a fault. Typed so callers can tell "not published yet" apart
+ * from a genuine network failure and stay quiet about the former.
+ */
+export class DatasetUnavailable extends Error {
+  readonly season: Season;
+  constructor(season: Season) {
+    super(`cfb ${season} dataset unreachable (proxy and hub both failed)`);
+    this.name = "DatasetUnavailable";
+    this.season = season;
+  }
+}
+
 /** Resolve which origin serves a season's dataset, preferring our own. */
 async function resolveBase(season: Season = DEFAULT_SEASON): Promise<string> {
   const memo = baseBySeason.get(season);
@@ -93,9 +149,7 @@ async function resolveBase(season: Season = DEFAULT_SEASON): Promise<string> {
       /* try the next candidate */
     }
   }
-  throw new Error(
-    `cfb ${season} dataset unreachable (proxy and hub both failed)`
-  );
+  throw new DatasetUnavailable(season);
 }
 
 export async function dataUrl(

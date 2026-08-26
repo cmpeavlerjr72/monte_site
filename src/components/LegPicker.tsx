@@ -26,6 +26,13 @@ type Props = {
   /** Book numbers for pre-fill: home-perspective spread and game total. */
   marketSpread?: number;
   marketTotal?: number;
+  /**
+   * Whether this export publishes players at all. FCS is game-level only —
+   * its seeds.json has real score columns and an empty players map — so the
+   * Player prop bet type is withheld rather than offering a picker with no
+   * names in it. Defaults to true for every existing caller.
+   */
+  hasPlayers?: boolean;
   onAdd: (leg: Leg) => void;
   onClose: () => void;
 };
@@ -46,7 +53,8 @@ function medianOf(xs: number[]): number {
 }
 
 export default function LegPicker({
-  row, season, weekId, teamA, teamB, marketSpread, marketTotal, onAdd, onClose,
+  row, season, weekId, teamA, teamB, marketSpread, marketTotal,
+  hasPlayers = true, onAdd, onClose,
 }: Props) {
   const [seeds, setSeeds] = useState<SeedsJson | null>(null);
   const [players, setPlayers] = useState<PlayersJson | null>(null);
@@ -215,7 +223,9 @@ export default function LegPicker({
         {/* bet type */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button type="button" className="ui-btn" data-on={betType === "game" ? "true" : "false"} onClick={() => { setBetType("game"); setLineTouched(false); }}>Game line</button>
-          <button type="button" className="ui-btn" data-on={betType === "prop" ? "true" : "false"} onClick={() => { setBetType("prop"); setLineTouched(false); }}>Player prop</button>
+          {hasPlayers && (
+            <button type="button" className="ui-btn" data-on={betType === "prop" ? "true" : "false"} onClick={() => { setBetType("prop"); setLineTouched(false); }}>Player prop</button>
+          )}
         </div>
 
         {/* cascade */}

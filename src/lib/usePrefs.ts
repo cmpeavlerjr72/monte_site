@@ -1,4 +1,4 @@
-// Viewer preferences: colour theme and card density.
+// Viewer preferences: colour theme, card density, and division filter.
 //
 // Both are per-viewer conveniences, so they live in localStorage — which can
 // throw outright (private windows, browsers set to block site data) rather
@@ -6,12 +6,14 @@
 // the default instead of taking the page down.
 
 import { useCallback, useEffect, useState } from "react";
+import type { DivisionFilter } from "./cfbData";
 
 export type ThemeMode = "system" | "light" | "dark";
 export type Density = "comfortable" | "condensed";
 
 const THEME_KEY = "cfb.theme";
 const DENSITY_KEY = "cfb.density";
+const DIVISION_KEY = "cfb.division";
 
 function readStored(key: string): string | null {
   try {
@@ -67,6 +69,25 @@ export function useThemeMode() {
   }, []);
 
   return { mode, resolved, setMode, cycle };
+}
+
+/**
+ * Which division(s) the scoreboard shows. Same storage discipline as the
+ * others: a blocked-storage browser silently gets the default.
+ *
+ * Defaults to "fbs" rather than "both" — a returning viewer who has never
+ * touched the control should see the slate they saw last week, and until the
+ * FCS dataset publishes "both" would look identical to "fbs" anyway.
+ */
+export function useDivisionFilter() {
+  const [division, setDivision] = useState<DivisionFilter>(() => {
+    const v = typeof window === "undefined" ? null : readStored(DIVISION_KEY);
+    return v === "fcs" || v === "both" || v === "fbs" ? v : "fbs";
+  });
+
+  useEffect(() => { writeStored(DIVISION_KEY, division); }, [division]);
+
+  return { division, setDivision };
 }
 
 export function useDensity() {

@@ -68,6 +68,16 @@ export type GameSummaryJson = {
   neutral_site?: boolean;
   /** Set on a few 2025 week-0 games where home/away could not be established. */
   orientation_assumed?: boolean;
+  /** "fbs" | "fcs". Absent on the FBS exports that predate the FCS dataset. */
+  division?: string;
+  /**
+   * Whether this export published players.json / players_dist.json at all.
+   * FCS is game-level only, so both are ABSENT there. Branching on the flag
+   * is preferred over discovering it through a 404: it lets the UI hide the
+   * player affordances before anything is fetched.
+   */
+  has_players?: boolean;
+  has_props?: boolean;
   nsims?: number;
   updated?: string;
   finalA?: number | null;
@@ -165,6 +175,11 @@ function parseSummary(raw: any): GameSummaryJson | null {
     p75_total: num(raw.p75_total),
     neutral_site: Boolean(raw.neutral_site),
     orientation_assumed: Boolean(raw.orientation_assumed),
+    division: raw.division != null ? String(raw.division) : undefined,
+    // Absent means "yes" — every FBS export published before these flags
+    // existed carries players, and must keep its player panels.
+    has_players: raw.has_players === undefined ? undefined : Boolean(raw.has_players),
+    has_props: raw.has_props === undefined ? undefined : Boolean(raw.has_props),
     nsims: num(raw.nsims ?? raw.n_sims),
     updated: raw.updated != null ? String(raw.updated) : undefined,
     finalA: num(raw.finalA) ?? null,

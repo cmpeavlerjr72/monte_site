@@ -12,7 +12,7 @@ import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 import SupportButton from "../components/SupportButton";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { Skeleton, SkeletonCard, SkeletonChart } from "../components/Skeleton";
-import { useThemeMode, useDensity, type Density } from "../lib/usePrefs";
+import { useThemeMode, useDensity, useDivisionFilter, type Density } from "../lib/usePrefs";
 import MarketEdge from "../components/MarketEdge";
 import TopEdges from "../components/TopEdges";
 import { type EdgeInput, type GameEdges } from "../lib/edges";
@@ -20,8 +20,8 @@ import { useSlateEdges } from "../lib/useSlateEdges";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
   getCatalog, playerFileForPair, resolveLatestSeason, latestWeek,
-  invalidateSeason, SEASONS,
-  type CfbCatalog, type FileItem, type Season,
+  invalidateSeason, SEASONS, namespaceFor, fcsAvailableFor,
+  type CfbCatalog, type Division, type DivisionFilter, type FileItem, type Season,
 } from "../lib/cfbData";
 import {
   getJsonWeekGames, getCompactJson,
@@ -255,7 +255,28 @@ type GameMeta = {
 type GameMetaMap = Record<string, GameMeta>;
 
 type CardGame = {
+  /**
+   * Page-wide identity: React key, DOM id (`game-<key>`), Kalshi map key and
+   * the slate scan's game key all use THIS, not row.slug.
+   *
+   * FBS keeps the bare slug so every existing join (props_odds.json is keyed
+   * by slug) keeps working untouched. FCS cards are prefixed, because the two
+   * datasets are indexed independently and nothing guarantees their slug
+   * spaces are disjoint. See fcsCardKey().
+   */
   key: string;
+  /**
+   * Dataset namespace this card's files live in ("2026", "fcs-2026"). Every
+   * per-card fetch (compact, players, seeds, box score, parlay legs) is keyed
+   * by it, which is what lets a merged slate hold cards from both datasets.
+   */
+  ns: Season;
+  division: Division;
+  /**
+   * From the export's `has_players` flag. FCS publishes game-level sims only,
+   * so player panels and prop legs are hidden rather than left to 404.
+   */
+  hasPlayers: boolean;
   teamA: string;
   teamB: string;
   medA: number;
@@ -618,6 +639,205 @@ function sortCards(
   return out;
 }
 
+/* --------------------- division helpers --------------------- */
+/**
+ * Card key for an FCS game.
+ *
+ * FBS cards keep their bare slug so every slug-keyed join in the app
+ * (props_odds.json, the edge scan, the DOM ids) is untouched by the existence
+ * of a second division. FCS gets a prefix because the two datasets are indexed
+ * independently: nothing in either contract promises the slug spaces are
+ * disjoint, and a silent React-key collision on a merged slate would render
+ * one game and drop the other.
+ */
+const fcsCardKey = (slug: string) => `fcs:${slug}`;
+
+/**
+ * Build cards from one dataset's week index + summaries.
+ *
+ * Lifted out of the page (it was an inline useMemo) so the FBS and FCS slates
+ * are built by the SAME code rather than a copy that can drift. The two
+ * contracts are identical — teamA=home, margin=home-away, home-perspective
+ * odds — which is the whole reason this needed no per-division branching
+ * beyond identity and the player flag.
+ *
+ * summary.json carries headline numbers, not per-seed rows. It publishes the
+ * per-team medians directly — which matters, because median(A) + median(B) is
+ * not median(total), so recovering points from margin+total would print a
+ * score the sim never produced (TCU/UNC: 24-17 exact vs 25-19 derived).
+ *
+ * spreadProb/totalProb are deliberately left undefined. The exact cover/over
+ * rates need the per-seed arrays in compact.json, and pulling one compact per
+ * game just to fill the card list would rebuild the ~MB-per-week fetch this
+ * layout exists to avoid. A normal approximation off p25/p75 in their place
+ * would be inventing a number the sim never produced.
+ */
+function buildJsonCards(
+  jsonGames: JsonGame[],
+  division: Division,
+  ns: Season,
+  getCardLive: (g: { teamA: string; teamB: string }) => {
+    lg?: LiveGame; inProgress: boolean;
+    aScore?: number; bScore?: number; statusText?: string;
+  }
+): CardGame[] {
+  const out: CardGame[] = [];
+
+  for (const { row, summary } of jsonGames) {
+    if (!summary) continue;
+
+    const teamA = summary.teamA || row.teamA;   // home
+    const teamB = summary.teamB || row.teamB;   // away
+
+    const margin = summary.median_margin;       // home - away
+    const total = summary.median_total;
+
+    // Exact medians when present; fall back to the margin/total pair only if
+    // an older export lacks them.
+    let medA = summary.median_A_pts;
+    let medB = summary.median_B_pts;
+    if (!Number.isFinite(medA) || !Number.isFinite(medB)) {
+      if (!Number.isFinite(margin) || !Number.isFinite(total)) continue;
+      medA = ((total as number) + (margin as number)) / 2;
+      medB = ((total as number) - (margin as number)) / 2;
+    }
+    medA = Math.round(medA as number);
+    medB = Math.round(medB as number);
+
+    const meanA = Number.isFinite(summary.mean_A_pts)
+      ? Math.round(summary.mean_A_pts as number)
+      : medA;
+    const meanB = Number.isFinite(summary.mean_B_pts)
+      ? Math.round(summary.mean_B_pts as number)
+      : medB;
+
+    const { lg, inProgress, aScore, bScore, statusText } = getCardLive({ teamA, teamB });
+
+    const { ms, label } = parseKickoffMs(row.date, undefined, row.time_utc);
+
+    // Prefer the OPEN line: bets go in early in the week, so the open is the
+    // number the pick is judged against.
+    const o = summary.odds ?? null;
+    const spread = o?.spread_open ?? o?.spread_current ?? undefined;   // home perspective
+    const totalLine = o?.over_under_open ?? o?.over_under_current ?? undefined;
+
+    let pickSpread: string | undefined;
+    if (Number.isFinite(spread)) {
+      const s = spread as number;
+      const diff = (medA + s) - medB;
+      if (Math.abs(diff) < 1e-9) pickSpread = `Push @ ${s > 0 ? `+${s}` : `${s}`}`;
+      else if (diff > 0) pickSpread = `${teamA} ${s > 0 ? `+${s}` : `${s}`}`;
+      else pickSpread = `${teamB} ${(-s) > 0 ? `+${-s}` : `${-s}`}`;
+    }
+
+    let pickTotal: string | undefined;
+    if (Number.isFinite(totalLine)) {
+      pickTotal = (medA + medB) > (totalLine as number)
+        ? `Over ${totalLine}`
+        : `Under ${totalLine}`;
+    }
+
+    // A_win_prob is P(home) and comes straight from the sim — exact, unlike
+    // the derived spread/total probabilities above.
+    let mlPickTeam: string | undefined;
+    let mlPickProb: number | undefined;
+    let mlFair: string | undefined;
+    const pA = summary.A_win_prob;
+    if (typeof pA === "number" && pA >= 0 && pA <= 1) {
+      const pickA = pA >= 0.5;
+      mlPickTeam = pickA ? teamA : teamB;
+      mlPickProb = pickA ? pA : 1 - pA;
+      mlFair = americanOdds(mlPickProb);
+    }
+
+    const fA = summary.finalA;
+    const fB = summary.finalB;
+    const hasFinals = Number.isFinite(fA) && Number.isFinite(fB);
+
+    let dispFinalA: number | undefined;
+    let dispFinalB: number | undefined;
+    let scoreSource: "CSV_FINALS" | "LIVE" | "UPCOMING" = "UPCOMING";
+    if (hasFinals) {
+      dispFinalA = fA as number;
+      dispFinalB = fB as number;
+      scoreSource = "CSV_FINALS";
+    } else if (Number.isFinite(aScore) && Number.isFinite(bScore)) {
+      dispFinalA = aScore as number;
+      dispFinalB = bScore as number;
+      scoreSource = "LIVE";
+    }
+
+    let spreadResult: "win" | "loss" | "push" | undefined;
+    let totalResult: "win" | "loss" | "push" | undefined;
+    let mlResult: "win" | "loss" | "push" | undefined;
+
+    if (hasFinals) {
+      const finA = fA as number;
+      const finB = fB as number;
+
+      if (Number.isFinite(spread)) {
+        const s = spread as number;
+        const coverA = (finA + s) > finB ? 1 : (finA + s) < finB ? -1 : 0;
+        const pickedA = ((medA + s) - medB) > 0;
+        spreadResult = coverA === 0
+          ? "push"
+          : ((coverA > 0 && pickedA) || (coverA < 0 && !pickedA)) ? "win" : "loss";
+      }
+
+      if (Number.isFinite(totalLine)) {
+        const lineT = totalLine as number;
+        const gameTotal = finA + finB;
+        const predTotal = medA + medB;
+        const actualSide = gameTotal > lineT ? "Over" : gameTotal < lineT ? "Under" : "Push";
+        const predictedSide = predTotal > lineT ? "Over" : predTotal < lineT ? "Under" : "Push";
+        totalResult = (actualSide === "Push" || predictedSide === "Push")
+          ? "push"
+          : (actualSide === predictedSide ? "win" : "loss");
+      }
+
+      if (typeof mlPickTeam === "string") {
+        if (finA === finB) mlResult = "push";
+        else mlResult = ((finA > finB ? teamA : teamB) === mlPickTeam) ? "win" : "loss";
+      }
+    }
+
+    out.push({
+      key: division === "fcs" ? fcsCardKey(row.slug) : row.slug,
+      ns,
+      division,
+      // Absent flag = a pre-flag FBS export, which does publish players.
+      hasPlayers: summary.has_players !== false,
+      teamA, teamB,
+      medA, medB,
+      meanA, meanB,
+      kickoffLabel: label,
+      kickoffMs: Number.isFinite(ms) ? ms : undefined,
+      pickSpread, pickTotal,
+      spreadProb: undefined, totalProb: undefined,
+      spreadResult, totalResult,
+      finalA: dispFinalA,
+      finalB: dispFinalB,
+      mlPickTeam, mlPickProb, mlFair, mlResult,
+      scoreSource,
+      liveInProgress: inProgress,
+      liveStatusText: statusText ?? lg?.statusText,
+      liveA: aScore,
+      liveB: bScore,
+      jsonRow: row,
+      pHome: typeof pA === "number" ? pA : undefined,
+      nsims: summary.nsims,
+      oddsSpread: Number.isFinite(spread) ? (spread as number) : undefined,
+      oddsTotal: Number.isFinite(totalLine) ? (totalLine as number) : undefined,
+      simMedMargin: Number.isFinite(margin) ? (margin as number) : undefined,
+      simMedTotal: Number.isFinite(total) ? (total as number) : undefined,
+      simMeanMargin: summary.mean_margin,
+      simMeanTotal: summary.mean_total,
+    });
+  }
+
+  return out;
+}
+
 /* --------------------- URL deep links (?season= / ?week=) --------------------- */
 // Read once at module load, same pattern GameCenter.tsx uses. An explicit deep
 // link beats the "latest season / latest week" default, but only on first
@@ -958,11 +1178,74 @@ function ScoreboardPage() {
     return () => { alive = false; ac.abort(); };
   }, [season, selectedWeek, weekOptions, scoreFileByWeek, gamesFileByWeek]);
 
-  /* ---- Viewer preferences (item 10 + 13). Both persist in localStorage,
+  /* ---- Viewer preferences (item 10 + 13). All persist in localStorage,
    * guarded inside usePrefs so a blocked-storage browser just gets defaults. */
   const { resolved: themeResolved, cycle: cycleTheme, mode: themeMode } = useThemeMode();
   const { density, toggle: toggleDensity } = useDensity();
   const condensed = density === "condensed";
+  const { division, setDivision } = useDivisionFilter();
+
+  /* ================================ FCS =====================================
+   * FCS ships as a separate dataset with an identical layout, addressed by the
+   * namespace "fcs-<year>". Three deliberate choices:
+   *
+   *  1. It is NOT a season. Putting "fcs-2026" in SEASONS would place it in
+   *     the season dropdown and let a cold load resolve the whole page onto
+   *     it. Division is its own axis, and it travels with each CARD.
+   *  2. It reuses the FBS week list. The two exports publish the same week
+   *     numbers, so a second season_index fetch would only add a way to fail;
+   *     a week the FCS export has not reached simply comes back empty.
+   *  3. A missing FCS dataset is EXPECTED, not an error. Until the first
+   *     upload every fetch here 404s, and that has to read as a quiet empty
+   *     state — never the red banner, and never a broken "Both" view.
+   * ========================================================================= */
+  /**
+   * Whether this season offers FCS at all. It gates the selector too, so a
+   * viewer whose stored preference is "fcs" can land on a season that has no
+   * FCS dataset with no control on screen to get back — hence showFbs falls
+   * back to true here rather than leaving an empty, unrecoverable slate.
+   */
+  const fcsOffered = fcsAvailableFor(season);
+  const showFcs = fcsOffered && division !== "fbs";
+  const showFbs = !fcsOffered || division !== "fcs";
+  /** Namespace for this season's FCS dataset ("fcs-2026"). */
+  const fcsNs = useMemo(() => namespaceFor("fcs", season), [season]);
+
+  const [fcsGames, setFcsGames] = useState<JsonGame[]>([]);
+  /** "published" only once rows actually arrive; anything else renders quietly. */
+  const [fcsStatus, setFcsStatus] = useState<"idle" | "loading" | "published" | "unpublished">("idle");
+
+  useEffect(() => {
+    if (!showFcs || !season || !selectedWeek) {
+      setFcsGames([]);
+      setFcsStatus("idle");
+      return;
+    }
+
+    const id = weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
+    const ac = new AbortController();
+    let alive = true;
+    setFcsStatus("loading");
+
+    (async () => {
+      try {
+        const rows = await getJsonWeekGames(id, fcsNs, ac.signal);
+        if (!alive) return;
+        setFcsGames(rows ?? []);
+        setFcsStatus(rows?.length ? "published" : "unpublished");
+      } catch (e: any) {
+        if (e?.name === "AbortError" || !alive) return;
+        // Deliberately swallowed: a 404 (or a whole missing dataset) is the
+        // pre-publish state. It must never set weekError — that banner would
+        // claim the FBS slate is broken, and in "Both" it would hide a
+        // perfectly good FBS week behind an FCS non-event.
+        setFcsGames([]);
+        setFcsStatus("unpublished");
+      }
+    })();
+
+    return () => { alive = false; ac.abort(); };
+  }, [showFcs, season, fcsNs, selectedWeek, weekOptions]);
 
   /* ---- Expanded panel. Lifted out of the card so the panel can render as a
    * separate full-width grid item: a card must never change size because
@@ -1035,7 +1318,7 @@ function ScoreboardPage() {
   const [kalshiStamp, setKalshiStamp] = useState("");
 
   useEffect(() => {
-    if (!season || !selectedWeek) { setKalshiBySlug(new Map()); return; }
+    if (!season || !selectedWeek) { setKalshiBySlug(new Map()); setKalshiStamp(""); return; }
     const weekId =
       weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
 
@@ -1043,18 +1326,35 @@ function ScoreboardPage() {
     let alive = true;
     (async () => {
       try {
-        const payload = await getKalshiCfb(season, weekId, ac.signal);
-        if (alive) {
-          setKalshiBySlug(indexKalshiBySlug(payload));
-          setKalshiStamp(`${payload.updated}|${payload.games.length}`);
-        }
+        // One request per namespace the slate is showing. The server matches
+        // Kalshi events to whichever dataset it is asked about, so the FCS
+        // call needs no client-side name handling — see server/cfbNames.ts.
+        const [fbsPayload, fcsPayload] = await Promise.all([
+          showFbs ? getKalshiCfb(season, weekId, ac.signal) : null,
+          showFcs ? getKalshiCfb(fcsNs, weekId, ac.signal) : null,
+        ]);
+        if (!alive) return;
+
+        // Merged under the CARD keys, which is what every consumer looks up
+        // with. FCS entries are re-keyed to match their prefixed cards.
+        const merged = new Map<string, KalshiGame>();
+        if (fbsPayload) for (const [k, v] of indexKalshiBySlug(fbsPayload)) merged.set(k, v);
+        if (fcsPayload) for (const [k, v] of indexKalshiBySlug(fcsPayload)) merged.set(fcsCardKey(k), v);
+
+        setKalshiBySlug(merged);
+        // Primitive stamp for the scan signature — must move whenever either
+        // feed does, or a refreshed FCS payload would not retrigger the scan.
+        setKalshiStamp(
+          `${fbsPayload?.updated ?? ""}|${fbsPayload?.games.length ?? 0}` +
+          `#${fcsPayload?.updated ?? ""}|${fcsPayload?.games.length ?? 0}`
+        );
       } catch (e: any) {
         if (e?.name === "AbortError") return;
         if (alive) { setKalshiBySlug(new Map()); setKalshiStamp(""); }
       }
     })();
     return () => { alive = false; ac.abort(); };
-  }, [season, selectedWeek, weekOptions]);
+  }, [season, selectedWeek, weekOptions, showFbs, showFcs, fcsNs]);
 
   /* ---------- cards, CSV seasons (join per-seed sims with meta, compute picks) ---------- */
   const cards2025: CardGame[] = useMemo(() => {
@@ -1296,6 +1596,11 @@ function ScoreboardPage() {
 
       out.push({
         key,
+        // Legacy CSV seasons are FBS-only and predate the division split; they
+        // read from the page's own season namespace.
+        ns: season,
+        division: "fbs",
+        hasPlayers: true,
         teamA: g.teamA,
         teamB: g.teamB,
         medA, medB,
@@ -1320,182 +1625,40 @@ function ScoreboardPage() {
     }
 
     return out;
-  }, [games, meta, getCardLive, selectedWeek]);
+  }, [games, meta, getCardLive, selectedWeek, season]);
 
-  /* ---------- cards, JSON seasons (one summary.json per game) ----------
+  /* ---------- cards, JSON datasets (one summary.json per game) ----------
    *
-   * summary.json carries headline numbers, not per-seed rows. It publishes the
-   * per-team medians directly — which matters, because median(A) + median(B)
-   * is not median(total), so recovering points from margin+total would print
-   * a score the sim never produced (TCU/UNC: 24-17 exact vs 25-19 derived).
-   *
-   * spreadProb/totalProb are deliberately left undefined. The exact cover/over
-   * rates need the per-seed arrays in compact.json, and pulling one compact per
-   * game just to fill the card list would rebuild the ~MB-per-week fetch this
-   * layout exists to avoid. A normal approximation off p25/p75 in their place
-   * would be inventing a number the sim never produced.
+   * One call per dataset, same builder. FBS and FCS publish an identical
+   * contract, so the only thing that differs is which namespace the files
+   * come from and the card identity (see buildJsonCards / fcsCardKey).
    */
-  const cardsJson: CardGame[] = useMemo(() => {
-    const out: CardGame[] = [];
-
-    for (const { row, summary } of jsonGames) {
-      if (!summary) continue;
-
-      const teamA = summary.teamA || row.teamA;   // home
-      const teamB = summary.teamB || row.teamB;   // away
-
-      const margin = summary.median_margin;       // home - away
-      const total = summary.median_total;
-
-      // Exact medians when present; fall back to the margin/total pair only if
-      // an older export lacks them.
-      let medA = summary.median_A_pts;
-      let medB = summary.median_B_pts;
-      if (!Number.isFinite(medA) || !Number.isFinite(medB)) {
-        if (!Number.isFinite(margin) || !Number.isFinite(total)) continue;
-        medA = ((total as number) + (margin as number)) / 2;
-        medB = ((total as number) - (margin as number)) / 2;
-      }
-      medA = Math.round(medA as number);
-      medB = Math.round(medB as number);
-
-      const meanA = Number.isFinite(summary.mean_A_pts)
-        ? Math.round(summary.mean_A_pts as number)
-        : medA;
-      const meanB = Number.isFinite(summary.mean_B_pts)
-        ? Math.round(summary.mean_B_pts as number)
-        : medB;
-
-      const { lg, inProgress, aScore, bScore, statusText } = getCardLive({ teamA, teamB });
-
-      const { ms, label } = parseKickoffMs(row.date, undefined, row.time_utc);
-
-      // Prefer the OPEN line: bets go in early in the week, so the open is the
-      // number the pick is judged against.
-      const o = summary.odds ?? null;
-      const spread = o?.spread_open ?? o?.spread_current ?? undefined;   // home perspective
-      const totalLine = o?.over_under_open ?? o?.over_under_current ?? undefined;
-
-      let pickSpread: string | undefined;
-      if (Number.isFinite(spread)) {
-        const s = spread as number;
-        const diff = (medA + s) - medB;
-        if (Math.abs(diff) < 1e-9) pickSpread = `Push @ ${s > 0 ? `+${s}` : `${s}`}`;
-        else if (diff > 0) pickSpread = `${teamA} ${s > 0 ? `+${s}` : `${s}`}`;
-        else pickSpread = `${teamB} ${(-s) > 0 ? `+${-s}` : `${-s}`}`;
-      }
-
-      let pickTotal: string | undefined;
-      if (Number.isFinite(totalLine)) {
-        pickTotal = (medA + medB) > (totalLine as number)
-          ? `Over ${totalLine}`
-          : `Under ${totalLine}`;
-      }
-
-      // A_win_prob is P(home) and comes straight from the sim — exact, unlike
-      // the derived spread/total probabilities above.
-      let mlPickTeam: string | undefined;
-      let mlPickProb: number | undefined;
-      let mlFair: string | undefined;
-      const pA = summary.A_win_prob;
-      if (typeof pA === "number" && pA >= 0 && pA <= 1) {
-        const pickA = pA >= 0.5;
-        mlPickTeam = pickA ? teamA : teamB;
-        mlPickProb = pickA ? pA : 1 - pA;
-        mlFair = americanOdds(mlPickProb);
-      }
-
-      const fA = summary.finalA;
-      const fB = summary.finalB;
-      const hasFinals = Number.isFinite(fA) && Number.isFinite(fB);
-
-      let dispFinalA: number | undefined;
-      let dispFinalB: number | undefined;
-      let scoreSource: "CSV_FINALS" | "LIVE" | "UPCOMING" = "UPCOMING";
-      if (hasFinals) {
-        dispFinalA = fA as number;
-        dispFinalB = fB as number;
-        scoreSource = "CSV_FINALS";
-      } else if (Number.isFinite(aScore) && Number.isFinite(bScore)) {
-        dispFinalA = aScore as number;
-        dispFinalB = bScore as number;
-        scoreSource = "LIVE";
-      }
-
-      let spreadResult: "win" | "loss" | "push" | undefined;
-      let totalResult: "win" | "loss" | "push" | undefined;
-      let mlResult: "win" | "loss" | "push" | undefined;
-
-      if (hasFinals) {
-        const finA = fA as number;
-        const finB = fB as number;
-
-        if (Number.isFinite(spread)) {
-          const s = spread as number;
-          const coverA = (finA + s) > finB ? 1 : (finA + s) < finB ? -1 : 0;
-          const pickedA = ((medA + s) - medB) > 0;
-          spreadResult = coverA === 0
-            ? "push"
-            : ((coverA > 0 && pickedA) || (coverA < 0 && !pickedA)) ? "win" : "loss";
-        }
-
-        if (Number.isFinite(totalLine)) {
-          const lineT = totalLine as number;
-          const gameTotal = finA + finB;
-          const predTotal = medA + medB;
-          const actualSide = gameTotal > lineT ? "Over" : gameTotal < lineT ? "Under" : "Push";
-          const predictedSide = predTotal > lineT ? "Over" : predTotal < lineT ? "Under" : "Push";
-          totalResult = (actualSide === "Push" || predictedSide === "Push")
-            ? "push"
-            : (actualSide === predictedSide ? "win" : "loss");
-        }
-
-        if (typeof mlPickTeam === "string") {
-          if (finA === finB) mlResult = "push";
-          else mlResult = ((finA > finB ? teamA : teamB) === mlPickTeam) ? "win" : "loss";
-        }
-      }
-
-      out.push({
-        key: row.slug,
-        teamA, teamB,
-        medA, medB,
-        meanA, meanB,
-        kickoffLabel: label,
-        kickoffMs: Number.isFinite(ms) ? ms : undefined,
-        pickSpread, pickTotal,
-        spreadProb: undefined, totalProb: undefined,
-        spreadResult, totalResult,
-        finalA: dispFinalA,
-        finalB: dispFinalB,
-        mlPickTeam, mlPickProb, mlFair, mlResult,
-        scoreSource,
-        liveInProgress: inProgress,
-        liveStatusText: statusText ?? lg?.statusText,
-        liveA: aScore,
-        liveB: bScore,
-        jsonRow: row,
-        pHome: typeof pA === "number" ? pA : undefined,
-        nsims: summary.nsims,
-        oddsSpread: Number.isFinite(spread) ? (spread as number) : undefined,
-        oddsTotal: Number.isFinite(totalLine) ? (totalLine as number) : undefined,
-        simMedMargin: Number.isFinite(margin) ? (margin as number) : undefined,
-        simMedTotal: Number.isFinite(total) ? (total as number) : undefined,
-        simMeanMargin: summary.mean_margin,
-        simMeanTotal: summary.mean_total,
-      });
-    }
-
-    return out;
-  }, [jsonGames, getCardLive]);
-
-  // Whichever path produced rows for this week. Both cannot be populated at
-  // once: the loader clears one before filling the other.
-  /** Unsorted slate. The scan reads THIS; only the display list is sorted. */
-  const baseCards = useMemo(
-    () => (cardsJson.length ? cardsJson : cards2025),
-    [cardsJson, cards2025]
+  const cardsJson: CardGame[] = useMemo(
+    () => buildJsonCards(jsonGames, "fbs", season, getCardLive),
+    [jsonGames, season, getCardLive]
   );
+
+  const cardsFcs: CardGame[] = useMemo(
+    () => buildJsonCards(fcsGames, "fcs", fcsNs, getCardLive),
+    [fcsGames, fcsNs, getCardLive]
+  );
+
+  /**
+   * Unsorted slate. The scan reads THIS; only the display list is sorted.
+   *
+   * FBS half: whichever path produced rows for this week. Both cannot be
+   * populated at once — the loader clears one before filling the other.
+   *
+   * FCS half is simply concatenated. "Both" is a MERGE, not a second list, so
+   * every downstream feature (sort, conference filter, edge scan, Top Edges
+   * ranking, parlay slip) treats the two divisions as one slate for free. When
+   * FCS is unpublished cardsFcs is empty and "Both" degrades to exactly the
+   * FBS view, with no branch anywhere to keep in sync.
+   */
+  const baseCards = useMemo(() => {
+    const fbsCards = showFbs ? (cardsJson.length ? cardsJson : cards2025) : [];
+    return showFcs ? [...fbsCards, ...cardsFcs] : fbsCards;
+  }, [showFbs, showFcs, cardsJson, cards2025, cardsFcs]);
 
   /**
    * Quick-add a leg straight from a Top Edges row: build the Leg exactly the
@@ -1512,7 +1675,10 @@ function ScoreboardPage() {
     setLegs((prev) => {
       if (prev.some((l) => l.id === id)) return prev; // dedupe: no-op
       const leg: Leg = {
-        id, season, weekId, slug: card.jsonRow!.slug,
+        // The leg's own namespace, not the page's: on a merged slate an FCS
+        // leg must keep fetching its seeds from the FCS dataset even after
+        // the viewer switches back to FBS-only.
+        id, season: card.ns, weekId, slug: card.jsonRow!.slug,
         teamA: card.teamA, teamB: card.teamB, row: card.jsonRow!,
         spec, label: legLabel(spec, card.teamA, card.teamB),
       };
@@ -1520,7 +1686,7 @@ function ScoreboardPage() {
     });
     setFlashLegId(id);
     window.setTimeout(() => setFlashLegId((k) => (k === id ? null : k)), 1800);
-  }, [baseCards, season, weekId]);
+  }, [baseCards, weekId]);
 
   /**
    * Inputs for the slate scan.
@@ -1528,10 +1694,16 @@ function ScoreboardPage() {
    * Derived from the UNSORTED card list on purpose. `cards` below is sorted
    * with `slateEdges`, so deriving the scan's inputs from it made the scan
    * depend on its own output — the cycle that froze the tab.
+   *
+   * On a merged slate this list spans both datasets: each input carries its
+   * own namespace so the scan fetches each game's compact from the right
+   * repo. Games with no book line and no Kalshi listing produce no priced
+   * rows and drop out of the ranking (they are never ranked as NaN).
    */
   const edgeInputs: EdgeInput[] = useMemo(
     () => baseCards.filter((c) => c.jsonRow).map((c) => ({
       slug: c.key, teamA: c.teamA, teamB: c.teamB, row: c.jsonRow!,
+      season: c.ns, division: c.division,
       bookSpread: c.oddsSpread, bookTotal: c.oddsTotal,
       simMargin: useMean ? c.simMeanMargin : c.simMedMargin,
       simTotal: useMean ? c.simMeanTotal : c.simMedTotal,
@@ -1544,7 +1716,14 @@ function ScoreboardPage() {
     inputs: edgeInputs,
     kalshiBySlug,
     kalshiStamp,
-    season,
+    // Scan-level namespace, used for the WEEK-level props file only. On an
+    // FCS-only slate that file does not exist, which the scan reports as
+    // "props not published" rather than an error. Per-game files use each
+    // input's own `season`.
+    season: showFbs ? season : fcsNs,
+    // Must stay the bare week directory — it IS the props_odds.json path.
+    // The division does not need folding in here: FCS cards carry prefixed
+    // slugs, so a division change already moves the scan's slug signature.
     weekKey: weekId,
     useMean,
     enabled: sortBy === "edge" || showTopEdges,
@@ -1619,13 +1798,29 @@ function ScoreboardPage() {
   const LBL = { fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" } as const;
   const HDG = { margin: 0, fontSize: 14, fontWeight: 800, color: "var(--brand-text)", whiteSpace: "nowrap" } as const;
 
+  /** Either half still in flight. Without the FCS term an FCS-only slate
+   *  flashed "No games for this selection" before its rows landed. */
+  const slateLoading = loading || (showFcs && fcsStatus === "loading");
+
   const statusText = catalogLoading
     ? "Loading seasons…"
     : catalogError
     ? "Dataset unavailable"
-    : loading
+    : slateLoading
     ? "Loading…"
     : `${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}${simsText}`;
+
+  /**
+   * The pre-publish note, and the ONLY thing the viewer sees about a missing
+   * FCS week. Never a banner: in "Both" a healthy FBS slate is on screen
+   * beneath it, and an error box there would misattribute the failure.
+   */
+  const fcsNote =
+    showFcs && fcsStatus === "unpublished"
+      ? division === "fcs"
+        ? "FCS week not published yet."
+        : "FCS week not published yet — showing FBS only."
+      : null;
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px" }}>
@@ -1665,6 +1860,25 @@ function ScoreboardPage() {
                 <option key={w.id} value={w.legacyKey}>{w.label}</option>
               ))}
             </select>
+
+            {/* Division. Its own axis, not a season — see the FCS block above.
+                Hidden entirely for seasons with no FCS dataset, so 2025 keeps
+                the toolbar it has today. */}
+            {fcsAvailableFor(season) && (
+              <>
+                <h2 style={HDG}>Division</h2>
+                <select
+                  value={division}
+                  onChange={(e) => setDivision(e.target.value as DivisionFilter)}
+                  className="ui-sel" style={CTL}
+                  aria-label="Division"
+                >
+                  <option value="fbs">FBS</option>
+                  <option value="fcs">FCS</option>
+                  <option value="both">Both</option>
+                </select>
+              </>
+            )}
 
             <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>{statusText}</span>
 
@@ -1796,7 +2010,7 @@ function ScoreboardPage() {
         </section>
       )}
 
-      {(loading || catalogLoading) && !filteredCards.length && (
+      {(slateLoading || catalogLoading) && !filteredCards.length && (
         <div
           style={{
             display: "grid", gap: GRID_GAP,
@@ -1808,7 +2022,15 @@ function ScoreboardPage() {
         </div>
       )}
 
-      {!catalogError && !weekError && !loading && !catalogLoading && !filteredCards.length && (
+      {/* FCS pre-publish. A quiet note, styled like the "no games" line rather
+          than the failure cards above — nothing here is broken. */}
+      {fcsNote && !catalogError && !weekError && (
+        <section className="card" style={{ padding: 12, marginBottom: 16, fontSize: 13, color: "var(--muted)" }}>
+          {fcsNote}
+        </section>
+      )}
+
+      {!catalogError && !weekError && !slateLoading && !catalogLoading && !filteredCards.length && !fcsNote && (
         <section className="card" style={{ padding: 16, marginBottom: 16, fontSize: 13, color: "var(--muted)" }}>
           No games for this selection.
         </section>
@@ -1870,7 +2092,9 @@ function ScoreboardPage() {
                 onToggle={(kind) => togglePanel(c.key, kind)}
                 weekLabel={weekLabel}
                 condensed={condensed}
-                season={season}
+                // The CARD's namespace, not the page's: on a merged slate the
+                // two halves fetch from different datasets.
+                season={c.ns}
                 onAddLeg={() => togglePanel(c.key, "picker")}
                 flash={flashKey === c.key}
               />
@@ -1881,7 +2105,7 @@ function ScoreboardPage() {
                     kind={openPanel.kind}
                     gdata={games[openCard.key]}
                     week={selectedWeek}
-                    season={season}
+                    season={openCard.ns}
                     weekId={weekId}
                     useMean={useMean}
                     onAddLeg={addLeg}
@@ -2026,6 +2250,14 @@ export function GameCard({
 
         return (
           <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+            {/* Sibling of the week label, not a child of it: that span
+                truncates with an ellipsis, and a badge inside it would be the
+                first thing clipped on a long label ("Week 14 (Rivalry Week)").
+                Only non-FBS games are badged, so an FBS-only slate — the
+                default — renders exactly the header it did before. */}
+            {card.division === "fcs" && (
+              <span className="division-badge" data-division="fcs">FCS</span>
+            )}
             <span style={{ letterSpacing: 0.3, textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {weekLabel}
             </span>
@@ -2152,12 +2384,17 @@ export function GameCard({
         <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />
       )}
 
-      {/* action buttons */}
+      {/* Action buttons.
+          Player panels are gated on the export's has_players FLAG rather than
+          on the 404 the fetch would take: FCS publishes game-level sims only,
+          and offering a button that can only fail is worse than not offering
+          it. Everything game-level (scores distribution, market block, win
+          prob, parlay legs) works identically on both divisions. */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
         {canShowScores && tabBtn("scores", "Simulated Scores")}
         {csvCard && tabBtn("players", "Player Stats", true)}
-        {jsonRow && tabBtn("props", "Player Props")}
-        {jsonRow && tabBtn("box", "Box Score", true)}
+        {jsonRow && card.hasPlayers && tabBtn("props", "Player Props")}
+        {jsonRow && card.hasPlayers && tabBtn("box", "Box Score", true)}
       </div>
     </article>
   );
@@ -2358,14 +2595,16 @@ function CardPanelHost({
 
       {kind === "scores" && <ScoresPanel card={card} gdata={gdata} season={season} />}
       {kind === "players" && <PlayersPanel card={card} week={week} season={season} />}
-      {kind === "props" && jsonRow && (
+      {/* card.hasPlayers guards these as well as the buttons: a panel can
+          outlive its card's tab (deep link, stale open state). */}
+      {kind === "props" && jsonRow && card.hasPlayers && (
         <PlayerProps
           row={jsonRow} season={season}
           teamA={card.teamA} teamB={card.teamB}
           colorFor={(t) => getTeamColors(t)?.primary}
         />
       )}
-      {kind === "box" && jsonRow && (
+      {kind === "box" && jsonRow && card.hasPlayers && (
         <BoxScore
           row={jsonRow} season={season}
           teamA={card.teamA} teamB={card.teamB}
@@ -2381,6 +2620,10 @@ function CardPanelHost({
           row={jsonRow} season={season} weekId={weekId}
           teamA={card.teamA} teamB={card.teamB}
           marketSpread={card.oddsSpread} marketTotal={card.oddsTotal}
+          // FCS seeds.json carries real A_pts/B_pts with an EMPTY players map,
+          // so game-line legs price exactly as on FBS and only the player-prop
+          // bet type is withheld.
+          hasPlayers={card.hasPlayers}
           onAdd={onAddLeg} onClose={onClose}
         />
       )}

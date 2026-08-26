@@ -17,14 +17,26 @@ import {
 import { propEdge, type PropEdge } from "./propEdge";
 import { buildMarketRows, makeSeedCounts, rowEdge, type MarketRow } from "./marketEdge";
 import type { KalshiGame } from "./kalshi";
-import type { Season } from "./cfbData";
+import { DatasetUnavailable, type Division, type Season } from "./cfbData";
 
 /** What the scan needs from a card, without importing the page's types. */
 export type EdgeInput = {
+  /**
+   * Identity for this game across the scan, the Kalshi map and the card grid.
+   * On a merged FBS+FCS slate this is the card key (FCS games carry a prefix),
+   * NOT necessarily row.slug — the two datasets are indexed independently and
+   * nothing guarantees their slugs are disjoint.
+   */
   slug: string;
   teamA: string;
   teamB: string;
   row: JsonWeekRow;
+  /**
+   * Dataset namespace this game's files live in ("2026", "fcs-2026").
+   * Defaults to the scan-level season, so single-division callers can omit it.
+   */
+  season?: Season;
+  division?: Division;
   bookSpread?: number;
   bookTotal?: number;
   simMargin?: number;
@@ -50,6 +62,8 @@ export type GameEdges = {
   slug: string;
   teamA: string;
   teamB: string;
+  /** Which dataset the game came from, so a merged ranking can badge it. */
+  division?: Division;
   rows: MarketRow[];
   /**
    * Best SIGNED edge across this game's rows; null when Kalshi priced none.
@@ -66,6 +80,7 @@ export type EdgeEntry = {
   slug: string;
   teamA: string;
   teamB: string;
+  division?: Division;
   row: MarketRow;
   edge: number;
 };
@@ -88,7 +103,15 @@ export async function ensureSlateEdges(
     propsStatus = "ok";
   } catch (err) {
     if ((err as any)?.name === "AbortError") throw err;
-    if (!(err instanceof PropsNotPublished) && (err as any)?.name !== "PropsNotPublished") {
+    // "not published" covers two shapes: the file 404s inside a live dataset,
+    // or the whole namespace is not up yet (FCS pre-publish). Neither is an
+    // error the viewer should see as one.
+    const notPublished =
+      err instanceof PropsNotPublished ||
+      (err as any)?.name === "PropsNotPublished" ||
+      err instanceof DatasetUnavailable ||
+      (err as any)?.name === "DatasetUnavailable";
+    if (!notPublished) {
       console.warn("[edges] props_odds failed:", err);
       propsStatus = "error";
     }
@@ -98,9 +121,12 @@ export async function ensureSlateEdges(
 
   await Promise.all(
     inputs.map(async (g) => {
+      // Per-game namespace: on a merged FBS+FCS slate the two halves live in
+      // different datasets, and getCompactCached keys its memo by it too.
+      const gameSeason = g.season ?? season;
       let counts = null;
       try {
-        counts = makeSeedCounts(await getCompactCached(g.row, season));
+        counts = makeSeedCounts(await getCompactCached(g.row, gameSeason));
       } catch (err) {
         if ((err as any)?.name === "AbortError") throw err;
         // A missing compact means sim-only rows, not a failed slate.
@@ -127,14 +153,21 @@ export async function ensureSlateEdges(
         if (bestSigned === null || e > bestSigned) bestSigned = e;
       }
 
-      out.set(g.slug, { slug: g.slug, teamA: g.teamA, teamB: g.teamB, rows, bestSigned });
+      out.set(g.slug, {
+        slug: g.slug, teamA: g.teamA, teamB: g.teamB,
+        division: g.division, rows, bestSigned,
+      });
 
       // Props for this game, if the week's file quoted any. players_dist is
       // only fetched for games that actually have prop rows.
+      //
+      // FCS publishes no props (has_players/has_props false, no props_odds.json
+      // in that namespace), so this lookup simply misses for FCS games and the
+      // dist fetch below never fires — the flag and the miss agree.
       const propRows = propsOdds?.byGame.get(g.slug);
       if (!propRows?.length) return;
       try {
-        const dist = await getPlayersDistCached(g.row, season);
+        const dist = await getPlayersDistCached(g.row, gameSeason);
         if (signal?.aborted) return;
         const byPlayer = new Map(dist.players.map((pl) => [pl.player, pl]));
         for (const row of propRows) {
@@ -169,9 +202,15 @@ export function rankEdges(edges: Map<string, GameEdges>, limit = 10): EdgeEntry[
   const all: EdgeEntry[] = [];
   for (const g of edges.values()) {
     for (const r of g.rows) {
+      // rowEdge is null whenever either side is unpriced — which is the normal
+      // state for an FCS game with no Kalshi listing and no book line. Such a
+      // game is EXCLUDED from the ranking here rather than ranked as NaN.
       const e = rowEdge(r);
       if (e === null) continue;
-      all.push({ slug: g.slug, teamA: g.teamA, teamB: g.teamB, row: r, edge: e });
+      all.push({
+        slug: g.slug, teamA: g.teamA, teamB: g.teamB,
+        division: g.division, row: r, edge: e,
+      });
     }
   }
   all.sort((a, b) => b.edge - a.edge);
