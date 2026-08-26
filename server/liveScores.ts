@@ -1367,6 +1367,51 @@ let portalFails = 0;
 let portalLockUntil = 0;
 const PORTAL_TTL_MS = 20_000;
 const PORTAL_NCAAF = /^KXNCAAF/;
+/** Multivariate combos (2+ legs picked in the Kalshi app). Kept when at
+ *  least one leg is an NCAAF game market. */
+const PORTAL_MVE = /^KXMVE/;
+const portalKeep = (t: string) => PORTAL_NCAAF.test(t) || PORTAL_MVE.test(t);
+
+/** ticker -> {legs, title}. Permanent: a combo's legs never change. A fetch
+ *  error stays UNcached so the next poll retries. */
+const portalMveCache = new Map<string, { legs: PortalLeg[]; title: string } | null>();
+
+async function portalMveInfo(ticker: string) {
+  if (portalMveCache.has(ticker)) return portalMveCache.get(ticker) ?? null;
+  const body = await portalGet(`/markets/${encodeURIComponent(ticker)}`);
+  const m = body?.market || body || {};
+  const legs: PortalLeg[] = (m.mve_selected_legs || [])
+    .map((l: any) => ({
+      market_ticker: String(l?.market_ticker || ""),
+      side: String(l?.side || ""),
+    }))
+    .filter((l: PortalLeg) => l.market_ticker);
+  const info = legs.length
+    ? { legs, title: String(m.title || "") }
+    : null;
+  portalMveCache.set(ticker, info);
+  return info;
+}
+
+/** Pass combo rows through leg resolution; drop combos with no NCAAF leg.
+ *  A resolution FAILURE also drops the row for this poll (retried next). */
+async function portalResolveMve<T extends { ticker: string; legs?: PortalLeg[]; title?: string }>(
+  rows: T[],
+): Promise<T[]> {
+  const out: T[] = [];
+  for (const r of rows) {
+    if (!PORTAL_MVE.test(r.ticker)) { out.push(r); continue; }
+    try {
+      const info = await portalMveInfo(r.ticker);
+      if (info && info.legs.some((l) => PORTAL_NCAAF.test(l.market_ticker))) {
+        out.push({ ...r, legs: info.legs, title: info.title });
+      }
+    } catch (err: any) {
+      console.warn("[portal] mve leg fetch failed:", r.ticker, err?.message ?? err);
+    }
+  }
+  return out;
+}
 
 /** Lazy, cached; null = tried and unavailable (missing/bad env). */
 let portalKeyCache: crypto.KeyObject | null | undefined;
@@ -1424,11 +1469,17 @@ const portalNum = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** One leg of a multivariate combo (Kalshi "MVE" tickers are opaque shard
+ *  hashes; the market object's mve_selected_legs carries the real per-game
+ *  market tickers, which is what the client joins on). */
+type PortalLeg = { market_ticker: string; side: string };
+
 type PortalOrder = {
   ticker: string; order_id: string; side: string;
   yes_price: number | null; no_price: number | null;
   initial: number | null; filled: number | null; remaining: number | null;
   created_time: string;
+  legs?: PortalLeg[]; title?: string;
 };
 type PortalFill = {
   ticker: string; side: string; action: string;
@@ -1442,6 +1493,7 @@ type PortalFill = {
 type PortalPosition = {
   ticker: string; side: string; count: number;
   avg_price: number | null; fees: number | null;
+  legs?: PortalLeg[]; title?: string;
 };
 type PortalPayload = {
   fetched_at: string; orders: PortalOrder[]; fills: PortalFill[];
@@ -1457,7 +1509,7 @@ async function portalOrders(): Promise<PortalOrder[]> {
       (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
     for (const o of body?.orders || []) {
       const t = String(o.ticker || "");
-      if (!PORTAL_NCAAF.test(t)) continue;
+      if (!portalKeep(t)) continue;
       out.push({
         ticker: t,
         order_id: String(o.order_id || ""),
@@ -1473,7 +1525,7 @@ async function portalOrders(): Promise<PortalOrder[]> {
     cursor = String(body?.cursor || "");
     if (!cursor) break;
   }
-  return out;
+  return portalResolveMve(out);
 }
 
 async function portalFills(): Promise<PortalFill[]> {
@@ -1511,7 +1563,7 @@ async function portalPositions(): Promise<PortalPosition[]> {
       (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
     for (const p of body?.market_positions || body?.positions || []) {
       const t = String(p.ticker || "");
-      if (!PORTAL_NCAAF.test(t)) continue;
+      if (!portalKeep(t)) continue;
       const pos = portalNum(p.position_fp ?? p.position) ?? 0;
       if (!pos) continue;
       const count = Math.abs(pos);
@@ -1527,7 +1579,7 @@ async function portalPositions(): Promise<PortalPosition[]> {
     cursor = String(body?.cursor || "");
     if (!cursor) break;
   }
-  return out;
+  return portalResolveMve(out);
 }
 
 let portalCache: { at: number; payload: PortalPayload } | null = null;

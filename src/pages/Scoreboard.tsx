@@ -2556,7 +2556,11 @@ function decodeBookTicker(ticker: string): string {
   const fam = (parts[0] || "").replace("KXNCAAF", "");
   const strike = parts[2] || "";
   const m = strike.match(/^([A-Z]*?)(\d+)$/);
-  if (!m) return fam || ticker;
+  if (!m) {
+    // Letters-only strike = a winner market's team code ("...-UWGA" -> ML).
+    if (/^[A-Z]+$/.test(strike)) return `${strike} ML`;
+    return fam || ticker;
+  }
   const code = m[1];
   const n = Number(m[2]);
   if (fam === "TOTAL") return `Total o${n - 0.5}`;
@@ -2568,23 +2572,41 @@ function decodeBookTicker(ticker: string): string {
 const cents = (v: number | null): string =>
   v === null ? "—" : `${Math.round(v * 100)}¢`;
 
-/** The owner's book on this game: one line per resting order (⏳) and one
- *  per filled position (✔). Read-only; prices are the held side's. */
+/** MVE contract counts can be fractional (45.76 of a combo). */
+const bookCount = (n: number | null): string =>
+  n === null ? "?" : String(Number(n.toFixed(2)));
+
+/** A combo renders every leg ("UWGA ML + UTM -3.5"); the full Kalshi title
+ *  stays on hover. A single market is just its own decode. */
+function bookLabel(e: { ticker: string; legs?: { market_ticker: string }[] }): string {
+  if (e.legs?.length) {
+    return e.legs.map((l) => decodeBookTicker(l.market_ticker)).join(" + ");
+  }
+  return decodeBookTicker(e.ticker);
+}
+
+/** The owner's book on this game: one line per resting order (⏳), one per
+ *  filled position (✔), combos marked 🔗. Read-only; prices are the held
+ *  side's. */
 function MyBookStrip({ book }: { book: PortalGameBook }) {
   return (
     <div className="mybook" title="Your Kalshi orders and fills on this game">
       {book.positions.map((p) => (
-        <span key={`f:${p.ticker}:${p.side}`} className="mybook__row mybook__row--filled">
-          <span className="mybook__mark">✔</span>
+        <span
+          key={`f:${p.ticker}:${p.side}`}
+          className="mybook__row mybook__row--filled"
+          title={p.title || undefined}
+        >
+          <span className="mybook__mark">{p.legs?.length ? "🔗" : "✔"}</span>
           <span className="division-badge">{p.side.toUpperCase()}</span>
-          {decodeBookTicker(p.ticker)} @{cents(p.avg_price)} ×{p.count}
+          {bookLabel(p)} @{cents(p.avg_price)} ×{bookCount(p.count)}
         </span>
       ))}
       {book.orders.map((o) => (
-        <span key={`o:${o.order_id}`} className="mybook__row">
-          <span className="mybook__mark">⏳</span>
+        <span key={`o:${o.order_id}`} className="mybook__row" title={o.title || undefined}>
+          <span className="mybook__mark">{o.legs?.length ? "🔗" : "⏳"}</span>
           <span className="division-badge">{o.side.toUpperCase()}</span>
-          {decodeBookTicker(o.ticker)} @{cents(o.side === "no" ? o.no_price : o.yes_price)} ×{o.remaining ?? 0}
+          {bookLabel(o)} @{cents(o.side === "no" ? o.no_price : o.yes_price)} ×{bookCount(o.remaining)}
         </span>
       ))}
     </div>

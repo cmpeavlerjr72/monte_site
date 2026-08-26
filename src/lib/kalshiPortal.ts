@@ -36,11 +36,17 @@ export function writePortalToken(token: string): void {
   }
 }
 
+/** One leg of a multivariate combo. The combo's own ticker is an opaque
+ *  shard hash; these per-game market tickers are what joins to cards. */
+export type PortalLeg = { market_ticker: string; side: string };
+
 export type PortalOrder = {
   ticker: string; order_id: string; side: string;
   yes_price: number | null; no_price: number | null;
   initial: number | null; filled: number | null; remaining: number | null;
   created_time: string;
+  /** Present on combo entries; the row renders on EVERY leg's card. */
+  legs?: PortalLeg[]; title?: string;
 };
 export type PortalFill = {
   ticker: string; side: string; action: string;
@@ -53,6 +59,7 @@ export type PortalFill = {
 export type PortalPosition = {
   ticker: string; side: string; count: number;
   avg_price: number | null; fees: number | null;
+  legs?: PortalLeg[]; title?: string;
 };
 export type PortalPayload = {
   fetched_at: string; orders: PortalOrder[]; fills: PortalFill[];
@@ -91,17 +98,27 @@ export function groupBookBySlug(
   }
 
   let unmatched = 0;
-  const bookFor = (ticker: string): PortalGameBook | null => {
-    const code = portalGameCode(ticker);
-    const slug = code ? codeToSlug.get(code) : undefined;
-    if (!slug) { unmatched++; return null; }
+  const bookAt = (slug: string): PortalGameBook => {
     let b = bySlug.get(slug);
     if (!b) { b = { orders: [], positions: [] }; bySlug.set(slug, b); }
     return b;
   };
+  /** Single market -> its game's book; combo -> the book of EVERY leg whose
+   *  game is on the visible slate. Nothing mapped counts once as off-slate. */
+  const booksFor = (e: { ticker: string; legs?: PortalLeg[] }): PortalGameBook[] => {
+    const tickers = e.legs?.length ? e.legs.map((l) => l.market_ticker) : [e.ticker];
+    const slugs = new Set<string>();
+    for (const t of tickers) {
+      const code = portalGameCode(t);
+      const slug = code ? codeToSlug.get(code) : undefined;
+      if (slug) slugs.add(slug);
+    }
+    if (!slugs.size) { unmatched++; return []; }
+    return [...slugs].map(bookAt);
+  };
 
-  for (const o of payload.orders) bookFor(o.ticker)?.orders.push(o);
-  for (const p of payload.positions) bookFor(p.ticker)?.positions.push(p);
+  for (const o of payload.orders) for (const b of booksFor(o)) b.orders.push(o);
+  for (const p of payload.positions) for (const b of booksFor(p)) b.positions.push(p);
   return { bySlug, unmatched };
 }
 

@@ -1126,6 +1126,51 @@ let portalFails = 0;
 let portalLockUntil = 0;
 const PORTAL_TTL_MS = 20_000;
 const PORTAL_NCAAF = /^KXNCAAF/;
+/** Multivariate combos (2+ legs picked in the Kalshi app). Kept when at
+ *  least one leg is an NCAAF game market. */
+const PORTAL_MVE = /^KXMVE/;
+const portalKeep = (t) => PORTAL_NCAAF.test(t) || PORTAL_MVE.test(t);
+/** ticker -> {legs, title}. Permanent: a combo's legs never change. A fetch
+ *  error stays UNcached so the next poll retries. */
+const portalMveCache = new Map();
+async function portalMveInfo(ticker) {
+    if (portalMveCache.has(ticker))
+        return portalMveCache.get(ticker) ?? null;
+    const body = await portalGet(`/markets/${encodeURIComponent(ticker)}`);
+    const m = body?.market || body || {};
+    const legs = (m.mve_selected_legs || [])
+        .map((l) => ({
+        market_ticker: String(l?.market_ticker || ""),
+        side: String(l?.side || ""),
+    }))
+        .filter((l) => l.market_ticker);
+    const info = legs.length
+        ? { legs, title: String(m.title || "") }
+        : null;
+    portalMveCache.set(ticker, info);
+    return info;
+}
+/** Pass combo rows through leg resolution; drop combos with no NCAAF leg.
+ *  A resolution FAILURE also drops the row for this poll (retried next). */
+async function portalResolveMve(rows) {
+    const out = [];
+    for (const r of rows) {
+        if (!PORTAL_MVE.test(r.ticker)) {
+            out.push(r);
+            continue;
+        }
+        try {
+            const info = await portalMveInfo(r.ticker);
+            if (info && info.legs.some((l) => PORTAL_NCAAF.test(l.market_ticker))) {
+                out.push({ ...r, legs: info.legs, title: info.title });
+            }
+        }
+        catch (err) {
+            console.warn("[portal] mve leg fetch failed:", r.ticker, err?.message ?? err);
+        }
+    }
+    return out;
+}
 /** Lazy, cached; null = tried and unavailable (missing/bad env). */
 let portalKeyCache;
 function portalPrivateKey() {
@@ -1193,7 +1238,7 @@ async function portalOrders() {
             (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
         for (const o of body?.orders || []) {
             const t = String(o.ticker || "");
-            if (!PORTAL_NCAAF.test(t))
+            if (!portalKeep(t))
                 continue;
             out.push({
                 ticker: t,
@@ -1211,7 +1256,7 @@ async function portalOrders() {
         if (!cursor)
             break;
     }
-    return out;
+    return portalResolveMve(out);
 }
 async function portalFills() {
     const out = [];
@@ -1249,7 +1294,7 @@ async function portalPositions() {
             (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
         for (const p of body?.market_positions || body?.positions || []) {
             const t = String(p.ticker || "");
-            if (!PORTAL_NCAAF.test(t))
+            if (!portalKeep(t))
                 continue;
             const pos = portalNum(p.position_fp ?? p.position) ?? 0;
             if (!pos)
@@ -1268,7 +1313,7 @@ async function portalPositions() {
         if (!cursor)
             break;
     }
-    return out;
+    return portalResolveMve(out);
 }
 let portalCache = null;
 app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
