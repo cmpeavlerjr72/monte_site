@@ -107,10 +107,11 @@ export function groupBookBySlug(
 
 export type PortalState = {
   payload: PortalPayload | null;
-  /** "idle" = no token; "error" covers network/500; "unauthorized" = bad
-   *  token (the UI should offer re-login); "unconfigured" = server has no
-   *  CFB_PORTFOLIO_TOKEN env yet. */
-  status: "idle" | "loading" | "ok" | "unauthorized" | "unconfigured" | "error";
+  /** "idle" = no password stored; "error" covers network/500;
+   *  "unauthorized" = wrong password (offer re-login); "locked" = too many
+   *  failed attempts, server cooling down; "unconfigured" = server has no
+   *  CFB_PORTAL_PASSWORD env yet. */
+  status: "idle" | "loading" | "ok" | "unauthorized" | "locked" | "unconfigured" | "error";
 };
 
 /**
@@ -138,6 +139,7 @@ export function usePortalBook(token: string): PortalState {
         });
         if (!alive) return;
         if (r.status === 401) { setState({ payload: null, status: "unauthorized" }); return; }
+        if (r.status === 429) { setState((s) => ({ payload: s.payload, status: "locked" })); return; }
         if (r.status === 503) { setState({ payload: null, status: "unconfigured" }); return; }
         if (!r.ok) { setState((s) => ({ payload: s.payload, status: "error" })); return; }
         const payload = (await r.json()) as PortalPayload;

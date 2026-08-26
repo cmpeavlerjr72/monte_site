@@ -1334,9 +1334,10 @@ function ScoreboardPage() {
     [portal.payload, kalshiBySlug]
   );
   const portalNote = useMemo(() => {
-    if (!portalToken) return "connect your Kalshi portal token";
+    if (!portalToken) return "log in with your portal password";
     switch (portal.status) {
-      case "unauthorized": return "token rejected — reconnect";
+      case "unauthorized": return "wrong password — log in again";
+      case "locked": return "too many attempts — wait a minute";
       case "unconfigured": return "server portal not configured";
       case "error": return "portal unreachable — will retry";
       case "loading": return "connecting…";
@@ -1986,9 +1987,9 @@ function ScoreboardPage() {
                     }}
                   >
                     <input
-                      name="tok" type="password" placeholder="portal token"
+                      name="tok" type="password" placeholder="password"
                       className="ui-sel" autoFocus
-                      autoComplete="off"
+                      autoComplete="current-password"
                     />
                     <button type="submit" className="ui-btn">Connect</button>
                   </form>

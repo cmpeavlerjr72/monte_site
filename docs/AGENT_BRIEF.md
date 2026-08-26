@@ -68,8 +68,11 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
 
 ## My-Kalshi portal (owner-only)
 
-`/api/portfolio/cfb` (server) — token-gated (`x-cfb-token` vs
-`CFB_PORTFOLIO_TOKEN` env, timing-safe; 503 when unconfigured), signed
+`/api/portfolio/cfb` (server) — password-gated (`x-cfb-token` header vs
+`CFB_PORTAL_PASSWORD` env — owner-chosen password, `CFB_PORTFOLIO_TOKEN`
+alias kept; timing-safe; 5 consecutive misses = 60s lockout (429) because
+a human password is guessable where a token was not; 503 when
+unconfigured), signed
 Kalshi portfolio reads via env creds (`KALSHI_API_KEY_ID` +
 `KALSHI_PRIVATE_KEY` inline or `KALSHI_PRIVATE_KEY_PATH`). Returns NCAAF
 resting orders, fills, and positions (positions = ground truth for held

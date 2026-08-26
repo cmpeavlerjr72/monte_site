@@ -1108,8 +1108,18 @@ const staticDir = path.resolve(__dirname, "../../dist");
 // family is where order entry would eventually live, so the auth gate exists
 // BEFORE any mutating endpoint ever does.
 // ============================================================================
-const PORTAL_TOKEN = process.env.CFB_PORTFOLIO_TOKEN || "";
+// The owner's login secret is a PASSWORD OF THEIR CHOOSING (user 2026-08-26:
+// a random token is unusable at login time), set as CFB_PORTAL_PASSWORD.
+// The old CFB_PORTFOLIO_TOKEN name still works as an alias. A human-chosen
+// password is guessable in a way a token is not, so failures rate-limit:
+// 5 consecutive misses lock the route for 60s (single-operator portal — a
+// legitimate user never hits that; a script does immediately).
+const PORTAL_SECRET = process.env.CFB_PORTAL_PASSWORD || process.env.CFB_PORTFOLIO_TOKEN || "";
 const PORTAL_KEY_ID = process.env.KALSHI_API_KEY_ID || "";
+const PORTAL_MAX_FAILS = 5;
+const PORTAL_LOCK_MS = 60_000;
+let portalFails = 0;
+let portalLockUntil = 0;
 const PORTAL_TTL_MS = 20_000;
 const PORTAL_NCAAF = /^KXNCAAF/;
 /** Lazy, cached; null = tried and unavailable (missing/bad env). */
@@ -1260,16 +1270,30 @@ let portalCache = null;
 app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
     // Personal financial data: never cacheable by intermediaries.
     res.set("Cache-Control", "no-store");
-    if (!PORTAL_TOKEN) {
+    if (!PORTAL_SECRET) {
         res.status(503).json({ error: "portal_not_configured" });
         return;
     }
-    const got = Buffer.from(String(req.header("x-cfb-token") || ""), "utf8");
-    const want = Buffer.from(PORTAL_TOKEN, "utf8");
-    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) {
-        res.status(401).json({ error: "bad_token" });
+    if (Date.now() < portalLockUntil) {
+        res.status(429).json({
+            error: "locked",
+            retry_in_s: Math.ceil((portalLockUntil - Date.now()) / 1000),
+        });
         return;
     }
+    const got = Buffer.from(String(req.header("x-cfb-token") || ""), "utf8");
+    const want = Buffer.from(PORTAL_SECRET, "utf8");
+    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) {
+        portalFails++;
+        if (portalFails >= PORTAL_MAX_FAILS) {
+            portalLockUntil = Date.now() + PORTAL_LOCK_MS;
+            portalFails = 0;
+            console.warn("[portal] too many failed logins — locked 60s");
+        }
+        res.status(401).json({ error: "bad_password" });
+        return;
+    }
+    portalFails = 0;
     if (portalCache && Date.now() - portalCache.at < PORTAL_TTL_MS) {
         res.json(portalCache.payload);
         return;
