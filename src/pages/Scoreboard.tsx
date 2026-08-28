@@ -30,6 +30,7 @@ import {
 import { pctText } from "../lib/marketEdge";
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
+import TeamStats from "../components/TeamStats";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
@@ -657,7 +658,8 @@ function planTick(plan: Map<string, TickInfo>) {
 
 /* --------------------- expandable panels --------------------- */
 /** Which drill-down a card currently owns. Only one is open page-wide. */
-export type PanelKind = "scores" | "players" | "box" | "props" | "picker" | "live";
+export type PanelKind =
+  | "scores" | "players" | "box" | "props" | "picker" | "live" | "teamstats";
 
 /** Must mirror the grid CSS below so the break-out row lands in the right place.
  *  Condensed narrows the track so a 1400px viewport fits 5 columns instead of 4. */
@@ -2809,6 +2811,10 @@ export function GameCard({
         {csvCard && tabBtn("players", "Player Stats", true)}
         {jsonRow && card.hasPlayers && tabBtn("props", "Player Props")}
         {jsonRow && card.hasPlayers && tabBtn("box", "Box Score", true)}
+        {/* Team box-stat distributions. Gated on hasPlayers exactly like the
+            player panels: team_stats.json is built from the player sweep, so
+            the FCS (game-level-only) namespace has none and gets no button. */}
+        {jsonRow && card.hasPlayers && tabBtn("teamstats", "Team Stats")}
       </div>
     </article>
   );
@@ -3284,6 +3290,7 @@ function CardPanelHost({
     : kind === "players" ? "Simulated Player Stats"
     : kind === "props" ? "Player Props"
     : kind === "box" ? "Projected Box Score"
+    : kind === "teamstats" ? "Team Stats (simulated distributions)"
     : kind === "live" ? (card.liveInProgress ? "Live Gamecast" : "Game Flow")
     : "Add Parlay Leg";
 
@@ -3355,6 +3362,15 @@ function CardPanelHost({
           ptsB={useMean ? card.meanB : card.medB}
           useMean={useMean}
           logoFor={getTeamLogo}
+          colorFor={(t) => getTeamColors(t)?.primary}
+        />
+      )}
+      {/* Display only: every number comes precomputed out of team_stats.json
+          (per-seed first, then aggregated). No prices, no edge math here. */}
+      {kind === "teamstats" && jsonRow && card.hasPlayers && (
+        <TeamStats
+          slug={jsonRow.slug} ns={card.ns} weekId={weekId}
+          teamA={card.teamA} teamB={card.teamB}
           colorFor={(t) => getTeamColors(t)?.primary}
         />
       )}

@@ -810,3 +810,138 @@ export async function getTeamMarkets(
     withheldCount: num(raw?.withheld_count) ?? 0,
   };
 }
+
+/* ========================== team_stats.json ================================
+ * Per-game TEAM box-stat distributions, published by the sim repo's
+ * scripts/export_team_stats.py. DISPLAY ONLY: every number in the file is
+ * already computed (per seed first, then aggregated across seeds), so nothing
+ * here — and nothing in the panel — does arithmetic on a distribution.
+ * FCS publishes no players, therefore no team stats: that namespace 404s
+ * forever, which is the same expected "not published" state as a week the
+ * exporter has not reached yet.
+ * ========================================================================= */
+
+/** One stat's distribution. A stat the sim cannot produce (field goals,
+ *  forced turnovers) arrives with every number null and a `reason`. */
+export type TeamStatDist = {
+  mean: number | null;
+  median: number | null;
+  q10: number | null;
+  q90: number | null;
+  /** { "199.5": P(stat > 199.5) }, already probabilities in [0,1]. */
+  rungs: Record<string, number> | null;
+  reason?: string;
+};
+
+export type TeamStatsGame = {
+  teamA: string;
+  teamB: string;
+  /** team name (VERBATIM from the published week index) -> stat -> dist. */
+  stats: Record<string, Record<string, TeamStatDist>>;
+};
+
+export type TeamStats = {
+  nsims: number | null;
+  tag: string | null;
+  generatedAt: string | null;
+  /** stat key -> one-line definition incl. settlement caveats. */
+  definitions: Record<string, string>;
+  /** File-level fine print (gross-passing identity, OT1/OT2, 2-pt, ...). */
+  caveats: string[];
+  /** our game slug -> game block. */
+  games: Record<string, TeamStatsGame>;
+};
+
+/** Thrown when the week/namespace has no team_stats.json. Quiet empty state,
+ *  never an error banner (mirrors TeamMarketsNotPublished). */
+export class TeamStatsNotPublished extends Error {
+  constructor(path: string) {
+    super(`team_stats.json not published (${path})`);
+    this.name = "TeamStatsNotPublished";
+  }
+}
+
+const numOrNull = (v: any): number | null => num(v) ?? null;
+
+function parseTeamStatDist(raw: any): TeamStatDist | null {
+  if (!raw || typeof raw !== "object") return null;
+  let rungs: Record<string, number> | null = null;
+  if (raw.rungs && typeof raw.rungs === "object") {
+    rungs = {};
+    for (const [k, v] of Object.entries(raw.rungs)) {
+      const p = num(v);
+      if (p !== undefined) rungs[k] = p;
+    }
+  }
+  return {
+    mean: numOrNull(raw.mean),
+    median: numOrNull(raw.median),
+    q10: numOrNull(raw.q10),
+    q90: numOrNull(raw.q90),
+    rungs,
+    reason: raw.reason != null ? String(raw.reason) : undefined,
+  };
+}
+
+const teamStatsCache = new Map<string, Promise<TeamStats>>();
+
+/** Memoized per (namespace, week) — one fetch shared by every card that opens
+ *  the panel in that week. */
+export function getTeamStatsCached(season: Season, weekId: string): Promise<TeamStats> {
+  const key = `${season}/${weekId}`;
+  const memo = teamStatsCache.get(key);
+  if (memo) return memo;
+  const promise = getTeamStats(season, weekId).catch((err) => {
+    teamStatsCache.delete(key); // let a retry work
+    throw err;
+  });
+  teamStatsCache.set(key, promise);
+  return promise;
+}
+
+export async function getTeamStats(
+  season: Season,
+  weekId: string,
+  signal?: AbortSignal
+): Promise<TeamStats> {
+  const rel = `weeks/${weekId}/team_stats.json`;
+  const url = await dataUrl(rel, season);
+  // no-store: the established rule (see AGENT_BRIEF #3).
+  const res = await fetch(url, { signal, cache: "no-store" });
+  if (res.status === 404) throw new TeamStatsNotPublished(rel);
+  if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
+  const raw = await res.json();
+
+  const games: Record<string, TeamStatsGame> = {};
+  for (const [slug, g] of Object.entries<any>(raw?.games ?? {})) {
+    const stats: Record<string, Record<string, TeamStatDist>> = {};
+    for (const [team, byStat] of Object.entries<any>(g?.stats ?? {})) {
+      const one: Record<string, TeamStatDist> = {};
+      for (const [stat, dist] of Object.entries<any>(byStat ?? {})) {
+        const parsed = parseTeamStatDist(dist);
+        if (parsed) one[stat] = parsed;
+      }
+      // Team keys are used VERBATIM (AGENT_BRIEF rule 1) — no re-typing.
+      stats[team] = one;
+    }
+    games[slug] = {
+      teamA: String(g?.teamA ?? ""),
+      teamB: String(g?.teamB ?? ""),
+      stats,
+    };
+  }
+
+  const definitions: Record<string, string> = {};
+  for (const [k, v] of Object.entries<any>(raw?.definitions ?? {})) {
+    definitions[k] = String(v);
+  }
+
+  return {
+    nsims: numOrNull(raw?.nsims),
+    tag: raw?.tag != null ? String(raw.tag) : null,
+    generatedAt: raw?.generated_at != null ? String(raw.generated_at) : null,
+    definitions,
+    caveats: Array.isArray(raw?.caveats) ? raw.caveats.map((c: any) => String(c)) : [],
+    games,
+  };
+}

@@ -93,6 +93,21 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   the column footer reports the hidden count. Rows render compact
   bet-style titles ("USC 1H ML", "UNLV u19.5 TT"), oriented to the
   recommended side where the complement is exact (totals/spreads/OT).
+- `team_stats.json` — per-game TEAM box-stat distributions, keyed by our
+  game slug then by team name (both VERBATIM from that week's index).
+  Each stat carries `{mean, median, q10, q90, rungs:{K: P(stat>K)}}`; a
+  stat the sim cannot produce (`fg_made`, `turnovers_forced`) is null
+  with a `reason`. File-level `definitions` + `caveats` carry the
+  settlement fine print (team receiving yards == GROSS passing yards;
+  sack yardage is negative QB rushing and a rush attempt;
+  `td_offensive` is rush+rec only and is a FLOOR for Kalshi's team-TD
+  market, whose wording does not exclude defensive/return TDs; Kalshi
+  counts OT1/OT2 only and never 2-pt conversions). Published by
+  cfb-props-sim `export_team_stats.py`; built from the PLAYER sweep, so
+  the FCS namespace 404s forever = expected "not published" state
+  (`TeamStatsNotPublished`). The "Team Stats" panel is DISPLAY ONLY:
+  all aggregation is per-seed-then-across-seeds in the exporter, and
+  the client does no arithmetic on a distribution and shows no prices.
 
 ## My-Kalshi portal (owner-only)
 
