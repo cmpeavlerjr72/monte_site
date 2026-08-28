@@ -2991,7 +2991,17 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
     [cards, weekLines, weekLinesFcs, frame, anyLines]
   );
 
-  if (!anyLines || !rec) {
+  // A lines file can resolve while pricing ZERO displayed games (an FCS view
+  // before the FCS lines.json publishes joins nothing against the FBS file).
+  // That state must fall back to the plain W-L tally, not vanish — graded
+  // pills with no record strip reads as a bug.
+  const recPriced = rec
+    ? rec.ats.win + rec.ats.loss + rec.ats.push +
+      rec.tot.win + rec.tot.loss + rec.tot.push +
+      rec.ml.win + rec.ml.loss + rec.ml.push > 0
+    : false;
+
+  if (!anyLines || !rec || !recPriced) {
     const parts: string[] = [];
     const ats = fmtMarketRecord(tally.ats); if (ats) parts.push(`ATS ${ats}`);
     const tot = fmtMarketRecord(tally.tot); if (tot) parts.push(`Totals ${tot}`);
