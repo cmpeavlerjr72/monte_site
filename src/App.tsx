@@ -44,6 +44,7 @@ import CBBComingSoon from "./pages/CBBComingSoon";
 
 // Hidden pages (no nav entry — direct URL only)
 import TestVisual from "./pages/TestVisual";
+import TestGamecast from "./pages/TestGamecast";
 
 
 export default function App() {
@@ -100,6 +101,8 @@ export default function App() {
 
           {/* Hidden: sim-test scoreboard (direct URL only, no nav link) */}
           <Route path="/test-visual" element={<TestVisual />} />
+          {/* Hidden: live-gamecast component harness vs any ESPN event */}
+          <Route path="/test-gamecast" element={<TestGamecast />} />
 
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />

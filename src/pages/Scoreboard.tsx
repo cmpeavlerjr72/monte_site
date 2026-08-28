@@ -39,6 +39,8 @@ import {
 import LegPicker from "../components/LegPicker";
 import ParlaySlip from "../components/ParlaySlip";
 import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
+import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
+import { parseSituation, type LiveSituation } from "../lib/espnGame";
 
 type LiveGame = {
   id: string;
@@ -48,6 +50,13 @@ type LiveGame = {
   awayScore?: number;
   homeScore?: number;
   statusText: string;
+  /** ESPN team ids + abbrevs, for the field strip and gamecast panel. */
+  homeId?: string;
+  awayId?: string;
+  homeAbbrev?: string;
+  awayAbbrev?: string;
+  /** Ball spot / down & distance / possession — present only while live. */
+  situation?: LiveSituation;
 };
 
 const clean = (s?: string) =>
@@ -94,6 +103,11 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
       homeTeam: home?.team?.shortDisplayName ?? home?.team?.displayName,
       awayScore: away?.score ? Number(away.score) : undefined,
       homeScore: home?.score ? Number(home.score) : undefined,
+      homeId: home?.team?.id != null ? String(home.team.id) : undefined,
+      awayId: away?.team?.id != null ? String(away.team.id) : undefined,
+      homeAbbrev: home?.team?.abbreviation,
+      awayAbbrev: away?.team?.abbreviation,
+      situation: state === "in" ? parseSituation(comp) : undefined,
     };
   });
 }
@@ -308,6 +322,9 @@ type CardGame = {
   liveStatusText?: string;
   liveA?: number;
   liveB?: number;
+  /** The matched ESPN scoreboard event — field strip + gamecast panel key
+   *  off it (event id, team ids/abbrevs, live situation). */
+  live?: LiveGame;
   /** Small-JSON path only — the index row, for lazy compact/players fetches. */
   jsonRow?: JsonWeekRow;
   /** P(home wins) straight from the sim, for side-by-side with the market. */
@@ -582,7 +599,7 @@ function planTick(plan: Map<string, TickInfo>) {
 
 /* --------------------- expandable panels --------------------- */
 /** Which drill-down a card currently owns. Only one is open page-wide. */
-export type PanelKind = "scores" | "players" | "box" | "props" | "picker";
+export type PanelKind = "scores" | "players" | "box" | "props" | "picker" | "live";
 
 /** Must mirror the grid CSS below so the break-out row lands in the right place.
  *  Condensed narrows the track so a 1400px viewport fits 5 columns instead of 4. */
@@ -829,6 +846,7 @@ function buildJsonCards(
       liveStatusText: statusText ?? lg?.statusText,
       liveA: aScore,
       liveB: bScore,
+      live: lg,
       jsonRow: row,
       pHome: typeof pA === "number" ? pA : undefined,
       nsims: summary.nsims,
@@ -1640,6 +1658,7 @@ function ScoreboardPage() {
         liveStatusText: statusText,
         liveA: aScore,
         liveB: bScore,
+        live: lg,
       });
     }
 
@@ -2347,6 +2366,21 @@ export function GameCard({
 
   const expanded = openKind !== null;
 
+  /* Live gamecast wiring. ESPN's home/away can flip vs the sim contract
+     (teamA=home) on neutral-site games, so colors are mapped by NAME match,
+     never by slot. */
+  const lv = card.live;
+  const liveNow = Boolean(card.liveInProgress);
+  const espnHomeIsA = lv ? clean(lv.homeTeam) === clean(card.teamA) : true;
+  const liveBits = {
+    homeAbbrev: lv?.homeAbbrev,
+    awayAbbrev: lv?.awayAbbrev,
+    homeId: lv?.homeId,
+    awayId: lv?.awayId,
+    homeColor: (espnHomeIsA ? aColors : bColors)?.primary,
+    awayColor: (espnHomeIsA ? bColors : aColors)?.primary,
+  };
+
   const tabBtn = (kind: PanelKind, label: string, accent = false) => (
     <button
       className="ui-btn"
@@ -2509,6 +2543,10 @@ export function GameCard({
 
       <WinProbBar card={card} aColor={aColors?.primary} bColor={bColors?.primary} condensed={condensed} />
 
+      {/* Live ball spot + down & distance, straight off the scoreboard poll. */}
+      {liveNow && lv?.situation && (
+        <FieldStrip situation={lv.situation} bits={liveBits} condensed={condensed} />
+      )}
 
       {jsonRow ? (
         <MarketEdge
@@ -2536,6 +2574,10 @@ export function GameCard({
           it. Everything game-level (scores distribution, market block, win
           prob, parlay legs) works identically on both divisions. */}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
+        {/* Live while in progress; the same panel doubles as the postgame
+            win/cover flow chart while the event is still on today's board. */}
+        {lv?.id && (liveNow || lv.state === "final") &&
+          tabBtn("live", liveNow ? "Live" : "Game Flow", liveNow)}
         {canShowScores && tabBtn("scores", "Simulated Scores")}
         {csvCard && tabBtn("players", "Player Stats", true)}
         {jsonRow && card.hasPlayers && tabBtn("props", "Player Props")}
@@ -2779,7 +2821,20 @@ function CardPanelHost({
     : kind === "players" ? "Simulated Player Stats"
     : kind === "props" ? "Player Props"
     : kind === "box" ? "Projected Box Score"
+    : kind === "live" ? (card.liveInProgress ? "Live Gamecast" : "Game Flow")
     : "Add Parlay Leg";
+
+  // Same name-keyed home/away mapping as the card (neutral-site flips).
+  const lv = card.live;
+  const espnHomeIsA = lv ? clean(lv.homeTeam) === clean(card.teamA) : true;
+  const liveBits = {
+    homeAbbrev: lv?.homeAbbrev,
+    awayAbbrev: lv?.awayAbbrev,
+    homeId: lv?.homeId,
+    awayId: lv?.awayId,
+    homeColor: getTeamColors(espnHomeIsA ? card.teamA : card.teamB)?.primary,
+    awayColor: getTeamColors(espnHomeIsA ? card.teamB : card.teamA)?.primary,
+  };
 
   return (
     <section
@@ -2801,6 +2856,19 @@ function CardPanelHost({
         </button>
       </div>
 
+      {kind === "live" && lv?.id && (
+        <LiveGamePanel
+          eventId={lv.id}
+          isLive={lv.state === "in"}
+          situation={lv.situation}
+          bits={liveBits}
+          simHomeWinPct={
+            typeof card.pHome === "number"
+              ? 100 * (espnHomeIsA ? card.pHome : 1 - card.pHome)
+              : undefined
+          }
+        />
+      )}
       {kind === "scores" && <ScoresPanel card={card} gdata={gdata} season={season} />}
       {kind === "players" && <PlayersPanel card={card} week={week} season={season} />}
       {/* card.hasPlayers guards these as well as the buttons: a panel can
