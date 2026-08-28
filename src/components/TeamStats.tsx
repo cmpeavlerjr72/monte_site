@@ -72,6 +72,17 @@ type Props = {
   kalshi?: KalshiGame;
   colorFor?: (team: string) => string | undefined;
   logoFor?: (team: string) => string | undefined;
+  /**
+   * PRE-FOCUS, sent by the Bets panel's "See projection →" button: scroll that
+   * team's stat straight into view and flash it, instead of dropping the
+   * reader at the top of a 13-stat chart to hunt for the one the bet was on.
+   *
+   * The keys are `team_stats.json`'s own — both sides read the same document,
+   * so a suggestion's stat IS a block key. A target with no rendered block
+   * (an unpublished stat, a series we have not mapped) is a quiet no-op, never
+   * an error.
+   */
+  focus?: { team: string; stat: string } | null;
 };
 
 const ROWS: { key: string; label: string; unit?: string }[] = [
@@ -288,7 +299,7 @@ function buildFlags(
 /* ------------------------------ one stat block ---------------------------- */
 function StatBlock({
   statKey, label, unit, definition, cols, sideOf, stats, quotes,
-  colorFor, logoFor, sel, onSel, L,
+  colorFor, logoFor, sel, onSel, L, blockRef, highlight = false,
 }: {
   statKey: string;
   label: string;
@@ -303,15 +314,25 @@ function StatBlock({
   sel: string | null;
   onSel: (key: string | null) => void;
   L: Layout;
+  /** Registers this block so a focus payload can scroll to it. */
+  blockRef?: (el: HTMLDivElement | null) => void;
+  /** Temporary post-jump highlight — the card-flash convention, ~1.8s. */
+  highlight?: boolean;
 }) {
   const [tA, tB] = cols;
   const dA = stats[tA]?.[statKey];
   const dB = tB ? stats[tB]?.[statKey] : undefined;
 
+  // Same mark the scoreboard uses when a card is jumped to: an outline that
+  // fades, never a colour change — the palette here already means something.
+  const focusStyle = highlight
+    ? { outline: "2px solid var(--brand)", outlineOffset: 2, borderRadius: 8 }
+    : undefined;
+
   if ((!dA || dA.median === null) && (!dB || dB.median === null)) {
     const reason = dA?.reason ?? dB?.reason;
     return (
-      <div style={{ padding: "7px 0", borderTop: "1px solid var(--border)" }}>
+      <div ref={blockRef} style={{ padding: "7px 0", borderTop: "1px solid var(--border)", ...focusStyle }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text)" }}>{label}</div>
         <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
           Not simulated{reason ? ` — ${reason}` : ""}.
@@ -486,7 +507,10 @@ function StatBlock({
   };
 
   return (
-    <div style={{ padding: "7px 0", borderTop: "1px solid var(--border)", position: "relative" }}>
+    <div ref={blockRef} style={{
+      padding: "7px 0", borderTop: "1px solid var(--border)", position: "relative",
+      ...focusStyle,
+    }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text)" }} title={definition}>
           {label}
@@ -600,7 +624,7 @@ function TableView({ cols, stats, defs }: {
 
 /* ================================ the panel =============================== */
 export default function TeamStats({
-  slug, ns, weekId, teamA, teamB, kalshi, colorFor, logoFor,
+  slug, ns, weekId, teamA, teamB, kalshi, colorFor, logoFor, focus,
 }: Props) {
   const [doc, setDoc] = useState<TeamStatsDoc | null>(null);
   const [missing, setMissing] = useState(false);
@@ -675,6 +699,51 @@ export default function TeamStats({
     return (t: string) => map.get(t) ?? null;
   }, [teamA, teamB]);
 
+  /* ------------------------------ pre-focus -------------------------------
+   * A suggestion in the Bets panel points here with {team, stat}. Deps are
+   * PRIMITIVES (brief rule 4), and `applied` makes it fire ONCE per payload:
+   * without it, focus + the `view` dep would keep dragging the reader back to
+   * the chart every time they opened the table.
+   *
+   * Order of the guards matters. Table view has no per-stat blocks, so it
+   * switches to chart and lets the `view` dep bring the effect back; a doc
+   * that has not loaded yet has no ref either, and the `doc` dep covers that.
+   * A stat with no block at all just never resolves — a no-op by design.
+   * ---------------------------------------------------------------------- */
+  const [flashStat, setFlashStat] = useState<string | null>(null);
+  const blockRefs = useRef(new Map<string, HTMLDivElement>());
+  const appliedFocus = useRef<string>("");
+  const focusTeam = focus?.team ?? "";
+  const focusStat = focus?.stat ?? "";
+  useEffect(() => {
+    const key = focusStat ? `${focusTeam}|${focusStat}` : "";
+    if (!key || appliedFocus.current === key) return;
+    if (view === "table") { setView("chart"); return; }
+    const el = blockRefs.current.get(focusStat);
+    if (!el) return;
+    appliedFocus.current = key;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashStat(focusStat);
+    const t = window.setTimeout(
+      () => setFlashStat((k) => (k === focusStat ? null : k)), 1800);
+    return () => window.clearTimeout(t);
+  }, [focusTeam, focusStat, doc, view]);
+
+  // One STABLE ref callback per stat: a fresh closure every render would make
+  // React detach and re-attach every block on every render.
+  const refFns = useRef(new Map<string, (el: HTMLDivElement | null) => void>());
+  const attachBlock = useCallback((statKey: string) => {
+    let fn = refFns.current.get(statKey);
+    if (!fn) {
+      fn = (el: HTMLDivElement | null) => {
+        if (el) blockRefs.current.set(statKey, el);
+        else blockRefs.current.delete(statKey);
+      };
+      refFns.current.set(statKey, fn);
+    }
+    return fn;
+  }, []);
+
   if (loading && !doc) {
     return <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading team stats…</div>;
   }
@@ -731,6 +800,8 @@ export default function TeamStats({
                 cols={cols} sideOf={sideOf} stats={game.stats} quotes={quotes}
                 colorFor={colorFor} logoFor={logoFor}
                 sel={sel} onSel={setSel} L={L}
+                blockRef={attachBlock(r.key)}
+                highlight={flashStat === r.key}
               />
             ))}
           </div>
