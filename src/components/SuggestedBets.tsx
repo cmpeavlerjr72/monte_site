@@ -20,6 +20,13 @@
 // Scoreboard) under ONE set of filters, so the index count, the tab badge and
 // the rows below can never disagree.
 //
+// A third, narrower surface lives here too: `PlaceStrip`, the one-line bet bar
+// that rides above a PROJECTION panel after "See projection →". It is the same
+// bet, the same confirm slip and the same rails — reached from the chart
+// instead of from the list, because deciding while looking at the shape is the
+// whole point of jumping there. It never prices anything itself: it looks the
+// ladder up live by id and degrades to a sentence when it is gone.
+//
 // `scripts/fbs_maker_pipeline.py` in cfb-props-sim remains the AUTOMATED
 // placement authority and stays post-only-only. This panel is the
 // HUMAN-CONFIRMED path: it mirrors the pipeline's selection constants so the
@@ -156,18 +163,96 @@ export function kickText(ms: number | undefined): string {
  * team's block in the Team Stats chart; a game line points at the simulated
  * scores panel, which is where winner/spread/total live. Anything we cannot
  * map (a series Kalshi added since) simply gets no button.
+ *
+ * THE TARGET CARRIES THE VALUE BEING PRICED, not just the chart. Landing on
+ * the right block and leaving the reader to find which of eleven rungs the bet
+ * was on is most of the way to nowhere: a stat target names its STRIKE and a
+ * scores target names its METRIC and LINE, so the chart opens with the marker
+ * already on the number the money is going onto.
+ *
+ * It also carries the ORIGINATING LADDER's id, which is what lets the
+ * projection panel offer a place strip for that exact bet (see `PlaceStrip`).
+ * The id is only ever a lookup key — the group itself is re-read live from the
+ * page compute, never carried across a recompute.
  * ------------------------------------------------------------------------ */
+
+/** The scores panel's four tabs. Mirrors `Metric` in Scoreboard.tsx. */
+export type ScoreMetric = "spread" | "total" | "teamLeft" | "teamRight";
+
 export type ProjectionTarget =
-  | { kind: "teamstats"; team: string; stat: string }
-  | { kind: "scores" };
+  | {
+      kind: "teamstats"; team: string; stat: string;
+      /** Kalshi's own integer strike ("175+" -> 175), so the chart can pick the
+       *  ONE flag this bet is about out of the whole ladder. */
+      strike?: number;
+      groupId?: string;
+    }
+  | {
+      kind: "scores"; metric: ScoreMetric;
+      /** The line, in the axis's own convention: a home-perspective spread
+       *  (−7.5 means the home team laying 7.5) or a game total. */
+      line?: number;
+      groupId?: string;
+    };
+
+/**
+ * A ladder's stable id, and the one the panel's rows already key on.
+ *
+ * A tail ladder and its in-band twin share a `ladder` string (same game, same
+ * family, same team) — they are two halves of one ladder split by the band —
+ * so the tail half is namespaced or the two would resolve to each other.
+ */
+export const groupIdOf = (g: LadderGroup): string =>
+  g.tail ? `tail:${g.ladder}` : g.ladder;
+
+/**
+ * Find a ladder in the CURRENT compute by id.
+ *
+ * Always call this against the live `useSuggestions` result at render time.
+ * Holding on to a `LadderGroup` object across a recompute is how a place strip
+ * would show a 45-second-old price on a game that has since kicked off.
+ * Returns null when the ladder is gone — the caller says so in words.
+ */
+export function findGroupById(
+  section: SuggestSection | undefined, id: string | undefined,
+): LadderGroup | null {
+  if (!section || !id) return null;
+  return [...section.groups, ...section.tailGroups]
+    .find((g) => groupIdOf(g) === id) ?? null;
+}
 
 export function projectionTargetFor(g: LadderGroup): ProjectionTarget | null {
-  if (g.family === "game") return { kind: "scores" };
-  const series = g.rungs[0]?.series ?? "";
-  const stat = STAT_FOR_SERIES[series];
-  const team = g.rungs[0]?.team ?? "";
+  const id = groupIdOf(g);
+  // The BEST rung, because that is the rung whose net edge the row prints. A
+  // two-rung ladder points the chart at the number the verdict came from.
+  const best = g.rungs.length
+    ? g.rungs.reduce((m, r) => (r.edge > m.edge ? r : m), g.rungs[0])
+    : null;
+  if (!best) return null;
+  if (g.family === "game") {
+    switch (best.series) {
+      // `strike` is the exporter's signed HOME-perspective line for a spread
+      // rung and the game total for a total rung — both already in the scores
+      // axis's own units, so there is nothing to convert.
+      case "KXNCAAFTOTAL":
+        return { kind: "scores", metric: "total", line: best.strike, groupId: id };
+      case "KXNCAAFSPREAD":
+        return { kind: "scores", metric: "spread", line: best.strike, groupId: id };
+      // A moneyline IS the spread at pick'em: "wins" = "covers −0.5". Same
+      // convention marketEdge.ts uses for its win rows, reused so the two
+      // surfaces cannot drift apart.
+      case "KXNCAAFGAME":
+        return { kind: "scores", metric: "spread", line: -0.5, groupId: id };
+      // A game family Kalshi adds later still gets the right chart, just no
+      // pre-loaded line — never a wrong one.
+      default:
+        return { kind: "scores", metric: "spread", groupId: id };
+    }
+  }
+  const stat = STAT_FOR_SERIES[best.series];
+  const team = best.team;
   if (!stat || !team) return null;
-  return { kind: "teamstats", team, stat };
+  return { kind: "teamstats", team, stat, strike: best.strike, groupId: id };
 }
 
 /* ------------------------------- filter chips ------------------------------ */
@@ -354,8 +439,9 @@ function LadderRows({
                   type="button" className="ui-btn"
                   onClick={() => onProject(target)}
                   title={target.kind === "teamstats"
-                    ? `Show ${target.team}'s simulated distribution for this stat`
-                    : "Show the simulated score distribution"}
+                    ? `Show ${target.team}'s simulated distribution with the ${target.strike}+ market marked`
+                    : `Show the simulated score distribution${
+                        target.line === undefined ? "" : ` with ${target.line} marked`}`}
                   style={{ padding: "1px 8px", fontSize: 10.5, fontWeight: 700 }}
                 >
                   See projection →
@@ -619,6 +705,126 @@ export default function GameBetsPanel({
         />
       )}
     </div>
+  );
+}
+
+/* ============================== place strip =============================== */
+/**
+ * PLACE THE BET FROM THE CHART IT CAME OUT OF.
+ *
+ * "See projection →" used to be a one-way door: read the distribution, then
+ * navigate back to the Bets tab and find the row again to act on it. The strip
+ * closes that loop — while the reader is looking at the shape, the bet that
+ * sent them there is a button away, with the same confirm slip, the same
+ * server rails and the same dry-run staging as the panel. There is exactly ONE
+ * placement implementation in this app (`ConfirmSlip` below) and this is a
+ * second entry point into it, never a second copy of it.
+ *
+ * SCOPE. It appears ONLY when the reader arrived from a bets row (the focus
+ * payload carries a ladder id) and only for a live owner session. It is not
+ * place-from-chart for arbitrary rungs: a chart is a reading surface, and a
+ * Place button on every strike would turn a mis-tap into an order.
+ *
+ * NEVER STALE. `group` is looked up LIVE by id against the current compute on
+ * every render (see `findGroupById`); the compute re-runs on the 45s feed poll
+ * and the 30s clock, so a game that kicks off or a filter that hides the
+ * ladder makes this degrade to one quiet sentence instead of showing a price
+ * that no longer exists. The slip itself still re-reads the live book
+ * server-side before it signs anything.
+ */
+export function PlaceStrip({
+  group, unit, token, feeParams, quotedAt, ordersLive,
+}: {
+  /** The originating ladder, re-read from the CURRENT compute — or null when
+   *  it is no longer suggested. */
+  group: LadderGroup | null;
+  unit: number;
+  token: string;
+  feeParams: Record<string, FeeParams>;
+  quotedAt: Date;
+  ordersLive: boolean;
+}) {
+  const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
+
+  if (!group) {
+    return (
+      <div style={{
+        marginBottom: 7, padding: "6px 9px", borderRadius: 8,
+        border: "1px dashed var(--border)", background: "var(--fill)",
+        fontSize: 11, color: "var(--muted)",
+      }}>
+        This bet is no longer suggested — the game has kicked, the book moved,
+        or a filter is hiding it. The chart below is unchanged.
+      </div>
+    );
+  }
+
+  const single = group.rungs.length === 1;
+  const head = group.rungs[0];
+  const bestMode = group.rungs.reduce(
+    (m, r) => (r.edge > m.edge ? r : m), group.rungs[0]).mode;
+  const outlay = group.rungs.reduce((s, r) => s + r.outlay, 0);
+
+  return (
+    <>
+      <div style={{
+        marginBottom: 7, padding: "7px 9px", borderRadius: 8,
+        border: "1px solid var(--border)",
+        borderLeft: `4px solid ${group.tail ? "var(--border)" : modeHue(bestMode)}`,
+        background: "var(--fill)",
+        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+      }}>
+        {/* The bet, in bet-slip words — the same string the row said. */}
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", minWidth: 0 }}>
+          {group.tail && <TailBadge inline />}
+          {single ? head.label : group.headline}
+        </span>
+        {single
+          ? <ModeChip mode={head.mode} price={head.price} />
+          : Array.from(new Set(group.rungs.map((r) => r.mode)))
+              .map((m) => <ModeChip key={m} mode={m} />)}
+        {/* Sizing, from the owner's unit. Muted: it is context, not the
+            verdict. */}
+        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+          {single
+            ? `${head.count} @ ${cents(head.price)} · $${head.outlay.toFixed(2)}`
+            : `${group.rungs.length} rungs · $${group.each} each · $${outlay.toFixed(2)} of $${unit}`}
+        </span>
+        {!ordersLive && (
+          <DryRunBadge title="Order entry is staged: the server validates and logs, and submits nothing." />
+        )}
+        {/* THE ONE NUMBER: net edge in cents, colourless on a tail row. */}
+        <span style={{
+          marginLeft: "auto", fontWeight: 800, fontSize: 12.5,
+          fontVariantNumeric: "tabular-nums",
+          color: group.tail
+            ? "var(--muted)"
+            : group.bestEdge > 0 ? "var(--pos)" : "var(--neg)",
+        }}>
+          {signed(group.bestEdge)}
+        </span>
+        <button
+          type="button" className="ui-btn"
+          onClick={() => setSlip({ group, idem: newIdempotencyKey() })}
+          title={`Place ${group.rungs.length} order${group.rungs.length === 1 ? "" : "s"}`}
+          style={{ flex: "none", padding: "3px 12px", fontSize: 11, fontWeight: 800 }}
+        >
+          Place
+        </button>
+      </div>
+
+      {slip && (
+        <ConfirmSlip
+          group={slip.group}
+          idem={slip.idem}
+          token={token}
+          feeParams={feeParams}
+          quotedAt={quotedAt}
+          ordersLive={ordersLive}
+          onClose={() => setSlip(null)}
+        />
+      )}
+    </>
   );
 }
 

@@ -81,8 +81,16 @@ type Props = {
    * so a suggestion's stat IS a block key. A target with no rendered block
    * (an unpublished stat, a series we have not mapped) is a quiet no-op, never
    * an error.
+   *
+   * `strike` is Kalshi's own integer strike ("175+" -> 175) and it is the
+   * point of the whole jump: a rec-yards ladder has eleven flags on it and
+   * landing on the block still leaves the reader guessing WHICH rung the money
+   * is going onto. When it resolves to a rendered flag, that flag is drawn in
+   * the brand colour with a full-height stem, keeps its verdict chip at every
+   * width, and has its derivation popover already open. A strike that is not
+   * on the published grid is a quiet no-op — the block focus still happens.
    */
-  focus?: { team: string; stat: string } | null;
+  focus?: { team: string; stat: string; strike?: number } | null;
 };
 
 const ROWS: { key: string; label: string; unit?: string }[] = [
@@ -257,7 +265,10 @@ const strikeLabel = (k: number): string => `${Math.ceil(k)}+`;
 function buildFlags(
   rungs: Rung[], statKey: string, side: "A" | "B" | null, team: string,
   label: string, quotes: Map<string, KalshiStatQuote>, x: (v: number) => number,
-  maxChips: number
+  maxChips: number,
+  /** The rung a suggestion is priced on, if this block holds it. It keeps its
+   *  chip at every width — the whole reason the reader jumped here. */
+  focusKey: string | null = null,
 ): Flag[] {
   if (!side) return [];
   const raw: Omit<Flag, "row">[] = [];
@@ -293,6 +304,10 @@ function buildFlags(
     const keep = new Set(chipped.map((f) => f.key));
     for (const f of raw) if (f.showChip && !keep.has(f.key)) f.showChip = false;
   }
+  // The focused rung is EXEMPT from the narrow-width thinning. It is the one
+  // market the reader came here to look at; letting the phone layout demote it
+  // to a bare stub would defeat the jump.
+  if (focusKey) for (const f of raw) if (f.key === focusKey) f.showChip = true;
   return stagger(raw);
 }
 
@@ -300,6 +315,7 @@ function buildFlags(
 function StatBlock({
   statKey, label, unit, definition, cols, sideOf, stats, quotes,
   colorFor, logoFor, sel, onSel, L, blockRef, highlight = false,
+  focusKey = null,
 }: {
   statKey: string;
   label: string;
@@ -318,6 +334,9 @@ function StatBlock({
   blockRef?: (el: HTMLDivElement | null) => void;
   /** Temporary post-jump highlight — the card-flash convention, ~1.8s. */
   highlight?: boolean;
+  /** Flag key of the exact rung a suggestion is priced on, when it is in this
+   *  block. Drawn in the brand colour with a full-height stem. */
+  focusKey?: string | null;
 }) {
   const [tA, tB] = cols;
   const dA = stats[tA]?.[statKey];
@@ -385,8 +404,8 @@ function StatBlock({
     ...cntA.map((b) => b.mass), ...cntB.map((b) => b.mass)
   );
 
-  const flagsA = buildFlags(rA, statKey, sideOf(tA), tA, label, quotes, x, L.maxChips);
-  const flagsB = tB ? buildFlags(rB, statKey, sideOf(tB), tB, label, quotes, x, L.maxChips) : [];
+  const flagsA = buildFlags(rA, statKey, sideOf(tA), tA, label, quotes, x, L.maxChips, focusKey);
+  const flagsB = tB ? buildFlags(rB, statKey, sideOf(tB), tB, label, quotes, x, L.maxChips, focusKey) : [];
   const rowsA = flagsA.some((f) => f.showChip) ? Math.max(...flagsA.map((f) => f.row)) + 1 : 0;
   const rowsB = flagsB.some((f) => f.showChip) ? Math.max(...flagsB.map((f) => f.row)) + 1 : 0;
 
@@ -467,6 +486,12 @@ function StatBlock({
             ? (up ? axisY - L.densH - 2 : axisY + L.densH + 2)
             : (up ? outer + 2 : outer - CHIP_H + 2);
           const on = f.key === sel;
+          // THE RUNG THIS BET IS ON. It gets the brand channel — a colour that
+          // means "you were sent here" and nothing else on this chart, so it
+          // never competes with --pos/--neg, which mean edge sign. Plus a
+          // marker dot where the strike crosses the axis, so the eye lands on
+          // the value before it reads a single character.
+          const isFocus = focusKey !== null && f.key === focusKey;
           const tone = f.edge === null ? "var(--muted)" : f.edge > 0 ? "var(--pos)" : "var(--neg)";
           const big = f.edge !== null && Math.abs(f.edge) >= 0.10;
           const hitTop = Math.min(axisY, stemEnd) - CHIP_H;
@@ -474,21 +499,27 @@ function StatBlock({
             <g key={f.key} style={{ cursor: "pointer" }}
                onClick={() => onSel(on ? null : f.key)}>
               <line x1={f.x} x2={f.x} y1={axisY} y2={stemEnd}
-                    stroke={!f.showChip ? "var(--border)" : "var(--muted)"}
-                    strokeWidth={on ? 2 : 1} strokeOpacity={!f.showChip ? 1 : 0.8} />
+                    stroke={isFocus ? "var(--brand)" : !f.showChip ? "var(--border)" : "var(--muted)"}
+                    strokeWidth={isFocus ? 2.5 : on ? 2 : 1}
+                    strokeOpacity={isFocus || !f.showChip ? 1 : 0.8} />
+              {isFocus && (
+                <circle cx={f.x} cy={axisY} r={3.5} fill="var(--brand)" />
+              )}
               {/* On a phone a stub is a BARE tick: 25-yard strikes land ~16px
                   apart there, so printing every "275+" would collide into
                   mush. The strike stays in the tap popover, which is the
                   whole point of keeping stubs tappable. */}
               {(f.showChip || !L.narrow) && (
-                <text x={f.x} y={strikeY} fontSize={9} textAnchor="middle"
-                      fill="var(--muted)" style={{ fontVariantNumeric: "tabular-nums" }}>
+                <text x={f.x} y={strikeY} fontSize={isFocus ? 10.5 : 9} textAnchor="middle"
+                      fontWeight={isFocus ? 800 : 400}
+                      fill={isFocus ? "var(--brand-text)" : "var(--muted)"}
+                      style={{ fontVariantNumeric: "tabular-nums" }}>
                   {f.strike}
                 </text>
               )}
               {f.showChip && f.edge !== null && (
-                <text x={f.x} y={edgeY} fontSize={big ? 11.5 : 10}
-                      fontWeight={big ? 800 : 700} textAnchor="middle" fill={tone}
+                <text x={f.x} y={edgeY} fontSize={big || isFocus ? 11.5 : 10}
+                      fontWeight={big || isFocus ? 800 : 700} textAnchor="middle" fill={tone}
                       style={{ fontVariantNumeric: "tabular-nums" }}>
                   {signed(f.edge)}
                 </text>
@@ -715,8 +746,32 @@ export default function TeamStats({
   const appliedFocus = useRef<string>("");
   const focusTeam = focus?.team ?? "";
   const focusStat = focus?.stat ?? "";
+  const focusStrike = focus?.strike;
+
+  /**
+   * The focused STRIKE, resolved to a flag key.
+   *
+   * Kalshi words a market as "175+" and our exporter writes the rung at its
+   * half-integer floor ("174.5"), so the two are related by `Math.ceil` — the
+   * same relation `strikeLabel` prints with. Resolving it against the
+   * document's own rung keys (rather than assuming `strike − 0.5`) means an
+   * integer-keyed grid resolves too, and a strike that is simply not published
+   * resolves to null and changes nothing.
+   */
+  const focusFlagKey = useMemo(() => {
+    if (!focusStat || typeof focusStrike !== "number") return null;
+    const side = sideOf(focusTeam);
+    if (!side) return null;
+    const rungs = doc?.games?.[slug]?.stats?.[focusTeam]?.[focusStat]?.rungs;
+    if (!rungs) return null;
+    const k = Object.keys(rungs).map(Number)
+      .filter((n) => Number.isFinite(n))
+      .find((n) => Math.ceil(n) === focusStrike);
+    return k === undefined ? null : `${focusStat}|${side}|${k}`;
+  }, [focusStat, focusStrike, focusTeam, sideOf, doc, slug]);
+
   useEffect(() => {
-    const key = focusStat ? `${focusTeam}|${focusStat}` : "";
+    const key = focusStat ? `${focusTeam}|${focusStat}|${focusStrike ?? ""}` : "";
     if (!key || appliedFocus.current === key) return;
     if (view === "table") { setView("chart"); return; }
     const el = blockRefs.current.get(focusStat);
@@ -724,10 +779,14 @@ export default function TeamStats({
     appliedFocus.current = key;
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     setFlashStat(focusStat);
+    // The priced rung's derivation, already open: "Sim 67% · Kalshi 58¢ ·
+    // Edge +9¢" is the sentence the reader jumped here to check, and making
+    // them find and tap the right flag first is the hunt this focus removes.
+    if (focusFlagKey) setSel(focusFlagKey);
     const t = window.setTimeout(
       () => setFlashStat((k) => (k === focusStat ? null : k)), 1800);
     return () => window.clearTimeout(t);
-  }, [focusTeam, focusStat, doc, view]);
+  }, [focusTeam, focusStat, focusStrike, focusFlagKey, doc, view]);
 
   // One STABLE ref callback per stat: a fresh closure every render would make
   // React detach and re-attach every block on every render.
@@ -785,6 +844,7 @@ export default function TeamStats({
         Top team is above the line, bottom team below — further right is more.
         {doc.nsims ? ` ${doc.nsims.toLocaleString()} simulated games.` : ""}
         {priced ? " Prices update live; no edge is shown on a one-sided or very wide book." : ""}
+        {focusFlagKey ? " The rung your bet is on is the highlighted flag." : ""}
       </div>
 
       {/* The CHART fits its container at every width, so it never scrolls.
@@ -802,6 +862,7 @@ export default function TeamStats({
                 sel={sel} onSel={setSel} L={L}
                 blockRef={attachBlock(r.key)}
                 highlight={flashStat === r.key}
+                focusKey={r.key === focusStat ? focusFlagKey : null}
               />
             ))}
           </div>
