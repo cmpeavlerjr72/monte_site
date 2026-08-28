@@ -287,6 +287,99 @@ const BLOCKED_TEAM_MARKET_FLAGS = new Set(["THIN", "TAIL", "NOISE"]);
 export const isTradeableTeamMarket = (r: TeamMarketRow): boolean =>
   !r.flags.some((f) => BLOCKED_TEAM_MARKET_FLAGS.has(f));
 
+/* ================= team_stats rungs <-> Kalshi team-stat markets ===========
+ * The Team Stats panel overlays live prices on the rungs it already displays.
+ * The join and every number it needs live HERE, in the math layer, for the
+ * same reason the flag rule does: no view can forget the site rule, and the
+ * panel itself stays a formatter.
+ * ========================================================================= */
+
+/** Our team_stats stat key -> the Kalshi series that settles the SAME event.
+ *
+ *  `td_offensive` is deliberately ABSENT. KXNCAAFTEAMTD's rules count every
+ *  touchdown a team records and do not exclude defensive or return scores,
+ *  which we do not simulate — our stat is a FLOOR for that market, so a price
+ *  printed beside it would manufacture a false edge. `fg_made` is absent for
+ *  the same class of reason: we publish no number at all. */
+export const TEAM_STAT_SERIES: Readonly<Record<string, string>> = {
+  points: "KXNCAAFTEAMTOTAL",
+  rec_yards: "KXNCAAFTEAMRECYDS",
+  rush_td: "KXNCAAFTEAMRSHTD",
+  rec_td: "KXNCAAFTEAMRECTD",
+};
+
+/** One market quote attached to one (stat, team, strike) rung. */
+export type TeamStatQuote = {
+  yesBid: number;
+  yesAsk: number;
+  /** Display price for the YES event ("over K"), i.e. the book's midpoint. */
+  mid: number;
+  /** False when THIN/TAIL/NOISE — price may show, an EDGE never may. */
+  tradeable: boolean;
+  flags: string[];
+  ticker: string;
+};
+
+/** Edge threshold in probability units (3 cents). */
+export const TEAM_STAT_EDGE_MIN = 0.03;
+
+/**
+ * sim P(over K) minus the market's YES midpoint, or null when there is no
+ * edge to show. Null on a flagged quote (site rule) and null below the 3c
+ * threshold. `simP` is the rung the panel already displays and the file's own
+ * `sim_p` for the same market — the same sim, same tag — so this is one
+ * subtraction of two published numbers, never a re-derivation.
+ */
+export function teamStatEdge(q: TeamStatQuote, simP: number): number | null {
+  if (!q.tradeable) return null;
+  const e = simP - q.mid;
+  return Math.abs(e) >= TEAM_STAT_EDGE_MIN ? e : null;
+}
+
+/**
+ * Index this game's team-stat markets by `<statKey>|<team>|<strike>`.
+ *
+ * Team identity for these families lives in the market TITLE, which always
+ * leads with the school ("North Carolina scores over 13.5 points"). We match
+ * team names taken VERBATIM from team_stats.json (brief rule 1 — nothing is
+ * retyped) and, when both names match, keep the LONGER one so a name that is
+ * a prefix of its opponent's can never steal the row.
+ */
+export function indexTeamStatQuotes(
+  rows: TeamMarketRow[],
+  slug: string,
+  teams: string[]
+): Map<string, TeamStatQuote> {
+  const seriesToStat = new Map<string, string>();
+  for (const [stat, series] of Object.entries(TEAM_STAT_SERIES)) {
+    seriesToStat.set(series, stat);
+  }
+  const out = new Map<string, TeamStatQuote>();
+
+  for (const r of rows) {
+    if (r.slug !== slug) continue;
+    const stat = seriesToStat.get(r.series);
+    if (!stat || r.strike === null) continue;
+
+    let team: string | null = null;
+    for (const t of teams) {
+      if (!r.title.startsWith(t)) continue;
+      if (team === null || t.length > team.length) team = t;
+    }
+    if (!team) continue;
+
+    out.set(`${stat}|${team}|${r.strike}`, {
+      yesBid: r.yes_bid,
+      yesAsk: r.yes_ask,
+      mid: (r.yes_bid + r.yes_ask) / 2,
+      tradeable: isTradeableTeamMarket(r),
+      flags: r.flags,
+      ticker: r.market_ticker,
+    });
+  }
+  return out;
+}
+
 /**
  * Team-market rows ranked by fee-adjusted EV descending, optionally within
  * one market family (series). Flagged rows are dropped here (see the site

@@ -105,9 +105,30 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   counts OT1/OT2 only and never 2-pt conversions). Published by
   cfb-props-sim `export_team_stats.py`; built from the PLAYER sweep, so
   the FCS namespace 404s forever = expected "not published" state
-  (`TeamStatsNotPublished`). The "Team Stats" panel is DISPLAY ONLY:
-  all aggregation is per-seed-then-across-seeds in the exporter, and
-  the client does no arithmetic on a distribution and shows no prices.
+  (`TeamStatsNotPublished`). The "Team Stats" panel renders each stat
+  as two DISTRIBUTION STRIPS on one shared scale (teamA above teamB):
+  a q10–q90 band, a median mark, and a hash at every rung, with the sim
+  P(over) above each hash and the Kalshi price below it; strikes label
+  one shared axis. A % prints only for 3%–97% (bare hash otherwise) and
+  the block scrolls horizontally rather than compressing — `PLOT_W` is
+  set by the densest ladder (team points, 3-point gaps), so shrinking
+  it collides the market row. All aggregation stays
+  per-seed-then-across-seeds in the exporter; the client's ONLY
+  arithmetic is the market midpoint and the `sim_p − mid` edge, both in
+  `edges.ts` beside the flag rule (`indexTeamStatQuotes` /
+  `teamStatEdge`, 3c threshold). Prices come from `team_markets.json`
+  — the site's `/api/kalshi/cfb` proxy carries only GAME/TOTAL/SPREAD,
+  no `KXNCAAFTEAM*` — joined by series+strike with the team read off
+  the market title's leading school name. `TEAM_STAT_SERIES`
+  deliberately omits `td_offensive`: KXNCAAFTEAMTD counts
+  defensive/return scores we do not simulate, so our stat is a FLOOR
+  and a price beside it would fake an edge. SITE RULE holds — a
+  THIN/TAIL/NOISE quote shows its bid–ask and NEVER an edge. School
+  brand hexes FAIL `validate_palette.js` as marks (UNC #7bafd4 is
+  2.29:1 on light, TCU #4d1979 is 1.44:1 on dark), so brand color is a
+  band wash + identity swatch only; every load-bearing mark and all
+  text wears theme tokens, and the numeric table view is one toggle
+  away as the relief the validator requires.
 
 ## My-Kalshi portal (owner-only)
 
