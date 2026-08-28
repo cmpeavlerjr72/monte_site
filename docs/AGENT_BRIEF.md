@@ -105,30 +105,50 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   counts OT1/OT2 only and never 2-pt conversions). Published by
   cfb-props-sim `export_team_stats.py`; built from the PLAYER sweep, so
   the FCS namespace 404s forever = expected "not published" state
-  (`TeamStatsNotPublished`). The "Team Stats" panel renders each stat
-  as two DISTRIBUTION STRIPS on one shared scale (teamA above teamB):
-  a q10–q90 band, a median mark, and a hash at every rung, with the sim
-  P(over) above each hash and the Kalshi price below it; strikes label
-  one shared axis. A % prints only for 3%–97% (bare hash otherwise) and
-  the block scrolls horizontally rather than compressing — `PLOT_W` is
-  set by the densest ladder (team points, 3-point gaps), so shrinking
-  it collides the market row. All aggregation stays
-  per-seed-then-across-seeds in the exporter; the client's ONLY
-  arithmetic is the market midpoint and the `sim_p − mid` edge, both in
-  `edges.ts` beside the flag rule (`indexTeamStatQuotes` /
-  `teamStatEdge`, 3c threshold). Prices come from `team_markets.json`
-  — the site's `/api/kalshi/cfb` proxy carries only GAME/TOTAL/SPREAD,
-  no `KXNCAAFTEAM*` — joined by series+strike with the team read off
-  the market title's leading school name. `TEAM_STAT_SERIES`
-  deliberately omits `td_offensive`: KXNCAAFTEAMTD counts
-  defensive/return scores we do not simulate, so our stat is a FLOOR
-  and a price beside it would fake an edge. SITE RULE holds — a
-  THIN/TAIL/NOISE quote shows its bid–ask and NEVER an edge. School
-  brand hexes FAIL `validate_palette.js` as marks (UNC #7bafd4 is
-  2.29:1 on light, TCU #4d1979 is 1.44:1 on dark), so brand color is a
-  band wash + identity swatch only; every load-bearing mark and all
-  text wears theme tokens, and the numeric table view is one toggle
-  away as the relief the validator requires.
+  (`TeamStatsNotPublished`). The "Team Stats" panel draws each stat as a
+  MIRRORED DENSITY on ONE continuous axis — teamA's distribution above
+  the line, teamB's below — with live Kalshi markets as flags on the
+  line. This shape was chosen against a stated bar: readable "to
+  someone who has had a beer or two at a bar". Three rules follow from
+  it and must not be undone: (1) NO number pairs at rest anywhere — no
+  bid–ask, no q10–q90; a flag shows only the strike in Kalshi's own
+  wording ("150+", `Math.ceil` of the half-integer floor) and the
+  VERDICT, the edge in cents. Everything else lives in the tap popover,
+  written in words ("TCU 225+ receiving yards — Sim: 63% · Kalshi: 52¢
+  · Edge: +11¢"), tap targets >=40px. (2) ONE axis per stat, drawn
+  unbroken and last so it sits on top. (3) A words legend at the top
+  says which numbers are whose, once. Flag labels sit entirely OUTSIDE
+  the silhouette (only the stem crosses it), chips stagger into up to 3
+  rows when strikes crowd, and a chip-less flag (no actionable edge)
+  keeps a short stub and claims no stagger row. Density is
+  adjacent-rung SUBTRACTION — P(>K_i) − P(>K_i+1) over bin width — never
+  a kernel; small-integer counts (TDs, sacks, INTs) draw as discrete
+  bars on an axis starting at −0.5, because a smooth curve over 0,1,2,3
+  would misstate what the sim produced.
+  PRICES ARE LIVE, never a published snapshot: the panel is meant to
+  become a trading surface, so it reads `/api/kalshi/cfb` (45s TTL,
+  bulk series paging — `KALSHI_STAT_SERIES` in `server/liveScores.ts`
+  adds the KXNCAAFTEAM* families, one `/markets` call per series per
+  window; NEVER add per-market calls, that is what the 2026-08-26
+  shared-IP 429 punished). The server resolves each quote to our stat
+  key and to this game's A/B side, so the client does no name join. SIM
+  values stay from the published weekly file — weekly by design, not
+  staleness — so there is no "as of" stamp, only a live dot. The
+  client's ONLY arithmetic is the midpoint and `sim − mid`; quality
+  suppression is the live equivalent of THIN/TAIL/NOISE and lives in
+  `src/lib/kalshi.ts` (`statBookQuality`): no edge badge when the book
+  is one-sided, wider than 30c, or the sim sits outside 5–95%. Price
+  may still show; the edge may not. `KXNCAAFTEAMTD`/`FG`/`TO` are
+  excluded server-side AND in the sim repo's publisher — team-TD counts
+  defensive/return scores we do not simulate (ours is a FLOOR), FG and
+  turnovers are not simulated at all. `team_markets.json` is now only
+  the RANKED Top Edges feed (daily republish is sufficient; it no
+  longer feeds this panel). School brand hexes FAIL
+  `validate_palette.js` as marks (UNC #7bafd4 is 2.29:1 on light, TCU
+  #4d1979 is 1.44:1 on dark), so brand color fills the silhouette only
+  — every stroke, label and the axis wear theme tokens, `--pos`/`--neg`
+  appear only on a signed edge chip, and the numeric table view is one
+  toggle away as the relief the validator requires.
 
 ## My-Kalshi portal (owner-only)
 

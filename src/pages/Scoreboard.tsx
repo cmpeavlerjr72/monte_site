@@ -2477,6 +2477,7 @@ function ScoreboardPage() {
                     season={openCard.ns}
                     weekId={weekId}
                     useMean={useMean}
+                    kalshi={openCard.jsonRow ? kalshiBySlug.get(openCard.key) : undefined}
                     onAddLeg={addLeg}
                     onClose={() => setOpenPanel(null)}
                   />
@@ -3259,7 +3260,7 @@ export function SimVsKalshi({ card, kalshi, useMean }: {
  * geometry is completely independent of what is open.
  * ========================================================================= */
 function CardPanelHost({
-  card, kind, gdata, week, season, weekId, useMean, onAddLeg, onClose,
+  card, kind, gdata, week, season, weekId, useMean, kalshi, onAddLeg, onClose,
 }: {
   card: CardGame;
   kind: PanelKind;
@@ -3268,6 +3269,9 @@ function CardPanelHost({
   season: Season;
   weekId: string;
   useMean: boolean;
+  /** Live Kalshi feed for this game (45s TTL) — the Team Stats panel's
+   *  price source, so its numbers are never a published snapshot. */
+  kalshi?: KalshiGame;
   onAddLeg: (leg: Leg) => void;
   onClose: () => void;
 }) {
@@ -3371,7 +3375,9 @@ function CardPanelHost({
         <TeamStats
           slug={jsonRow.slug} ns={card.ns} weekId={weekId}
           teamA={card.teamA} teamB={card.teamB}
+          kalshi={kalshi}
           colorFor={(t) => getTeamColors(t)?.primary}
+          logoFor={(t) => getTeamLogo(t) || undefined}
         />
       )}
       {kind === "picker" && jsonRow && (

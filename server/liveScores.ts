@@ -1000,6 +1000,56 @@ type KalshiSide = { line: number | null; yes_price: number | null };
  * happens to be centred on.
  */
 type KalshiRung = { line: number; yes_price: number };
+
+/**
+ * Per-team STAT ladders (KXNCAAFTEAM*), added 2026-08-28 so the Team Stats
+ * panel prices LIVE instead of off a daily published snapshot.
+ *
+ * `stat` is our team_stats.json key, so the client joins by (stat, side,
+ * strike) and never re-derives a probability. Both sides of the book travel
+ * because the panel's quality gate is "is this book real?" — a one-sided
+ * quote or a >30c spread suppresses the edge badge — and a midpoint alone
+ * cannot answer that.
+ *
+ * KXNCAAFTEAMTD / TEAMFG / TEAMTO are deliberately EXCLUDED: team-TD counts
+ * defensive and return scores the sim does not produce (our number is only a
+ * floor), and FG / turnovers are not simulated at all.
+ */
+const KALSHI_STAT_SERIES: Record<string, string> = {
+  // Team points. Already fetched above for the game-level total, but this is
+  // the PER-TEAM ladder and it is the most-traded of the lot — the panel's
+  // first row would otherwise be the only one with no live prices at all.
+  KXNCAAFTEAMTOTAL: "points",
+  KXNCAAFTEAMRECYDS: "rec_yards",
+  KXNCAAFTEAMRSHYDS: "rush_yards",
+  KXNCAAFTEAMYDS: "total_yards",
+  KXNCAAFTEAMREC: "receptions",
+  KXNCAAFTEAMRSHATT: "rush_att",
+  KXNCAAFTEAMRSHTD: "rush_td",
+  KXNCAAFTEAMRECTD: "rec_td",
+  KXNCAAFTEAMSACK: "def_sacks",
+  KXNCAAFTEAMINT: "def_ints",
+};
+
+/** The school a stat-market subtitle names, with the strike phrase stripped. */
+function statMarketTeam(subTitle: unknown): string {
+  const s = String(subTitle ?? "").trim();
+  const colon = s.indexOf(":");
+  if (colon > 0) return s.slice(0, colon);
+  const over = s.match(/^(.+?)\s+over\s+[\d.]+\s+points scored$/i);
+  return over ? over[1] : s;
+}
+
+type KalshiStatQuote = {
+  /** team_stats.json stat key. */
+  stat: string;
+  /** Which side of THIS game — resolved server-side, so no client name join. */
+  side: "A" | "B";
+  strike: number;
+  yes_bid: number | null;
+  yes_ask: number | null;
+};
+
 type KalshiGame = {
   slug: string;
   event_ticker: string;
@@ -1009,6 +1059,8 @@ type KalshiGame = {
   /** Full ladders, so the client can match the book's line exactly. */
   total_ladder: KalshiRung[];
   spread_ladder: KalshiRung[];
+  /** Live per-team stat-market quotes; [] when Kalshi lists none. */
+  stat_quotes: KalshiStatQuote[];
 };
 type KalshiPayload = {
   available: boolean;
@@ -1255,10 +1307,16 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     console.log(`[kalshi] ${matches.length}/${ours.length} matched; unmatched: ${unmatched.join(" | ")}`);
   }
 
-  const [winBy, totBy, sprBy] = await Promise.all([
+  // Bulk series paging only — one /markets call per series per TTL window,
+  // never per market. Adding the stat families grows the fan-out by 9 cheap
+  // calls per 45s (a staged-empty family is a single empty page), which is
+  // what keeps this route clear of the shared-IP 429 episode of 2026-08-26.
+  const statSeries = Object.keys(KALSHI_STAT_SERIES);
+  const [winBy, totBy, sprBy, ...statBy] = await Promise.all([
     kalshiMarketsBySeries("KXNCAAFGAME"),
     kalshiMarketsBySeries("KXNCAAFTOTAL"),
     kalshiMarketsBySeries("KXNCAAFSPREAD"),
+    ...statSeries.map((s) => kalshiMarketsBySeries(s)),
   ]);
 
   const games = matches.map(({ slug, ev, teamA, teamB }): KalshiGame => {
@@ -1271,10 +1329,33 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
       spread: { line: null, yes_price: null },
       total_ladder: [],
       spread_ladder: [],
+      stat_quotes: [],
     };
 
     const keyA = cfbNameKey(teamA);
     const keyB = cfbNameKey(teamB);
+
+    // Per-team stat ladders. Subtitle is "<Team>: <K>+" (verified live on
+    // RECYDS / RSHTD / RECTD), and floor_strike is the K the rung settles
+    // over — the same half-integer grid team_stats.json publishes rungs on,
+    // so the client joins by strike with no interpolation anywhere.
+    for (let i = 0; i < statSeries.length; i++) {
+      const stat = KALSHI_STAT_SERIES[statSeries[i]];
+      for (const m of statBy[i].get(`${statSeries[i]}-${suffix}`) ?? []) {
+        // Two live subtitle shapes, both verified 2026-08-26/28:
+        //   "North Carolina: 300+"                  (the stat ladders)
+        //   "North Carolina over 6.5 points scored" (the team-points ladder)
+        const who = cfbNameKey(statMarketTeam(m?.yes_sub_title));
+        const side = who === keyA ? "A" : who === keyB ? "B" : null;
+        const strike = dollars(m?.floor_strike);
+        if (!side || strike === null) continue;
+        out.stat_quotes.push({
+          stat, side, strike,
+          yes_bid: dollars(m?.yes_bid_dollars),
+          yes_ask: dollars(m?.yes_ask_dollars),
+        });
+      }
+    }
 
     // Winner: one binary market per team, identified by yes_sub_title.
     for (const m of winBy.get(`KXNCAAFGAME-${suffix}`) ?? []) {

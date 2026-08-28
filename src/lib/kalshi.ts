@@ -22,7 +22,65 @@ export type KalshiGame = {
   /** Every priced strike, so we can quote the BOOK's line rather than Kalshi's. */
   total_ladder: KalshiRung[];
   spread_ladder: KalshiRung[];
+  /** LIVE per-team stat-market quotes (KXNCAAFTEAM*), [] when none listed. */
+  stat_quotes?: KalshiStatQuote[];
 };
+
+/**
+ * One live quote on a per-team stat market, already resolved server-side to
+ * our team_stats.json stat key and to this game's A/B side — so nothing here
+ * needs a name join or a probability of its own.
+ */
+export type KalshiStatQuote = {
+  stat: string;
+  side: "A" | "B";
+  strike: number;
+  yes_bid: number | null;
+  yes_ask: number | null;
+};
+
+/** A live book judged good enough to quote an EDGE against. */
+export type StatBookQuality = {
+  mid: number;
+  spread: number;
+  /** False when one-sided or too wide — price may show, an edge may not. */
+  tradeable: boolean;
+};
+
+/** Widest book we will still call a price. Beyond this the "mid" is fiction. */
+export const STAT_MAX_SPREAD = 0.30;
+/** Outside this the sim itself is in its own tail; no edge badge. */
+export const STAT_SIM_LO = 0.05;
+export const STAT_SIM_HI = 0.95;
+/** Minimum |sim − mid| worth badging, in probability units (3 cents). */
+export const STAT_EDGE_MIN = 0.03;
+
+/**
+ * Judge one live book. This is the LIVE replacement for team_markets.json's
+ * precomputed THIN/TAIL/NOISE flags: same intent (never badge an edge against
+ * a book that is not really there), expressed as simple comparisons on the
+ * quote in hand because a live price has no precomputed flag to carry.
+ */
+export function statBookQuality(q: KalshiStatQuote, simP: number): StatBookQuality | null {
+  const { yes_bid: bid, yes_ask: ask } = q;
+  if (bid === null || ask === null) return null;
+  const oneSided = bid <= 0 || ask >= 1;
+  const spread = ask - bid;
+  return {
+    mid: (bid + ask) / 2,
+    spread,
+    tradeable:
+      !oneSided && spread <= STAT_MAX_SPREAD &&
+      simP >= STAT_SIM_LO && simP <= STAT_SIM_HI,
+  };
+}
+
+/** Index a game's live stat quotes by `<stat>|<side>|<strike>`. */
+export function indexStatQuotes(g: KalshiGame | undefined): Map<string, KalshiStatQuote> {
+  const m = new Map<string, KalshiStatQuote>();
+  for (const q of g?.stat_quotes ?? []) m.set(`${q.stat}|${q.side}|${q.strike}`, q);
+  return m;
+}
 
 export type RungMatch = {
   rung: KalshiRung;

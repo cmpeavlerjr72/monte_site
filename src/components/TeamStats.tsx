@@ -1,71 +1,79 @@
 // src/components/TeamStats.tsx
 //
-// Team box-stat distributions for one simulated game, drawn as glanceable
-// DISTRIBUTION STRIPS with live Kalshi prices overlaid on the rungs.
+// Team box-stat distributions for one simulated game, drawn as a MIRRORED
+// DENSITY on a single continuous axis, with live Kalshi markets as flags.
 //
 // ---------------------------------------------------------------------------
-// What the reader has to do (this picked the form)
+// The bar test (this drove the whole design)
 // ---------------------------------------------------------------------------
-// "Where does the sim live, and where do the market's break points fall inside
-// it?" That is an interval-vs-reference-marks read, not a magnitude ranking —
-// so each team gets a horizontal strip on a scale SHARED with its opponent
-// (teamA above teamB), carrying a q10–q90 band, a median marker, and a hash at
-// every Kalshi strike. Percentages ride above the hashes; strikes label the one
-// shared axis below both strips. The old chip table said the same thing in
-// prose and made the reader do the comparing.
+// Acceptance bar, user's words: readable "to someone who has had a beer or two
+// at a bar." Three complaints killed the previous version, and one form fixes
+// all three:
+//
+//   "95-5 and 90-10 values, no clue what those are"  -> NO number pairs
+//      anywhere at rest. Not bid-ask, not q10-q90. The only number on a flag
+//      is the VERDICT: the edge in cents. Everything else is one tap away.
+//   "it should be one continuous line"               -> ONE axis per stat,
+//      drawn unbroken from 0 to max, with team A's distribution above it and
+//      team B's below (split violin / mirrored ridgeline). Which team is
+//      further right is preattentive — no reading required.
+//   "no clue what the kalshi numbers are and what our numbers are"
+//                                                    -> the shape IS ours and
+//      the flags ARE Kalshi's, said once in a plain-words legend at the top.
+//
+// ---------------------------------------------------------------------------
+// Where the numbers come from
+// ---------------------------------------------------------------------------
+// Distributions: the sim repo's export_team_stats.py publishes P(stat > K) at
+// every Kalshi strike, computed per simulated game FIRST then aggregated
+// across seeds. Fair values are weekly BY DESIGN — that is not staleness.
+// The density here is adjacent-rung SUBTRACTION only: P(>K_i) − P(>K_i+1) is
+// the mass in that bin, divided by the bin's width. No smoothing model, no
+// kernel, no re-derivation.
+//
+// Prices: LIVE from /api/kalshi/cfb (45s TTL, bulk series paging) via the
+// card's kalshi feed — never a published snapshot, because this panel is
+// meant to become a trading surface. The server resolves each quote to our
+// stat key and to this game's A/B side, so nothing here does a name join.
+// Edge = sim − live mid, one subtraction, suppressed by the quality rule in
+// src/lib/kalshi.ts (one-sided book, spread > 30c, sim in its own tail).
 //
 // ---------------------------------------------------------------------------
 // Color (validated, not eyeballed)
 // ---------------------------------------------------------------------------
-// School brand hexes FAIL as a mark palette — validate_palette.js on the
-// UNC/TCU pair reports contrast 2.29:1 for #7bafd4 on the light surface and
-// 1.44:1 for #4d1979 on the dark one (both below 3:1), plus a chroma-floor
-// fail. So brand color is used ONLY as a low-opacity band wash over a
-// token-colored base and as an identity swatch beside a text label; every
-// load-bearing mark — median, hashes, axis, and ALL text — wears theme tokens
-// and is AA in both themes. The relief the validator demands for a sub-3:1
-// color (visible labels + a table view) is present twice over: every strip is
-// directly labeled, and the numeric table is one toggle away.
-// Status tokens (--pos/--neg) appear only on the edge marker, always with a
-// sign character, never as color alone.
-//
-// ---------------------------------------------------------------------------
-// Division of labour
-// ---------------------------------------------------------------------------
-// Distributions are precomputed by the sim repo's export_team_stats.py (per
-// simulated game FIRST, then aggregated across seeds). Market flags,
-// orientation, the YES midpoint and the edge subtraction all come out of
-// src/lib/edges.ts. This file formats and lays out; it derives no statistic.
-//
-// A missing file (FCS namespace, or a week the exporter has not reached) is
-// the expected pre-publish state: quiet muted line, never an error banner.
-// Missing PRICES are likewise silent — most stat families have no Kalshi
-// ladder yet, and a stat with no market simply shows no price row.
+// School brand hexes FAIL validate_palette.js as marks (UNC #7bafd4 is 2.29:1
+// on the light surface, TCU #4d1979 is 1.44:1 on dark). So brand color fills
+// the density silhouette only; every stroke, every label and the axis wear
+// theme tokens. Status tokens (--pos/--neg) appear only on the edge chip,
+// always with a sign character and a "¢" unit, never as color alone — and
+// both are AA as text on both surfaces. The numeric table view remains one
+// toggle away as the relief the validator requires for a sub-3:1 fill.
 
 import { useEffect, useMemo, useState } from "react";
 import {
   getTeamStatsCached, TeamStatsNotPublished,
-  getTeamMarketsCached, TeamMarketsNotPublished,
-  type TeamStats as TeamStatsDoc, type TeamStatDist, type TeamMarketRow,
+  type TeamStats as TeamStatsDoc, type TeamStatDist,
 } from "../lib/cfbJson";
 import {
-  indexTeamStatQuotes, teamStatEdge, type TeamStatQuote,
-} from "../lib/edges";
+  indexStatQuotes, statBookQuality, STAT_EDGE_MIN,
+  type KalshiGame, type KalshiStatQuote,
+} from "../lib/kalshi";
 import type { Season } from "../lib/cfbData";
 
 type Props = {
-  /** Our game slug — the key team_stats.json and team_markets.json share. */
   slug: string;
   /** Dataset namespace of THIS CARD ("2026"), never the page's season. */
   ns: Season;
   weekId: string;
-  /** Home / away, used to order the two strips. */
+  /** Home / away: orders the strips AND resolves the live quotes' A/B side. */
   teamA: string;
   teamB: string;
+  /** Live Kalshi feed for this game (45s TTL). Prices are never a snapshot. */
+  kalshi?: KalshiGame;
   colorFor?: (team: string) => string | undefined;
+  logoFor?: (team: string) => string | undefined;
 };
 
-/** Display order + labels. Keys must match the exporter's stat keys. */
 const ROWS: { key: string; label: string; unit?: string }[] = [
   { key: "points", label: "Points" },
   { key: "rec_yards", label: "Receiving yards", unit: "= gross passing" },
@@ -82,25 +90,20 @@ const ROWS: { key: string; label: string; unit?: string }[] = [
   { key: "turnovers_forced", label: "Turnovers forced" },
 ];
 
-/** A hash gets a % label only inside this band; outside it the bare hash still
- *  marks the strike, but "100%"/"0%" on every rung is noise. */
-const PCT_LO = 0.03;
-const PCT_HI = 0.97;
+/** Small-integer counts: a smoothed curve over 0,1,2,3 would be a lie about
+ *  what the sim produced, so these draw as discrete bars. */
+const DISCRETE = new Set(["rush_td", "rec_td", "td_offensive", "def_sacks", "def_ints"]);
 
 /* -------------------------------- geometry ------------------------------- */
-// 900 is set by the DENSEST row, not by taste: team points ladder 6.5→48.5 has
-// a 3-point gap, which at this width is ~40px — wider than the longest price
-// label ("97 −5" ≈ 33px). Narrower and the market row collides; the block
-// scrolls horizontally rather than compressing (brief rule: wide content
-// scrolls in its own container).
-const PLOT_W = 900;      // min drawing width; the block scrolls below this
-const GUTTER = 148;      // team label + median/range column
-const PAD_R = 18;
-const PCT_H = 13;        // % labels above the strip
-const STRIP_H = 20;
-const MKT_H = 13;        // market price row (only when the stat has quotes)
-const ROW_GAP = 5;
-const AXIS_H = 15;
+const PLOT_W = 900;
+const GUTTER = 156;
+const PAD_R = 26;
+const DENS_H = 34;        // silhouette height, each side of the axis
+const CHIP_H = 24;        // one row of flag labels: strike over edge, 2 lines
+const AXIS_LBL = 13;
+const BLOCK_PAD = 4;
+const CHIP_W = 42;        // reserved width per chip, drives the stagger
+const HIT_W = 40;         // tap target (>= 40px per spec)
 
 const fmt = (v: number | null, dp = 1): string =>
   v === null || !Number.isFinite(v) ? "—" : v.toFixed(dp);
@@ -108,232 +111,364 @@ const fmt = (v: number | null, dp = 1): string =>
 const dpFor = (key: string): number =>
   key.endsWith("_yards") || key === "points" ? 0 : 1;
 
-const cents = (p: number): string => `${Math.round(p * 100)}c`;
+const cents = (p: number): string => `${Math.round(p * 100)}¢`;
+const signed = (e: number): string =>
+  `${e > 0 ? "+" : "−"}${Math.abs(Math.round(e * 100))}¢`;
 
-/** Round the axis top to a clean step so the ticks read as real numbers. */
 function niceMax(raw: number): number {
   const step = raw > 200 ? 50 : raw > 60 ? 25 : raw > 20 ? 5 : raw > 8 ? 2 : 1;
   return Math.max(step, Math.ceil(raw / step) * step);
 }
 
-type Rung = { k: number; label: string };
+type Rung = { k: number; label: string; p: number };
 
-const rungList = (d: TeamStatDist | undefined): Rung[] =>
-  d?.rungs
-    ? Object.keys(d.rungs)
-        .map((k) => ({ k: Number(k), label: k }))
-        .filter((r) => Number.isFinite(r.k))
-        .sort((a, b) => a.k - b.k)
-    : [];
+function rungList(d: TeamStatDist | undefined): Rung[] {
+  if (!d?.rungs) return [];
+  return Object.entries(d.rungs)
+    .map(([label, p]) => ({ k: Number(label), label, p }))
+    .filter((r) => Number.isFinite(r.k))
+    .sort((a, b) => a.k - b.k);
+}
 
-/* ------------------------------- one strip -------------------------------- */
-function Strip({
-  team, d, quotes, statKey, axisMax, y, showMarket, brand,
-}: {
-  team: string;
-  d: TeamStatDist;
-  quotes: Map<string, TeamStatQuote>;
-  statKey: string;
-  axisMax: number;
-  y: number;
-  showMarket: boolean;
-  brand: string;
-}) {
-  const x = (v: number) => GUTTER + (Math.max(0, Math.min(v, axisMax)) / axisMax) * (PLOT_W - GUTTER - PAD_R);
-  const stripY = y + PCT_H;
-  const mid = stripY + STRIP_H / 2;
-  const dp = dpFor(statKey);
+/* ------------------------------- the density ------------------------------
+ * Bin mass from adjacent rungs, divided by bin width. Subtraction only.
+ * ------------------------------------------------------------------------ */
+type Bin = { lo: number; hi: number; dens: number };
 
-  const q10 = d.q10 ?? 0;
-  const q90 = d.q90 ?? 0;
-  const med = d.median ?? 0;
-  const bandX = x(q10);
-  const bandW = Math.max(2, x(q90) - bandX);
+function bins(rungs: Rung[], axisMax: number): Bin[] {
+  if (!rungs.length) return [];
+  const out: Bin[] = [];
+  const push = (lo: number, hi: number, mass: number) => {
+    if (hi > lo) out.push({ lo, hi, dens: Math.max(0, mass) / (hi - lo) });
+  };
+  push(0, rungs[0].k, 1 - rungs[0].p);
+  for (let i = 0; i < rungs.length - 1; i++) {
+    push(rungs[i].k, rungs[i + 1].k, rungs[i].p - rungs[i + 1].p);
+  }
+  push(rungs[rungs.length - 1].k, axisMax, rungs[rungs.length - 1].p);
+  return out;
+}
 
-  return (
-    <g>
-      {/* ---- gutter: identity swatch + name + the direct-labelled median ---- */}
-      <rect x={0} y={mid - 5} width={9} height={9} rx={2} fill={brand} />
-      <text
-        x={14} y={mid - 1} fontSize={11} fontWeight={700}
-        fill="var(--text)" dominantBaseline="middle"
-      >
-        {team.length > 20 ? `${team.slice(0, 19)}…` : team}
-      </text>
-      <text x={14} y={mid + 11} fontSize={10} fill="var(--muted)">
-        {fmt(med, dp)}
-        <tspan fill="var(--muted)">{`  ${fmt(q10, dp)}–${fmt(q90, dp)}`}</tspan>
-      </text>
+/** Discrete counts: mass at each integer value. */
+function counts(rungs: Rung[]): { v: number; mass: number }[] {
+  if (!rungs.length) return [];
+  const out = [{ v: Math.max(0, Math.floor(rungs[0].k)), mass: 1 - rungs[0].p }];
+  for (let i = 0; i < rungs.length - 1; i++) {
+    out.push({ v: rungs[i].k + 0.5, mass: rungs[i].p - rungs[i + 1].p });
+  }
+  const last = rungs[rungs.length - 1];
+  out.push({ v: last.k + 0.5, mass: last.p });
+  return out.filter((b) => b.mass > 0.0005);
+}
 
-      {/* ---- track: hairline, one step off the surface, solid ---- */}
-      <line
-        x1={x(0)} x2={x(axisMax)} y1={mid} y2={mid}
-        stroke="var(--border)" strokeWidth={1}
-      />
+/** Smooth polyline through bin centres, rooted at zero on both ends. */
+function densityPath(
+  bs: Bin[], x: (v: number) => number, y: (d: number) => number, base: number
+): string {
+  if (!bs.length) return "";
+  const pts: [number, number][] = [[x(bs[0].lo), base]];
+  for (const b of bs) pts.push([x((b.lo + b.hi) / 2), y(b.dens)]);
+  pts.push([x(bs[bs.length - 1].hi), base]);
 
-      {/* ---- band q10..q90: token base so it is visible on any surface,
-              then the school wash on top for identity ---- */}
-      <rect x={bandX} y={stripY} width={bandW} height={STRIP_H} rx={3} fill="var(--fill)" />
-      <rect x={bandX} y={stripY} width={bandW} height={STRIP_H} rx={3} fill={brand} opacity={0.22}>
-        <title>{`${team}: 80% of simulated games fall between ${fmt(q10, dp)} and ${fmt(q90, dp)}`}</title>
-      </rect>
+  let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [cx, cy] = pts[i];
+    const [nx, ny] = pts[i + 1];
+    d += ` Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${((cx + nx) / 2).toFixed(1)} ${((cy + ny) / 2).toFixed(1)}`;
+  }
+  const last = pts[pts.length - 1];
+  return `${d} L ${last[0].toFixed(1)} ${last[1].toFixed(1)} Z`;
+}
 
-      {/* ---- median: the one loud mark ---- */}
-      <line
-        x1={x(med)} x2={x(med)} y1={stripY - 3} y2={stripY + STRIP_H + 3}
-        stroke="var(--text)" strokeWidth={2} strokeLinecap="round"
-      >
-        <title>{`${team} median ${fmt(med, dp)}`}</title>
-      </line>
+/* --------------------------------- flags ---------------------------------- */
+type Flag = {
+  key: string;
+  x: number;
+  strike: string;
+  edge: number | null;
+  /** Why the edge is withheld, in words, for the popover. */
+  detail: string;
+  row: number;
+};
 
-      {/* ---- Kalshi break points ---- */}
-      {rungList(d).map((r) => {
-        const p = d.rungs?.[r.label];
-        if (p === undefined || r.k > axisMax) return null;
-        const hx = x(r.k);
-        const q = quotes.get(`${statKey}|${team}|${r.k}`);
-        const edge = q ? teamStatEdge(q, p) : null;
-        const labelPct = p >= PCT_LO && p <= PCT_HI;
-        return (
-          <g key={r.label}>
-            <line
-              x1={hx} x2={hx} y1={stripY} y2={stripY + STRIP_H}
-              stroke="var(--muted)" strokeWidth={1} opacity={0.7}
-            >
-              <title>
-                {`${team} P(over ${r.label}) = ${(p * 100).toFixed(1)}%`}
-                {q ? ` · market ${cents(q.yesBid)}–${cents(q.yesAsk)}` : ""}
-              </title>
-            </line>
-            {labelPct && (
-              <text
-                x={hx} y={y + PCT_H - 3} fontSize={10} fontWeight={600}
-                textAnchor="middle" fill="var(--text)"
-                style={{ fontVariantNumeric: "tabular-nums" }}
-              >
-                {Math.round(p * 100)}%
-              </text>
-            )}
-            {showMarket && q && (
-              <text
-                x={hx} y={stripY + STRIP_H + MKT_H - 3} fontSize={9.5}
-                textAnchor="middle"
-                fill={edge === null ? "var(--muted)" : edge > 0 ? "var(--pos)" : "var(--neg)"}
-                style={{ fontVariantNumeric: "tabular-nums" }}
-              >
-                {/* bare cents: the caption names the unit, and the "c" costs
-                    the width this row does not have. Full bid/ask in the
-                    hover layer below. */}
-                {q.tradeable
-                  ? Math.round(q.mid * 100)
-                  : `${Math.round(q.yesBid * 100)}–${Math.round(q.yesAsk * 100)}`}
-                {edge !== null
-                  ? ` ${edge > 0 ? "+" : "−"}${Math.abs(Math.round(edge * 100))}`
-                  : ""}
-                <title>
-                  {`market ${cents(q.yesBid)} bid / ${cents(q.yesAsk)} ask`}
-                  {q.tradeable
-                    ? edge !== null
-                      ? ` · edge ${edge > 0 ? "+" : "−"}${Math.abs(Math.round(edge * 100))}c vs sim`
-                      : " · no edge at the 3c threshold"
-                    : ` · ${q.flags.join("/")} book — price shown, edge withheld`}
-                </title>
-              </text>
-            )}
-          </g>
-        );
-      })}
-    </g>
-  );
+/** Stagger chips into rows so two adjacent strikes never overlap. */
+function stagger(flags: Omit<Flag, "row">[], rowsMax = 3): Flag[] {
+  const lastX: number[] = [];
+  return flags.map((f) => {
+    // Chip-less flags claim no row: they carry only a small strike stub, so
+    // letting them push a real verdict onto a second row would be backwards.
+    if (f.edge === null) return { ...f, row: 0 };
+    let row = 0;
+    while (row < rowsMax && lastX[row] !== undefined && f.x - lastX[row] < CHIP_W) row++;
+    if (row >= rowsMax) row = 0;                    // give up gracefully
+    lastX[row] = f.x;
+    return { ...f, row };
+  });
+}
+
+/** Kalshi's own wording for a strike: floor 149.5 is the market "150+", floor
+ *  2.5 is "3+". Half-integers are settlement plumbing, not something to read
+ *  at a bar. */
+const strikeLabel = (k: number): string => `${Math.ceil(k)}+`;
+
+function buildFlags(
+  rungs: Rung[], statKey: string, side: "A" | "B" | null, team: string,
+  label: string, quotes: Map<string, KalshiStatQuote>, x: (v: number) => number
+): Flag[] {
+  if (!side) return [];
+  const raw: Omit<Flag, "row">[] = [];
+  for (const r of rungs) {
+    const q = quotes.get(`${statKey}|${side}|${r.k}`);
+    if (!q) continue;                    // no market at this strike -> no ink
+    const book = statBookQuality(q, r.p);
+    if (!book) continue;
+    const e = r.p - book.mid;             // the one subtraction
+    const live = book.tradeable && Math.abs(e) >= STAT_EDGE_MIN ? e : null;
+    const head = `${team} ${strikeLabel(r.k)} ${label.toLowerCase()}`;
+    const detail = !book.tradeable
+      ? `${head} — Sim: ${Math.round(r.p * 100)}% · Kalshi book is one-sided or ` +
+        `${Math.round(book.spread * 100)}¢ wide, so no edge is shown.`
+      : `${head} — Sim: ${Math.round(r.p * 100)}% · Kalshi: ${cents(book.mid)} · ` +
+        (live !== null
+          ? `Edge: ${signed(live)}`
+          : `Edge: under the 3¢ threshold`);
+    raw.push({ key: `${statKey}|${side}|${r.k}`, x: x(r.k), strike: strikeLabel(r.k), edge: live, detail });
+  }
+  return stagger(raw);
 }
 
 /* ------------------------------ one stat block ---------------------------- */
 function StatBlock({
-  statKey, label, unit, definition, cols, stats, quotes, colorFor,
+  statKey, label, unit, definition, cols, sideOf, stats, quotes,
+  colorFor, logoFor, sel, onSel,
 }: {
   statKey: string;
   label: string;
   unit?: string;
   definition?: string;
   cols: string[];
+  sideOf: (team: string) => "A" | "B" | null;
   stats: Record<string, Record<string, TeamStatDist>>;
-  quotes: Map<string, TeamStatQuote>;
+  quotes: Map<string, KalshiStatQuote>;
   colorFor?: (team: string) => string | undefined;
+  logoFor?: (team: string) => string | undefined;
+  sel: string | null;
+  onSel: (key: string | null) => void;
 }) {
-  const dists = cols.map((t) => stats[t]?.[statKey]);
-  const nulls = dists.every((d) => !d || d.median === null);
+  const [tA, tB] = cols;
+  const dA = stats[tA]?.[statKey];
+  const dB = tB ? stats[tB]?.[statKey] : undefined;
 
-  if (nulls) {
-    const reason = dists.find((d) => d?.reason)?.reason;
+  if ((!dA || dA.median === null) && (!dB || dB.median === null)) {
+    const reason = dA?.reason ?? dB?.reason;
     return (
-      <div style={{ padding: "6px 0", borderTop: "1px solid var(--border)" }}>
+      <div style={{ padding: "7px 0", borderTop: "1px solid var(--border)" }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text)" }}>{label}</div>
         <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
-          n/a (not simulated){reason ? ` — ${reason}` : ""}
+          Not simulated{reason ? ` — ${reason}` : ""}.
         </div>
       </div>
     );
   }
 
-  // Shared scale: one axis for both teams so the strips compare directly.
-  const rungs = rungList(dists.find((d) => d?.rungs) ?? undefined);
-  const maxRung = rungs.length ? rungs[rungs.length - 1].k : 0;
-  const maxQ90 = Math.max(...dists.map((d) => d?.q90 ?? 0));
-  const axisMax = niceMax(Math.max(maxQ90 * 1.12, maxRung * 1.06, 1));
+  const rA = rungList(dA);
+  const rB = rungList(dB);
+  const allR = rA.length ? rA : rB;
+  const maxRung = allR.length ? allR[allR.length - 1].k : 0;
+  const maxQ90 = Math.max(dA?.q90 ?? 0, dB?.q90 ?? 0);
+  const discrete = DISCRETE.has(statKey);
 
-  const showMarket = cols.some((t) =>
-    rungs.some((r) => quotes.has(`${statKey}|${t}|${r.k}`))
+  const cntA = discrete ? counts(rA) : [];
+  const cntB = discrete ? counts(rB) : [];
+  // Counts get a TIGHT axis: a 0-7 axis for a 0-4 distribution wastes half
+  // the width on an empty tail. Cut at the last value carrying real mass,
+  // but never inside a strike that has a live market. Continuous stats keep
+  // the padded q90 rule.
+  const quotedMax = Math.max(
+    0,
+    ...[...quotes.keys()]
+      .filter((k) => k.startsWith(`${statKey}|`))
+      .map((k) => Number(k.split("|")[2]))
+      .filter((v) => Number.isFinite(v))
   );
-  const rowH = PCT_H + STRIP_H + (showMarket ? MKT_H : 0) + ROW_GAP;
-  const height = rowH * cols.length + AXIS_H;
-  const x = (v: number) => GUTTER + (v / axisMax) * (PLOT_W - GUTTER - PAD_R);
+  const axisMax = discrete
+    ? Math.max(
+        3, quotedMax + 0.5,
+        ...cntA.filter((b) => b.mass >= 0.01).map((b) => b.v),
+        ...cntB.filter((b) => b.mass >= 0.01).map((b) => b.v)
+      ) + 0.5
+    : niceMax(Math.max(maxQ90 * 1.12, maxRung * 1.06, 1));
 
-  // Drop every other strike label when the ticks would collide.
-  const span = (PLOT_W - GUTTER - PAD_R) / Math.max(1, axisMax);
-  const tickStep = rungs.length > 1 && (rungs[1].k - rungs[0].k) * span < 34 ? 2 : 1;
+  // Discrete axes start at -0.5 so the value-0 bar gets a whole slot instead
+  // of being sliced in half by the axis origin.
+  const axisMin = discrete ? -0.5 : 0;
+  const x = (v: number) =>
+    GUTTER +
+    ((Math.max(axisMin, Math.min(v, axisMax)) - axisMin) / (axisMax - axisMin)) *
+      (PLOT_W - GUTTER - PAD_R);
+
+  const binsA = discrete ? [] : bins(rA, axisMax);
+  const binsB = discrete ? [] : bins(rB, axisMax);
+  const peak = Math.max(
+    1e-9,
+    ...binsA.map((b) => b.dens), ...binsB.map((b) => b.dens),
+    ...cntA.map((b) => b.mass), ...cntB.map((b) => b.mass)
+  );
+
+  const flagsA = buildFlags(rA, statKey, sideOf(tA), tA, label, quotes, x);
+  const flagsB = tB ? buildFlags(rB, statKey, sideOf(tB), tB, label, quotes, x) : [];
+  const rowsA = flagsA.length ? Math.max(...flagsA.map((f) => f.row)) + 1 : 0;
+  const rowsB = flagsB.length ? Math.max(...flagsB.map((f) => f.row)) + 1 : 0;
+
+  const bandA = rowsA * CHIP_H + BLOCK_PAD;
+  const bandB = rowsB * CHIP_H + BLOCK_PAD;
+  const axisY = bandA + DENS_H;
+  const height = axisY + DENS_H + bandB + AXIS_LBL;
+
+  const yUp = (d: number) => axisY - (d / peak) * DENS_H;
+  const yDn = (d: number) => axisY + (d / peak) * DENS_H;
+
+  const selFlag = [...flagsA, ...flagsB].find((f) => f.key === sel);
+
+  const side = (
+    team: string, d: TeamStatDist | undefined, bs: Bin[],
+    cs: { v: number; mass: number }[], flags: Flag[], up: boolean
+  ) => {
+    if (!d || d.median === null) return null;
+    const brand = colorFor?.(team) ?? "var(--brand)";
+    const logo = logoFor?.(team);
+    const yFn = up ? yUp : yDn;
+    const labelY = up ? axisY - DENS_H / 2 : axisY + DENS_H / 2;
+    // 0.34 of the unit slot, capped at the 24px bar spec: the leftover is air,
+    // and the gap between neighbours is the separator, never a stroke.
+    const slot = (PLOT_W - GUTTER - PAD_R) / (axisMax - axisMin);
+    const barW = Math.min(24, Math.max(3, slot * 0.34));
+    return (
+      <g>
+        {logo && <image href={logo} x={0} y={labelY - 9} width={18} height={18} preserveAspectRatio="xMidYMid meet" />}
+        <text x={22} y={labelY - 2} fontSize={11.5} fontWeight={700} fill="var(--text)">
+          {team.length > 18 ? `${team.slice(0, 17)}…` : team}
+        </text>
+        <text x={22} y={labelY + 11} fontSize={10} fill="var(--muted)">
+          {`median ${fmt(d.median, dpFor(statKey))}`}
+        </text>
+
+        {/* our simulation: brand-filled silhouette, token stroke */}
+        {!!bs.length && (
+          <path d={densityPath(bs, x, yFn, axisY)} fill={brand} opacity={0.30}
+                stroke="var(--muted)" strokeWidth={1} strokeOpacity={0.45}>
+            <title>{`${team}: simulated distribution (median ${fmt(d.median, dpFor(statKey))})`}</title>
+          </path>
+        )}
+        {cs.map((b) => {
+          const h = (b.mass / peak) * DENS_H;
+          // Clamp into the plot: the value-0 bar would otherwise hang half
+          // its width over the team-label gutter.
+          const left = Math.max(x(axisMin), x(b.v) - barW / 2);
+          const right = Math.min(x(axisMax), x(b.v) + barW / 2);
+          return (
+            <rect key={b.v} x={left} y={up ? axisY - h : axisY}
+                  width={Math.max(2, right - left)} height={Math.max(1, h)} rx={2}
+                  fill={brand} opacity={0.30} stroke="var(--muted)"
+                  strokeWidth={1} strokeOpacity={0.45}>
+              <title>{`${team}: ${Math.round(b.mass * 100)}% of games at exactly ${b.v}`}</title>
+            </rect>
+          );
+        })}
+
+        {/* live Kalshi markets */}
+        {/* A flag is ONE visual unit and it lives entirely OUTSIDE the
+            silhouette: the stem crosses the density (showing where the strike
+            falls in our distribution) and both labels sit in the chip band,
+            so no text is ever set on top of a coloured fill. */}
+        {flags.map((f) => {
+          // Row 0 is nearest the density; later rows stack outward.
+          const outer = up
+            ? bandA - f.row * CHIP_H
+            : axisY + DENS_H + (f.row + 1) * CHIP_H;
+          const strikeY = f.edge === null
+            ? (up ? axisY - DENS_H - 5 : axisY + DENS_H + 12)
+            : (up ? outer - 2 : outer - 12);
+          const edgeY = up ? outer - 12 : outer - 2;
+          // A flag with no edge is a market we cannot act on: it keeps a short
+          // stub and its strike, never a full-height stem competing with the
+          // rungs that DO carry a verdict.
+          const stemEnd = f.edge === null
+            ? (up ? axisY - DENS_H - 2 : axisY + DENS_H + 2)
+            : (up ? outer + 2 : outer - CHIP_H + 2);
+          const on = f.key === sel;
+          const tone = f.edge === null ? "var(--muted)" : f.edge > 0 ? "var(--pos)" : "var(--neg)";
+          const big = f.edge !== null && Math.abs(f.edge) >= 0.10;
+          const hitTop = Math.min(axisY, stemEnd) - CHIP_H;
+          return (
+            <g key={f.key} style={{ cursor: "pointer" }}
+               onClick={() => onSel(on ? null : f.key)}>
+              <line x1={f.x} x2={f.x} y1={axisY} y2={stemEnd}
+                    stroke={f.edge === null ? "var(--border)" : "var(--muted)"}
+                    strokeWidth={on ? 2 : 1} strokeOpacity={f.edge === null ? 1 : 0.8} />
+              <text x={f.x} y={strikeY} fontSize={9} textAnchor="middle"
+                    fill="var(--muted)" style={{ fontVariantNumeric: "tabular-nums" }}>
+                {f.strike}
+              </text>
+              {f.edge !== null && (
+                <text x={f.x} y={edgeY} fontSize={big ? 11.5 : 10}
+                      fontWeight={big ? 800 : 700} textAnchor="middle" fill={tone}
+                      style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {signed(f.edge)}
+                </text>
+              )}
+              {/* >=40px tap target, invisible */}
+              <rect x={f.x - HIT_W / 2} y={hitTop}
+                    width={HIT_W} height={Math.abs(axisY - stemEnd) + CHIP_H * 2}
+                    fill="transparent">
+                <title>{f.detail}</title>
+              </rect>
+            </g>
+          );
+        })}
+      </g>
+    );
+  };
 
   return (
-    <div style={{ padding: "6px 0", borderTop: "1px solid var(--border)" }}>
+    <div style={{ padding: "7px 0", borderTop: "1px solid var(--border)", position: "relative" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text)" }} title={definition}>
           {label}
         </span>
         {unit && <span style={{ fontSize: 10, color: "var(--muted)" }}>{unit}</span>}
       </div>
-      <svg
-        width={PLOT_W} height={height} viewBox={`0 0 ${PLOT_W} ${height}`}
-        role="img" aria-label={`${label} simulated distribution by team`}
-        style={{ display: "block", maxWidth: "none" }}
-      >
-        {cols.map((t, i) => {
-          const d = stats[t]?.[statKey];
-          if (!d || d.median === null) return null;
-          return (
-            <Strip
-              key={t} team={t} d={d} quotes={quotes} statKey={statKey}
-              axisMax={axisMax} y={i * rowH} showMarket={showMarket}
-              brand={colorFor?.(t) ?? "var(--brand)"}
-            />
-          );
-        })}
-        {/* shared axis: the strike labels for the hashes above */}
-        <line
-          x1={x(0)} x2={x(axisMax)} y1={rowH * cols.length - 2}
-          y2={rowH * cols.length - 2} stroke="var(--border)" strokeWidth={1}
-        />
-        <text x={x(0)} y={rowH * cols.length + 9} fontSize={9} fill="var(--muted)" textAnchor="middle">0</text>
-        {rungs.filter((_, i) => i % tickStep === 0).map((r) =>
-          r.k > axisMax ? null : (
-            <text
-              key={r.label} x={x(r.k)} y={rowH * cols.length + 9} fontSize={9}
-              fill="var(--muted)" textAnchor="middle"
-              style={{ fontVariantNumeric: "tabular-nums" }}
-            >
-              {r.label}
-            </text>
-          )
-        )}
+      <svg width={PLOT_W} height={height} viewBox={`0 0 ${PLOT_W} ${height}`}
+           role="img" aria-label={`${label}: simulated distributions and live Kalshi markets`}
+           style={{ display: "block", maxWidth: "none" }}>
+        {side(tA, dA, binsA, cntA, flagsA, true)}
+        {tB && side(tB, dB, binsB, cntB, flagsB, false)}
+
+        {/* THE axis: one continuous line, drawn last so it sits on top */}
+        <line x1={x(0)} x2={x(axisMax)} y1={axisY} y2={axisY}
+              stroke="var(--text)" strokeWidth={1.5} strokeLinecap="round" />
+        <text x={x(0)} y={height - 2} fontSize={9} fill="var(--muted)" textAnchor="start">0</text>
+        <text x={x(axisMax)} y={height - 2} fontSize={9} fill="var(--muted)" textAnchor="end"
+              style={{ fontVariantNumeric: "tabular-nums" }}>
+          {axisMax}
+        </text>
       </svg>
+
+      {selFlag && (
+        <div role="status" style={{
+          position: "absolute", left: Math.min(Math.max(8, selFlag.x - 150), PLOT_W - 300),
+          top: 4, zIndex: 2, maxWidth: 300,
+          background: "var(--card)", border: "1px solid var(--brand)",
+          borderRadius: 8, padding: "7px 9px", fontSize: 11.5, lineHeight: 1.45,
+          color: "var(--text)", boxShadow: "0 4px 14px var(--shadow)",
+        }}>
+          {selFlag.detail}
+          <button type="button" className="ui-btn" onClick={() => onSel(null)}
+                  style={{ marginLeft: 8, padding: "1px 7px", fontSize: 10.5 }}>
+            Close
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -345,41 +480,53 @@ function TableView({ cols, stats, defs }: {
   defs: Record<string, string>;
 }) {
   const shown = ROWS.filter((r) => cols.some((t) => stats[t]?.[r.key]));
+  const th: React.CSSProperties = {
+    textAlign: "left", padding: "4px 8px", fontSize: 11,
+    color: "var(--muted)", borderBottom: "1px solid var(--border)",
+  };
   return (
     <table style={{ width: "100%", minWidth: 520, borderCollapse: "collapse", fontSize: 12 }}>
       <thead>
         <tr>
-          <th style={{ textAlign: "left", padding: "4px 8px", fontSize: 11, color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>Stat</th>
+          <th style={th}>Stat</th>
           {cols.map((t) => (
-            <th key={t} style={{ textAlign: "left", padding: "4px 8px", fontSize: 11.5, fontWeight: 800, color: "var(--text)", borderBottom: "1px solid var(--border)" }}>
-              {t}
-            </th>
+            <th key={t} style={{ ...th, fontSize: 11.5, fontWeight: 800, color: "var(--text)" }}>{t}</th>
           ))}
         </tr>
       </thead>
       <tbody>
         {shown.map((r) => (
           <tr key={r.key}>
-            <th scope="row" title={defs[r.key]} style={{ textAlign: "left", padding: "5px 8px", fontWeight: 600, color: "var(--text)", borderBottom: "1px solid var(--border)", verticalAlign: "top" }}>
+            <th scope="row" title={defs[r.key]} style={{
+              textAlign: "left", padding: "5px 8px", fontWeight: 600,
+              color: "var(--text)", borderBottom: "1px solid var(--border)",
+              verticalAlign: "top",
+            }}>
               {r.label}
             </th>
             {cols.map((t) => {
               const d = stats[t]?.[r.key];
               const dp = dpFor(r.key);
               return (
-                <td key={t} style={{ padding: "5px 8px", borderBottom: "1px solid var(--border)", color: "var(--text)", verticalAlign: "top", fontVariantNumeric: "tabular-nums" }}>
+                <td key={t} style={{
+                  padding: "5px 8px", borderBottom: "1px solid var(--border)",
+                  color: "var(--text)", verticalAlign: "top",
+                  fontVariantNumeric: "tabular-nums",
+                }}>
                   {!d || d.median === null ? (
                     <span style={{ color: "var(--muted)" }}>
-                      n/a (not simulated){d?.reason ? ` — ${d.reason}` : ""}
+                      not simulated{d?.reason ? ` — ${d.reason}` : ""}
                     </span>
                   ) : (
                     <>
                       <strong>{fmt(d.median, dp)}</strong>
-                      <span style={{ color: "var(--muted)" }}>{`  ${fmt(d.q10, dp)}–${fmt(d.q90, dp)}`}</span>
+                      <span style={{ color: "var(--muted)" }}>
+                        {`  10th–90th: ${fmt(d.q10, dp)}–${fmt(d.q90, dp)}`}
+                      </span>
                       {d.rungs && (
                         <div style={{ color: "var(--muted)", fontSize: 10.5 }}>
                           {Object.entries(d.rungs)
-                            .filter(([, p]) => p >= PCT_LO && p <= PCT_HI)
+                            .filter(([, p]) => p >= 0.03 && p <= 0.97)
                             .map(([k, p]) => `${k}+ ${Math.round(p * 100)}%`)
                             .join(" · ")}
                         </div>
@@ -398,17 +545,17 @@ function TableView({ cols, stats, defs }: {
 
 /* ================================ the panel =============================== */
 export default function TeamStats({
-  slug, ns, weekId, teamA, teamB, colorFor,
+  slug, ns, weekId, teamA, teamB, kalshi, colorFor, logoFor,
 }: Props) {
   const [doc, setDoc] = useState<TeamStatsDoc | null>(null);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [mkt, setMkt] = useState<{ rows: TeamMarketRow[]; updated: string | null } | null>(null);
-  const [view, setView] = useState<"strips" | "table">("strips");
+  const [view, setView] = useState<"chart" | "table">("chart");
+  const [sel, setSel] = useState<string | null>(null);
 
-  // Lazy: mounts only when the panel is open; both loaders are memoized per
-  // (namespace, week) in module state. Deps are PRIMITIVES only (brief rule 4).
+  // Lazy: mounts only when the panel is open; the loader is memoized per
+  // (namespace, week). Deps are PRIMITIVES only (brief rule 4).
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -425,26 +572,8 @@ export default function TeamStats({
     return () => { alive = false; };
   }, [ns, weekId]);
 
-  // Prices are a supplement: any failure (including the FCS 404) leaves the
-  // strips fully readable, so nothing here ever reaches the error state.
-  useEffect(() => {
-    let alive = true;
-    getTeamMarketsCached(ns, weekId)
-      .then((m) => { if (alive) setMkt({ rows: m.rows, updated: m.updated }); })
-      .catch((e: any) => {
-        if (!alive) return;
-        if (!(e instanceof TeamMarketsNotPublished || e?.name === "TeamMarketsNotPublished")) {
-          console.warn("[TeamStats] team_markets load failed:", e);
-        }
-        setMkt({ rows: [], updated: null });
-      });
-    return () => { alive = false; };
-  }, [ns, weekId]);
-
   const game = doc?.games?.[slug];
 
-  // Column order follows the card (home first); the KEYS come from the
-  // published file verbatim, never retyped (brief rule 1).
   const cols = useMemo(() => {
     if (!game) return [];
     const keys = Object.keys(game.stats);
@@ -453,10 +582,13 @@ export default function TeamStats({
     return out;
   }, [game, teamA, teamB]);
 
-  const quotes = useMemo(
-    () => (mkt && cols.length ? indexTeamStatQuotes(mkt.rows, slug, cols) : new Map<string, TeamStatQuote>()),
-    [mkt, slug, cols]
-  );
+  // Live quotes, re-derived whenever the 45s poll hands us a new feed object.
+  const quotes = useMemo(() => indexStatQuotes(kalshi), [kalshi]);
+
+  const sideOf = useMemo(() => {
+    const map = new Map<string, "A" | "B">([[teamA, "A"], [teamB, "B"]]);
+    return (t: string) => map.get(t) ?? null;
+  }, [teamA, teamB]);
 
   if (loading && !doc) {
     return <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading team stats…</div>;
@@ -477,38 +609,41 @@ export default function TeamStats({
 
   return (
     <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11, color: "var(--muted)" }}>
-          Shaded band = middle 80% of simulated games (10th–90th percentile);
-          the upright mark is the median. Hashes are Kalshi break points —
-          percentage above is the sim's P(over); the number below is the
-          market price in cents, with our edge beside it.
-          {doc.nsims ? ` ${doc.nsims.toLocaleString()} sims.` : ""}
+      {/* The legend, in words, once. This is the answer to "no clue what the
+          kalshi numbers are and what our numbers are". */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, color: "var(--text)" }}>
+          Shaded shape = <strong>our simulation</strong> · flags on the line ={" "}
+          <strong>live Kalshi markets</strong> ·{" "}
+          <span style={{ color: "var(--pos)", fontWeight: 700 }}>green</span>/
+          <span style={{ color: "var(--neg)", fontWeight: 700 }}>red</span> ={" "}
+          <strong>our edge in cents</strong>. Tap a flag for the detail.
         </span>
         <button
           type="button" className="ui-btn"
-          onClick={() => setView((v) => (v === "strips" ? "table" : "strips"))}
+          onClick={() => setView((v) => (v === "chart" ? "table" : "chart"))}
           style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 11 }}
         >
-          {view === "strips" ? "Table view" : "Strip view"}
+          {view === "chart" ? "Table view" : "Chart view"}
         </button>
       </div>
-      {priced && mkt?.updated && (
-        <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
-          Prices as of {new Date(mkt.updated).toLocaleString()} · midpoint of the
-          Kalshi book; a THIN/TAIL/NOISE quote shows its bid–ask and never an edge.
-        </div>
-      )}
+      <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+        Top team is above the line, bottom team below — further right is more.
+        {doc.nsims ? ` ${doc.nsims.toLocaleString()} simulated games.` : ""}
+        {priced ? " Prices update live; no edge is shown on a one-sided or very wide book." : ""}
+      </div>
 
       {/* Wide content scrolls inside its own container; the page never does. */}
       <div style={{ overflowX: "auto" }}>
-        {view === "strips" ? (
+        {view === "chart" ? (
           <div style={{ minWidth: PLOT_W }}>
             {ROWS.map((r) => (
               <StatBlock
                 key={r.key} statKey={r.key} label={r.label} unit={r.unit}
                 definition={doc.definitions?.[r.key]}
-                cols={cols} stats={game.stats} quotes={quotes} colorFor={colorFor}
+                cols={cols} sideOf={sideOf} stats={game.stats} quotes={quotes}
+                colorFor={colorFor} logoFor={logoFor}
+                sel={sel} onSel={setSel}
               />
             ))}
           </div>
