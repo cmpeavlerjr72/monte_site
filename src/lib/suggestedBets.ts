@@ -200,29 +200,41 @@ export function timeToKickText(msToKick: number | null): string {
   const mins = Math.round(msToKick / 60000);
   if (mins < 90) return `${mins} min to kick`;
   const hours = msToKick / 3600000;
-  if (hours < 48) return `${hours < 10 ? hours.toFixed(1) : Math.round(hours)}h to kick`;
+  if (hours < 48) {
+    const h = hours < 10 ? Math.round(hours * 10) / 10 : Math.round(hours);
+    return `${h}h to kick`;
+  }
   return `${Math.round(hours / 24)}d to kick`;
 }
 
-/** The popover's sentence: where we are in the ladder and what it changed. */
+/** "6¢" / "4.5¢" — a trailing zero on a threshold reads as false precision. */
+const barText = (v: number) => {
+  const c = Math.round(v * 1000) / 10;
+  return `${Number.isInteger(c) ? c : c.toFixed(1)}¢`;
+};
+
+/** The popover's sentence: where we are in the ladder, and what it changed. */
 export function timingWords(t: Timing): string {
   const when = timeToKickText(t.msToKick);
-  const bar = `take bar ${(t.takeThreshold * 100).toFixed(t.takeThreshold * 100 % 1 ? 1 : 0)}¢`;
+  const bar = barText(t.takeThreshold);
+  const from = ` (from ${barText(TAKE_THRESHOLD)})`;
   switch (t.band) {
     case "far":
       return t.msToKick === null
-        ? `${when} — treated as far out: full ${bar}, resting allowed.`
-        : `${when} — plenty of time for a rest to fill, so the full ${bar} stands.`;
+        ? `Kick time unknown — treated as far out, so the full take ` +
+          `threshold of ${bar} stands and resting is allowed.`
+        : `${when} — plenty of time for a rest to fill, so the full take ` +
+          `threshold of ${bar} stands.`;
     case "near":
       return `${when} — a rest still has a session to fill, but not days, ` +
-             `so the ${bar} (from 6¢).`;
+             `so the take threshold relaxes to ${bar}${from}.`;
     case "soon":
       return `${when} — resting has little time to fill before the kick−30 ` +
-             `pull, so the ${bar} (from 6¢).`;
+             `pull, so the take threshold relaxes to ${bar}${from}.`;
     case "imminent":
-      return `${when} — inside the last hour a rest would be cancelled at ` +
-             `kick−30 before it filled, so REST is off the table and only a ` +
-             `${bar} take qualifies.`;
+      return `${when} — a rest posted now would be cancelled at kick−30 ` +
+             `before it filled, so resting is off the table entirely and ` +
+             `only a take clearing ${bar} qualifies.`;
   }
 }
 
