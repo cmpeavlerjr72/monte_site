@@ -40,8 +40,8 @@ import MyBookPanel from "../components/MyBookPanel";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { useRestingReview } from "../lib/restingReview";
 import {
-  readModeFilter, readShowTails, readSuggestSort, readTypeFilter, readUnit,
-  writeModeFilter, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
+  readModeFilter, readMyGamesOpen, readShowTails, readSuggestSort, readTypeFilter, readUnit,
+  writeModeFilter, writeMyGamesOpen, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
   type BetTypeFilter, type ModeFilter, type SuggestSort,
 } from "../lib/ownerPrefs";
 import { buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
@@ -683,11 +683,75 @@ export type PanelKind =
  *  the slate-wide compute, and a fresh `[]` each render would defeat its memo. */
 const NO_SUGGEST_GAMES: SuggestGame[] = [];
 
+/** Stable empty card list, for the same memo reason: the "My games" tray is
+ *  empty on almost every render and a fresh `[]` would re-render the grid. */
+const EMPTY_CARDS: CardGame[] = [];
+
+/**
+ * Scroll a card into view and flash it.
+ *
+ * RE-TRIES ACROSS FRAMES, and that is the whole point of it being a function.
+ * Every jump target used to exist already, so one `requestAnimationFrame` was
+ * enough to let a panel mount. A target inside a COLLAPSED "My games" tray does
+ * not exist yet when the jump starts: the press expands the tray, React commits
+ * a whole grid of cards, and only then is there an element with that id. A
+ * single frame is usually enough — a few frames always are, and a target that
+ * genuinely is not on the board (a filtered-out game) simply gives up silently,
+ * exactly as the single-frame version did.
+ */
+function scrollAndFlash(
+  key: string,
+  setFlashKey: React.Dispatch<React.SetStateAction<string | null>>,
+  tries = 4,
+): void {
+  requestAnimationFrame(() => {
+    const el = document.getElementById(`game-${key}`);
+    if (!el) {
+      if (tries > 1) scrollAndFlash(key, setFlashKey, tries - 1);
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashKey(key);
+    window.setTimeout(() => setFlashKey((k) => (k === key ? null : k)), 1800);
+  });
+}
+
 /** Must mirror the grid CSS below so the break-out row lands in the right place.
  *  Condensed narrows the track so a 1400px viewport fits 5 columns instead of 4. */
 const GRID_MIN: Record<Density, number> = { comfortable: 320, condensed: 250 };
 const GRID_MIN_COL = 320;
 const GRID_GAP = 16;
+
+/**
+ * How many columns a card grid is actually rendering, mirroring
+ * `repeat(auto-fit, minmax(320px, 1fr))`. Needed so the break-out panel is
+ * inserted after the LAST card of the expanded card's row rather than
+ * immediately after the card, which would leave a hole in the row.
+ *
+ * MEASURED PER GRID, because there are two of them now: the "My games" tray is
+ * inset by its own border and padding, so at a handful of window widths it fits
+ * one column fewer than the board below it. Sharing the board's count would put
+ * the tray's panel one row late at exactly those widths.
+ *
+ * `active` is the mount signal. The tray's grid is unmounted while the tray is
+ * collapsed, so the observer has to be re-attached when it comes back — an
+ * effect keyed on `density` alone would never see the new element.
+ */
+function useGridCols(density: Density, active = true) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [cols, setCols] = useState(1);
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setCols(gridColumnsFor(el.clientWidth, GRID_MIN[density]));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // Density changes the track width, so the column count must be re-measured.
+  }, [density, active]);
+  return [ref, cols] as const;
+}
 
 /** Columns `repeat(auto-fit, minmax(MIN, 1fr))` actually produces at width w. */
 export function gridColumnsFor(width: number, min = GRID_MIN_COL, gap = GRID_GAP): number {
@@ -1538,28 +1602,7 @@ function ScoreboardPage() {
     setOpenPanel({ key, kind });
   }, []);
 
-  /**
-   * How many columns the card grid is actually rendering, mirroring
-   * `repeat(auto-fit, minmax(320px, 1fr))`. Needed so the break-out panel is
-   * inserted after the LAST card of the expanded card's row rather than
-   * immediately after the card, which would leave a hole in the row.
-   */
-  const gridRef = useRef<HTMLDivElement | null>(null);
-  const [gridCols, setGridCols] = useState(1);
-
-  useEffect(() => {
-    const el = gridRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const measure = () => {
-      const w = el.clientWidth;
-      setGridCols(gridColumnsFor(w, GRID_MIN[density]));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-    // Density changes the track width, so the column count must be re-measured.
-  }, [density]);
+  const [gridRef, gridCols] = useGridCols(density);
 
   /* ---- Slate-wide edges (item 3 + 4). Opt-in: the cards load their own
    * compacts lazily, so this only runs when the Edge sort or the Top Edges
@@ -1621,6 +1664,18 @@ function ScoreboardPage() {
   const [portalToken, setPortalToken] = useState<string>(() => readPortalToken());
   const [portalUiOpen, setPortalUiOpen] = useState(false);
   const portal = usePortalBook(portalToken);
+  /**
+   * THE OWNER GATE, one definition. A live portal session — everything
+   * owner-only reads this: the suggestions compute, the resting review, the
+   * per-card Bets tab, and the "My games" tray.
+   *
+   * Declared HERE, up with the token it is derived from, because consumers now
+   * appear on both sides of the card memos (the tray's membership is computed
+   * with the cards, the panels are composed below them). A `const` read before
+   * its declaration in the same function body is a temporal-dead-zone crash,
+   * not a hoist.
+   */
+  const ownerOn = Boolean(portalToken) && portal.status === "ok";
   /** Dollars of risk per ladder. One knob, every sizing site (suggestion
    *  counts, outlay, the Place slip). Clamped on read AND on write. */
   const [unit, setUnit] = useState<number>(() => readUnit());
@@ -1640,6 +1695,9 @@ function ScoreboardPage() {
   const onBetType = useCallback((v: BetTypeFilter) => { setBetType(v); writeTypeFilter(v); }, []);
   const onBetTails = useCallback((v: boolean) => { setBetTails(v); writeShowTails(v); }, []);
   const onBetSort = useCallback((v: SuggestSort) => { setBetSort(v); writeSuggestSort(v); }, []);
+  /** The "My games" tray: expanded or one header line. Persisted per browser. */
+  const [myGamesOpen, setMyGamesOpen] = useState<boolean>(() => readMyGamesOpen());
+  const onMyGamesOpen = useCallback((v: boolean) => { setMyGamesOpen(v); writeMyGamesOpen(v); }, []);
   const clearBetFilters = useCallback(() => { onBetMode("all"); onBetType("all"); }, [onBetMode, onBetType]);
   /** slug -> compact seed arrays for the games the owner has bets on, so
    *  sim EV can be priced at the bets' own strikes. Filled by an effect
@@ -2212,12 +2270,69 @@ function ScoreboardPage() {
   }, [cards, confFilter, teamToConf]);
 
   /**
+   * THE "MY GAMES" MEMBERSHIP — which cards the owner already has skin in.
+   *
+   * A game qualifies on EXPOSURE, which is two things and deliberately not
+   * three: a HELD position, or a RESTING order this app placed. Orders that are
+   * not ours (the maker pipeline's, or hand-placed) are visible on the card's
+   * book strip but are not actionable from this page, so they do not move a
+   * game out of the scan — same `app` gate the resting-order review uses.
+   *
+   * The ticker -> card join is the one that already exists: `computePortalBets`
+   * runs every entry's ticker through `buildCodeToSlug(kalshiBySlug)` (the event
+   * code embedded in every NCAAF ticker), so `portalBook.bets[].slugs` is
+   * already card keys. Nothing new is fetched and nothing new is parsed.
+   *
+   * Counted over BETS, not over the by-slug index: a combo appears on every
+   * leg's card, and counting the index would report one 3-leg combo as three
+   * resting orders. Off-slate entries (and games a conference filter has
+   * removed) contribute nothing, so the header's counts always describe exactly
+   * the cards inside the tray.
+   */
+  const myGames = useMemo(() => {
+    const keys = new Set<string>();
+    let held = 0;
+    let resting = 0;
+    if (!ownerOn) return { keys, held, resting };
+    const onBoard = new Set(filteredCards.map((c) => c.key));
+    for (const b of portalBook.bets) {
+      const exposure = b.kind === "position" || (b.kind === "order" && b.app === true);
+      if (!exposure) continue;
+      const hits = b.slugs.filter((s) => onBoard.has(s));
+      if (!hits.length) continue;
+      for (const s of hits) keys.add(s);
+      if (b.kind === "position") held++;
+      else resting++;
+    }
+    return { keys, held, resting };
+  }, [ownerOn, portalBook, filteredCards]);
+
+  /** The two halves of the board. A card is in EXACTLY one of them — the tray
+   *  renders its members in both of its own states, so the main grid never
+   *  holds a game the owner has money on. Both keep `filteredCards`' order,
+   *  which is the kick-tier sort. */
+  const trayCards = useMemo(
+    () => (myGames.keys.size ? filteredCards.filter((c) => myGames.keys.has(c.key)) : EMPTY_CARDS),
+    [filteredCards, myGames]
+  );
+  const mainCards = useMemo(
+    () => (myGames.keys.size ? filteredCards.filter((c) => !myGames.keys.has(c.key)) : filteredCards),
+    [filteredCards, myGames]
+  );
+  /** The tray's own column count — see `useGridCols`. */
+  const [trayGridRef, trayCols] = useGridCols(density, myGamesOpen && trayCards.length > 0);
+
+  /**
    * Scroll to a game's card and flash it — from the Top Edges list, and from
    * the suggested-bets index (which also asks for the "bets" panel).
    *
    * ORDER MATTERS: the panel is set FIRST and the scroll waits a frame.
    * Opening a panel inserts a full-width grid item, which reflows the grid;
-   * scrolling before that lands on wherever the card used to be.
+   * scrolling before that lands on wherever the card used to be. The tray is
+   * the same rule one level up: a target inside a COLLAPSED tray has no element
+   * to scroll to at all, so the tray is opened first and the scroll waits for
+   * the cards to mount (`scrollAndFlash` re-tries across a few frames — a tray
+   * expansion mounts a whole grid, not one panel).
    */
   const jumpToGame = useCallback((slug: string, kind?: PanelKind) => {
     setShowTopEdges(false);
@@ -2225,15 +2340,9 @@ function ScoreboardPage() {
       setPanelFocus(null);
       setOpenPanel({ key: slug, kind });
     }
-    // Let the panel mount/unmount first so the card lands at a stable offset.
-    requestAnimationFrame(() => {
-      const el = document.getElementById(`game-${slug}`);
-      if (!el) return;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      setFlashKey(slug);
-      window.setTimeout(() => setFlashKey((k) => (k === slug ? null : k)), 1800);
-    });
-  }, []);
+    if (myGames.keys.has(slug)) onMyGamesOpen(true);
+    scrollAndFlash(slug, setFlashKey);
+  }, [myGames, onMyGamesOpen]);
 
   /** Human week label for the card header (replaces the hardcoded "week"). */
   const weekLabel = useMemo(
@@ -2292,9 +2401,9 @@ function ScoreboardPage() {
    *
    * OWNER GATE: without a live portal session it is handed an EMPTY, stable
    * game list, so the slate-wide compute never runs for a viewer who has no
-   * bets UI to show. Same gate as the index and the panel below.
+   * bets UI to show. Same gate (`ownerOn`, declared with the portal token) as
+   * the index, the tray and the panel below.
    */
-  const ownerOn = Boolean(portalToken) && portal.status === "ok";
   const suggestions = useSuggestions({
     games: ownerOn ? suggestGames : NO_SUGGEST_GAMES,
     kalshiBySlug,
@@ -2386,6 +2495,133 @@ function ScoreboardPage() {
     }
     return { ats, tot, ml, provisionalGames, anyGraded };
   }, [filteredCards]);
+
+  /**
+   * ONE CARD RENDERER, two grids.
+   *
+   * The "My games" tray and the main grid render the SAME component with the
+   * same props — a card must not become a different card for being in the tray
+   * (its tab panels, its Bets flows and its book strip all have to keep
+   * working). So the mapping lives here and each grid hands it its own list.
+   *
+   * The break-out panel's row arithmetic is per-LIST: `panelRowEnd` needs the
+   * open card's index inside the grid it is actually rendering in. It resolves
+   * to -1 in the list that does not hold the open card, so the panel renders
+   * exactly once, under the grid that owns it. Each grid passes its OWN
+   * measured column count (the tray is inset — see `useGridCols`).
+   */
+  const renderCards = (list: CardGame[], cols: number) => {
+    const idxIn = openPanel ? list.findIndex((c) => c.key === openPanel.key) : -1;
+    const rowEnd = panelRowEnd(idxIn, cols, list.length);
+    return list.map((c, idx) => {
+      const isOpen = openPanel?.key === c.key;
+      // OWNER ONLY, and only what the current filters actually leave on
+      // this game — the badge reads the same compute the panel renders.
+      const sec = suggestions.bySlug.get(c.key);
+      const bets = ownerOn
+        ? { n: sec?.groups.length ?? 0, nTail: sec?.tailGroups.length ?? 0 }
+        : undefined;
+
+      return (
+        <Fragment key={c.key}>
+          <GameCard
+            card={c}
+            gdata={games[c.key]}
+            useMean={useMean}
+            kalshi={c.jsonRow ? kalshiBySlug.get(c.key) : undefined}
+            book={portalBook.bySlug.get(c.key)}
+            // Owner only, and only for the per-order ✕ on a resting row
+            // this app placed. The strip is read-only without it.
+            bookToken={ownerOn ? portalToken : ""}
+            parlayOpen={parlayOpen}
+            openKind={isOpen ? openPanel!.kind : null}
+            onToggle={(kind) => togglePanel(c.key, kind)}
+            weekLabel={weekLabel}
+            condensed={condensed}
+            // The CARD's namespace, not the page's: on a merged slate the
+            // two halves fetch from different datasets.
+            season={c.ns}
+            onAddLeg={() => togglePanel(c.key, "picker")}
+            flash={flashKey === c.key}
+            bets={bets}
+          />
+          {openPanel && idx === rowEnd && openCard && (
+            <div style={{ gridColumn: "1 / -1" }}>
+              <CardPanelHost
+                card={openCard}
+                kind={openPanel.kind}
+                gdata={games[openCard.key]}
+                week={selectedWeek}
+                season={openCard.ns}
+                weekId={weekId}
+                useMean={useMean}
+                kalshi={openCard.jsonRow ? kalshiBySlug.get(openCard.key) : undefined}
+                onAddLeg={addLeg}
+                onClose={closePanel}
+                // Only ever set for the panel it was aimed at, so a stale
+                // payload cannot re-scroll a chart opened by hand.
+                focus={
+                  (openPanel.kind === "teamstats" && panelFocus?.kind === "teamstats") ||
+                  (openPanel.kind === "scores" && panelFocus?.kind === "scores")
+                    ? panelFocus : null
+                }
+                /* PLACE FROM THE PROJECTION. Owner-gated exactly like the
+                   bets panel, and only when the reader ARRIVED from a bets
+                   row (the focus carries a ladder id) — never a general
+                   place-from-chart affordance.
+                   The ladder is looked up LIVE, on every render, against
+                   the compute that re-runs on the 45s feed poll and the
+                   30s clock. Nothing is cached: a ladder that has gone
+                   (kickoff, a filter, a moved book) resolves to null and
+                   the strip says so instead of pricing a ghost. */
+                placeStrip={
+                  ownerOn && panelFocus?.groupId &&
+                  (openPanel.kind === "teamstats" || openPanel.kind === "scores") ? (
+                    <PlaceStrip
+                      group={findGroupById(
+                        suggestions.bySlug.get(openCard.key), panelFocus.groupId)}
+                      unit={unit}
+                      token={portalToken}
+                      feeParams={kalshiFees}
+                      quotedAt={suggestions.computedAt}
+                      ordersLive={portal.payload?.orders_live === true}
+                    />
+                  ) : null
+                }
+                // The bets panel is composed HERE rather than plumbed
+                // through the host: it needs page state (filters, unit,
+                // token, the compute) that no other panel does.
+                betsPanel={openPanel.kind === "bets" && ownerOn ? (
+                  <GameBetsPanel
+                    section={suggestions.bySlug.get(openCard.key)}
+                    verdict={suggestions.pregameBySlug.get(openCard.key)}
+                    hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}
+                    tailCount={suggestions.tailCountBySlug.get(openCard.key) ?? 0}
+                    unit={unit}
+                    token={portalToken}
+                    feeParams={kalshiFees}
+                    quotedAt={suggestions.computedAt}
+                    ordersLive={portal.payload?.orders_live === true}
+                    modeFilter={betMode} onModeFilter={onBetMode}
+                    typeFilter={betType} onTypeFilter={onBetType}
+                    showTails={betTails} onShowTails={onBetTails}
+                    onProject={(t: ProjectionTarget) => focusPanel(
+                      openCard.key,
+                      t.kind === "scores" ? "scores" : "teamstats",
+                      // The WHOLE target travels: which chart, which value
+                      // on it, and which ladder sent us — the panel needs
+                      // all three to open on the bet rather than near it.
+                      t,
+                    )}
+                  />
+                ) : null}
+              />
+            </div>
+          )}
+        </Fragment>
+      );
+    });
+  };
 
   // Compact toolbar tokens — the row must fit on one line at desktop widths.
   const CTL = { maxWidth: 190 } as const;
@@ -2722,6 +2958,69 @@ function ScoreboardPage() {
         <SlateTallyBar tally={slateTally} cards={filteredCards} weekLines={weekLines} weekLinesFcs={weekLinesFcs} condensed={condensed} />
       )}
 
+      {/* THE "MY GAMES" TRAY — the games the owner already has money on, taken
+          out of the scan below.
+
+          It is not a filter and not a pin: the member cards render HERE and
+          nowhere else, in both tray states, so the grid underneath answers one
+          question only — "what have I got nothing on yet?".
+
+          Owner-gated, and absent entirely when nothing is held or resting, so a
+          public viewer and a flat book both see the board exactly as before. */}
+      {ownerOn && trayCards.length > 0 && (
+        <section
+          style={{
+            border: "1px solid var(--border)", borderRadius: 12,
+            background: "var(--fill)", padding: 8, marginBottom: 16,
+            display: "grid", gap: 8,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => onMyGamesOpen(!myGamesOpen)}
+            aria-expanded={myGamesOpen}
+            aria-controls="my-games-grid"
+            style={{
+              display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+              width: "100%", textAlign: "left", cursor: "pointer",
+              padding: "4px 4px", border: "none", background: "none",
+              color: "var(--text)", font: "inherit",
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 11, color: "var(--muted)", flex: "none" }}>
+              {myGamesOpen ? "▾" : "▸"}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "var(--brand-text)" }}>
+              Your games ({trayCards.length})
+            </span>
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>
+              · {myGames.resting} resting · {myGames.held} held
+            </span>
+          </button>
+
+          {myGamesOpen && (
+            <>
+              <div style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.5, padding: "0 4px" }}>
+                Money already on the board. They are kept out of the grid below,
+                which is everything you have nothing on.
+              </div>
+              <div
+                id="my-games-grid"
+                ref={trayGridRef}
+                style={{
+                  display: "grid",
+                  gap: GRID_GAP,
+                  gridTemplateColumns: `repeat(auto-fit, minmax(${GRID_MIN[density]}px, 1fr))`,
+                  alignItems: "stretch",
+                }}
+              >
+                {renderCards(trayCards, trayCols)}
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
       {/* Cards grid.
           Cards are fixed-size grid items; an expanded panel is a SEPARATE
           full-width item (grid-column 1/-1) placed after the last card of the
@@ -2736,116 +3035,7 @@ function ScoreboardPage() {
           alignItems: "stretch",
         }}
       >
-        {filteredCards.map((c, idx) => {
-          const isOpen = openPanel?.key === c.key;
-          // End of the row that contains the expanded card.
-          const rowEnd = panelRowEnd(openIdx, gridCols, filteredCards.length);
-          // OWNER ONLY, and only what the current filters actually leave on
-          // this game — the badge reads the same compute the panel renders.
-          const sec = suggestions.bySlug.get(c.key);
-          const bets = ownerOn
-            ? { n: sec?.groups.length ?? 0, nTail: sec?.tailGroups.length ?? 0 }
-            : undefined;
-
-          return (
-            <Fragment key={c.key}>
-              <GameCard
-                card={c}
-                gdata={games[c.key]}
-                useMean={useMean}
-                kalshi={c.jsonRow ? kalshiBySlug.get(c.key) : undefined}
-                book={portalBook.bySlug.get(c.key)}
-                // Owner only, and only for the per-order ✕ on a resting row
-                // this app placed. The strip is read-only without it.
-                bookToken={ownerOn ? portalToken : ""}
-                parlayOpen={parlayOpen}
-                openKind={isOpen ? openPanel!.kind : null}
-                onToggle={(kind) => togglePanel(c.key, kind)}
-                weekLabel={weekLabel}
-                condensed={condensed}
-                // The CARD's namespace, not the page's: on a merged slate the
-                // two halves fetch from different datasets.
-                season={c.ns}
-                onAddLeg={() => togglePanel(c.key, "picker")}
-                flash={flashKey === c.key}
-                bets={bets}
-              />
-              {openPanel && idx === rowEnd && openCard && (
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <CardPanelHost
-                    card={openCard}
-                    kind={openPanel.kind}
-                    gdata={games[openCard.key]}
-                    week={selectedWeek}
-                    season={openCard.ns}
-                    weekId={weekId}
-                    useMean={useMean}
-                    kalshi={openCard.jsonRow ? kalshiBySlug.get(openCard.key) : undefined}
-                    onAddLeg={addLeg}
-                    onClose={closePanel}
-                    // Only ever set for the panel it was aimed at, so a stale
-                    // payload cannot re-scroll a chart opened by hand.
-                    focus={
-                      (openPanel.kind === "teamstats" && panelFocus?.kind === "teamstats") ||
-                      (openPanel.kind === "scores" && panelFocus?.kind === "scores")
-                        ? panelFocus : null
-                    }
-                    /* PLACE FROM THE PROJECTION. Owner-gated exactly like the
-                       bets panel, and only when the reader ARRIVED from a bets
-                       row (the focus carries a ladder id) — never a general
-                       place-from-chart affordance.
-                       The ladder is looked up LIVE, on every render, against
-                       the compute that re-runs on the 45s feed poll and the
-                       30s clock. Nothing is cached: a ladder that has gone
-                       (kickoff, a filter, a moved book) resolves to null and
-                       the strip says so instead of pricing a ghost. */
-                    placeStrip={
-                      ownerOn && panelFocus?.groupId &&
-                      (openPanel.kind === "teamstats" || openPanel.kind === "scores") ? (
-                        <PlaceStrip
-                          group={findGroupById(
-                            suggestions.bySlug.get(openCard.key), panelFocus.groupId)}
-                          unit={unit}
-                          token={portalToken}
-                          feeParams={kalshiFees}
-                          quotedAt={suggestions.computedAt}
-                          ordersLive={portal.payload?.orders_live === true}
-                        />
-                      ) : null
-                    }
-                    // The bets panel is composed HERE rather than plumbed
-                    // through the host: it needs page state (filters, unit,
-                    // token, the compute) that no other panel does.
-                    betsPanel={openPanel.kind === "bets" && ownerOn ? (
-                      <GameBetsPanel
-                        section={suggestions.bySlug.get(openCard.key)}
-                        verdict={suggestions.pregameBySlug.get(openCard.key)}
-                        hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}
-                        tailCount={suggestions.tailCountBySlug.get(openCard.key) ?? 0}
-                        unit={unit}
-                        token={portalToken}
-                        feeParams={kalshiFees}
-                        quotedAt={suggestions.computedAt}
-                        ordersLive={portal.payload?.orders_live === true}
-                        modeFilter={betMode} onModeFilter={onBetMode}
-                        typeFilter={betType} onTypeFilter={onBetType}
-                        showTails={betTails} onShowTails={onBetTails}
-                        onProject={(t: ProjectionTarget) => focusPanel(
-                          openCard.key,
-                          t.kind === "scores" ? "scores" : "teamstats",
-                          // The WHOLE target travels: which chart, which value
-                          // on it, and which ladder sent us — the panel needs
-                          // all three to open on the bet rather than near it.
-                          t,
-                        )}
-                      />
-                    ) : null}
-                  />
-                </div>
-              )}
-            </Fragment>
-          );
-        })}
+        {renderCards(mainCards, gridCols)}
       </div>
     </div>
   );

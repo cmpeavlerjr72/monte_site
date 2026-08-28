@@ -75,6 +75,20 @@ const TAILS_KEY = "cfb.suggestedBets.showTails";
 export const readShowTails = (): boolean => read(TAILS_KEY) === "1";
 export const writeShowTails = (v: boolean): void => write(TAILS_KEY, v ? "1" : "0");
 
+/* -------------------------- the "My games" tray --------------------------- */
+/**
+ * Whether the tray of games the owner already has money on is expanded.
+ *
+ * DEFAULT OPEN, unlike the suggestions card above. The tray REMOVES its games
+ * from the main grid in both states, so a default-collapsed tray would make
+ * cards vanish from the board on first load with no press to explain it. Open
+ * by default the tray only regroups them; collapsing is the owner's own choice
+ * and this remembers it.
+ */
+const MYGAMES_KEY = "cfb.myGames.open";
+export const readMyGamesOpen = (): boolean => read(MYGAMES_KEY) !== "0";
+export const writeMyGamesOpen = (v: boolean): void => write(MYGAMES_KEY, v ? "1" : "0");
+
 /** "edge" = best net edge first; "soon" = earliest kickoff first. */
 export type SuggestSort = "edge" | "soon";
 const SORT_KEY = "cfb.suggestedBets.sort";
