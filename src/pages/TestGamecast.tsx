@@ -6,12 +6,18 @@
 // live slate. The field strip gets a situation synthesized from the last
 // drive when the game is over.
 //
-//   /test-gamecast                → tonight's default event
-//   /test-gamecast?event=4018...  → any college football event id
+//   /test-gamecast                        → tonight's default event
+//   /test-gamecast?event=4018...          → any college football event id
+//   /test-gamecast?event=...&grid=<url>   → also overlay a live.json grid
+//                                            fetched from an arbitrary URL
+//                                            (bypasses card/ns/weekId plumbing
+//                                            so the overlay can be eyeballed
+//                                            against a finished/live game)
 
 import { useEffect, useMemo, useState } from "react";
 import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
 import { parseSummaryLite, type LiveSituation } from "../lib/espnGame";
+import { parseLiveGrid, type LiveGrid } from "../lib/liveGrid";
 
 const SUMMARY =
   "https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=";
@@ -21,8 +27,13 @@ export default function TestGamecast() {
     () => new URLSearchParams(window.location.search).get("event") ?? "401866532",
     []
   );
+  const gridUrl = useMemo(
+    () => new URLSearchParams(window.location.search).get("grid"),
+    []
+  );
   const [raw, setRaw] = useState<any | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [liveGrid, setLiveGrid] = useState<LiveGrid | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +45,21 @@ export default function TestGamecast() {
       cancelled = true;
     };
   }, [eventId]);
+
+  useEffect(() => {
+    if (!gridUrl) {
+      setLiveGrid(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(gridUrl, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j) => !cancelled && setLiveGrid(parseLiveGrid(j)))
+      .catch(() => !cancelled && setLiveGrid(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [gridUrl]);
 
   if (err) return <div style={{ color: "var(--neg)" }}>Failed: {err}</div>;
   if (!raw) return <div style={{ color: "var(--muted)" }}>Loading {eventId}…</div>;
@@ -88,6 +114,11 @@ export default function TestGamecast() {
       <section style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12 }}>
         <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>
           LiveGamePanel (isLive forced on so the drive field + play list render)
+          {gridUrl && (
+            <span style={{ fontWeight: 400, color: "var(--muted)" }}>
+              {" "}· sim grid {liveGrid ? "loaded" : "loading/unavailable"} from {gridUrl}
+            </span>
+          )}
         </div>
         <LiveGamePanel
           eventId={eventId}
@@ -95,6 +126,7 @@ export default function TestGamecast() {
           situation={situation}
           bits={bits}
           simHomeWinPct={62}
+          liveGrid={liveGrid}
         />
       </section>
     </div>

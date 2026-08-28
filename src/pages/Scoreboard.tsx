@@ -41,6 +41,7 @@ import ParlaySlip from "../components/ParlaySlip";
 import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
 import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
 import { parseSituation, type LiveSituation } from "../lib/espnGame";
+import { useLiveGrid } from "../lib/liveGrid";
 
 type LiveGame = {
   id: string;
@@ -2861,6 +2862,19 @@ function CardPanelHost({
   onClose: () => void;
 }) {
   const jsonRow = card.jsonRow;
+
+  // Sim-conditional live overlay: one fetch, only while the live panel is
+  // actually open (not on every other panel kind) and only when the card
+  // has a jsonRow to key the dataset path off (FCS-without-row -> null args
+  // -> the hook itself resolves to null, same quiet-empty-state contract as
+  // every other per-game fetch here).
+  const wantLiveGrid = kind === "live" && Boolean(jsonRow);
+  const liveGrid = useLiveGrid(
+    wantLiveGrid ? card.ns : null,
+    wantLiveGrid ? weekId : null,
+    wantLiveGrid ? jsonRow!.slug : null
+  );
+
   const title =
     kind === "scores" ? "Simulated Scores"
     : kind === "players" ? "Simulated Player Stats"
@@ -2914,6 +2928,8 @@ function CardPanelHost({
               ? 100 * (espnHomeIsA ? card.pHome : 1 - card.pHome)
               : undefined
           }
+          liveGrid={liveGrid}
+          flipToEspnHome={!espnHomeIsA}
         />
       )}
       {kind === "scores" && <ScoresPanel card={card} gdata={gdata} season={season} />}

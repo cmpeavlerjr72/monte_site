@@ -15,12 +15,14 @@
 
 import { useMemo, useState } from "react";
 import {
-  ComposedChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
+  ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import type {
   AttackDir, CurrentDrive, LiveSituation, ProbPoint, GameSummaryLite,
 } from "../lib/espnGame";
 import { useGameProbabilities, useGameSummary } from "../lib/espnGame";
+import type { LiveGrid, GridLookup } from "../lib/liveGrid";
+import { lookupGrid } from "../lib/liveGrid";
 
 const X0 = 10; // endzone width in viewBox units
 const xOf = (yardLine: number) => X0 + (100 - Math.max(0, Math.min(100, yardLine)));
@@ -277,28 +279,45 @@ const XAXIS_H = 18;
 const PLOT_TOP = CHART_MARGIN.top;
 const PLOT_BOTTOM = CHART_H - XAXIS_H;
 
-function ProbChart({ points, summary, bits, simHomeWinPct, eventId }: {
+function ProbChart({ points, summary, bits, simHomeWinPct, eventId, liveGrid, simPoints }: {
   points: ProbPoint[];
   summary: GameSummaryLite | null;
   bits: TeamBits;
+  /** Static fallback (pregame P(home) as a flat line) — used only when a
+   *  dynamic per-point series (simPoints) is not available. */
   simHomeWinPct?: number;
   eventId: string;
+  /** Sim-conditional grid, present only for a game whose live.json has
+   *  published. Read here just for the OVER-mode header + fallback total. */
+  liveGrid?: LiveGrid | null;
+  /** One grid lookup per `points` entry (same index), or null where the
+   *  point has no lookup (OT, missing play join). Built by LiveGamePanel. */
+  simPoints?: (GridLookup | null)[] | null;
 }) {
   const [mode, setMode] = useState<ProbMode>("win");
   const hasCover = points.some((p) => p.coverHome !== undefined);
   const hasOver = points.some((p) => p.overPct !== undefined);
   const effMode: ProbMode = mode === "cover" && !hasCover ? "win" : mode === "over" && !hasOver ? "win" : mode;
 
+  const hasSimSeries = Boolean(simPoints && simPoints.some((c) => c !== null));
+
   const data = useMemo(
     () =>
       points.map((p, i) => ({
         i,
         v: effMode === "win" ? p.homeWin : effMode === "cover" ? p.coverHome : p.overPct,
+        sim: simPoints?.[i] ? simPoints[i]!.pHomeWin * 100 : undefined,
         playId: p.playId,
         secondsLeft: p.secondsLeft,
       })),
-    [points, effMode]
+    [points, effMode, simPoints]
   );
+
+  // The latest point's grid cell — feeds the WIN-mode SIM chip and the
+  // OVER-mode "SIM total" readout. Strictly the LAST point (not the most
+  // recent non-null one): when it's OT or unjoined, no chip is shown, same
+  // as the chart drawing no sim segment there.
+  const lastSimCell = simPoints?.[simPoints.length - 1] ?? null;
 
   // Quarter boundaries (3600-second regulation clock) → separator lines and
   // ESPN-style 1st/2nd/3rd/4th labels centered inside each segment.
@@ -373,6 +392,35 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId }: {
           {leaderLogo && <img src={leaderLogo} alt="" width={16} height={16} style={{ objectFit: "contain" }} />}
           {readout}
         </span>
+        {effMode === "win" && lastSimCell && (
+          <span
+            title={
+              `SIM fair total ${lastSimCell.meanTotal.toFixed(1)} · ` +
+              `fair margin ${lastSimCell.meanMargin >= 0 ? "+" : ""}${lastSimCell.meanMargin.toFixed(1)} · ` +
+              `n=${lastSimCell.n}${lastSimCell.widened ? " (widened cell)" : ""}`
+            }
+            style={{
+              fontSize: 11, fontWeight: 800, color: "var(--brand)",
+              border: "1px solid var(--brand)", borderRadius: 999, padding: "2px 8px",
+              fontVariantNumeric: "tabular-nums", cursor: "help",
+            }}
+          >
+            SIM {(lastSimCell.pHomeWin >= 0.5 ? bits.homeAbbrev : bits.awayAbbrev) ?? ""}{" "}
+            {(lastSimCell.pHomeWin >= 0.5 ? 100 * lastSimCell.pHomeWin : 100 * (1 - lastSimCell.pHomeWin)).toFixed(1)}%
+          </span>
+        )}
+        {effMode === "over" && liveGrid && (lastSimCell || liveGrid.uncond.mean_total !== undefined) && (
+          <span
+            title="Sim-conditional fair total for the current game state (falls back to the pregame fair total once regulation ends)."
+            style={{
+              fontSize: 11, fontWeight: 800, color: "var(--brand)",
+              border: "1px solid var(--brand)", borderRadius: 999, padding: "2px 8px",
+              fontVariantNumeric: "tabular-nums", cursor: "help",
+            }}
+          >
+            SIM total {(lastSimCell?.meanTotal ?? liveGrid.uncond.mean_total).toFixed(1)}
+          </span>
+        )}
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
           {modeBtn("win", "Win %", true)}
           {modeBtn("cover", "Cover %", hasCover)}
@@ -417,7 +465,11 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId }: {
             {boundaries.map((b) => (
               <ReferenceLine key={b} x={b} stroke="var(--border)" strokeDasharray="2 3" />
             ))}
-            {effMode === "win" && simHomeWinPct !== undefined && (
+            {/* Dynamic per-state sim line takes over from the flat pregame
+                reference the moment a live grid + joined score are available;
+                the static line stays as the fallback for callers with no
+                liveGrid (e.g. no sim series could be built yet). */}
+            {effMode === "win" && simHomeWinPct !== undefined && !hasSimSeries && (
               <ReferenceLine
                 y={simHomeWinPct} stroke="var(--brand)" strokeDasharray="6 3"
                 label={{ value: "SIM", position: "insideRight", fontSize: 9, fill: "var(--brand)" }}
@@ -458,6 +510,14 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId }: {
               fill={stroke} fillOpacity={0.16}
               dot={false} isAnimationActive={false}
             />
+            {effMode === "win" && hasSimSeries && (
+              <Line
+                type="stepAfter" dataKey="sim"
+                stroke="var(--brand)" strokeWidth={1.6} strokeDasharray="6 3"
+                dot={false} isAnimationActive={false} connectNulls={false}
+                legendType="none"
+              />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -544,12 +604,28 @@ function DriveLog({ drives, bits, isLive }: {
 
 /* ------------------------------ LiveGamePanel ----------------------------- */
 
-export function LiveGamePanel({ eventId, isLive, situation, bits, simHomeWinPct }: {
+export function LiveGamePanel({
+  eventId, isLive, situation, bits, simHomeWinPct, liveGrid = null, flipToEspnHome = false,
+}: {
   eventId: string;
   isLive: boolean;
   situation?: LiveSituation;
   bits: TeamBits;
+  /** Static fallback line — pregame P(home), unconditional. */
   simHomeWinPct?: number;
+  /** Sim-conditional (time x margin) grid for this game, or null when not
+   *  published (FCS, past weeks, exporter hasn't reached this game yet). */
+  liveGrid?: LiveGrid | null;
+  /**
+   * true when the sim's home team (liveGrid.teamA / card.teamA) is NOT the
+   * same team ESPN calls home for this event (neutral-site games can flip) —
+   * same condition the caller already computes for simHomeWinPct
+   * (`espnHomeIsA`). Every value the grid returns is in the SIM's home/away
+   * orientation; `bits` (and every other number already on this chart, e.g.
+   * ProbPoint.homeWin) is in ESPN's — this flips margin in and probability/
+   * margin back out so the overlay lines up with the axes it's drawn on.
+   */
+  flipToEspnHome?: boolean;
 }) {
   const summary = useGameSummary(eventId, isLive);
   const probs = useGameProbabilities(eventId, isLive);
@@ -560,6 +636,27 @@ export function LiveGamePanel({ eventId, isLive, situation, bits, simHomeWinPct 
   const nothing = !loading && !drives.length && !(probs && probs.length);
   const possHome = (drive?.teamId ?? situation?.possessionId) === bits.homeId;
   const possLogo = drive?.teamLogo ?? (possHome ? bits.homeLogo : bits.awayLogo);
+
+  // One grid lookup per probability point, aligned by index: regulation only
+  // (secondsLeft < 0 = OT, no axis for it on the grid) and only where the
+  // point's play joins to a scored PlayRef (summary.playText).
+  const simPoints = useMemo<(GridLookup | null)[] | null>(() => {
+    if (!liveGrid || !probs || !summary) return null;
+    return probs.map((p) => {
+      if (p.secondsLeft < 0) return null;
+      const ref = p.playId ? summary.playText.get(p.playId) : undefined;
+      if (!ref || ref.home === undefined || ref.away === undefined) return null;
+      const espnMargin = ref.home - ref.away; // ESPN home - ESPN away
+      const simMargin = flipToEspnHome ? -espnMargin : espnMargin;
+      const cell = lookupGrid(liveGrid, 3600 - p.secondsLeft, simMargin);
+      if (!cell) return null;
+      // Cell is in the SIM's home/away orientation; flip back to ESPN's so
+      // it matches every other number already on this chart.
+      return flipToEspnHome
+        ? { ...cell, pHomeWin: 1 - cell.pHomeWin, meanMargin: -cell.meanMargin }
+        : cell;
+    });
+  }, [liveGrid, probs, summary, flipToEspnHome]);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -584,7 +681,8 @@ export function LiveGamePanel({ eventId, isLive, situation, bits, simHomeWinPct 
 
       {probs && probs.length > 0 && (
         <ProbChart points={probs} summary={summary} bits={bits}
-          simHomeWinPct={simHomeWinPct} eventId={eventId} />
+          simHomeWinPct={simHomeWinPct} eventId={eventId}
+          liveGrid={liveGrid} simPoints={simPoints} />
       )}
 
       {drives.length > 0 && <DriveLog drives={drives} bits={bits} isLive={isLive} />}
