@@ -40,7 +40,7 @@ import type { PortalPayload } from "../lib/kalshiPortal";
 import {
   buildSuggestions, heldTickerSet, statCandidates,
   LADDER_RISK, MIN_MAKER_EDGE, TAKE_THRESHOLD,
-  type Candidate, type FeeParams, type Suggestion, type Suppressed,
+  type Candidate, type FeeParams,
 } from "../lib/suggestedBets";
 import type { Season } from "../lib/cfbData";
 
