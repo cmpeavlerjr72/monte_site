@@ -157,7 +157,12 @@ export function lookupGrid(
 
   const timeIdx = clamp(Math.floor(elapsedSeconds / g.time_bin_s), 0, g.n_time - 1);
   const halfSpan = (g.n_margin - 1) / 2; // e.g. 14 for n_margin=29, margin_bin=2 -> +/-28
-  const centerIdx = clamp(Math.round(margin / g.margin_bin), -halfSpan, halfSpan) + halfSpan;
+  // Half-AWAY-from-zero, matching the exporter's margin_rule
+  // (export_live_grid.py): JS Math.round is half-toward-+Infinity, which
+  // would shift every negative odd margin one bin toward zero vs. how the
+  // corpus was binned.
+  const q = margin / g.margin_bin;
+  const centerIdx = clamp(Math.sign(q) * Math.round(Math.abs(q)), -halfSpan, halfSpan) + halfSpan;
 
   const cellAt = (mi: number): GridLookup | null => {
     if (mi < 0 || mi >= g.n_margin) return null;
