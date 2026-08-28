@@ -55,8 +55,8 @@ import type { KalshiGame } from "../lib/kalshi";
 import type { PortalPayload } from "../lib/kalshiPortal";
 import {
   buildSuggestions, gameCandidates, groupLadders, heldTickerSet,
-  statCandidates, MIN_MAKER_EDGE, TAKE_THRESHOLD,
-  type Candidate, type FeeParams, type LadderGroup,
+  statCandidates, orderFee, MIN_MAKER_EDGE, TAKE_THRESHOLD, TAIL_HI, TAIL_LO,
+  type Candidate, type FeeParams, type LadderGroup, type Suggestion,
 } from "../lib/suggestedBets";
 import {
   newIdempotencyKey, placeErrorText, placeOrders,
@@ -68,6 +68,7 @@ import { SERIES_FOR_STAT } from "../lib/teamStatMarkets";
 import {
   readCardOpen, writeCardOpen, readModeFilter, writeModeFilter,
   readSuggestSort, writeSuggestSort, readTypeFilter, writeTypeFilter,
+  readShowTails, writeShowTails,
   type ModeFilter, type SuggestSort, type BetTypeFilter,
 } from "../lib/ownerPrefs";
 import DryRunBadge from "./DryRunBadge";
@@ -128,6 +129,28 @@ function ModeChip({ mode, price }: { mode: "REST" | "TAKE"; price?: number }) {
   );
 }
 
+/**
+ * The TAIL mark. Deliberately colourless — `--muted` ink on a dashed outline,
+ * never `--pos`/`--neg` (edge sign) and never the mode hues. It says "we do
+ * not stand behind this row", which is not a bet direction and not an
+ * execution mode, so it gets neither channel.
+ */
+function TailBadge({ inline = false }: { inline?: boolean }) {
+  return (
+    <span
+      title={`Sim probability or the ask being paid is outside ${Math.round(TAIL_LO * 100)}–${Math.round(TAIL_HI * 100)}¢`}
+      style={{
+        fontSize: 9, fontWeight: 900, letterSpacing: 0.4,
+        padding: "0 4px", borderRadius: 4, whiteSpace: "nowrap",
+        border: "1px dashed var(--border)", color: "var(--muted)",
+        marginRight: inline ? 5 : 0, verticalAlign: "middle",
+      }}
+    >
+      TAIL
+    </span>
+  );
+}
+
 /** "Sat 3:30 PM" — enough to order a multi-day slate without a date column. */
 function kickText(ms: number | undefined): string {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
@@ -144,11 +167,14 @@ function kickText(ms: number | undefined): string {
  * simply has no mark.
  */
 function GameHeader({
-  game, slug, n, onJump,
+  game, slug, n, nTail, onJump,
 }: {
   game: SuggestGame | undefined;
   slug: string;
   n: number;
+  /** Revealed tail markets in this section, counted SEPARATELY — they are not
+   *  bets the card is making, so they never inflate the bet count. */
+  nTail: number;
   onJump?: (cardKey: string) => void;
 }) {
   const away = game?.teamB ?? "";
@@ -181,8 +207,10 @@ function GameHeader({
       {kick && (
         <span style={{ fontSize: 10, color: "var(--muted)" }}>· {kick}</span>
       )}
+      {/* ONE count, in one unit. A section that survives only because tails
+          are revealed says so in words rather than showing "0 bets". */}
       <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap" }}>
-        {n} bet{n === 1 ? "" : "s"}
+        {n > 0 ? `${n} bet${n === 1 ? "" : "s"}` : nTail > 0 ? "tail only" : ""}
       </span>
     </button>
   );
@@ -212,11 +240,13 @@ export default function SuggestedBets({
   const [modeFilter, setModeFilter] = useState<ModeFilter>(() => readModeFilter());
   const [typeFilter, setTypeFilter] = useState<BetTypeFilter>(() => readTypeFilter());
   const [sort, setSort] = useState<SuggestSort>(() => readSuggestSort());
+  /** Reveal the tail band's held-out markets. Default OFF, persisted. */
+  const [showTails, setShowTails] = useState<boolean>(() => readShowTails());
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
    *  Confirm replays server-side instead of placing twice. */
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
 
-  const { rows, suppressed, computedAt } = useMemo(() => {
+  const { rows, tailRows, tailMarkets, suppressed, computedAt } = useMemo(() => {
     const held = heldTickerSet(portal?.positions, portal?.orders);
     const candidates: Candidate[] = [];
     for (const g of games) {
@@ -269,6 +299,11 @@ export default function SuggestedBets({
   // Selection and sizing already happened above; none of this touches either,
   // so a filter can never change what a surviving row would cost.
   const allGroups = useMemo(() => groupLadders(rows, unit), [rows, unit]);
+  // The tail band's held-out markets, grouped the same way but kept in their
+  // OWN list: they are appended under each game's real suggestions when the
+  // toggle is on, and never sorted among them.
+  const allTailGroups = useMemo(
+    () => groupLadders(tailRows, unit), [tailRows, unit]);
 
   /**
    * ONE SECTION PER GAME. Suggestions concentrate hard — two, three, four
@@ -285,24 +320,37 @@ export default function SuggestedBets({
    * `family` is one value). Both compose — either can empty a section.
    */
   const sections = useMemo(() => {
-    const kept = allGroups.filter((g) => {
+    const pass = (g: LadderGroup) => {
       const modeOk = modeFilter === "all" ||
         g.rungs.some((r) => (modeFilter === "rest") === (r.mode === "REST"));
       const typeOk = typeFilter === "all" || g.family === typeFilter;
       return modeOk && typeOk;
-    });
-    const bySlug = new Map<string, LadderGroup[]>();
-    for (const g of kept) {
-      const arr = bySlug.get(g.slug);
-      if (arr) arr.push(g); else bySlug.set(g.slug, [g]);
-    }
-    const out = [...bySlug].map(([slug, list]) => {
-      const inner = [...list].sort((a, b) => b.bestEdge - a.bestEdge);
+    };
+    const kept = allGroups.filter(pass);
+    // Tails obey the SAME filters — they are a reveal, not an escape hatch.
+    const keptTails = showTails ? allTailGroups.filter(pass) : [];
+
+    const bySlug = new Map<string, { core: LadderGroup[]; tail: LadderGroup[] }>();
+    const slot = (slug: string) => {
+      let s = bySlug.get(slug);
+      if (!s) { s = { core: [], tail: [] }; bySlug.set(slug, s); }
+      return s;
+    };
+    for (const g of kept) slot(g.slug).core.push(g);
+    for (const g of keptTails) slot(g.slug).tail.push(g);
+
+    const out = [...bySlug].map(([slug, { core, tail }]) => {
+      const inner = [...core].sort((a, b) => b.bestEdge - a.bestEdge);
+      const tails = [...tail].sort((a, b) => b.bestEdge - a.bestEdge);
       return {
         slug,
         game: gameByKey.get(slug),
         groups: inner,
-        bestEdge: inner[0].bestEdge,
+        tailGroups: tails,
+        // Ranked on the REAL suggestions only. A game that has nothing but
+        // tails sorts last (−Infinity) instead of jumping the queue on the
+        // strength of an edge we do not stand behind.
+        bestEdge: inner.length ? inner[0].bestEdge : -Infinity,
         // Unknown kickoff sorts LAST rather than first, so a missing time
         // never masquerades as the most urgent game on the board.
         kickoffMs: gameByKey.get(slug)?.kickoffMs ?? Infinity,
@@ -312,7 +360,7 @@ export default function SuggestedBets({
       ? (a.kickoffMs !== b.kickoffMs ? a.kickoffMs - b.kickoffMs : b.bestEdge - a.bestEdge)
       : b.bestEdge - a.bestEdge);
     return out;
-  }, [allGroups, modeFilter, typeFilter, sort, gameByKey]);
+  }, [allGroups, allTailGroups, showTails, modeFilter, typeFilter, sort, gameByKey]);
 
   const shownCount = sections.reduce((n, s) => n + s.groups.length, 0);
   const hiddenByFilter = allGroups.length - shownCount;
@@ -475,11 +523,22 @@ export default function SuggestedBets({
                     game={sec.game}
                     slug={sec.slug}
                     n={sec.groups.length}
+                    nTail={sec.tailGroups.length}
                     onJump={onJump}
                   />
                   <div style={{ display: "grid", gap: 4 }}>
-              {sec.groups.map((g) => {
-                const on = g.ladder === sel;
+              {/* Real suggestions first, then — only when the toggle is on —
+                  the tail band's held-out markets, behind their own labelled
+                  divider. ONE map, so the row markup exists once; `g.tail` is
+                  the only thing that changes how it looks. */}
+              {[...sec.groups, ...sec.tailGroups].map((g, gi) => {
+                // A tail ladder and its in-band twin share a `ladder` string
+                // (same game, same family, same team) — they are two halves of
+                // one ladder split by the band. React keys and the expand
+                // selection both need the PAIR to be distinct, or ticking one
+                // opens both and React drops a row.
+                const gid = g.tail ? `tail:${g.ladder}` : g.ladder;
+                const on = gid === sel;
                 const single = g.rungs.length === 1;
                 const head = g.rungs[0];
                 // Mode at a glance: the row wears a slim accent in its own
@@ -487,21 +546,47 @@ export default function SuggestedBets({
                 // BEST rung's hue, and shows a chip for each mode anyway.
                 const modes = Array.from(new Set(g.rungs.map((r) => r.mode)));
                 const bestMode = g.rungs.reduce((m, r) => (r.edge > m.edge ? r : m), g.rungs[0]).mode;
+                // A TAIL row keeps its number but LOSES its colour: green on
+                // an edge we do not stand behind would be the card lying in
+                // its loudest channel. The badge and the muted ink say so
+                // instead — the Team Stats convention, where a suppressed
+                // flag keeps its mark and loses its chip.
+                const edgeColor = g.tail
+                  ? "var(--muted)"
+                  : g.bestEdge > 0 ? "var(--pos)" : "var(--neg)";
+                const firstTail = g.tail && gi === sec.groups.length;
                 return (
-                  <div key={g.ladder}>
+                  <div key={gid}>
+                    {firstTail && (
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 6,
+                        margin: "5px 0 3px", fontSize: 10, color: "var(--muted)",
+                      }}>
+                        <TailBadge />
+                        <span>
+                          sim or price outside {Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢
+                          {" "}— shown on request, never ranked
+                        </span>
+                      </div>
+                    )}
                     <div style={{
                       display: "flex", alignItems: "stretch", gap: 4,
                     }}>
                       <button
                         type="button"
-                        onClick={() => { setSel(on ? null : g.ladder); onJump?.(g.slug); }}
+                        onClick={() => { setSel(on ? null : gid); onJump?.(g.slug); }}
                         style={{
                           flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
                           display: "grid", gap: 3,
                           padding: "6px 8px", borderRadius: 7,
-                          border: `1px solid ${on ? "var(--brand)" : "var(--border)"}`,
-                          borderLeft: `4px solid ${modeHue(bestMode)}`,
-                          background: "var(--card)", color: "var(--text)",
+                          // A tail row is DASHED and sits on the section fill
+                          // rather than the card: at a glance it reads as a
+                          // provisional row, the same dotted-underline
+                          // convention the approximate-strike marks use.
+                          border: `1px ${g.tail ? "dashed" : "solid"} ${on ? "var(--brand)" : "var(--border)"}`,
+                          borderLeft: `4px solid ${g.tail ? "var(--border)" : modeHue(bestMode)}`,
+                          background: g.tail ? "var(--fill)" : "var(--card)",
+                          color: g.tail ? "var(--muted)" : "var(--text)",
                           font: "inherit", fontSize: 12,
                         }}
                       >
@@ -512,6 +597,7 @@ export default function SuggestedBets({
                             single line put them all over the place, which is
                             what read as sloppy. */}
                         <span style={{ fontWeight: 700, lineHeight: 1.25 }}>
+                          {g.tail && <TailBadge inline />}
                           {single ? head.label : g.headline}
                         </span>
                         <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -529,7 +615,7 @@ export default function SuggestedBets({
                           <span style={{
                             marginLeft: "auto", flex: "none", fontWeight: 800,
                             fontVariantNumeric: "tabular-nums",
-                            color: g.bestEdge > 0 ? "var(--pos)" : "var(--neg)",
+                            color: edgeColor,
                           }}>
                             {signed(g.bestEdge)}
                           </span>
@@ -561,6 +647,15 @@ export default function SuggestedBets({
                         background: "var(--card)", border: "1px solid var(--brand)",
                         borderRadius: 7,
                       }}>
+                        {g.tail && (
+                          <div style={{ color: "var(--muted)", marginBottom: 4 }}>
+                            Held out of the list: the sim, the ask, or both sit
+                            outside {Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢.
+                            That is where our own model is least trusted and where
+                            a thin book misprices hardest, so the edge below is
+                            printed without a verdict colour.
+                          </div>
+                        )}
                         {single ? (
                           <>
                             Sim {Math.round(head.simP * 100)}% · price {cents(head.price)} ·
@@ -622,11 +717,36 @@ export default function SuggestedBets({
             </div>
           )}
 
+          {/* THE TAIL LINE. Held-out markets are counted, explained in one
+              sentence, and one press away — a filter the reader cannot see is
+              how a filter becomes a mystery. */}
+          {tailMarkets > 0 && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
+              fontSize: 10, color: "var(--muted)",
+            }}>
+              <span>
+                {tailMarkets} tail market{tailMarkets === 1 ? "" : "s"}
+                {showTails ? " shown, muted" : " hidden"} — sim or price outside
+                {" "}{Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢,
+                where the model is least confident.
+              </span>
+              <button
+                type="button" className="ui-btn"
+                data-on={showTails ? "true" : "false"}
+                aria-pressed={showTails}
+                onClick={() => { const v = !showTails; setShowTails(v); writeShowTails(v); }}
+                style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
+              >
+                {showTails ? "Hide tails" : "Show tails"}
+              </button>
+            </div>
+          )}
+
           {suppressed.length > 0 && (
             <div style={{ fontSize: 10, color: "var(--muted)" }}>
               {suppressed.length} candidate{suppressed.length === 1 ? "" : "s"} suppressed
-              (thin or one-sided book, sim in its own tail, ladder cap, penny quote,
-              or already held).
+              (thin or one-sided book, ladder cap, penny quote, or already held).
             </div>
           )}
         </>
@@ -637,6 +757,7 @@ export default function SuggestedBets({
           group={slip.group}
           idem={slip.idem}
           token={token}
+          feeParams={feeParams}
           quotedAt={computedAt}
           ordersLive={ordersLive}
           onClose={() => setSlip(null)}
@@ -648,17 +769,50 @@ export default function SuggestedBets({
 
 /* ----------------------------- confirm popup ------------------------------ */
 /**
+ * Display-only echoes of the SERVER's rails (server/liveScores.ts). They are
+ * not controls — the server enforces them and rejects regardless — but since
+ * the contracts field is now editable, the slip says which edit the exchange
+ * will refuse BEFORE the press instead of after it.
+ */
+const CAP_ORDER = 40;
+const CAP_REQUEST = 80;
+const MAX_ORDERS = 8;
+
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
+/** One rung's editable state: in or out, and how many contracts. */
+type RungEdit = { include: boolean; raw: string };
+
+/**
  * The bet in words, then Confirm. Everything shown here is a client-side
  * restatement of an already-computed suggestion; the SERVER re-reads the live
  * book before it signs, so a price that has moved comes back as a rejection
  * naming the new ask rather than as a bad fill.
+ *
+ * PER-RUNG CHOICE (user, 2026-08-28: "when we lump ladder stuff together, I
+ * should have the ability to take them separately or together — right now I'm
+ * forced to place the ladders together"). Every rung carries an include
+ * checkbox (both on by default) and an editable contracts field prefilled with
+ * the computed split. Deselecting a rung drops it from the `orders` array the
+ * server already accepts — no server change, and strictly fewer orders, so
+ * every cap (per-order, per-request, 24h) is satisfied a fortiori. Totals
+ * below re-add live, net of the fee at the EDITED count, because the exchange
+ * rounds the fee up per order and a bumped count can change what it costs by
+ * more than the price × count arithmetic suggests.
+ *
+ * Placing one rung alone keeps that rung's computed size; the field is there
+ * so the user can bump it to a full unit himself, with the cost of doing so
+ * printed on the same line.
  */
 function ConfirmSlip({
-  group, idem, token, quotedAt, ordersLive, onClose,
+  group, idem, token, feeParams, quotedAt, ordersLive, onClose,
 }: {
   group: LadderGroup;
   idem: string;
   token: string;
+  /** Needed to re-price the fee at an EDITED count — Kalshi's own per-series
+   *  params, the same ones selection used. */
+  feeParams: Record<string, FeeParams>;
   quotedAt: Date;
   ordersLive: boolean;
   onClose: () => void;
@@ -667,21 +821,56 @@ function ConfirmSlip({
   const [resp, setResp] = useState<{ status: number; body: PlaceResponse } | null>(null);
 
   const rungs = group.rungs;
-  const contracts = rungs.reduce((s, r) => s + r.count, 0);
-  const fee = rungs.reduce((s, r) => s + r.fee, 0);
-  const outlay = rungs.reduce((s, r) => s + r.outlay, 0);
-  const anyTake = rungs.some((r) => r.mode === "TAKE");
+  const multi = rungs.length > 1;
+  const [edits, setEdits] = useState<Record<string, RungEdit>>(() =>
+    Object.fromEntries(rungs.map((r) => [r.key, { include: true, raw: String(r.count) }])));
+
+  /** Re-priced per rung at the CURRENT count. `count` is NaN when the field is
+   *  empty or not a whole number ≥ 1 — that is a blocking state, not a zero. */
+  const lines = rungs.map((r: Suggestion) => {
+    const e = edits[r.key] ?? { include: true, raw: String(r.count) };
+    const n = Number(e.raw);
+    const count = Number.isFinite(n) && n >= 1 && Number.isInteger(n)
+      ? Math.min(n, 99999) : NaN;
+    const ok = Number.isFinite(count);
+    const fee = ok ? orderFee(r.price, count, r.mode === "REST", feeParams[r.series]) : 0;
+    return {
+      r, e, count, ok, fee,
+      cost: ok ? round2(r.price * count + fee) : 0,
+      changed: ok && count !== r.count,
+    };
+  });
+  const picked = lines.filter((l) => l.e.include);
+  const contracts = picked.reduce((s, l) => s + (l.ok ? l.count : 0), 0);
+  const fee = round2(picked.reduce((s, l) => s + l.fee, 0));
+  const outlay = round2(picked.reduce((s, l) => s + l.cost, 0));
+  const anyTake = picked.some((l) => l.r.mode === "TAKE");
+  const anyRest = picked.some((l) => l.r.mode === "REST");
+  const badCount = picked.some((l) => !l.ok);
+  const overRequest = outlay > CAP_REQUEST + 1e-9;
+  const tooMany = picked.length > MAX_ORDERS;
+  const canSend = picked.length > 0 && !badCount;
+
+  const setRaw = (key: string, raw: string) =>
+    setEdits((s) => ({ ...s, [key]: { ...(s[key] ?? { include: true, raw }), raw } }));
+  const toggle = (key: string) =>
+    setEdits((s) => ({
+      ...s,
+      [key]: { ...(s[key] ?? { include: true, raw: "" }), include: !(s[key]?.include ?? true) },
+    }));
 
   const send = async () => {
     setBusy(true);
-    const orders: PlaceOrder[] = rungs.map((r) => ({
-      ticker: r.ticker,
-      side: r.side,
+    // ONLY the included rungs. The endpoint already takes an orders array, so
+    // a one-rung slip is the same request with one element.
+    const orders: PlaceOrder[] = picked.map((l) => ({
+      ticker: l.r.ticker,
+      side: l.r.side,
       // Intent only. The server derives post_only / time_in_force from it and
       // rejects the request outright if we try to send those ourselves.
-      mode: r.mode === "REST" ? "rest" : "take",
-      price_dollars: r.price,
-      count_fp: r.count,
+      mode: l.r.mode === "REST" ? "rest" : "take",
+      price_dollars: l.r.price,
+      count_fp: l.count,
     }));
     try {
       setResp(await placeOrders(token, idem, orders));
@@ -719,7 +908,7 @@ function ConfirmSlip({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 14, fontWeight: 900, color: "var(--brand-text)" }}>
-            {resp ? "Result" : rungs.length > 1 ? "Place these bets" : "Place this bet"}
+            {resp ? "Result" : picked.length > 1 ? "Place these bets" : "Place this bet"}
           </span>
           {dry && <DryRunBadge title="CFB_ORDERS_LIVE is not set — nothing is submitted to Kalshi." />}
         </div>
@@ -731,39 +920,106 @@ function ConfirmSlip({
           </div>
         )}
 
-        {/* --- the bet, in words --- */}
+        {/* --- the bet, in words — one card per rung, each one optional --- */}
         {!resp && (
           <div style={{ display: "grid", gap: 6 }}>
-            {rungs.map((r) => (
+            {multi && (
+              <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                Take them together or separately — untick a rung to leave it
+                out, and edit either count.
+              </div>
+            )}
+            {lines.map(({ r, e, count, ok, fee: rFee, cost, changed }) => (
               <div key={r.key} style={{
-                border: "1px solid var(--border)", borderRadius: 9, padding: "7px 9px",
-                display: "grid", gap: 3, fontSize: 12,
+                border: `1px ${e.include ? "solid" : "dashed"} var(--border)`,
+                borderRadius: 9, padding: "7px 9px",
+                display: "grid", gap: 4, fontSize: 12,
+                background: e.include ? "transparent" : "var(--fill)",
+                opacity: e.include ? 1 : 0.6,
               }}>
-                <div style={{ fontWeight: 800 }}>{r.label}</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <label style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  fontWeight: 800, cursor: multi ? "pointer" : "default",
+                  // 40px tap target for the whole title line, not just the box.
+                  minHeight: multi ? 34 : undefined,
+                }}>
+                  {multi && (
+                    <input
+                      type="checkbox"
+                      checked={e.include}
+                      onChange={() => toggle(r.key)}
+                      aria-label={`Include ${r.label}`}
+                      style={{ width: 18, height: 18, flex: "none", accentColor: "var(--brand)" }}
+                    />
+                  )}
+                  <span style={{ minWidth: 0 }}>{r.label}</span>
+                </label>
+
+                {/* Line 2 — the SIZE, and nothing that competes with it. */}
+                <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                   <span style={{
                     fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 999,
                     border: "1px solid var(--border)", color: "var(--muted)",
+                    whiteSpace: "nowrap",
                   }}>
                     {r.mode} @ {cents(r.price)}
                   </span>
+                  {/* EDITABLE SIZE — single-market rows get it too. */}
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={e.raw}
+                    disabled={!e.include}
+                    onChange={(ev) => setRaw(r.key, ev.target.value)}
+                    aria-label={`Contracts for ${r.label}`}
+                    aria-invalid={!ok}
+                    style={{
+                      width: 58, padding: "4px 6px", fontSize: 12, fontWeight: 800,
+                      borderRadius: 6, background: "var(--card)", color: "var(--text)",
+                      border: `1px solid ${ok ? "var(--border)" : "var(--neg)"}`,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  />
+                  <span style={{ fontSize: 11.5, color: "var(--muted)" }}>contracts</span>
+                  {changed && ok && (
+                    <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                      (suggested {r.count})
+                    </span>
+                  )}
+                </div>
+
+                {/* Line 3 — what it costs and what it is worth, side by side.
+                    The cost is the thing the edit changes and the edge is the
+                    reason to place it, so they belong on one line. */}
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
-                    {r.count} contracts · ${(r.price * r.count).toFixed(2)}
-                    {" + "}${r.fee.toFixed(2)} {r.mode === "TAKE" ? "taker" : "maker"} fee
-                    {" = "}<strong style={{ color: "var(--text)" }}>${r.outlay.toFixed(2)}</strong>
+                    {ok ? (
+                      <>
+                        ${(r.price * count).toFixed(2)} + ${rFee.toFixed(2)} fee
+                        {" = "}<strong style={{ color: "var(--text)" }}>${cost.toFixed(2)}</strong>
+                      </>
+                    ) : (
+                      <span style={{ color: "var(--neg)" }}>
+                        enter a whole number of contracts, 1 or more
+                      </span>
+                    )}
                   </span>
                   <span style={{
-                    marginLeft: "auto", fontWeight: 800,
+                    marginLeft: "auto", fontWeight: 800, whiteSpace: "nowrap",
                     color: r.edge > 0 ? "var(--pos)" : "var(--neg)",
                   }}>
                     {signed(r.edge)} net
                   </span>
                 </div>
-                <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
-                  {r.mode === "TAKE"
-                    ? `Fills at ${cents(r.price)} or better, never worse — it is a limit order, not a market order. Anything that does not fill immediately is cancelled; if the exchange ignores immediate-or-cancel the remainder rests at ${cents(r.price)} and the result below will say so.`
-                    : `Rests at ${cents(r.price)}, post-only: if the book has moved so this would cross, it is rejected rather than filled as a taker.`}
-                </div>
+
+                {e.include && ok && cost > CAP_ORDER + 1e-9 && (
+                  <div style={{ fontSize: 10.5, color: "var(--neg)" }}>
+                    ${cost.toFixed(2)} is over the ${CAP_ORDER} per-order cap — the
+                    server will refuse this one.
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -771,18 +1027,51 @@ function ConfirmSlip({
 
         {!resp && (
           <div style={{ fontSize: 11.5, color: "var(--muted)", lineHeight: 1.5 }}>
-            <div>
-              <strong style={{ color: "var(--text)" }}>
-                {contracts} contract{contracts === 1 ? "" : "s"} · ${outlay.toFixed(2)} total
-              </strong>
-              {" "}(${(outlay - fee).toFixed(2)} stake + ${fee.toFixed(2)} fee)
-            </div>
+            {picked.length === 0 ? (
+              <div style={{ color: "var(--text)", fontWeight: 800 }}>
+                Nothing selected — tick at least one rung.
+              </div>
+            ) : badCount ? (
+              <div style={{ color: "var(--text)", fontWeight: 800 }}>
+                Give every ticked rung a whole number of contracts, 1 or more.
+              </div>
+            ) : (
+              <div>
+                <strong style={{ color: "var(--text)" }}>
+                  {contracts} contract{contracts === 1 ? "" : "s"}
+                  {" · "}${outlay.toFixed(2)} total
+                </strong>
+                {" "}(${(outlay - fee).toFixed(2)} stake + ${fee.toFixed(2)} fee)
+                {multi && ` · ${picked.length} of ${rungs.length} rung${rungs.length === 1 ? "" : "s"}`}
+              </div>
+            )}
             <div>
               Prices as of {clock(quotedAt)} · re-verified against the live book
               at placement.
             </div>
+            {/* The mechanics, said ONCE. It used to be repeated in full under
+                every rung, which at 375px pushed Confirm below the fold. */}
             {anyTake && (
-              <div>Taker rows pay the full fee; resting rows pay the maker fee (zero on these families).</div>
+              <div>
+                TAKE is a LIMIT order at the confirmed price — it fills there or
+                better, never worse, and anything unfilled is cancelled. If the
+                exchange ignores immediate-or-cancel, the remainder rests and the
+                result will say so. Taker rows pay the full fee.
+              </div>
+            )}
+            {anyRest && (
+              <div>
+                REST sits post-only: if the book has moved so the quote would
+                cross, the exchange rejects it rather than filling it as a taker.
+                Maker fee only — zero on the per-team families.
+              </div>
+            )}
+            {(overRequest || tooMany) && (
+              <div style={{ color: "var(--neg)" }}>
+                {overRequest && `$${outlay.toFixed(2)} is over the $${CAP_REQUEST} per-slip cap. `}
+                {tooMany && `More than ${MAX_ORDERS} orders in one slip. `}
+                The server refuses the whole request — untick or shrink a rung.
+              </div>
             )}
           </div>
         )}
@@ -853,9 +1142,19 @@ function ConfirmSlip({
         <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
           {!resp && (
             <button type="button" className="ui-btn" data-on="true" onClick={send}
-                    disabled={busy}
-                    style={{ flex: 1, padding: "9px 12px", fontWeight: 800 }}>
-              {busy ? "Sending…" : dry ? "Confirm (dry run)" : "Confirm"}
+                    disabled={busy || !canSend}
+                    title={canSend ? undefined : "Tick a rung and give it a whole contract count"}
+                    style={{
+                      flex: 1, padding: "9px 12px", fontWeight: 800,
+                      opacity: canSend ? 1 : 0.5,
+                      cursor: canSend ? "pointer" : "not-allowed",
+                    }}>
+              {busy
+                ? "Sending…"
+                : `${dry ? "Confirm (dry run)" : "Confirm"}` +
+                  (canSend && multi
+                    ? ` · ${picked.length} order${picked.length === 1 ? "" : "s"}`
+                    : "")}
             </button>
           )}
           <button type="button" className="ui-btn" onClick={onClose}

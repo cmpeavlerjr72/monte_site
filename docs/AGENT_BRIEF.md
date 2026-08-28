@@ -93,7 +93,11 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   Published by cfb-props-sim `kalshi_team_edges.py --publish`.
   SITE RULE (user 2026-08-26): rows flagged THIN/TAIL/NOISE are never
   surfaced as edges — filtered in `edges.ts` (math layer, like rule 5);
-  the column footer reports the hidden count. Rows render compact
+  the column footer reports the hidden count. NOTE 2026-08-28: the
+  publisher's TAIL definition changed under this filter (was `p<=0.02 ||
+  p>=0.98`, now the shared 0.20–0.80 band on sim AND ask — see the
+  Suggested bets section), so a republished file hides materially more
+  rows here. `edges.ts` needed no change; it reads the flag. Rows render compact
   bet-style titles ("USC 1H ML", "UNLV u19.5 TT"), oriented to the
   recommended side where the complement is exact (totals/spreads/OT).
 - `team_stats.json` — per-game TEAM box-stat distributions, keyed by our
@@ -245,16 +249,59 @@ the same state that powers MyBookStrip.
 The FBS maker pipeline (`scripts/fbs_maker_pipeline.py` in cfb-props-sim)
 remains the AUTOMATED placement authority and stays POST-ONLY-ONLY. This
 card mirrors its SELECTION constants by name (take 0.06, rest 0.03, margin
-0.05, min price 0.03, max spread 0.30, sim 0.05–0.95, prefer 0.35–0.65, 2
-rungs per ladder / 1 per winner, $30 per ladder). If the two disagree on
+0.05, min price 0.03, max spread 0.30, TAIL band 0.20–0.80, prefer 0.35–0.65,
+2 rungs per ladder / 1 per winner, $30 per ladder). If the two disagree on
 selection the pipeline is right and this file is the bug.
+
+**The TAIL band (2026-08-28).** A contract is TAIL unless BOTH its sim
+probability AND the ask it would pay sit inside [0.20, 0.80] —
+`TAIL_LO`/`TAIL_HI`/`isTail` in suggestedBets.ts, mirroring `is_tail` in
+cfb-props-sim's `kalshi_team_edges.py`, which `fbs_maker_pipeline.py` imports
+and which also sets the published `team_markets.json` TAIL flag. ONE
+definition, three consumers; the Python is the source. It replaced a sim-only
+0.05–0.95 band here and in the pipeline (and `p<=0.02||p>=0.98` for the
+published flag) — none of which had a PRICE leg, which is how "FSU −15 NO TAKE
+@0.12 · +27.3¢" reached the card: a 27¢ edge bought at 12¢, in the region
+where the engine is weakest (the INV-43 lineage), where a 1¢ tick is 8% of the
+price, and where a thin book's own staleness explains the edge as well as our
+skill does. Measured on the wk0 book: the pipeline's priced rows went 104 →
+100, 14 dropped (every one a tail sim or a sub-20¢/over-80¢ ask) and 10 added
+from the SAME ladders at mid-band strikes.
+
+TAIL rows are **not deleted**. `buildSuggestions` partitions them BEFORE
+picking the better side of a market — a tail contract usually carries the
+fatter apparent edge, so picking first would let it bury a good in-band bet on
+the other half — and returns `tailRows` plus a `tailMarkets` count. The card
+hides them by default, counts them in the footer, and reveals them behind a
+persisted "show tails" toggle: muted, dashed, TAIL-badged, and with the edge
+printed in `--muted` rather than `--pos`, because green on a number we do not
+stand behind is the card lying in its loudest channel. A tail ladder and its
+in-band twin share a `ladder` string, so the React key AND the expand
+selection carry a `tail:` prefix; without it one tick opens both rows and
+React drops one.
 
 Since 2026-08-28 the card also PLACES, via the endpoints below. The card
 starts COLLAPSED (header = "Suggested bets (N) · computed HH:MM:SS" +
 chevron; the state persists in try/catch'd localStorage). Every row gets a
-**Place** button — a grouped ladder places all its rungs as ONE request
-behind ONE confirm. The kill switch is NOT on this card; it is a row in the
+**Place** button. The kill switch is NOT on this card; it is a row in the
 My Book console below.
+
+**PER-RUNG PLACEMENT (user, 2026-08-28: "when we lump ladder stuff together, I
+should have the ability to take them separately or together").** The confirm
+slip gives every rung an include CHECKBOX (all on by default, shown only when
+a ladder has >1 rung) and an EDITABLE contracts field prefilled with the
+computed split — single-market rows get the field too. Unticking a rung drops
+it from the `orders` array the endpoint already takes, so there is NO server
+change and every cap holds a fortiori (fewer orders, smaller total; caps are
+per-order $40 / per-request $80 / 8 orders, all server-side). Totals, fee and
+the Confirm label recompute live off the EDITED count via `orderFee` — the
+exchange rounds the fee up per order, so price × count is not enough. Placing
+one rung alone keeps that rung's computed size; the field is what lets the
+user bump it to a full unit, with the per-rung cost printed beside it. The
+slip refuses to send with nothing ticked or a non-integer count, and warns —
+without blocking — when an edited size crosses a server cap. The per-rung
+mode fine print is stated ONCE under the totals: repeating it per rung pushed
+Confirm below the fold at 375px.
 
 **Layout: ONE SECTION PER GAME.** Suggestions concentrate hard — three or
 four ladders on one matchup is normal — and a flat list of them read as

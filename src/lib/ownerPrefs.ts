@@ -67,6 +67,14 @@ export function readTypeFilter(): BetTypeFilter {
 }
 export const writeTypeFilter = (v: BetTypeFilter): void => write(TYPE_FILTER_KEY, v);
 
+/** Reveal the TAIL band's held-out markets (see suggestedBets.ts: sim OR ask
+ *  outside 20–80¢, where the engine is least trusted and thin books misprice
+ *  hardest). DEFAULT OFF — the whole point of the band is that those rows are
+ *  not ranked with the rest. On, they render muted and badged. */
+const TAILS_KEY = "cfb.suggestedBets.showTails";
+export const readShowTails = (): boolean => read(TAILS_KEY) === "1";
+export const writeShowTails = (v: boolean): void => write(TAILS_KEY, v ? "1" : "0");
+
 /** "edge" = best net edge first; "soon" = earliest kickoff first. */
 export type SuggestSort = "edge" | "soon";
 const SORT_KEY = "cfb.suggestedBets.sort";

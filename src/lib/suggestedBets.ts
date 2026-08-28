@@ -46,9 +46,56 @@ export const MAKER_MARGIN = 0.05;
 export const MIN_PRICE = 0.03;
 /** `--max-spread`: a wider book is not a book. */
 export const MAX_SPREAD = 0.30;
-/** `--sim-lo` / `--sim-hi`: outside this the sim is in its own tail. */
-export const SIM_LO = 0.05;
-export const SIM_HI = 0.95;
+/* ------------------------------ THE TAIL BAND ----------------------------- */
+/**
+ * ONE definition, three consumers.
+ *
+ * A contract is TAIL unless BOTH its own sim probability AND the market-side
+ * price it would pay — that contract's ASK — sit inside [TAIL_LO, TAIL_HI].
+ *
+ * WAS (until 2026-08-28): a sim-only band of 0.05–0.95 here and in
+ * `--sim-lo/--sim-hi`, plus `p <= 0.02 || p >= 0.98` for the published
+ * `team_markets.json` TAIL flag. All three were effectively no-ops — they
+ * caught only near-certainties, and said NOTHING about the price. That is how
+ * rows like "FSU −15 NO TAKE @0.12 · +27.3¢" reached this card: a 27-cent
+ * apparent edge bought at 12¢, which is
+ *
+ *   1. where the engine is historically weakest (the INV-43 lineage: the far
+ *      ends of our distributions are the least trustworthy part of them),
+ *   2. where a 1¢ tick is 8% of the price, so the quoting rules stop meaning
+ *      much — the same reasoning already behind MIN_PRICE, and
+ *   3. where a thin book misprices hardest, so the book's own staleness is at
+ *      least as good an explanation for the "edge" as our skill is.
+ *
+ * User call, 2026-08-28: "the list is full of stuff on the edges like below
+ * 20c which puts us in that region where we are the least confident."
+ *
+ * The same numbers live in cfb-props-sim `scripts/kalshi_team_edges.py`
+ * (`TAIL_LO`/`TAIL_HI`/`is_tail`, the source of truth), which
+ * `fbs_maker_pipeline.py` imports. If the three disagree, the Python is right
+ * and this file is the bug — the standing rule for every constant here.
+ *
+ * TAIL rows are NOT deleted: they are excluded from the default list and from
+ * ranking, counted in the card footer, and revealable (muted, badged) with the
+ * "show tails" toggle. Suppression that the user cannot see is how a filter
+ * turns into a mystery.
+ */
+export const TAIL_LO = 0.20;
+export const TAIL_HI = 0.80;
+const BAND_EPS = 1e-9;
+const inBand = (v: number) => v >= TAIL_LO - BAND_EPS && v <= TAIL_HI + BAND_EPS;
+/**
+ * `ask` MUST be the ask of the contract actually being BOUGHT — for a NO that
+ * is 1 − yes_bid, which is what `gameCandidates` already hands over. The sim
+ * leg is symmetric (inBand(p) === inBand(1 − p)), the price leg is not.
+ */
+export const isTail = (simP: number, ask: number): boolean =>
+  !(inBand(simP) && inBand(ask));
+
+/** `--sim-lo` / `--sim-hi`: the tail band's SIM leg, by the pipeline's own
+ *  flag names. Same numbers, deliberately not a second knob. */
+export const SIM_LO = TAIL_LO;
+export const SIM_HI = TAIL_HI;
 /** `--mid-lo` / `--mid-hi`: preferred rungs, where the book is thickest. */
 export const MID_LO = 0.35;
 export const MID_HI = 0.65;
@@ -137,6 +184,9 @@ export type Suggestion = {
   /** price × count + fee. */
   outlay: number;
   feeType: string;
+  /** Outside the [TAIL_LO, TAIL_HI] band on the sim, the ask, or both. Never
+   *  ranked among the defaults; shown muted behind the "show tails" toggle. */
+  tail: boolean;
 };
 
 export type Suppressed = {
@@ -167,7 +217,9 @@ function priceOne(
   if (ask - bid > MAX_SPREAD + 1e-9) {
     return { reason: `book ${Math.round((ask - bid) * 100)}c wide` };
   }
-  if (simP < SIM_LO || simP > SIM_HI) return { reason: "sim in its own tail" };
+  // NOTE: the TAIL band is deliberately NOT tested here. A tail contract is
+  // still priced, because the card can reveal it on demand; it is partitioned
+  // out of the default list in `buildSuggestions` instead.
 
   const edgeTake = simP - ask - takerFeePer(ask, fp);
   if (edgeTake >= TAKE_THRESHOLD) {
@@ -209,53 +261,37 @@ export type Candidate = {
  * sim sits in [0.35, 0.65] first, then the highest edge-after-fee per dollar
  * of risk, capped at 2 per ladder (1 for a winner market).
  */
-export function buildSuggestions(
-  candidates: Candidate[],
+type Priced = Candidate & { mode: "REST" | "TAKE"; price: number; edgePer: number };
+
+/** What one compute produces. `rows` is the list; `tailRows` is the opt-in
+ *  reveal; `tailMarkets` is what the footer counts. */
+export type BuildResult = {
+  rows: Suggestion[];
+  /** Markets that exist ONLY as a tail contract, priced and sized so the
+   *  toggle can show them — never mixed into `rows`, never ranked with them. */
+  tailRows: Suggestion[];
+  /** Distinct MARKETS held out by the tail band. The footer's number. */
+  tailMarkets: number;
+  suppressed: Suppressed[];
+};
+
+/**
+ * Cap per ladder, rank, and size — the second half of `select_ladders`. Split
+ * out because it runs TWICE: once over the in-band contracts (the list) and
+ * once over the tail contracts (the reveal), so a tail rung can never consume
+ * a ladder slot that an in-band rung would have had.
+ */
+function selectLadders(
+  priced: Priced[],
   feeParams: Record<string, FeeParams>,
-  heldTickers: Set<string>,
-  /** Dollars of risk per ladder — the user's unit size. */
-  unit: number = LADDER_RISK
-): { rows: Suggestion[]; suppressed: Suppressed[] } {
-  const suppressed: Suppressed[] = [];
-  type Priced = Candidate & { mode: "REST" | "TAKE"; price: number; edgePer: number };
-  const priced: Priced[] = [];
-
-  for (const c of candidates) {
-    // The account already has exposure here: the pipeline treats a held or
-    // resting rung as consuming its ladder slot, so the card must not
-    // re-suggest it.
-    if (c.ticker && heldTickers.has(c.ticker)) {
-      suppressed.push({ label: c.label, reason: "already held or resting", ticker: c.ticker });
-      continue;
-    }
-    const r = priceOne(c.simP, c.bid, c.ask, feeParams[c.series]);
-    if ("reason" in r) {
-      suppressed.push({ label: c.label, reason: r.reason, ticker: c.ticker });
-      continue;
-    }
-    priced.push({ ...c, ...r });
-  }
-
-  // ONE CONTRACT PER MARKET — the pipeline's shape, and a correctness rule.
-  //
-  // A Kalshi market has two contracts: its YES and its NO (the Under of an
-  // over rung, the dog on the favourite's winner market). `price_side` in the
-  // pipeline prices BOTH and keeps whichever is better, emitting a single row
-  // per market. A candidate source that offers both sides — which the
-  // game-line builder must, since that is the only way to express an Under or
-  // a fade — would otherwise let one ladder pick both halves of the same
-  // market: a self-hedge that pays two fees to bet on nothing.
-  const bestPerMarket = new Map<string, Priced>();
-  priced.forEach((p, i) => {
-    // A candidate with no ticker cannot collide with anything; give it a key
-    // of its own rather than letting empty strings merge unrelated rows.
-    const key = p.ticker || `no-ticker#${i}`;
-    const cur = bestPerMarket.get(key);
-    if (!cur || p.edgePer > cur.edgePer) bestPerMarket.set(key, p);
-  });
-
+  unit: number,
+  tail: boolean,
+  /** Where ladder-cap losers are reported. Null for the tail pass: those are
+   *  already accounted for by the tail count and would double-report. */
+  suppressed: Suppressed[] | null,
+): Suggestion[] {
   const byLadder = new Map<string, Priced[]>();
-  for (const p of bestPerMarket.values()) {
+  for (const p of priced) {
     const arr = byLadder.get(p.ladder);
     if (arr) arr.push(p);
     else byLadder.set(p.ladder, [p]);
@@ -271,7 +307,7 @@ export function buildSuggestions(
       return b.edgePer / Math.max(b.price, 1e-9) - a.edgePer / Math.max(a.price, 1e-9);
     });
     for (const p of ranked.slice(cap)) {
-      suppressed.push({
+      suppressed?.push({
         label: p.label, reason: `ladder already has ${cap} rung(s)`,
         ticker: p.ticker,
       });
@@ -301,25 +337,108 @@ export function buildSuggestions(
         fee, edge: p.edgePer, count,
         outlay: round2(p.price * count + fee),
         feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
+        tail,
       });
     }
   }
   rows.sort((a, b) => b.edge - a.edge);
+  return rows;
+}
+
+export function buildSuggestions(
+  candidates: Candidate[],
+  feeParams: Record<string, FeeParams>,
+  heldTickers: Set<string>,
+  /** Dollars of risk per ladder — the user's unit size. */
+  unit: number = LADDER_RISK
+): BuildResult {
+  const suppressed: Suppressed[] = [];
+  const priced: Priced[] = [];
+
+  for (const c of candidates) {
+    // The account already has exposure here: the pipeline treats a held or
+    // resting rung as consuming its ladder slot, so the card must not
+    // re-suggest it.
+    if (c.ticker && heldTickers.has(c.ticker)) {
+      suppressed.push({ label: c.label, reason: "already held or resting", ticker: c.ticker });
+      continue;
+    }
+    const r = priceOne(c.simP, c.bid, c.ask, feeParams[c.series]);
+    if ("reason" in r) {
+      suppressed.push({ label: c.label, reason: r.reason, ticker: c.ticker });
+      continue;
+    }
+    priced.push({ ...c, ...r });
+  }
+
+  // ONE CONTRACT PER MARKET — the pipeline's shape, and a correctness rule.
+  //
+  // A Kalshi market has two contracts: its YES and its NO (the Under of an
+  // over rung, the dog on the favourite's winner market). `price_side` in the
+  // pipeline prices BOTH and keeps whichever is better, emitting a single row
+  // per market. A candidate source that offers both sides — which the
+  // game-line builder must, since that is the only way to express an Under or
+  // a fade — would otherwise let one ladder pick both halves of the same
+  // market: a self-hedge that pays two fees to bet on nothing.
+  // THE TAIL PARTITION HAPPENS BEFORE "best side of the market" — and that
+  // ordering is the whole point. A tail contract usually carries the FATTER
+  // apparent edge (that is why the user was seeing them), so choosing the
+  // better side first would let the untrusted half of a market bury a
+  // perfectly good in-band bet on the other half. The pipeline drops tail
+  // contracts before it prices sides; this does the same.
+  const core: Priced[] = [], tails: Priced[] = [];
+  for (const p of priced) {
+    (isTail(p.simP, p.ask ?? 1) ? tails : core).push(p);
+  }
+
+  // ONE CONTRACT PER MARKET — the pipeline's shape, and a correctness rule.
+  //
+  // A Kalshi market has two contracts: its YES and its NO (the Under of an
+  // over rung, the dog on the favourite's winner market). `price_side` in the
+  // pipeline prices BOTH and keeps whichever is better, emitting a single row
+  // per market. A candidate source that offers both sides — which the
+  // game-line builder must, since that is the only way to express an Under or
+  // a fade — would otherwise let one ladder pick both halves of the same
+  // market: a self-hedge that pays two fees to bet on nothing.
+  const bestPerMarket = (list: Priced[]): Priced[] => {
+    const best = new Map<string, Priced>();
+    list.forEach((p, i) => {
+      // A candidate with no ticker cannot collide with anything; give it a key
+      // of its own rather than letting empty strings merge unrelated rows.
+      const key = p.ticker || `no-ticker#${i}`;
+      const cur = best.get(key);
+      if (!cur || p.edgePer > cur.edgePer) best.set(key, p);
+    });
+    return [...best.values()];
+  };
+
+  const rows = selectLadders(bestPerMarket(core), feeParams, unit, false, suppressed);
+
+  // A market that already produced an in-band bet must NOT also appear as a
+  // tail: buying both contracts of one market is a self-hedge that pays two
+  // fees. The reveal is only for markets that exist as a tail and nothing else.
+  const betOn = new Set(rows.map((r) => r.ticker).filter(Boolean));
+  const tailOnly = tails.filter((p) => !p.ticker || !betOn.has(p.ticker));
+  const tailTickers = new Set(tailOnly.map((p) => p.ticker).filter(Boolean));
+  const tailRows = selectLadders(
+    bestPerMarket(tailOnly), feeParams, unit, true, null);
 
   // The suppressed COUNT is per MARKET, not per contract. Every game-line
   // market yields two candidates (its YES and its NO), and the losing half of
   // a market that DID produce a bet is not a suppression — reporting it as one
   // would turn a useful footer into a four-digit number that means nothing.
-  const betOn = new Set(rows.map((r) => r.ticker).filter(Boolean));
+  // A market held out by the tail band is likewise not "suppressed": it has
+  // its own line in the footer and its own toggle.
   const seen = new Set<string>();
   const perMarket = suppressed.filter((s) => {
     if (!s.ticker) return true;                 // nothing to collapse against
     if (betOn.has(s.ticker)) return false;      // this market became a bet
+    if (tailTickers.has(s.ticker)) return false; // counted as a tail instead
     if (seen.has(s.ticker)) return false;       // its other contract said it
     seen.add(s.ticker);
     return true;
   });
-  return { rows, suppressed: perMarket };
+  return { rows, tailRows, tailMarkets: tailTickers.size, suppressed: perMarket };
 }
 
 /** Tickers the owner already has exposure to (positions + resting orders). */
@@ -571,6 +690,9 @@ export type LadderGroup = {
   headline: string;
   /** Dollars of the $LADDER_RISK stake allotted per rung in this ladder. */
   each: number;
+  /** Every rung is outside the tail band (the two sets never mix — they are
+   *  selected in separate passes). Drives the muting and the TAIL badge. */
+  tail: boolean;
 };
 
 export function groupLadders(
@@ -606,6 +728,7 @@ export function groupLadders(
       bestEdge: best.edge,
       headline,
       each: round2(unit / group.length),
+      tail: rungs.every((r) => r.tail),
     });
   }
   groups.sort((a, b) => b.bestEdge - a.bestEdge);
