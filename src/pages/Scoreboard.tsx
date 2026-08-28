@@ -31,9 +31,15 @@ import MyBookStrip from "../components/MyBook";
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import TeamStats from "../components/TeamStats";
-import SuggestedBets, { type SuggestGame } from "../components/SuggestedBets";
+import GameBetsPanel, { type ProjectionTarget } from "../components/SuggestedBets";
+import SuggestedBetsIndex from "../components/SuggestedBetsIndex";
 import MyBookPanel from "../components/MyBookPanel";
-import { readUnit, writeUnit } from "../lib/ownerPrefs";
+import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
+import {
+  readModeFilter, readShowTails, readSuggestSort, readTypeFilter, readUnit,
+  writeModeFilter, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
+  type BetTypeFilter, type ModeFilter, type SuggestSort,
+} from "../lib/ownerPrefs";
 import { buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
 import type { FeeParams } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
@@ -662,9 +668,16 @@ function planTick(plan: Map<string, TickInfo>) {
 }
 
 /* --------------------- expandable panels --------------------- */
-/** Which drill-down a card currently owns. Only one is open page-wide. */
+/** Which drill-down a card currently owns. Only one is open page-wide.
+ *  "bets" is OWNER-ONLY: its tab and its panel render only while the portal
+ *  session is live (see the gate around `ownerBets` below). */
 export type PanelKind =
-  | "scores" | "players" | "box" | "props" | "picker" | "live" | "teamstats";
+  | "scores" | "players" | "box" | "props" | "picker" | "live" | "teamstats"
+  | "bets";
+
+/** Stable empty slate for the suggestions hook: a non-owner must never run
+ *  the slate-wide compute, and a fresh `[]` each render would defeat its memo. */
+const NO_SUGGEST_GAMES: SuggestGame[] = [];
 
 /** Must mirror the grid CSS below so the break-out row lands in the right place.
  *  Condensed narrows the track so a 1400px viewport fits 5 columns instead of 4. */
@@ -1444,8 +1457,32 @@ function ScoreboardPage() {
    * something inside it opened. ---- */
   const [openPanel, setOpenPanel] = useState<{ key: string; kind: PanelKind } | null>(null);
 
+  /**
+   * A pre-focus payload for the panel that is about to open — today only the
+   * Team Stats chart uses it ("See projection →" on a suggested bet jumps to
+   * that team's stat instead of dumping the reader at the top of a 13-stat
+   * chart). It is CLEARED on every other panel change, so it can never leak
+   * into a panel that was opened for some other reason.
+   */
+  const [panelFocus, setPanelFocus] = useState<{ team: string; stat: string } | null>(null);
+
   const togglePanel = useCallback((key: string, kind: PanelKind) => {
+    setPanelFocus(null);
     setOpenPanel((prev) => (prev && prev.key === key && prev.kind === kind ? null : { key, kind }));
+  }, []);
+
+  const closePanel = useCallback(() => {
+    setPanelFocus(null);
+    setOpenPanel(null);
+  }, []);
+
+  /** Swap the OPEN card's panel for the chart a suggestion came from. Getting
+   *  back is the "Bets" tab still sitting on the card above the panel. */
+  const focusPanel = useCallback((
+    key: string, kind: PanelKind, focus: { team: string; stat: string } | null,
+  ) => {
+    setPanelFocus(focus);
+    setOpenPanel({ key, kind });
   }, []);
 
   /**
@@ -1534,6 +1571,23 @@ function ScoreboardPage() {
   /** Dollars of risk per ladder. One knob, every sizing site (suggestion
    *  counts, outlay, the Place slip). Clamped on read AND on write. */
   const [unit, setUnit] = useState<number>(() => readUnit());
+
+  /* ---- Suggested-bets view state, PAGE LEVEL ----
+   * The ranked index, every card's "Bets" badge and the per-game panel all
+   * read ONE compute under ONE set of filters (see lib/useSuggestions.ts). A
+   * filter owned by a panel would make the badge above it lie, so the state
+   * lives here and the panels only report a press. Persistence (ownerPrefs)
+   * happens in these setters — one place writes. */
+  const [suggestNonce, setSuggestNonce] = useState(0);
+  const [betMode, setBetMode] = useState<ModeFilter>(() => readModeFilter());
+  const [betType, setBetType] = useState<BetTypeFilter>(() => readTypeFilter());
+  const [betTails, setBetTails] = useState<boolean>(() => readShowTails());
+  const [betSort, setBetSort] = useState<SuggestSort>(() => readSuggestSort());
+  const onBetMode = useCallback((v: ModeFilter) => { setBetMode(v); writeModeFilter(v); }, []);
+  const onBetType = useCallback((v: BetTypeFilter) => { setBetType(v); writeTypeFilter(v); }, []);
+  const onBetTails = useCallback((v: boolean) => { setBetTails(v); writeShowTails(v); }, []);
+  const onBetSort = useCallback((v: SuggestSort) => { setBetSort(v); writeSuggestSort(v); }, []);
+  const clearBetFilters = useCallback(() => { onBetMode("all"); onBetType("all"); }, [onBetMode, onBetType]);
   /** slug -> compact seed arrays for the games the owner has bets on, so
    *  sim EV can be priced at the bets' own strikes. Filled by an effect
    *  keyed on a primitive signature (render-loop rule 1). */
@@ -2062,10 +2116,21 @@ function ScoreboardPage() {
     return cards.filter(c => (confOf(c.teamA) === confFilter) || (confOf(c.teamB) === confFilter));
   }, [cards, confFilter, teamToConf]);
 
-  /** Scroll to a game's card and flash it, from the Top Edges list. */
-  const jumpToGame = useCallback((slug: string) => {
+  /**
+   * Scroll to a game's card and flash it — from the Top Edges list, and from
+   * the suggested-bets index (which also asks for the "bets" panel).
+   *
+   * ORDER MATTERS: the panel is set FIRST and the scroll waits a frame.
+   * Opening a panel inserts a full-width grid item, which reflows the grid;
+   * scrolling before that lands on wherever the card used to be.
+   */
+  const jumpToGame = useCallback((slug: string, kind?: PanelKind) => {
     setShowTopEdges(false);
-    // Let the panel unmount first so the card lands at a stable offset.
+    if (kind) {
+      setPanelFocus(null);
+      setOpenPanel({ key: slug, kind });
+    }
+    // Let the panel mount/unmount first so the card lands at a stable offset.
     requestAnimationFrame(() => {
       const el = document.getElementById(`game-${slug}`);
       if (!el) return;
@@ -2148,6 +2213,33 @@ function ScoreboardPage() {
     }));
   }, [baseCards]);
 
+  /**
+   * THE ONE SUGGESTIONS COMPUTE.
+   *
+   * Called once, here, and read by three surfaces: the ranked index in the My
+   * Book console, every card's "Bets" tab badge, and the per-game bets panel.
+   * Two copies of this memo would be two answers to the same question.
+   *
+   * OWNER GATE: without a live portal session it is handed an EMPTY, stable
+   * game list, so the slate-wide compute never runs for a viewer who has no
+   * bets UI to show. Same gate as the index and the panel below.
+   */
+  const ownerOn = Boolean(portalToken) && portal.status === "ok";
+  const suggestions = useSuggestions({
+    games: ownerOn ? suggestGames : NO_SUGGEST_GAMES,
+    kalshiBySlug,
+    feeParams: kalshiFees,
+    portal: portal.payload,
+    docs: teamStatsDocs,
+    unit,
+    nowMs,
+    nonce: suggestNonce,
+    modeFilter: betMode,
+    typeFilter: betType,
+    showTails: betTails,
+    sort: betSort,
+  });
+
   const openIdx = useMemo(
     () => (openPanel ? filteredCards.findIndex((c) => c.key === openPanel.key) : -1),
     [openPanel, filteredCards]
@@ -2156,8 +2248,15 @@ function ScoreboardPage() {
 
   // Close the panel if its card leaves the slate (week/season/filter change).
   useEffect(() => {
-    if (openPanel && openIdx < 0) setOpenPanel(null);
+    if (openPanel && openIdx < 0) { setOpenPanel(null); setPanelFocus(null); }
   }, [openPanel, openIdx]);
+
+  // ...and if the owner session ends while a bets panel is open. The panel
+  // body is gated on `ownerOn`, so leaving it open would show a titled empty
+  // box; the tab that opened it is already gone.
+  useEffect(() => {
+    if (!ownerOn && openPanel?.kind === "bets") { setOpenPanel(null); setPanelFocus(null); }
+  }, [ownerOn, openPanel]);
 
   /**
    * Sim counts across the slate: one number when uniform, a min-max range when
@@ -2452,19 +2551,22 @@ function ScoreboardPage() {
           totals={portalBook.totals}
           unmatched={portalBook.unmatched}
         >
-          {/* Recomputes whenever the 45s Kalshi poll delivers, so it is live
-              without a single extra request. */}
-          {portalToken && portal.status === "ok" && (
-            <SuggestedBets
-              games={suggestGames}
-              kalshiBySlug={kalshiBySlug}
-              feeParams={kalshiFees}
-              portal={portal.payload}
-              docs={teamStatsDocs}
+          {/* The RANKED INDEX: which game, not which bet. It recomputes
+              whenever the 45s Kalshi poll delivers, so it is live without a
+              single extra request; a row opens that game's Bets panel, which
+              is where the ladders and the Place button live. */}
+          {ownerOn && (
+            <SuggestedBetsIndex
+              suggestions={suggestions}
               unit={unit}
-              token={portalToken}
-              nowMs={nowMs}
-              onJump={(slug) => setFlashKey(slug)}
+              sort={betSort}
+              onSort={onBetSort}
+              onRefresh={() => setSuggestNonce((n) => n + 1)}
+              ordersLive={portal.payload?.orders_live === true}
+              showTails={betTails}
+              onShowTails={onBetTails}
+              onClearFilters={clearBetFilters}
+              onOpenGame={(slug) => jumpToGame(slug, "bets")}
             />
           )}
         </MyBookPanel>
@@ -2547,6 +2649,12 @@ function ScoreboardPage() {
           const isOpen = openPanel?.key === c.key;
           // End of the row that contains the expanded card.
           const rowEnd = panelRowEnd(openIdx, gridCols, filteredCards.length);
+          // OWNER ONLY, and only what the current filters actually leave on
+          // this game — the badge reads the same compute the panel renders.
+          const sec = suggestions.bySlug.get(c.key);
+          const bets = ownerOn
+            ? { n: sec?.groups.length ?? 0, nTail: sec?.tailGroups.length ?? 0 }
+            : undefined;
 
           return (
             <Fragment key={c.key}>
@@ -2566,6 +2674,7 @@ function ScoreboardPage() {
                 season={c.ns}
                 onAddLeg={() => togglePanel(c.key, "picker")}
                 flash={flashKey === c.key}
+                bets={bets}
               />
               {openPanel && idx === rowEnd && openCard && (
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -2579,7 +2688,34 @@ function ScoreboardPage() {
                     useMean={useMean}
                     kalshi={openCard.jsonRow ? kalshiBySlug.get(openCard.key) : undefined}
                     onAddLeg={addLeg}
-                    onClose={() => setOpenPanel(null)}
+                    onClose={closePanel}
+                    // Only ever set for the panel it was aimed at, so a stale
+                    // payload cannot re-scroll a chart opened by hand.
+                    focus={openPanel.kind === "teamstats" ? panelFocus : null}
+                    // The bets panel is composed HERE rather than plumbed
+                    // through the host: it needs page state (filters, unit,
+                    // token, the compute) that no other panel does.
+                    betsPanel={openPanel.kind === "bets" && ownerOn ? (
+                      <GameBetsPanel
+                        section={suggestions.bySlug.get(openCard.key)}
+                        verdict={suggestions.pregameBySlug.get(openCard.key)}
+                        hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}
+                        tailCount={suggestions.tailCountBySlug.get(openCard.key) ?? 0}
+                        unit={unit}
+                        token={portalToken}
+                        feeParams={kalshiFees}
+                        quotedAt={suggestions.computedAt}
+                        ordersLive={portal.payload?.orders_live === true}
+                        modeFilter={betMode} onModeFilter={onBetMode}
+                        typeFilter={betType} onTypeFilter={onBetType}
+                        showTails={betTails} onShowTails={onBetTails}
+                        onProject={(t: ProjectionTarget) => focusPanel(
+                          openCard.key,
+                          t.kind === "scores" ? "scores" : "teamstats",
+                          t.kind === "teamstats" ? { team: t.team, stat: t.stat } : null,
+                        )}
+                      />
+                    ) : null}
                   />
                 </div>
               )}
@@ -2640,7 +2776,7 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 
 export function GameCard({
   card, gdata, useMean = false, kalshi, book, parlayOpen, openKind, onToggle,
-  weekLabel, condensed = false, onAddLeg, season, flash = false,
+  weekLabel, condensed = false, onAddLeg, season, flash = false, bets,
 }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
@@ -2663,6 +2799,12 @@ export function GameCard({
   season: Season;
   /** Pulse after being jumped to from the Top Edges list. */
   flash?: boolean;
+  /**
+   * OWNER ONLY. How many suggested ladders this game has under the CURRENT
+   * filters (`n`), and how many revealed tail ladders (`nTail`). Undefined for
+   * everyone else, which is what keeps the Bets tab off a viewer's card.
+   */
+  bets?: { n: number; nTail: number };
 }) {
   const jsonRow = card.jsonRow;
   const csvCard = !jsonRow;
@@ -2693,7 +2835,7 @@ export function GameCard({
     awayLogo: (espnHomeIsA ? bLogo : aLogo) || undefined,
   };
 
-  const tabBtn = (kind: PanelKind, label: string, accent = false) => (
+  const tabBtn = (kind: PanelKind, label: React.ReactNode, accent = false) => (
     <button
       className="ui-btn"
       data-on={openKind === kind ? "true" : "false"}
@@ -2916,6 +3058,24 @@ export function GameCard({
             player panels: team_stats.json is built from the player sweep, so
             the FCS (game-level-only) namespace has none and gets no button. */}
         {jsonRow && card.hasPlayers && tabBtn("teamstats", "Team Stats")}
+        {/* OWNER ONLY, and only when this game actually has something to
+            place. `openKind === "bets"` keeps the button alive while its own
+            panel is open, so a feed update that drops the last row cannot
+            yank the tab out from under an open panel. */}
+        {bets && (bets.n + bets.nTail > 0 || openKind === "bets") && tabBtn(
+          "bets",
+          <>
+            Bets
+            <span style={{
+              marginLeft: 5, padding: "0 5px", borderRadius: 999,
+              fontSize: 10, fontWeight: 900, verticalAlign: "middle",
+              background: "var(--brand)", color: "var(--brand-contrast)",
+            }}>
+              {bets.n > 0 ? bets.n : "tail"}
+            </span>
+          </>,
+          true,
+        )}
       </div>
     </article>
   );
@@ -3305,6 +3465,7 @@ export function SimVsKalshi({ card, kalshi, useMean }: {
  * ========================================================================= */
 function CardPanelHost({
   card, kind, gdata, week, season, weekId, useMean, kalshi, onAddLeg, onClose,
+  focus = null, betsPanel = null,
 }: {
   card: CardGame;
   kind: PanelKind;
@@ -3318,6 +3479,11 @@ function CardPanelHost({
   kalshi?: KalshiGame;
   onAddLeg: (leg: Leg) => void;
   onClose: () => void;
+  /** Team-stat pre-focus from a suggested bet's "See projection →". */
+  focus?: { team: string; stat: string } | null;
+  /** The owner's bets panel, composed by the page (it needs page state no
+   *  other panel does). Null for every other kind, and for a non-owner. */
+  betsPanel?: React.ReactNode;
 }) {
   const jsonRow = card.jsonRow;
 
@@ -3339,6 +3505,7 @@ function CardPanelHost({
     : kind === "props" ? "Player Props"
     : kind === "box" ? "Projected Box Score"
     : kind === "teamstats" ? "Team Stats (simulated distributions)"
+    : kind === "bets" ? "Suggested Bets"
     : kind === "live" ? (card.liveInProgress ? "Live Gamecast" : "Game Flow")
     : "Add Parlay Leg";
 
@@ -3422,8 +3589,12 @@ function CardPanelHost({
           kalshi={kalshi}
           colorFor={(t) => getTeamColors(t)?.primary}
           logoFor={(t) => getTeamLogo(t) || undefined}
+          focus={focus}
         />
       )}
+      {/* Owner-only, and already gated twice before it gets here: the page
+          only builds this node for a live portal session. */}
+      {kind === "bets" && betsPanel}
       {kind === "picker" && jsonRow && (
         <LegPicker
           row={jsonRow} season={season} weekId={weekId}

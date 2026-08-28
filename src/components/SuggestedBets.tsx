@@ -1,10 +1,27 @@
 // src/components/SuggestedBets.tsx
 //
-// Owner-only "Suggested bets" — and, since 2026-08-28, the ONE surface in this
-// app that can place a real order.
+// The per-game BETS PANEL — and, since 2026-08-28, the ONE surface in this app
+// that can place a real order.
+//
+// ---------------------------------------------------------------------------
+// Where this sits now (restructured 2026-08-28)
+// ---------------------------------------------------------------------------
+// The owner surface is two halves, because it answers two different questions:
+//
+//   WHICH GAME?   `SuggestedBetsIndex`, one slim ranked row per game in the My
+//                 Book console. Discovery is cross-game, so it stays at the top
+//                 of the page. It places nothing — it is a to-do list.
+//   THIS GAME.    THIS FILE, opened as the "Bets" tab on a game card, right
+//                 next to that game's projections. Deciding and placing is
+//                 per-game, so the ladders, the fees, the sizing and the
+//                 confirm slip live beside the chart they came from.
+//
+// Both read ONE compute (`src/lib/useSuggestions.ts`, called once in
+// Scoreboard) under ONE set of filters, so the index count, the tab badge and
+// the rows below can never disagree.
 //
 // `scripts/fbs_maker_pipeline.py` in cfb-props-sim remains the AUTOMATED
-// placement authority and stays post-only-only. This card is the
+// placement authority and stays post-only-only. This panel is the
 // HUMAN-CONFIRMED path: it mirrors the pipeline's selection constants so the
 // same conclusions can be read on a phone, and a Place button turns one into
 // an order after an explicit confirm. If the two ever disagree on SELECTION,
@@ -15,9 +32,11 @@
 // ---------------------------------------------------------------------------
 // Everything is computed from quotes ALREADY flowing through the page's
 // /api/kalshi/cfb poll (45s TTL, bulk series paging). No orderbook-depth
-// calls, no per-market fan-out. Because the compute is a pure function of
-// that feed, it re-runs whenever the poll delivers — live for free. "Refresh"
-// only re-runs the compute against the newest feed the page holds.
+// calls, no per-market fan-out, and opening a panel fetches NOTHING: the rows
+// are a slice of a compute the page already ran. Because that compute is a
+// pure function of the feed, it re-runs whenever the poll delivers — live for
+// free. "Refresh" (in the index header) only re-runs it against the newest
+// feed the page holds.
 //
 // The one exception is deliberate: pressing Confirm makes the SERVER re-read
 // the live orderbook for those tickers before it signs anything. That is per
@@ -30,7 +49,8 @@
 // Our sim fairs are pregame distributions. Once a ball is kicked they are
 // wrong, and an "edge" against a live book would be an invitation to lose
 // money. In-progress and final games are excluded, and so is any game whose
-// kick time has passed even if the live feed has not caught up yet.
+// kick time has passed even if the live feed has not caught up yet. A panel
+// opened on such a game says so in words rather than showing an empty list.
 //
 // ---------------------------------------------------------------------------
 // Fees are never gross
@@ -49,74 +69,36 @@
 // server/liveScores.ts. No position bookkeeping either: after a live placement
 // the portfolio strip picks it up on its own next poll.
 
-import { useMemo, useState } from "react";
-import type { TeamStats as TeamStatsDoc } from "../lib/cfbJson";
-import type { KalshiGame } from "../lib/kalshi";
-import type { PortalPayload } from "../lib/kalshiPortal";
+import { useState } from "react";
 import {
-  buildSuggestions, gameCandidates, groupLadders, heldTickerSet,
-  statCandidates, orderFee, pregameVerdict, timingWords,
+  orderFee, timingWords,
   MIN_MAKER_EDGE, TAKE_THRESHOLD, TAKE_THRESHOLD_LATE, TAKE_THRESHOLD_NEAR,
   TAIL_HI, TAIL_LO,
-  type Candidate, type FeeParams, type LadderGroup, type Suggestion,
+  type FeeParams, type LadderGroup, type Suggestion,
 } from "../lib/suggestedBets";
+import type { PregameVerdict } from "../lib/suggestedBets";
 import {
   newIdempotencyKey, placeErrorText, placeOrders,
   type PlaceOrder, type PlaceResponse,
 } from "../lib/placeOrders";
-// One mapping, both consumers: this card and the portal's held-position
-// pricing read the same series<->stat table (see teamStatMarkets.ts).
-import { SERIES_FOR_STAT } from "../lib/teamStatMarkets";
-import {
-  readCardOpen, writeCardOpen, readModeFilter, writeModeFilter,
-  readSuggestSort, writeSuggestSort, readTypeFilter, writeTypeFilter,
-  readShowTails, writeShowTails,
-  type ModeFilter, type SuggestSort, type BetTypeFilter,
-} from "../lib/ownerPrefs";
+// One mapping, three consumers: this panel's "see projection" jump, the
+// suggestions compute and the portal's held-position pricing (teamStatMarkets).
+import { STAT_FOR_SERIES } from "../lib/teamStatMarkets";
+// Filter state (and its persistence) lives in Scoreboard — ONE source of
+// truth for the index counts, the card badges and these rows. This panel only
+// reports a press.
+import type { BetTypeFilter, ModeFilter } from "../lib/ownerPrefs";
 import DryRunBadge from "./DryRunBadge";
-import { getTeamLogo } from "../utils/teamLogo";
-import type { Season } from "../lib/cfbData";
+import type { SuggestSection } from "../lib/useSuggestions";
 
-/** Bet-slip wording, not column headings. */
-const SHORT: Record<string, string> = {
-  points: "points",
-  rec_yards: "rec yds",
-  rush_yards: "rush yds",
-  total_yards: "total yds",
-  receptions: "receptions",
-  rush_att: "rush att",
-  rush_td: "rush TDs",
-  rec_td: "rec TDs",
-  def_sacks: "sacks",
-  def_ints: "INTs",
-};
-
-export type SuggestGame = {
-  key: string;
-  slug: string;
-  ns: Season;
-  teamA: string;
-  teamB: string;
-  /** The LIVE FEED's verdict alone: an in-progress event, a post/final state,
-   *  or a finals CSV. Never a kick-time test — the clock is the gate's own
-   *  second signal (see `pregameVerdict`). */
-  started: boolean;
-  /** ESPN's raw state ("pre"/"in"/"post"/"final"), or undefined where the feed
-   *  never joined this game — which is common, not exceptional. */
-  liveState?: string;
-  /** Kickoff, epoch ms — the "Soonest" sort key, the pregame gate's clock leg,
-   *  and the row's maker/taker timing band. Undefined sorts last. */
-  kickoffMs?: number;
-};
-
-const cents = (v: number) => `${Math.round(v * 100)}¢`;
-const signed = (v: number) =>
+export const cents = (v: number) => `${Math.round(v * 100)}¢`;
+export const signed = (v: number) =>
   `${v > 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}¢`;
-const clock = (d: Date) => d.toLocaleTimeString();
+export const clock = (d: Date) => d.toLocaleTimeString();
 
 /* ------------------------------- mode colour ------------------------------ */
 // Execution mode gets its OWN categorical channel (--mode-rest / --mode-take,
-// validated in theme.css). It must never borrow --pos/--neg: on this card
+// validated in theme.css). It must never borrow --pos/--neg: on this surface
 // those mean the sign of an edge and nothing else, so a red "take now" would
 // read as a bad bet. Every chip is also direct-labelled, so identity never
 // depends on colour alone.
@@ -143,7 +125,7 @@ function ModeChip({ mode, price }: { mode: "REST" | "TAKE"; price?: number }) {
  * not stand behind this row", which is not a bet direction and not an
  * execution mode, so it gets neither channel.
  */
-function TailBadge({ inline = false }: { inline?: boolean }) {
+export function TailBadge({ inline = false }: { inline?: boolean }) {
   return (
     <span
       title={`Sim probability or the ask being paid is outside ${Math.round(TAIL_LO * 100)}–${Math.round(TAIL_HI * 100)}¢`}
@@ -160,656 +142,469 @@ function TailBadge({ inline = false }: { inline?: boolean }) {
 }
 
 /** "Sat 3:30 PM" — enough to order a multi-day slate without a date column. */
-function kickText(ms: number | undefined): string {
+export function kickText(ms: number | undefined): string {
   if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
   const d = new Date(ms);
   return `${d.toLocaleDateString([], { weekday: "short" })} ` +
          `${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
+/* ---------------------------- chart pre-focus ------------------------------
+ * "See projection" is an EXPLICIT button, never an implicit side effect of
+ * tapping a row: a bet slip that silently swaps the panel underneath you is
+ * how a mis-tap becomes a mis-read. A per-team stat ladder points at that
+ * team's block in the Team Stats chart; a game line points at the simulated
+ * scores panel, which is where winner/spread/total live. Anything we cannot
+ * map (a series Kalshi added since) simply gets no button.
+ * ------------------------------------------------------------------------ */
+export type ProjectionTarget =
+  | { kind: "teamstats"; team: string; stat: string }
+  | { kind: "scores" };
+
+export function projectionTargetFor(g: LadderGroup): ProjectionTarget | null {
+  if (g.family === "game") return { kind: "scores" };
+  const series = g.rungs[0]?.series ?? "";
+  const stat = STAT_FOR_SERIES[series];
+  const team = g.rungs[0]?.team ?? "";
+  if (!stat || !team) return null;
+  return { kind: "teamstats", team, stat };
+}
+
+/* ------------------------------- filter chips ------------------------------ */
 /**
- * The section header: AWAY @ HOME, kick time, and how many bets are in this
- * game. teamA is HOME on every card in this app, so the away team is named
- * first — the way a slate is read aloud. Logos are a synchronous lookup from
- * the already-loaded team table, so they cost nothing; a school without one
- * simply has no mark.
+ * Mode and bet-type filters. They mutate the PAGE-LEVEL state (Scoreboard),
+ * because the index counts, the card badges and these rows all read one
+ * compute — a filter that only applied here would make the badge lie.
+ * Persisted per browser, exactly as before.
  */
-function GameHeader({
-  game, slug, n, nTail, onJump,
+function FilterChips({
+  modeFilter, onModeFilter, typeFilter, onTypeFilter,
 }: {
-  game: SuggestGame | undefined;
-  slug: string;
-  n: number;
-  /** Revealed tail markets in this section, counted SEPARATELY — they are not
-   *  bets the card is making, so they never inflate the bet count. */
-  nTail: number;
-  onJump?: (cardKey: string) => void;
+  modeFilter: ModeFilter;
+  onModeFilter: (v: ModeFilter) => void;
+  typeFilter: BetTypeFilter;
+  onTypeFilter: (v: BetTypeFilter) => void;
 }) {
-  const away = game?.teamB ?? "";
-  const home = game?.teamA ?? "";
-  const kick = kickText(game?.kickoffMs);
-  const logo = (name: string) => {
-    const src = getTeamLogo(name);
-    return src ? (
-      <img src={src} alt="" width={15} height={15} loading="lazy"
-           style={{ objectFit: "contain", flex: "none" }} />
-    ) : null;
-  };
+  const chip = { padding: "3px 9px", fontSize: 11, fontWeight: 700 } as const;
   return (
-    <button
-      type="button"
-      onClick={() => onJump?.(slug)}
-      title="Jump to this game on the board"
-      style={{
-        display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
-        width: "100%", textAlign: "left", cursor: "pointer",
-        padding: "1px 2px 3px", border: "none", background: "none",
-        color: "var(--text)", font: "inherit",
-      }}
-    >
-      {logo(away)}
-      <span style={{ fontSize: 11.5, fontWeight: 800 }}>{away || slug}</span>
-      <span style={{ fontSize: 10.5, color: "var(--muted)" }}>@</span>
-      {logo(home)}
-      <span style={{ fontSize: 11.5, fontWeight: 800 }}>{home}</span>
-      {kick && (
-        <span style={{ fontSize: 10, color: "var(--muted)" }}>· {kick}</span>
-      )}
-      {/* ONE count, in one unit. A section that survives only because tails
-          are revealed says so in words rather than showing "0 bets". */}
-      <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap" }}>
-        {n > 0 ? `${n} bet${n === 1 ? "" : "s"}` : nTail > 0 ? "tail only" : ""}
-      </span>
-    </button>
+    <div style={{ display: "grid", gap: 5 }}>
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Execution mode filter">
+        {([["all", "All"], ["rest", "Maker"], ["take", "Taker"]] as const).map(([v, label]) => (
+          <button
+            key={v} type="button" className="ui-btn"
+            data-on={modeFilter === v ? "true" : "false"}
+            onClick={() => onModeFilter(v)}
+            style={chip}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {/* Second filter row: bet TYPE, by Kalshi series family. Composes with
+          the mode filter (both apply); an unrecognised future series
+          (`family` null) only shows under "All", never crashes. */}
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Bet type filter">
+        {([
+          ["all", "All"], ["game", "Game lines"], ["td", "TD props"],
+          ["yardage", "Yardage"], ["team", "Team totals"],
+        ] as const).map(([v, label]) => (
+          <button
+            key={v} type="button" className="ui-btn"
+            data-on={typeFilter === v ? "true" : "false"}
+            onClick={() => onTypeFilter(v)}
+            style={chip}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
-export default function SuggestedBets({
-  games, kalshiBySlug, feeParams, portal, docs, unit, token, nowMs, onJump,
+/* ------------------------------- ladder rows ------------------------------- */
+/**
+ * One game's ladders. Real suggestions first, then — only when the toggle is
+ * on — the tail band's held-out markets behind their own labelled divider.
+ * ONE map, so the row markup exists once; `g.tail` is the only thing that
+ * changes how it looks.
+ */
+function LadderRows({
+  groups, tailGroups, unit, onPlace, onProject,
 }: {
-  games: SuggestGame[];
-  kalshiBySlug: Map<string, KalshiGame>;
-  feeParams: Record<string, FeeParams>;
-  portal: PortalPayload | null;
-  /** Published team_stats per namespace. Loaded ONCE at the page level
-   *  (`useTeamStatsDocs`) because the portal's held-position pricing needs the
-   *  same documents — one loader, two consumers. */
-  docs: Record<string, TeamStatsDoc>;
-  /** Dollars of risk per ladder — the user's unit size from the My Book
-   *  console. Sizing, outlay and the Place popup all read this one number. */
+  groups: LadderGroup[];
+  tailGroups: LadderGroup[];
+  unit: number;
+  onPlace: (g: LadderGroup) => void;
+  onProject: (t: ProjectionTarget) => void;
+}) {
+  const [sel, setSel] = useState<string | null>(null);
+
+  return (
+    <div style={{ display: "grid", gap: 5 }}>
+      {[...groups, ...tailGroups].map((g, gi) => {
+        // A tail ladder and its in-band twin share a `ladder` string (same
+        // game, same family, same team) — they are two halves of one ladder
+        // split by the band. React keys and the expand selection both need the
+        // PAIR to be distinct, or ticking one opens both and React drops a row.
+        const gid = g.tail ? `tail:${g.ladder}` : g.ladder;
+        const on = gid === sel;
+        const single = g.rungs.length === 1;
+        const head = g.rungs[0];
+        // Mode at a glance: the row wears a slim accent in its own
+        // execution-mode hue. A ladder whose rungs disagree takes the BEST
+        // rung's hue, and shows a chip for each mode anyway.
+        const modes = Array.from(new Set(g.rungs.map((r) => r.mode)));
+        const bestMode = g.rungs.reduce((m, r) => (r.edge > m.edge ? r : m), g.rungs[0]).mode;
+        // A TAIL row keeps its number but LOSES its colour: green on an edge
+        // we do not stand behind would be the panel lying in its loudest
+        // channel. The badge and the muted ink say so instead.
+        const edgeColor = g.tail
+          ? "var(--muted)"
+          : g.bestEdge > 0 ? "var(--pos)" : "var(--neg)";
+        const firstTail = g.tail && gi === groups.length;
+        const target = projectionTargetFor(g);
+        return (
+          <div key={gid}>
+            {firstTail && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 6,
+                margin: "5px 0 3px", fontSize: 10, color: "var(--muted)",
+              }}>
+                <TailBadge />
+                <span>
+                  sim or price outside {Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢
+                  {" "}— shown on request, never ranked
+                </span>
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "stretch", gap: 4 }}>
+              <button
+                type="button"
+                onClick={() => setSel(on ? null : gid)}
+                style={{
+                  flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
+                  display: "grid", gap: 3,
+                  padding: "7px 8px", borderRadius: 7,
+                  // A tail row is DASHED and sits on the section fill rather
+                  // than the card: at a glance it reads as a provisional row,
+                  // the same dotted convention the approximate-strike marks use.
+                  border: `1px ${g.tail ? "dashed" : "solid"} ${on ? "var(--brand)" : "var(--border)"}`,
+                  borderLeft: `4px solid ${g.tail ? "var(--border)" : modeHue(bestMode)}`,
+                  background: g.tail ? "var(--fill)" : "var(--card)",
+                  color: g.tail ? "var(--muted)" : "var(--text)",
+                  font: "inherit", fontSize: 12,
+                }}
+              >
+                {/* TWO FIXED LINES, always in the same order: the bet in
+                    words, then chip / sizing / edge. The edge is the last
+                    thing on line 2 in a column of its own, so every row's
+                    number lands at the same x. */}
+                <span style={{ fontWeight: 700, lineHeight: 1.25 }}>
+                  {g.tail && <TailBadge inline />}
+                  {single ? head.label : g.headline}
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {single
+                    ? <ModeChip mode={head.mode} price={head.price} />
+                    : modes.map((m) => <ModeChip key={m} mode={m} />)}
+                  <span style={{
+                    fontSize: 10.5, color: "var(--muted)", minWidth: 0,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {single
+                      ? `${head.count} @ ${cents(head.price)} · $${head.outlay.toFixed(2)}`
+                      : `${g.rungs.length} rungs · $${g.each} each`}
+                  </span>
+                  <span style={{
+                    marginLeft: "auto", flex: "none", fontWeight: 800,
+                    fontVariantNumeric: "tabular-nums",
+                    color: edgeColor,
+                  }}>
+                    {signed(g.bestEdge)}
+                  </span>
+                </span>
+              </button>
+              {/* Every mode gets a Place button. A REST rung rests post-only;
+                  a TAKE rung is a LIMIT order at this exact price — never a
+                  market order (user decision 2026-08-28). A ladder's rungs go
+                  as ONE request. */}
+              <button
+                type="button"
+                className="ui-btn"
+                onClick={() => onPlace(g)}
+                title={`Place ${g.rungs.length} order${g.rungs.length === 1 ? "" : "s"}`}
+                style={{
+                  // Fixed width, so the edge column above it lines up across
+                  // every row of the panel.
+                  width: 62, flex: "none", padding: 0,
+                  fontSize: 11, fontWeight: 800,
+                }}
+              >
+                Place
+              </button>
+            </div>
+
+            {/* The chart this bet came out of, one tap away and NAMED. The
+                "Bets" tab stays visible above the panel, so getting back is
+                the button you just came from — no back-plumbing. */}
+            {target && (
+              <div style={{ display: "flex", marginTop: 2 }}>
+                <button
+                  type="button" className="ui-btn"
+                  onClick={() => onProject(target)}
+                  title={target.kind === "teamstats"
+                    ? `Show ${target.team}'s simulated distribution for this stat`
+                    : "Show the simulated score distribution"}
+                  style={{ padding: "1px 8px", fontSize: 10.5, fontWeight: 700 }}
+                >
+                  See projection →
+                </button>
+              </div>
+            )}
+
+            {on && (
+              <div style={{
+                margin: "4px 0 5px", padding: "6px 8px", fontSize: 11.5,
+                lineHeight: 1.5, color: "var(--text)",
+                background: "var(--card)", border: "1px solid var(--brand)",
+                borderRadius: 7,
+              }}>
+                {g.tail && (
+                  <div style={{ color: "var(--muted)", marginBottom: 4 }}>
+                    Held out of the list: the sim, the ask, or both sit
+                    outside {Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢.
+                    That is where our own model is least trusted and where a
+                    thin book misprices hardest, so the edge above is printed
+                    without a verdict colour.
+                  </div>
+                )}
+                {/* TIME CONTEXT, in words. The mode chip already says REST or
+                    TAKE; this says why that bar was the bar. */}
+                <div style={{ color: "var(--muted)", marginBottom: 4 }}>
+                  {timingWords(g.timing)}
+                </div>
+                {single ? (
+                  <>
+                    Sim {Math.round(head.simP * 100)}% · price {cents(head.price)} ·
+                    fee {(head.fee * 100 / Math.max(head.count, 1)).toFixed(1)}¢/contract
+                    {" "}({head.fee.toFixed(2)} total) · net edge {signed(head.edge)}
+                    <div style={{ color: "var(--muted)", marginTop: 2 }}>
+                      {head.count} contracts, outlay ${head.outlay.toFixed(2)} of ${unit}
+                      {" · "}fee type {head.feeType}
+                      {" · "}{head.ticker}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {g.rungs.map((rr, ri) => (
+                      <div key={rr.key} style={{
+                        display: "flex", alignItems: "baseline", gap: 8,
+                        padding: "3px 0",
+                        borderTop: ri === 0 ? "none" : "1px solid var(--border)",
+                      }}>
+                        {/* A stat rung is "225+"; a game line is "−7.5" or
+                            "Over 48.5", which the builder supplies. */}
+                        <span style={{ fontWeight: 700 }}>
+                          {rr.rungText ?? `${rr.strike}+`}
+                        </span>
+                        <ModeChip mode={rr.mode} price={rr.price} />
+                        <span style={{ color: "var(--muted)" }}>
+                          {rr.count} ct · fee {rr.fee.toFixed(2)}
+                        </span>
+                        <span style={{
+                          marginLeft: "auto", fontWeight: 700,
+                          color: rr.edge > 0 ? "var(--pos)" : "var(--neg)",
+                        }}>
+                          {signed(rr.edge)}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ color: "var(--muted)", marginTop: 4 }}>
+                      ${unit} ladder, ${g.each} per rung
+                      {" · "}outlay ${g.rungs.reduce((s, rr) => s + rr.outlay, 0).toFixed(2)}
+                      {" · "}fee type {head.feeType}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* =============================== the panel ================================ */
+/**
+ * ONE GAME's suggested bets, opened from that game's card. Everything money
+ * happens here: the ladders, the sizing, the fee itemisation and the confirm
+ * slip. The index above only ranks.
+ */
+export default function GameBetsPanel({
+  section, verdict, hiddenByFilter, tailCount, unit, token, feeParams,
+  quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
+  showTails, onShowTails, onProject,
+}: {
+  /** This game's slice of the page compute, or undefined when it has none. */
+  section: SuggestSection | undefined;
+  /** Why this game is (or is not) suggestible — the empty state's reason. */
+  verdict: PregameVerdict | undefined;
+  /** Ladders this game HAS that the current filters are hiding. */
+  hiddenByFilter: number;
+  /** Tail-band ladders on this game, counted whether or not they are shown. */
+  tailCount: number;
+  /** Dollars of risk per ladder — the owner's unit size from My Book. */
   unit: number;
   /** Portal password — the same header the reads use. Placement needs it. */
   token: string;
-  /** A TICKING wall clock from the page (30s), not `Date.now()` read here.
-   *  Both time-dependent rules on this card — the pregame gate and the
-   *  maker/taker timing bands — must move on their own, not only when the ESPN
-   *  live poll happens to deliver. It is also a dependency of the compute memo,
-   *  which is what makes a game DROP OFF the card when it kicks. */
-  nowMs: number;
-  onJump?: (cardKey: string) => void;
+  feeParams: Record<string, FeeParams>;
+  /** When the page's compute last ran; the slip quotes it. */
+  quotedAt: Date;
+  ordersLive: boolean;
+  modeFilter: ModeFilter;
+  onModeFilter: (v: ModeFilter) => void;
+  typeFilter: BetTypeFilter;
+  onTypeFilter: (v: BetTypeFilter) => void;
+  showTails: boolean;
+  onShowTails: (v: boolean) => void;
+  /** Switch this card's open panel to the chart this bet came from. */
+  onProject: (t: ProjectionTarget) => void;
 }) {
-  const [sel, setSel] = useState<string | null>(null);
-  const [nonce, setNonce] = useState(0);
-  const [open, setOpen] = useState<boolean>(() => readCardOpen());
-  const [modeFilter, setModeFilter] = useState<ModeFilter>(() => readModeFilter());
-  const [typeFilter, setTypeFilter] = useState<BetTypeFilter>(() => readTypeFilter());
-  const [sort, setSort] = useState<SuggestSort>(() => readSuggestSort());
-  /** Reveal the tail band's held-out markets. Default OFF, persisted. */
-  const [showTails, setShowTails] = useState<boolean>(() => readShowTails());
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
    *  Confirm replays server-side instead of placing twice. */
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
 
-  const {
-    rows, tailRows, tailMarkets, suppressed, computedAt, pregameCount, blindCount,
-  } = useMemo(() => {
-    const held = heldTickerSet(portal?.positions, portal?.orders);
-    const candidates: Candidate[] = [];
-    // Games that are genuinely pregame, and games dropped for having NEITHER a
-    // kickoff time nor a live state — the one refusal a reader could otherwise
-    // mistake for "no edges here".
-    let nPregame = 0, nBlind = 0;
-    for (const g of games) {
-      // PREGAME ONLY — the rule, its precedence and its reasoning all live in
-      // `pregameVerdict`. It runs against the page's ticking clock, so this
-      // whole memo re-evaluates every 30s and a game LEAVES the card when it
-      // kicks, with or without an ESPN join.
-      const verdict = pregameVerdict(g, nowMs);
-      if (!verdict.ok) {
-        if (verdict.reason === "no kickoff time and no live state") nBlind += 1;
-        continue;
-      }
-      nPregame += 1;
-      const kg = kalshiBySlug.get(g.key);
-      if (!kg) continue;
-      // Per-CARD namespace, never the page's season: a merged "Both" slate
-      // holds FBS and FCS cards at once and each reads its own dataset.
-      const published = docs[String(g.ns)]?.games?.[g.slug];
-      if (!published) continue;
-      const stats = published.stats;
-      if (stats && Object.keys(stats).length) {
-        candidates.push(...statCandidates(
-          // `key` is what the scoreboard scrolls to; `slug` only indexes the
-          // published stats above.
-          kg, g.key, g.teamA, g.teamB,
-          (stat) => SHORT[stat] ?? stat,
-          (team, stat, strike) => {
-            // Published rung, read verbatim. No interpolation, no client-side
-            // distribution math — a strike off the grid simply has no bet.
-            const r = stats[team]?.[stat]?.rungs;
-            const v = r?.[String(strike)];
-            return typeof v === "number" ? v : null;
-          },
-          (stat) => SERIES_FOR_STAT[stat] ?? "",
-          g.kickoffMs,
-        ));
-      }
-      // Game lines (winner / spread / total). Absent on a week published
-      // before exporter schema 2 — quiet, never an error. A game-level-only
-      // namespace (FCS: no player sweep, so `stats` is empty by design)
-      // contributes THESE and only these.
-      if (published.game) {
-        candidates.push(...gameCandidates(
-          kg, g.key, g.teamA, g.teamB, published.game, g.kickoffMs));
-      }
-    }
-    // ONE clock for the gate above and the timing bands inside: two Date.now()
-    // reads a few ms apart can land on opposite sides of a band edge.
-    const built = buildSuggestions(candidates, feeParams, held, unit, nowMs);
-    return {
-      ...built, computedAt: new Date(),
-      pregameCount: nPregame, blindCount: nBlind,
-    };
-    // `nonce` is the manual refresh: it re-runs the compute against whatever
-    // feed the page currently holds, and never triggers a fetch of its own.
-    // `nowMs` ticks every 30s upstream, which is what makes a kicked-off game
-    // fall out of this list on its own.
-  }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs]);
-
-  // Card key -> game, so a same-game run of ladder rows can carry a header
-  // and the "Soonest" sort can find a kickoff.
-  const gameByKey = useMemo(() => new Map(games.map((g) => [g.key, g])), [games]);
-
-  // Presentation only: fold each ladder's picked rungs (nested markets, up to
-  // MAX_RUNGS) into one display row, then FILTER by execution mode and ORDER.
-  // Selection and sizing already happened above; none of this touches either,
-  // so a filter can never change what a surviving row would cost.
-  const allGroups = useMemo(() => groupLadders(rows, unit), [rows, unit]);
-  // The tail band's held-out markets, grouped the same way but kept in their
-  // OWN list: they are appended under each game's real suggestions when the
-  // toggle is on, and never sorted among them.
-  const allTailGroups = useMemo(
-    () => groupLadders(tailRows, unit), [tailRows, unit]);
-
-  /**
-   * ONE SECTION PER GAME. Suggestions concentrate hard — two, three, four
-   * ladders on the same matchup is the normal case — and a flat list of them
-   * ran together no matter what divider sat between the runs. So a game is a
-   * CONTAINER: its own header and its own rows, with real space around it.
-   * A game with a single suggestion still gets a section; consistent beats
-   * clever.
-   *
-   * Sorting orders SECTIONS, never rows across sections — games stay
-   * atomic in both orders. Within a section rows are always best-edge first.
-   * The mode filter drops ROWS (a ladder can mix REST/TAKE rungs); the
-   * bet-type filter drops whole LADDERS (a ladder never mixes series, so its
-   * `family` is one value). Both compose — either can empty a section.
-   */
-  const sections = useMemo(() => {
-    const pass = (g: LadderGroup) => {
-      const modeOk = modeFilter === "all" ||
-        g.rungs.some((r) => (modeFilter === "rest") === (r.mode === "REST"));
-      const typeOk = typeFilter === "all" || g.family === typeFilter;
-      return modeOk && typeOk;
-    };
-    const kept = allGroups.filter(pass);
-    // Tails obey the SAME filters — they are a reveal, not an escape hatch.
-    const keptTails = showTails ? allTailGroups.filter(pass) : [];
-
-    const bySlug = new Map<string, { core: LadderGroup[]; tail: LadderGroup[] }>();
-    const slot = (slug: string) => {
-      let s = bySlug.get(slug);
-      if (!s) { s = { core: [], tail: [] }; bySlug.set(slug, s); }
-      return s;
-    };
-    for (const g of kept) slot(g.slug).core.push(g);
-    for (const g of keptTails) slot(g.slug).tail.push(g);
-
-    const out = [...bySlug].map(([slug, { core, tail }]) => {
-      const inner = [...core].sort((a, b) => b.bestEdge - a.bestEdge);
-      const tails = [...tail].sort((a, b) => b.bestEdge - a.bestEdge);
-      return {
-        slug,
-        game: gameByKey.get(slug),
-        groups: inner,
-        tailGroups: tails,
-        // Ranked on the REAL suggestions only. A game that has nothing but
-        // tails sorts last (−Infinity) instead of jumping the queue on the
-        // strength of an edge we do not stand behind.
-        bestEdge: inner.length ? inner[0].bestEdge : -Infinity,
-        // Unknown kickoff sorts LAST rather than first, so a missing time
-        // never masquerades as the most urgent game on the board.
-        kickoffMs: gameByKey.get(slug)?.kickoffMs ?? Infinity,
-      };
-    });
-    out.sort((a, b) => sort === "soon"
-      ? (a.kickoffMs !== b.kickoffMs ? a.kickoffMs - b.kickoffMs : b.bestEdge - a.bestEdge)
-      : b.bestEdge - a.bestEdge);
-    return out;
-  }, [allGroups, allTailGroups, showTails, modeFilter, typeFilter, sort, gameByKey]);
-
-  const shownCount = sections.reduce((n, s) => n + s.groups.length, 0);
-  const hiddenByFilter = allGroups.length - shownCount;
-  // Undefined on a server that predates order entry: treat as staged-off,
-  // which is the safe reading.
-  const ordersLive = portal?.orders_live === true;
+  const groups = section?.groups ?? [];
+  const tailGroups = section?.tailGroups ?? [];
+  const nothing = groups.length === 0 && tailGroups.length === 0;
+  const clearFilters = () => { onModeFilter("all"); onTypeFilter("all"); };
 
   return (
-    <section style={{
-      border: "1px solid var(--brand)", borderRadius: 12,
-      background: "var(--card)", padding: 10, display: "grid", gap: open ? 8 : 0,
-    }}>
-      {/* Header row — present in BOTH states. The kill switch is NOT here: it
-          lives in the My Book console alongside the other owner controls. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={() => { const v = !open; setOpen(v); writeCardOpen(v); }}
-          aria-expanded={open}
-          style={{
-            display: "flex", alignItems: "center", gap: 7, padding: "2px 4px",
-            border: "none", background: "none", color: "var(--text)",
-            font: "inherit", cursor: "pointer", textAlign: "left",
-          }}
-        >
-          {/* CSS caret, not a glyph: "▶" renders in emoji presentation on
-              some platforms and came out as a blue box at phone width. */}
-          <span aria-hidden="true" style={{
-            width: 0, height: 0, flex: "none",
-            borderTop: "5px solid transparent",
-            borderBottom: "5px solid transparent",
-            borderLeft: "6px solid var(--muted)",
-            transform: open ? "rotate(90deg)" : "none",
-            transition: "transform .12s",
-          }} />
-          <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand-text)" }}>
-            Suggested bets ({shownCount})
-          </span>
-          <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-            · computed {clock(computedAt)}
-          </span>
-        </button>
+    <div style={{ display: "grid", gap: 7 }}>
+      <FilterChips
+        modeFilter={modeFilter} onModeFilter={onModeFilter}
+        typeFilter={typeFilter} onTypeFilter={onTypeFilter}
+      />
 
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-          {!ordersLive && (
-            <DryRunBadge title="Order entry is staged: the server validates and logs, and submits nothing." />
-          )}
-          {open && (
-            <button type="button" className="ui-btn" onClick={() => setNonce((n) => n + 1)}
-                    style={{ padding: "2px 8px", fontSize: 11 }}>
-              Refresh
-            </button>
-          )}
-        </div>
+      {/* The words legend the bar test asks for: say which colour is which,
+          once, instead of making the reader infer it. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 10.5, color: "var(--muted)", flexWrap: "wrap" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span aria-hidden="true" style={{
+            width: 9, height: 9, borderRadius: 3, background: "var(--mode-rest)",
+            display: "inline-block", flex: "none",
+          }} />
+          rest (maker fee)
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span aria-hidden="true" style={{
+            width: 9, height: 9, borderRadius: 3, background: "var(--mode-take)",
+            display: "inline-block", flex: "none",
+          }} />
+          take now (taker fee)
+        </span>
+        <span>green/red is the EDGE, not the mode</span>
       </div>
 
-      {open && (
-        <>
-          {/* Filter + order. Both persist; both are PRESENTATION — a filter
-              never changes what a surviving row costs. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", gap: 3 }} role="group" aria-label="Execution mode filter">
-              {([["all", "All"], ["rest", "Maker"], ["take", "Taker"]] as const).map(([v, label]) => (
-                <button
-                  key={v} type="button" className="ui-btn"
-                  data-on={modeFilter === v ? "true" : "false"}
-                  onClick={() => { setModeFilter(v); writeModeFilter(v); }}
-                  style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 3 }} role="group" aria-label="Sort order">
-              {([["edge", "Best edge"], ["soon", "Soonest"]] as const).map(([v, label]) => (
-                <button
-                  key={v} type="button" className="ui-btn"
-                  data-on={sort === v ? "true" : "false"}
-                  onClick={() => { setSort(v); writeSuggestSort(v); }}
-                  style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* The bars this game's rows had to clear, and what a row costs. The
+          take bar is a LADDER in time, so it is printed as one rather than as
+          a single number that is wrong for most of the slate. */}
+      <div style={{ fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5 }}>
+        ${unit}/ladder · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+
+        {" "}(none inside 1h of kick) / take
+        {" "}{Math.round(TAKE_THRESHOLD * 100)}¢ &gt;24h,
+        {" "}{(TAKE_THRESHOLD_NEAR * 100).toFixed(1)}¢ 3–24h,
+        {" "}{Math.round(TAKE_THRESHOLD_LATE * 100)}¢ under 3h ·
+        {" "}edges NET of fee, re-checked against the live book at placement
+      </div>
 
-          {/* Second filter row: bet TYPE, by Kalshi series family. Same chip
-              styling as the mode/sort row above — one visual system. Composes
-              with the mode filter (both apply); an unrecognised future series
-              (`family` null) only shows under "All", never crashes. */}
-          <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Bet type filter">
-            {([
-              ["all", "All"], ["game", "Game lines"], ["td", "TD props"],
-              ["yardage", "Yardage"], ["team", "Team totals"],
-            ] as const).map(([v, label]) => (
-              <button
-                key={v} type="button" className="ui-btn"
-                data-on={typeFilter === v ? "true" : "false"}
-                onClick={() => { setTypeFilter(v); writeTypeFilter(v); }}
-                style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* The words legend the bar test asks for: say which colour is
-              which, once, instead of making the reader infer it. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 10.5, color: "var(--muted)", flexWrap: "wrap" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span aria-hidden="true" style={{
-                width: 9, height: 9, borderRadius: 3, background: "var(--mode-rest)",
-                display: "inline-block", flex: "none",
-              }} />
-              rest (maker fee)
-            </span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span aria-hidden="true" style={{
-                width: 9, height: 9, borderRadius: 3, background: "var(--mode-take)",
-                display: "inline-block", flex: "none",
-              }} />
-              take now (taker fee)
-            </span>
-            <span>green/red is the EDGE, not the mode</span>
-          </div>
-
-          {/* ONE meta line. It used to be four, which is four gray lines
-              before the first bet on a phone. The header already stamps the
-              compute time, so this does not repeat it. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--muted)" }}>
-            <span aria-hidden="true" style={{
-              width: 6, height: 6, borderRadius: 999, background: "var(--pos)",
-              display: "inline-block", flex: "none",
-            }} />
-            {/* The take bar is a LADDER now, so it is printed as one rather
-                than as a single number that is wrong for most of the slate.
-                Rest keeps one bar but gains a cutoff: none inside 1h. */}
+      {nothing ? (
+        <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5, display: "grid", gap: 6 }}>
+          {verdict && !verdict.ok ? (
             <span>
-              Live · {pregameCount} pregame game{pregameCount === 1 ? "" : "s"} ·
-              {" "}${unit}/ladder · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+
-              {" "}(none inside 1h of kick) / take
-              {" "}{Math.round(TAKE_THRESHOLD * 100)}¢ &gt;24h,
-              {" "}{(TAKE_THRESHOLD_NEAR * 100).toFixed(1)}¢ 3–24h,
-              {" "}{Math.round(TAKE_THRESHOLD_LATE * 100)}¢ under 3h ·
-              {" "}edges NET of fee, re-checked at placement
+              Nothing here: this game is no longer pregame ({verdict.reason}).
+              Suggestions are PREGAME ONLY — our fairs are pregame
+              distributions, so an "edge" measured against a live book is not
+              an edge, it is a wrong number pointed at real money.
             </span>
-          </div>
-
-          {/* The one pregame refusal a reader could mistake for "no edges".
-              Everything else the gate drops (kicked off, live, final) is
-              self-evidently gone; a game with neither a kickoff time nor an
-              ESPN join is not, so it is counted out loud. */}
-          {blindCount > 0 && (
-            <div style={{ fontSize: 10, color: "var(--muted)" }}>
-              {blindCount} game{blindCount === 1 ? "" : "s"} skipped: no kickoff
-              time and no live state, so there is no way to tell whether they
-              have started.
-            </div>
-          )}
-
-          {sections.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              {hiddenByFilter > 0
-                ? `Nothing matches these filters — ${hiddenByFilter} suggestion${hiddenByFilter === 1 ? "" : "s"} hidden.`
-                : "Nothing clears the thresholds right now."}
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {sections.map((sec) => (
-                <div key={sec.slug} style={{
-                  border: "1px solid var(--border)", borderRadius: 10,
-                  background: "var(--fill)", padding: 7,
-                  display: "grid", gap: 5,
-                }}>
-                  <GameHeader
-                    game={sec.game}
-                    slug={sec.slug}
-                    n={sec.groups.length}
-                    nTail={sec.tailGroups.length}
-                    onJump={onJump}
-                  />
-                  <div style={{ display: "grid", gap: 4 }}>
-              {/* Real suggestions first, then — only when the toggle is on —
-                  the tail band's held-out markets, behind their own labelled
-                  divider. ONE map, so the row markup exists once; `g.tail` is
-                  the only thing that changes how it looks. */}
-              {[...sec.groups, ...sec.tailGroups].map((g, gi) => {
-                // A tail ladder and its in-band twin share a `ladder` string
-                // (same game, same family, same team) — they are two halves of
-                // one ladder split by the band. React keys and the expand
-                // selection both need the PAIR to be distinct, or ticking one
-                // opens both and React drops a row.
-                const gid = g.tail ? `tail:${g.ladder}` : g.ladder;
-                const on = gid === sel;
-                const single = g.rungs.length === 1;
-                const head = g.rungs[0];
-                // Mode at a glance: the row wears a slim accent in its own
-                // execution-mode hue. A ladder whose rungs disagree takes the
-                // BEST rung's hue, and shows a chip for each mode anyway.
-                const modes = Array.from(new Set(g.rungs.map((r) => r.mode)));
-                const bestMode = g.rungs.reduce((m, r) => (r.edge > m.edge ? r : m), g.rungs[0]).mode;
-                // A TAIL row keeps its number but LOSES its colour: green on
-                // an edge we do not stand behind would be the card lying in
-                // its loudest channel. The badge and the muted ink say so
-                // instead — the Team Stats convention, where a suppressed
-                // flag keeps its mark and loses its chip.
-                const edgeColor = g.tail
-                  ? "var(--muted)"
-                  : g.bestEdge > 0 ? "var(--pos)" : "var(--neg)";
-                const firstTail = g.tail && gi === sec.groups.length;
-                return (
-                  <div key={gid}>
-                    {firstTail && (
-                      <div style={{
-                        display: "flex", alignItems: "center", gap: 6,
-                        margin: "5px 0 3px", fontSize: 10, color: "var(--muted)",
-                      }}>
-                        <TailBadge />
-                        <span>
-                          sim or price outside {Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢
-                          {" "}— shown on request, never ranked
-                        </span>
-                      </div>
-                    )}
-                    <div style={{
-                      display: "flex", alignItems: "stretch", gap: 4,
-                    }}>
-                      <button
-                        type="button"
-                        onClick={() => { setSel(on ? null : gid); onJump?.(g.slug); }}
-                        style={{
-                          flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
-                          display: "grid", gap: 3,
-                          padding: "6px 8px", borderRadius: 7,
-                          // A tail row is DASHED and sits on the section fill
-                          // rather than the card: at a glance it reads as a
-                          // provisional row, the same dotted-underline
-                          // convention the approximate-strike marks use.
-                          border: `1px ${g.tail ? "dashed" : "solid"} ${on ? "var(--brand)" : "var(--border)"}`,
-                          borderLeft: `4px solid ${g.tail ? "var(--border)" : modeHue(bestMode)}`,
-                          background: g.tail ? "var(--fill)" : "var(--card)",
-                          color: g.tail ? "var(--muted)" : "var(--text)",
-                          font: "inherit", fontSize: 12,
-                        }}
-                      >
-                        {/* TWO FIXED LINES, always in the same order: the bet
-                            in words, then chip / sizing / edge. The edge is
-                            the last thing on line 2 in a column of its own, so
-                            every row's number lands at the same x — a wrapping
-                            single line put them all over the place, which is
-                            what read as sloppy. */}
-                        <span style={{ fontWeight: 700, lineHeight: 1.25 }}>
-                          {g.tail && <TailBadge inline />}
-                          {single ? head.label : g.headline}
-                        </span>
-                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          {single
-                            ? <ModeChip mode={head.mode} price={head.price} />
-                            : modes.map((m) => <ModeChip key={m} mode={m} />)}
-                          <span style={{
-                            fontSize: 10.5, color: "var(--muted)", minWidth: 0,
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                          }}>
-                            {single
-                              ? `${head.count} @ ${cents(head.price)} · $${head.outlay.toFixed(2)}`
-                              : `${g.rungs.length} rungs · $${g.each} each`}
-                          </span>
-                          <span style={{
-                            marginLeft: "auto", flex: "none", fontWeight: 800,
-                            fontVariantNumeric: "tabular-nums",
-                            color: edgeColor,
-                          }}>
-                            {signed(g.bestEdge)}
-                          </span>
-                        </span>
-                      </button>
-                      {/* Every mode gets a Place button. A REST rung rests
-                          post-only; a TAKE rung is a LIMIT order at this exact
-                          price — never a market order (user decision
-                          2026-08-28). A ladder's rungs go as ONE request. */}
-                      <button
-                        type="button"
-                        className="ui-btn"
-                        onClick={() => setSlip({ group: g, idem: newIdempotencyKey() })}
-                        title={`Place ${g.rungs.length} order${g.rungs.length === 1 ? "" : "s"}`}
-                        style={{
-                          // Fixed width, so the edge column above it lines up
-                          // across every row of every section.
-                          width: 62, flex: "none", padding: 0,
-                          fontSize: 11, fontWeight: 800,
-                        }}
-                      >
-                        Place
-                      </button>
-                    </div>
-                    {on && (
-                      <div style={{
-                        margin: "3px 0 5px", padding: "6px 8px", fontSize: 11.5,
-                        lineHeight: 1.5, color: "var(--text)",
-                        background: "var(--card)", border: "1px solid var(--brand)",
-                        borderRadius: 7,
-                      }}>
-                        {g.tail && (
-                          <div style={{ color: "var(--muted)", marginBottom: 4 }}>
-                            Held out of the list: the sim, the ask, or both sit
-                            outside {Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢.
-                            That is where our own model is least trusted and where
-                            a thin book misprices hardest, so the edge below is
-                            printed without a verdict colour.
-                          </div>
-                        )}
-                        {/* TIME CONTEXT, in words. The mode chip already says
-                            REST or TAKE; this says why that bar was the bar —
-                            "2h to kick — resting has little time to fill before
-                            the kick−30 pull, so the take bar 3¢ (from 6¢)". */}
-                        <div style={{ color: "var(--muted)", marginBottom: 4 }}>
-                          {timingWords(g.timing)}
-                        </div>
-                        {single ? (
-                          <>
-                            Sim {Math.round(head.simP * 100)}% · price {cents(head.price)} ·
-                            fee {(head.fee * 100 / Math.max(head.count, 1)).toFixed(1)}¢/contract
-                            {" "}({head.fee.toFixed(2)} total) · net edge {signed(head.edge)}
-                            <div style={{ color: "var(--muted)", marginTop: 2 }}>
-                              {head.count} contracts, outlay ${head.outlay.toFixed(2)} of ${unit}
-                              {" · "}fee type {head.feeType}
-                              {" · "}{head.ticker}
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            {g.rungs.map((rr, ri) => (
-                              <div key={rr.key} style={{
-                                display: "flex", alignItems: "baseline", gap: 8,
-                                padding: "3px 0",
-                                borderTop: ri === 0 ? "none" : "1px solid var(--border)",
-                              }}>
-                                {/* A stat rung is "225+"; a game line is
-                                    "−7.5" or "Over 48.5", which the builder
-                                    supplies — "48.5+" is not a bet. */}
-                                <span style={{ fontWeight: 700 }}>
-                                  {rr.rungText ?? `${rr.strike}+`}
-                                </span>
-                                <ModeChip mode={rr.mode} price={rr.price} />
-                                <span style={{ color: "var(--muted)" }}>
-                                  {rr.count} ct · fee {rr.fee.toFixed(2)}
-                                </span>
-                                <span style={{
-                                  marginLeft: "auto", fontWeight: 700,
-                                  color: rr.edge > 0 ? "var(--pos)" : "var(--neg)",
-                                }}>
-                                  {signed(rr.edge)}
-                                </span>
-                              </div>
-                            ))}
-                            <div style={{ color: "var(--muted)", marginTop: 4 }}>
-                              ${unit} ladder, ${g.each} per rung
-                              {" · "}outlay ${g.rungs.reduce((s, rr) => s + rr.outlay, 0).toFixed(2)}
-                              {" · "}fee type {head.feeType}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {hiddenByFilter > 0 && sections.length > 0 && (
-            <div style={{ fontSize: 10, color: "var(--muted)" }}>
-              {hiddenByFilter} suggestion{hiddenByFilter === 1 ? "" : "s"} hidden by the filters.
-            </div>
-          )}
-
-          {/* THE TAIL LINE. Held-out markets are counted, explained in one
-              sentence, and one press away — a filter the reader cannot see is
-              how a filter becomes a mystery. */}
-          {tailMarkets > 0 && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
-              fontSize: 10, color: "var(--muted)",
-            }}>
+          ) : hiddenByFilter > 0 ? (
+            <>
               <span>
-                {tailMarkets} tail market{tailMarkets === 1 ? "" : "s"}
-                {showTails ? " shown, muted" : " hidden"} — sim or price outside
-                {" "}{Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢,
-                where the model is least confident.
+                {hiddenByFilter} suggestion{hiddenByFilter === 1 ? "" : "s"} on
+                this game {hiddenByFilter === 1 ? "is" : "are"} hidden by the
+                mode / bet-type filters above.
               </span>
-              <button
-                type="button" className="ui-btn"
-                data-on={showTails ? "true" : "false"}
-                aria-pressed={showTails}
-                onClick={() => { const v = !showTails; setShowTails(v); writeShowTails(v); }}
-                style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
-              >
-                {showTails ? "Hide tails" : "Show tails"}
-              </button>
-            </div>
+              <span>
+                <button type="button" className="ui-btn" onClick={clearFilters}
+                        style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>
+                  Show all types
+                </button>
+              </span>
+            </>
+          ) : (
+            <span>
+              Nothing on this game clears the thresholds right now — no listed
+              market, no published rung at those strikes, or no edge left after
+              the fee.
+            </span>
           )}
+        </div>
+      ) : (
+        <LadderRows
+          groups={groups}
+          tailGroups={tailGroups}
+          unit={unit}
+          onPlace={(g) => setSlip({ group: g, idem: newIdempotencyKey() })}
+          onProject={onProject}
+        />
+      )}
 
-          {suppressed.length > 0 && (
-            <div style={{ fontSize: 10, color: "var(--muted)" }}>
-              {suppressed.length} candidate{suppressed.length === 1 ? "" : "s"} suppressed
-              (thin or one-sided book, ladder cap, penny quote, or already held).
-            </div>
-          )}
-        </>
+      {hiddenByFilter > 0 && !nothing && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", fontSize: 10, color: "var(--muted)" }}>
+          <span>
+            {hiddenByFilter} more suggestion{hiddenByFilter === 1 ? "" : "s"} on
+            this game hidden by the filters.
+          </span>
+          <button type="button" className="ui-btn" onClick={clearFilters}
+                  style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>
+            Show all types
+          </button>
+        </div>
+      )}
+
+      {/* THE TAIL LINE. Held-out ladders are counted, explained in one
+          sentence, and one press away — a filter the reader cannot see is how
+          a filter becomes a mystery. */}
+      {tailCount > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
+          fontSize: 10, color: "var(--muted)",
+        }}>
+          <span>
+            {tailCount} tail ladder{tailCount === 1 ? "" : "s"} on this game
+            {showTails ? " shown, muted" : " hidden"} — sim or price outside
+            {" "}{Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢,
+            where the model is least confident.
+          </span>
+          <button
+            type="button" className="ui-btn"
+            data-on={showTails ? "true" : "false"}
+            aria-pressed={showTails}
+            onClick={() => onShowTails(!showTails)}
+            style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
+          >
+            {showTails ? "Hide tails" : "Show tails"}
+          </button>
+        </div>
+      )}
+
+      {!ordersLive && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10, color: "var(--muted)", flexWrap: "wrap" }}>
+          <DryRunBadge title="Order entry is staged: the server validates and logs, and submits nothing." />
+          <span>Confirming runs the full path and submits nothing.</span>
+        </div>
       )}
 
       {slip && (
@@ -818,12 +613,12 @@ export default function SuggestedBets({
           idem={slip.idem}
           token={token}
           feeParams={feeParams}
-          quotedAt={computedAt}
+          quotedAt={quotedAt}
           ordersLive={ordersLive}
           onClose={() => setSlip(null)}
         />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -1192,7 +987,8 @@ function ConfirmSlip({
                   </div>
                 ))}
                 <div style={{ color: "var(--muted)", fontSize: 11 }}>
-                  Close this, hit Refresh, and re-read the row at the new price.
+                  Close this, hit Refresh in the index, and re-read the row at
+                  the new price.
                 </div>
               </>
             )}
