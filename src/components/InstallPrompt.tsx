@@ -14,14 +14,16 @@
  * event nor is iOS (desktop Firefox, in-app webviews, anything uninstallable),
  * so a context that cannot install never sees a button that cannot work.
  */
-import { useCallback, useEffect, useState } from "react";
-import { isIOS, isStandalone } from "../lib/pwa";
-
-/** Not in lib.dom yet — Chromium-only, and it is the whole install API. */
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-};
+import { useCallback, useState, useSyncExternalStore } from "react";
+import {
+  clearInstallPrompt,
+  getInstallPrompt,
+  isIOS,
+  isStandalone,
+  markInstalled,
+  subscribeInstallPrompt,
+  wasInstalled,
+} from "../lib/pwa";
 
 const DISMISS_KEY = "mvpeav.installPrompt.dismissed";
 
@@ -42,48 +44,46 @@ function writeDismissed(): void {
 }
 
 export default function InstallPrompt() {
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
+  // The event is stashed at module load in ../lib/pwa (Chrome fires it before
+  // React mounts), so this component SUBSCRIBES to the stash. It never
+  // registers a window listener of its own — that is the bug this avoids.
+  const deferred = useSyncExternalStore(
+    subscribeInstallPrompt,
+    getInstallPrompt,
+    () => null,
+  );
+  const appInstalled = useSyncExternalStore(
+    subscribeInstallPrompt,
+    wasInstalled,
+    () => false,
+  );
+
   const [dismissed, setDismissed] = useState<boolean>(() => readDismissed());
-  const [installed, setInstalled] = useState<boolean>(() => isStandalone());
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
   const ios = isIOS();
-
-  useEffect(() => {
-    const onBeforeInstall = (e: Event) => {
-      // Suppress Chrome's own mini-infobar so OUR button is the single entry
-      // point; without preventDefault the event is not reusable later.
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => {
-      setInstalled(true);
-      setDeferred(null);
-    };
-    window.addEventListener("beforeinstallprompt", onBeforeInstall);
-    window.addEventListener("appinstalled", onInstalled);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
-      window.removeEventListener("appinstalled", onInstalled);
-    };
-  }, []);
+  const installed = appInstalled || isStandalone();
 
   const onInstallClick = useCallback(async () => {
-    if (deferred) {
+    const evt = getInstallPrompt();
+    if (evt) {
       try {
-        await deferred.prompt();
-        const { outcome } = await deferred.userChoice;
-        if (outcome === "accepted") setInstalled(true);
+        await evt.prompt();
+        const { outcome } = await evt.userChoice;
+        if (outcome === "accepted") {
+          markInstalled();
+          return;
+        }
       } catch {
         /* A rejected/aborted prompt must not become an unhandled rejection. */
       }
-      // The event is single-use either way; Chrome re-fires it on a later
-      // visit if the user declined.
-      setDeferred(null);
+      // The event is single-use either way; Chrome re-fires (and the module
+      // re-stashes) on a later visit if the user declined.
+      clearInstallPrompt();
       return;
     }
     setShowIOSGuide(true);
-  }, [deferred]);
+  }, []);
 
   const onDismiss = useCallback(() => {
     setDismissed(true);

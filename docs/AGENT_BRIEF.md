@@ -227,6 +227,12 @@ site, so:
   no install API in ANY browser — every engine there is WebKit — so it
   gets the Share → Add to Home Screen guide instead). Hidden when already
   standalone, and a dismissal sticks in localStorage.
+- The `beforeinstallprompt` listener MUST stay at module scope in
+  `src/lib/pwa.ts`, never in a component effect. Chrome fires it once,
+  before React mounts (measured here: listener 77ms, mount 110ms, event
+  262ms) — an effect-registered listener misses it, the button never
+  appears, and Chrome's mini-infobar shows instead. The component
+  subscribes to the stash via `useSyncExternalStore`.
 
 Verifying a SW change means serving `dist` and checking, in a real browser:
 the page is controlled on second load, `/api` appears in no cache, the
