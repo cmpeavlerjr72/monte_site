@@ -49,6 +49,17 @@ export type PortalOrder = {
   legs?: PortalLeg[]; title?: string;
   /** Live book on the entry's own market, refreshed with each payload. */
   mkt_yes_bid?: number | null; mkt_yes_ask?: number | null;
+  /**
+   * THIS APP placed it — the server tested the order's client_order_id against
+   * its own ORDERS_TAG. The tag itself is never restated on the client: one
+   * definition, server-side, and this boolean is what it decided.
+   *
+   * It is the gate on every per-order control in the UI (the ✕ and the
+   * resting-order review), because it is exactly what the cancel and convert
+   * routes will accept. Absent on a server that predates the flag — treat as
+   * false, which offers no controls rather than offering ones that would 404.
+   */
+  app?: boolean;
 };
 export type PortalFill = {
   ticker: string; side: string; action: string;
@@ -179,6 +190,39 @@ export function simYesP(ticker: string, seeds: SeedPair | undefined): number | n
   return hit / A.length;
 }
 
+/**
+ * P(YES) for ONE market ticker — the portal's pricing plumbing, in one place.
+ *
+ * Held positions, resting orders and the resting-order REVIEW all have to price
+ * the same market the same way, so the two-source fallback lives here rather
+ * than inside `computePortalBets`:
+ *
+ *   1. the SEED arrays, which price the game lines (total / spread / winner)
+ *      by counting simulated outcomes, and
+ *   2. the published team_stats RUNGS for the per-team stat ladders, which are
+ *      not in the seed arrays at all (see `teamStatMarkets.buildStatYesP`).
+ *
+ * Always RAW-MARKET denominated: P(the market's YES), never a side we chose.
+ * A caller holding the NO takes the complement itself — the same convention
+ * `simYesP` and the published rungs already use.
+ *
+ * Null means "we cannot price this", which is the honest answer and the reason
+ * a row prints "—" instead of a number.
+ */
+export function buildPortalYesP(
+  kalshiBySlug: Map<string, KalshiGame>,
+  seedsBySlug: Map<string, SeedPair>,
+  statYesP?: (ticker: string) => number | null,
+): (ticker: string) => number | null {
+  const codeToSlug = buildCodeToSlug(kalshiBySlug);
+  return (ticker: string): number | null => {
+    const t = parseNcaafTicker(ticker);
+    const slug = t ? codeToSlug.get(t.code) : undefined;
+    return simYesP(ticker, slug ? seedsBySlug.get(slug) : undefined)
+      ?? statYesP?.(ticker) ?? null;
+  };
+}
+
 export function buildCodeToSlug(kalshiBySlug: Map<string, KalshiGame>): Map<string, string> {
   const out = new Map<string, string>();
   for (const [slug, kg] of kalshiBySlug) {
@@ -207,6 +251,16 @@ export type PortalBet = {
    *  come back separately as a held position (positions are the ground truth).
    *  Null on positions. */
   filled: number | null; initial: number | null;
+  /** RESTING ORDERS ONLY — Kalshi's order id, which the cancel and convert
+   *  routes address. Absent on positions and on combo rows. */
+  orderId?: string;
+  /** RESTING ORDERS ONLY — this app placed it (server's ORDERS_TAG test), so
+   *  the cancel/convert routes will accept it. False for the maker pipeline's
+   *  orders and for anything placed by hand: those are shown, never actioned. */
+  app?: boolean;
+  /** The one market this entry trades, when it is a straight bet. A combo has
+   *  several and gets none — it is not convertible. */
+  ticker?: string;
 };
 
 export type PortalTotals = {
@@ -235,6 +289,9 @@ export function computePortalBets(
     const t = parseNcaafTicker(tk);
     return t ? codeToSlug.get(t.code) : undefined;
   };
+  // ONE pricing implementation, shared with the resting-order review. See
+  // `buildPortalYesP`.
+  const yesP = buildPortalYesP(kalshiBySlug, seedsBySlug, statYesP);
 
   const push = (
     e: PortalOrder | PortalPosition, kind: PortalBet["kind"],
@@ -257,12 +314,10 @@ export function computePortalBets(
     const kalshiP = mid === null ? null : e.side === "no" ? 1 - mid : mid;
     let simP: number | null = 1;
     for (const l of legs) {
-      const s = slugOf(l.ticker);
       // Seeds price the GAME lines (total/spread/winner). The per-team stat
       // ladders are not in the seed arrays at all, so they fall through to the
       // published rungs. Either way a NO leg is the complement.
-      const py = simYesP(l.ticker, s ? seedsBySlug.get(s) : undefined)
-        ?? statYesP?.(l.ticker) ?? null;
+      const py = yesP(l.ticker);
       if (py === null) { simP = null; break; }
       simP *= l.side === "no" ? 1 - py : py;
     }
@@ -279,6 +334,12 @@ export function computePortalBets(
       slugs, title: e.title,
       legN: legs.length,
       filled: fill?.filled ?? null, initial: fill?.initial ?? null,
+      // Order identity travels with the row so a per-order control (the ✕, the
+      // review's Convert) can address it. A combo is deliberately left without
+      // one: it trades several markets and neither route takes it.
+      orderId: kind === "order" ? (e as PortalOrder).order_id : undefined,
+      app: kind === "order" ? (e as PortalOrder).app === true : undefined,
+      ticker: e.legs?.length ? undefined : e.ticker,
     };
     bets.push(bet);
     for (const s of slugs) {

@@ -33,8 +33,9 @@
 //     else; held-vs-resting is carried by SHAPE (filled dot vs hollow ring)
 //     with a words legend in the header, never by colour.
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { americanOdds, pctText } from "../lib/marketEdge";
+import CancelConfirm from "./CancelOrder";
 import type { PortalBet, PortalTotals } from "../lib/kalshiPortal";
 
 /* Geometry — fixed on purpose (see header). */
@@ -149,9 +150,22 @@ function Legend({ held, resting }: { held: boolean; resting: boolean }) {
  * The owner's book on ONE game. Labels are cheer-side (a held NO is flipped to
  * the complement bet), so the row reads as the outcome being rooted for.
  */
-export default function MyBookStrip({ bets }: { bets: PortalBet[] }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const openIdx = bets.findIndex((b) => b.key === open);
+export default function MyBookStrip({ bets, token = "" }: {
+  bets: PortalBet[];
+  /** Portal password. Present only for the owner, and only then does a resting
+   *  row that THIS APP placed get its ✕. Without it the strip is exactly the
+   *  read-only block it has always been. */
+  token?: string;
+}) {
+  /**
+   * ONE popover, two things it can be showing: the bet's derivation (a tap on
+   * the row) or the cancel confirm (a tap on the ✕). Reusing the popover rather
+   * than growing an inline confirm inside a fixed 40px row is what keeps the
+   * index arithmetic below valid AND leaves room for the question, the answer
+   * and two 30px buttons on a phone.
+   */
+  const [pop, setPop] = useState<{ key: string; mode: "info" | "cancel" } | null>(null);
+  const openIdx = bets.findIndex((b) => b.key === pop?.key);
   const openBet = openIdx >= 0 ? bets[openIdx] : null;
 
   return (
@@ -167,16 +181,38 @@ export default function MyBookStrip({ bets }: { bets: PortalBet[] }) {
         <span>Sim EV</span>
       </div>
 
-      {bets.map((b) => (
-        <BetRow
-          key={b.key}
-          bet={b}
-          on={b.key === open}
-          onToggle={() => setOpen((k) => (k === b.key ? null : b.key))}
-        />
-      ))}
+      {bets.map((b) => {
+        // The ✕ is offered ONLY where the server would accept it: a resting
+        // order this app placed (`app`, decided server-side against its own
+        // cfbapp- tag). The maker pipeline's orders and hand-placed ones show
+        // here and stay untouchable.
+        const cancellable = Boolean(token) && b.kind === "order" && b.app === true && b.orderId;
+        const row = (
+          <BetRow
+            bet={b}
+            on={b.key === pop?.key}
+            onToggle={() => setPop((p) => (p?.key === b.key && p.mode === "info" ? null : { key: b.key, mode: "info" }))}
+          />
+        );
+        if (!cancellable) return <Fragment key={b.key}>{row}</Fragment>;
+        return (
+          <div className="mybook__rowline" key={b.key}>
+            {row}
+            <button
+              type="button"
+              className="mybook__x"
+              data-on={pop?.key === b.key && pop.mode === "cancel" ? "true" : undefined}
+              aria-label={`Cancel the resting order for ${b.label}`}
+              title="Cancel this resting order"
+              onClick={() => setPop({ key: b.key, mode: "cancel" })}
+            >
+              ✕
+            </button>
+          </div>
+        );
+      })}
 
-      {openBet && (
+      {openBet && pop && (
         <div
           role="status"
           className="mybook__pop"
@@ -190,10 +226,21 @@ export default function MyBookStrip({ bets }: { bets: PortalBet[] }) {
               : HEAD_H + (openIdx + 1) * ROW_H,
           }}
         >
-          {betLines(openBet).map((line, i) => <div key={i}>{line}</div>)}
-          <button type="button" className="ui-btn mybook__close" onClick={() => setOpen(null)}>
-            Close
-          </button>
+          {pop.mode === "cancel" && openBet.orderId ? (
+            <CancelConfirm
+              token={token}
+              orderId={openBet.orderId}
+              label={openBet.label}
+              onDismiss={() => setPop(null)}
+            />
+          ) : (
+            <>
+              {betLines(openBet).map((line, i) => <div key={i}>{line}</div>)}
+              <button type="button" className="ui-btn mybook__close" onClick={() => setPop(null)}>
+                Close
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

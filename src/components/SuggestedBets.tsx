@@ -35,6 +35,28 @@
 // the pipeline is right and this file is the bug.
 //
 // ---------------------------------------------------------------------------
+// AND THE ORDERS ALREADY WORKING: the resting-bets review
+// ---------------------------------------------------------------------------
+// This surface only ever speaks about markets the account is NOT in — the
+// compute excludes every held or resting ticker, because a resting rung has
+// already consumed its ladder slot. That left a hole the size of the pipeline's
+// central doctrine: a maker order is supposed to BECOME a taker as kickoff
+// approaches (far out, resting is fine; a few hours out the take bar drops;
+// inside the last hour there is no resting at all, because the pre-kickoff
+// chain cancels every unfilled quote at kick−30) — and nothing in the app ever
+// said so, because the moment an order rested, that market went quiet.
+//
+// `src/lib/restingReview.ts` + `src/components/RestingBets.tsx` are the HUMAN
+// PATH FOR THAT DOCTRINE: one row per resting order this app placed, one
+// verdict — CONVERT / HOLD / PULL — off the SAME timing bands, the same fees
+// and the same pregame gate as the rows below, imported from suggestedBets.ts
+// and never restated. The block sits above the index in the owner console,
+// because money already committed outranks discovery.
+//
+// The selection constants here still mirror the pipeline. The review's
+// thresholds ARE those constants — there is no third opinion anywhere.
+//
+// ---------------------------------------------------------------------------
 // Zero new Kalshi load
 // ---------------------------------------------------------------------------
 // Everything is computed from quotes ALREADY flowing through the page's

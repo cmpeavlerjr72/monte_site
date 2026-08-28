@@ -18,7 +18,9 @@
 import { useState } from "react";
 import { getTeamLogo } from "../utils/teamLogo";
 import DryRunBadge from "./DryRunBadge";
+import RestingBets, { RestingBadge } from "./RestingBets";
 import { kickText, signed } from "./SuggestedBets";
+import type { RestingReview } from "../lib/restingReview";
 // Only the COLLAPSE state is this component's own; the filters and the order
 // live in Scoreboard (one compute, one set of filters) and persist there.
 import { readCardOpen, writeCardOpen, type SuggestSort } from "../lib/ownerPrefs";
@@ -100,10 +102,16 @@ function IndexRow({ sec, showTails, onOpen }: {
 }
 
 export default function SuggestedBetsIndex({
-  suggestions, unit, sort, onSort, onRefresh, ordersLive,
+  suggestions, review, token, unit, sort, onSort, onRefresh, ordersLive,
   showTails, onShowTails, onClearFilters, onOpenGame,
 }: {
   suggestions: Suggestions;
+  /** The owner's own resting orders, re-priced — the ACTION half of this
+   *  surface. It sits above the index rows because it is the only part with a
+   *  clock on it, and its badge shows even when the card is collapsed. */
+  review: RestingReview;
+  /** Portal password — the resting block can cancel and convert. */
+  token: string;
   /** Dollars of risk per ladder — printed so the counts have a unit. */
   unit: number;
   sort: SuggestSort;
@@ -162,6 +170,10 @@ export default function SuggestedBetsIndex({
         </button>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          {/* ACTION NEEDED, visible collapsed. A resting order whose verdict
+              has turned is the one thing on this surface with a deadline, and
+              a deadline behind a disclosure triangle is a deadline missed. */}
+          <RestingBadge n={review.needAction} />
           {!ordersLive && (
             <DryRunBadge title="Order entry is staged: the server validates and logs, and submits nothing." />
           )}
@@ -176,6 +188,16 @@ export default function SuggestedBetsIndex({
 
       {open && (
         <>
+          {/* THE ORDERS WE ALREADY HAVE, first. Discovery can wait; a rest
+              whose band has moved cannot. */}
+          <RestingBets
+            review={review}
+            token={token}
+            ordersLive={ordersLive}
+            quotedAt={computedAt}
+            onOpenGame={onOpenGame}
+          />
+
           {/* Order. The mode / bet-type filters live in the per-game panel
               beside the rows they drop; the ORDER of the games is this
               surface's own question, so it stays here. */}

@@ -108,6 +108,67 @@ export function cancelAppOrders(token: string) {
   return post("/api/portfolio/cfb/orders/cancel", token, { all: true });
 }
 
+/** ONE resting order, by id — same route, same tag filter. An order that has
+ *  already filled or been cancelled comes back as `not_resting` WITH its real
+ *  state; one that is not ours comes back 404 `not_app_order`. Neither is ever
+ *  reported as a successful cancel. */
+export function cancelAppOrder(token: string, orderId: string) {
+  return post("/api/portfolio/cfb/orders/cancel", token, { order_id: orderId });
+}
+
+/** A resting order becoming a take: cancel, confirm, then IOC at `limit_price`,
+ *  server-side and under ONE idempotency key. See the CONVERT block in
+ *  server/liveScores.ts for the whole contract — including the composite
+ *  `cancelled_not_placed` state this client must say out loud. */
+export type ConvertRequest = {
+  order_id: string;
+  ticker: string;
+  side: "yes" | "no";
+  /** Contracts still working on the rest. The server takes the smaller of this
+   *  and what the cancel confirms was left. */
+  count_fp: number;
+  /** The confirmed crossing price — a HARD bound. A worse ask is refused and
+   *  the rest is left alone. */
+  limit_price: number;
+};
+
+export type ConvertResponse = {
+  dry_run?: boolean;
+  idempotency_key?: string;
+  checked_at?: string;
+  /** Present once the cancel has been attempted. `ok:false` means the rest is
+   *  still working and nothing was placed. */
+  cancel?: { ok: boolean; order_id: string; ticker?: string; http_status?: number;
+             state?: { status: string; filled: number | null; remaining: number | null } | null } | null;
+  would_cancel?: { order_id: string; ticker: string; remaining: number | null };
+  would_place?: PlaceEcho[];
+  placed?: PlaceEcho[];
+  errors?: PlaceEcho[];
+  totals?: { cost: number; spent_24h: number; remaining_24h: number };
+  book?: { yes_bid: number | null; yes_ask: number | null; no_bid: number | null; no_ask: number | null };
+  note?: string;
+  /** "book_moved" | "no_offer" | "not_resting" | "not_app_order" |
+   *  "cancel_failed" | "cancelled_not_placed" | "cancelled_nothing_left" | … */
+  error?: string;
+  detail?: string;
+  cap?: number;
+  total?: number;
+  spent_24h?: number;
+  state?: { status: string; filled: number | null; remaining: number | null } | null;
+  replayed?: boolean;
+};
+
+export function convertOrder(token: string, idempotencyKey: string, req: ConvertRequest) {
+  return post("/api/portfolio/cfb/orders/convert", token,
+    { idempotency_key: idempotencyKey, ...req });
+}
+
+/** THE state the UI must never soften: the rest is gone and no take replaced
+ *  it, so the market is UNHELD and the ticker will reappear as a normal
+ *  suggestion on the next compute. */
+export const convertLostBoth = (b: ConvertResponse): boolean =>
+  b.error === "cancelled_not_placed";
+
 /** Human sentence for a server refusal, for the confirm popup's result area. */
 export function placeErrorText(body: PlaceResponse): string {
   if (body.rejected?.length) {
