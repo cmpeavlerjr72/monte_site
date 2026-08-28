@@ -38,7 +38,7 @@ import { getTeamStatsCached, type TeamStats as TeamStatsDoc } from "../lib/cfbJs
 import type { KalshiGame } from "../lib/kalshi";
 import type { PortalPayload } from "../lib/kalshiPortal";
 import {
-  buildSuggestions, heldTickerSet, statCandidates,
+  buildSuggestions, groupLadders, heldTickerSet, statCandidates,
   LADDER_RISK, MIN_MAKER_EDGE, TAKE_THRESHOLD,
   type Candidate, type FeeParams,
 } from "../lib/suggestedBets";
@@ -149,6 +149,14 @@ export default function SuggestedBets({
     // feed the page currently holds, and never triggers a fetch of its own.
   }, [games, kalshiBySlug, feeParams, portal, docs, nonce]);
 
+  // Presentation only: fold each ladder's picked rungs (nested markets, up to
+  // MAX_RUNGS) into one display row, ranked by its best rung's net edge.
+  // Selection and sizing already happened above; this never touches either.
+  const groups = useMemo(() => groupLadders(rows), [rows]);
+
+  // Card key -> game, so a same-game run of ladder rows can carry a header.
+  const gameByKey = useMemo(() => new Map(games.map((g) => [g.key, g])), [games]);
+
   const pregameCount = games.filter((g) => !g.started).length;
 
   return (
@@ -180,19 +188,37 @@ export default function SuggestedBets({
         fee. Read-only — the maker pipeline places.
       </div>
 
-      {rows.length === 0 ? (
+      {groups.length === 0 ? (
         <div style={{ fontSize: 12, color: "var(--muted)" }}>
           Nothing clears the thresholds right now.
         </div>
       ) : (
         <div style={{ display: "grid", gap: 3 }}>
-          {rows.map((r) => {
-            const on = r.key === sel;
+          {groups.map((g, i) => {
+            const on = g.ladder === sel;
+            const single = g.rungs.length === 1;
+            const head = g.rungs[0];
+            // Same-game visual cue: a run of >=2 consecutive rows sharing a
+            // game reads as one concentration, not N independent picks.
+            const isRunStart = groups[i - 1]?.slug !== g.slug;
+            let runLen = 1;
+            for (let j = i + 1; j < groups.length && groups[j].slug === g.slug; j++) runLen++;
+            const game = gameByKey.get(g.slug);
             return (
-              <div key={r.key}>
+              <div key={g.ladder}>
+                {isRunStart && runLen > 1 && game && (
+                  <div style={{
+                    fontSize: 9.5, fontWeight: 700, color: "var(--muted)",
+                    textTransform: "uppercase", letterSpacing: 0.3,
+                    borderTop: "1px solid var(--border)",
+                    padding: "5px 2px 2px", marginTop: i === 0 ? 0 : 2,
+                  }}>
+                    {game.teamA} vs {game.teamB} — {runLen} bets, one game
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={() => { setSel(on ? null : r.key); onJump?.(r.slug); }}
+                  onClick={() => { setSel(on ? null : g.ladder); onJump?.(g.slug); }}
                   style={{
                     width: "100%", textAlign: "left", cursor: "pointer",
                     display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap",
@@ -202,23 +228,35 @@ export default function SuggestedBets({
                     font: "inherit", fontSize: 12,
                   }}
                 >
-                  <span style={{ fontWeight: 700 }}>{r.label}</span>
-                  <span style={{
-                    fontSize: 10, fontWeight: 800, padding: "1px 6px",
-                    borderRadius: 999, border: "1px solid var(--border)",
-                    color: "var(--muted)", whiteSpace: "nowrap",
-                  }}>
-                    {r.mode} @{cents(r.price)}
-                  </span>
-                  <span style={{ fontSize: 10.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                    ${LADDER_RISK} → {r.count} @ {cents(r.price)}
-                  </span>
+                  <span style={{ fontWeight: 700 }}>{single ? head.label : g.headline}</span>
+                  {single ? (
+                    <>
+                      <span style={{
+                        fontSize: 10, fontWeight: 800, padding: "1px 6px",
+                        borderRadius: 999, border: "1px solid var(--border)",
+                        color: "var(--muted)", whiteSpace: "nowrap",
+                      }}>
+                        {head.mode} @{cents(head.price)}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                        ${LADDER_RISK} → {head.count} @ {cents(head.price)}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{
+                      fontSize: 10, fontWeight: 800, padding: "1px 6px",
+                      borderRadius: 999, border: "1px solid var(--border)",
+                      color: "var(--muted)", whiteSpace: "nowrap",
+                    }}>
+                      {g.rungs.length} rungs · ${g.each} each
+                    </span>
+                  )}
                   <span style={{
                     marginLeft: "auto", fontWeight: 800,
                     fontVariantNumeric: "tabular-nums",
-                    color: r.edge > 0 ? "var(--pos)" : "var(--neg)",
+                    color: g.bestEdge > 0 ? "var(--pos)" : "var(--neg)",
                   }}>
-                    {signed(r.edge)}
+                    {signed(g.bestEdge)}
                   </span>
                 </button>
                 {on && (
@@ -228,14 +266,45 @@ export default function SuggestedBets({
                     background: "var(--card)", border: "1px solid var(--brand)",
                     borderRadius: 7,
                   }}>
-                    Sim {Math.round(r.simP * 100)}% · price {cents(r.price)} ·
-                    fee {(r.fee * 100 / Math.max(r.count, 1)).toFixed(1)}¢/contract
-                    {" "}({r.fee.toFixed(2)} total) · net edge {signed(r.edge)}
-                    <div style={{ color: "var(--muted)", marginTop: 2 }}>
-                      {r.count} contracts, outlay ${r.outlay.toFixed(2)} of ${LADDER_RISK}
-                      {" · "}fee type {r.feeType}
-                      {" · "}{r.ticker}
-                    </div>
+                    {single ? (
+                      <>
+                        Sim {Math.round(head.simP * 100)}% · price {cents(head.price)} ·
+                        fee {(head.fee * 100 / Math.max(head.count, 1)).toFixed(1)}¢/contract
+                        {" "}({head.fee.toFixed(2)} total) · net edge {signed(head.edge)}
+                        <div style={{ color: "var(--muted)", marginTop: 2 }}>
+                          {head.count} contracts, outlay ${head.outlay.toFixed(2)} of ${LADDER_RISK}
+                          {" · "}fee type {head.feeType}
+                          {" · "}{head.ticker}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {g.rungs.map((rr, ri) => (
+                          <div key={rr.key} style={{
+                            display: "flex", alignItems: "baseline", gap: 8,
+                            padding: "3px 0",
+                            borderTop: ri === 0 ? "none" : "1px solid var(--border)",
+                          }}>
+                            <span style={{ fontWeight: 700 }}>{rr.strike}+</span>
+                            <span style={{ color: "var(--muted)" }}>{rr.mode} @{cents(rr.price)}</span>
+                            <span style={{ color: "var(--muted)" }}>
+                              {rr.count} ct · fee {rr.fee.toFixed(2)}
+                            </span>
+                            <span style={{
+                              marginLeft: "auto", fontWeight: 700,
+                              color: rr.edge > 0 ? "var(--pos)" : "var(--neg)",
+                            }}>
+                              {signed(rr.edge)}
+                            </span>
+                          </div>
+                        ))}
+                        <div style={{ color: "var(--muted)", marginTop: 4 }}>
+                          ${LADDER_RISK} ladder, ${g.each} per rung
+                          {" · "}outlay ${g.rungs.reduce((s, rr) => s + rr.outlay, 0).toFixed(2)}
+                          {" · "}fee type {head.feeType}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

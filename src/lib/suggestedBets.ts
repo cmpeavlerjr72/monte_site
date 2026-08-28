@@ -101,6 +101,10 @@ export type Suggestion = {
   ladder: string;
   /** Kalshi's own wording, e.g. "TCU 225+ rec yds". */
   label: string;
+  /** Display-only pieces of `label`, kept structured for grouping ladder-mates. */
+  team: string;
+  statText: string;
+  strike: number;
   mode: "REST" | "TAKE";
   simP: number;
   price: number;
@@ -153,6 +157,10 @@ export type Candidate = {
   slug: string;
   ladder: string;
   label: string;
+  /** Display-only pieces of `label`, kept structured for grouping ladder-mates. */
+  team: string;
+  statText: string;
+  strike: number;
   series: string;
   simP: number;
   bid: number | null;
@@ -225,6 +233,7 @@ export function buildSuggestions(
       rows.push({
         key: `${p.ticker}|${p.mode}`,
         ticker: p.ticker, slug: p.slug, ladder, label: p.label,
+        team: p.team, statText: p.statText, strike: p.strike,
         mode: p.mode, simP: p.simP, price: p.price,
         fee, edge: p.edgePer, count,
         outlay: round2(p.price * count + fee),
@@ -262,15 +271,64 @@ export function statCandidates(
     const team = q.side === "A" ? teamA : teamB;
     const p = rungP(team, q.stat, q.strike);
     if (p === null) continue;                 // no published rung: no bet
+    const strike = Math.ceil(q.strike);
+    const statText = statLabel(q.stat);
     out.push({
       ticker: q.ticker ?? "",
       slug,
       ladder: `${slug}|${q.stat}|${q.side}`,
-      label: `${team} ${Math.ceil(q.strike)}+ ${statLabel(q.stat)}`,
+      label: `${team} ${strike}+ ${statText}`,
+      team, statText, strike,
       series: seriesFor(q.stat),
       simP: p,
       bid: q.yes_bid, ask: q.yes_ask,
     });
   }
   return out;
+}
+
+/* ------------------------------- grouping --------------------------------- */
+/**
+ * Presentation-only: fold a ladder's picked rungs (nested markets — 2 per
+ * ladder, capped by MAX_RUNGS above) into ONE display row. Selection and
+ * sizing are untouched; this only decides how already-built `Suggestion`s are
+ * grouped and ranked for rendering. Ranking uses the BEST rung's net edge,
+ * matching the headline chip.
+ */
+export type LadderGroup = {
+  ladder: string;
+  /** Card key to scroll to (see `statCandidates` — this is the scoreboard key, not the data slug). */
+  slug: string;
+  /** Rungs sorted by strike ascending, for popover itemization. */
+  rungs: Suggestion[];
+  /** Best rung's net edge — drives ranking AND the at-rest verdict chip. */
+  bestEdge: number;
+  /** Single-line headline for a >1-rung ladder, e.g. "NMST 14+ & 17+ points". */
+  headline: string;
+  /** Dollars of the $LADDER_RISK stake allotted per rung in this ladder. */
+  each: number;
+};
+
+export function groupLadders(rows: Suggestion[]): LadderGroup[] {
+  const byLadder = new Map<string, Suggestion[]>();
+  for (const r of rows) {
+    const arr = byLadder.get(r.ladder);
+    if (arr) arr.push(r); else byLadder.set(r.ladder, [r]);
+  }
+  const groups: LadderGroup[] = [];
+  for (const [ladder, group] of byLadder) {
+    const rungs = [...group].sort((a, b) => a.strike - b.strike);
+    const best = group.reduce((m, r) => (r.edge > m.edge ? r : m), group[0]);
+    const strikes = rungs.map((r) => `${r.strike}+`).join(" & ");
+    groups.push({
+      ladder,
+      slug: best.slug,
+      rungs,
+      bestEdge: best.edge,
+      headline: rungs.length > 1 ? `${best.team} ${strikes} ${best.statText}` : best.label,
+      each: round2(LADDER_RISK / group.length),
+    });
+  }
+  groups.sort((a, b) => b.bestEdge - a.bestEdge);
+  return groups;
 }
