@@ -49,7 +49,7 @@
 // both are AA as text on both surfaces. The numeric table view remains one
 // toggle away as the relief the validator requires for a sub-3:1 fill.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getTeamStatsCached, TeamStatsNotPublished,
   type TeamStats as TeamStatsDoc, type TeamStatDist,
@@ -95,10 +95,39 @@ const ROWS: { key: string; label: string; unit?: string }[] = [
 const DISCRETE = new Set(["rush_td", "rec_td", "td_offensive", "def_sacks", "def_ints"]);
 
 /* -------------------------------- geometry ------------------------------- */
-const PLOT_W = 900;
-const GUTTER = 156;
+/* Layout is measured, not fixed: the panel fits its container the way the
+ * site's other charts do, INCLUDING on a phone in the installed PWA. The
+ * naive fix — a viewBox that scales — was rejected: at 375px in a 900px
+ * design that is a 0.42 scale factor, which turns 9px labels into 3.8px.
+ * So the layout is recomputed at the real width and legibility is bought
+ * with DENSITY instead: fonts stay fixed and the chips thin out to the
+ * markets that actually carry a verdict. */
+const DESIGN_W = 900;     // desktop width; also the upper clamp
+const MIN_W = 300;
+const NARROW_BELOW = 560;
 const PAD_R = 26;
-const DENS_H = 34;        // silhouette height, each side of the axis
+/** Everything width-dependent, derived once per measured container width. */
+type Layout = {
+  plotW: number;
+  gutter: number;
+  densH: number;
+  /** Max chipped flags PER TEAM per stat; Infinity on desktop. */
+  maxChips: number;
+  narrow: boolean;
+};
+
+function layoutFor(width: number): Layout {
+  const plotW = Math.max(MIN_W, Math.min(width || DESIGN_W, DESIGN_W));
+  const narrow = plotW < NARROW_BELOW;
+  return {
+    plotW,
+    // The desktop gutter is a luxury; on a phone it is a third of the screen.
+    gutter: narrow ? 84 : 156,
+    densH: narrow ? 27 : 34,
+    maxChips: narrow ? 4 : Infinity,
+    narrow,
+  };
+}
 const CHIP_H = 24;        // one row of flag labels: strike over edge, 2 lines
 const AXIS_LBL = 13;
 const BLOCK_PAD = 4;
@@ -186,6 +215,9 @@ type Flag = {
   x: number;
   strike: string;
   edge: number | null;
+  /** False = bare stub: no edge, or crowded out at narrow widths. Still
+   *  tappable, and the popover still carries the full verdict. */
+  showChip: boolean;
   /** Why the edge is withheld, in words, for the popover. */
   detail: string;
   row: number;
@@ -195,9 +227,9 @@ type Flag = {
 function stagger(flags: Omit<Flag, "row">[], rowsMax = 3): Flag[] {
   const lastX: number[] = [];
   return flags.map((f) => {
-    // Chip-less flags claim no row: they carry only a small strike stub, so
-    // letting them push a real verdict onto a second row would be backwards.
-    if (f.edge === null) return { ...f, row: 0 };
+    // Chip-less flags claim no row: they carry only a small stub, so letting
+    // them push a real verdict onto a second row would be backwards.
+    if (!f.showChip) return { ...f, row: 0 };
     let row = 0;
     while (row < rowsMax && lastX[row] !== undefined && f.x - lastX[row] < CHIP_W) row++;
     if (row >= rowsMax) row = 0;                    // give up gracefully
@@ -213,7 +245,8 @@ const strikeLabel = (k: number): string => `${Math.ceil(k)}+`;
 
 function buildFlags(
   rungs: Rung[], statKey: string, side: "A" | "B" | null, team: string,
-  label: string, quotes: Map<string, KalshiStatQuote>, x: (v: number) => number
+  label: string, quotes: Map<string, KalshiStatQuote>, x: (v: number) => number,
+  maxChips: number
 ): Flag[] {
   if (!side) return [];
   const raw: Omit<Flag, "row">[] = [];
@@ -232,7 +265,22 @@ function buildFlags(
         (live !== null
           ? `Edge: ${signed(live)}`
           : `Edge: under the 3¢ threshold`);
-    raw.push({ key: `${statKey}|${side}|${r.k}`, x: x(r.k), strike: strikeLabel(r.k), edge: live, detail });
+    raw.push({
+      key: `${statKey}|${side}|${r.k}`, x: x(r.k), strike: strikeLabel(r.k),
+      edge: live, showChip: live !== null, detail,
+    });
+  }
+
+  // Narrow widths: keep only the biggest verdicts as chips. Ranking by
+  // |edge| means the markets that survive are the ones worth acting on, not
+  // whichever happened to come first along the ladder. The rest stay as
+  // tappable stubs — nothing is removed, only de-emphasised.
+  if (Number.isFinite(maxChips)) {
+    const chipped = raw.filter((f) => f.showChip)
+      .sort((a, b) => Math.abs(b.edge!) - Math.abs(a.edge!))
+      .slice(0, maxChips);
+    const keep = new Set(chipped.map((f) => f.key));
+    for (const f of raw) if (f.showChip && !keep.has(f.key)) f.showChip = false;
   }
   return stagger(raw);
 }
@@ -240,7 +288,7 @@ function buildFlags(
 /* ------------------------------ one stat block ---------------------------- */
 function StatBlock({
   statKey, label, unit, definition, cols, sideOf, stats, quotes,
-  colorFor, logoFor, sel, onSel,
+  colorFor, logoFor, sel, onSel, L,
 }: {
   statKey: string;
   label: string;
@@ -254,6 +302,7 @@ function StatBlock({
   logoFor?: (team: string) => string | undefined;
   sel: string | null;
   onSel: (key: string | null) => void;
+  L: Layout;
 }) {
   const [tA, tB] = cols;
   const dA = stats[tA]?.[statKey];
@@ -303,9 +352,9 @@ function StatBlock({
   // of being sliced in half by the axis origin.
   const axisMin = discrete ? -0.5 : 0;
   const x = (v: number) =>
-    GUTTER +
+    L.gutter +
     ((Math.max(axisMin, Math.min(v, axisMax)) - axisMin) / (axisMax - axisMin)) *
-      (PLOT_W - GUTTER - PAD_R);
+      (L.plotW - L.gutter - PAD_R);
 
   const binsA = discrete ? [] : bins(rA, axisMax);
   const binsB = discrete ? [] : bins(rB, axisMax);
@@ -315,18 +364,18 @@ function StatBlock({
     ...cntA.map((b) => b.mass), ...cntB.map((b) => b.mass)
   );
 
-  const flagsA = buildFlags(rA, statKey, sideOf(tA), tA, label, quotes, x);
-  const flagsB = tB ? buildFlags(rB, statKey, sideOf(tB), tB, label, quotes, x) : [];
-  const rowsA = flagsA.length ? Math.max(...flagsA.map((f) => f.row)) + 1 : 0;
-  const rowsB = flagsB.length ? Math.max(...flagsB.map((f) => f.row)) + 1 : 0;
+  const flagsA = buildFlags(rA, statKey, sideOf(tA), tA, label, quotes, x, L.maxChips);
+  const flagsB = tB ? buildFlags(rB, statKey, sideOf(tB), tB, label, quotes, x, L.maxChips) : [];
+  const rowsA = flagsA.some((f) => f.showChip) ? Math.max(...flagsA.map((f) => f.row)) + 1 : 0;
+  const rowsB = flagsB.some((f) => f.showChip) ? Math.max(...flagsB.map((f) => f.row)) + 1 : 0;
 
   const bandA = rowsA * CHIP_H + BLOCK_PAD;
   const bandB = rowsB * CHIP_H + BLOCK_PAD;
-  const axisY = bandA + DENS_H;
-  const height = axisY + DENS_H + bandB + AXIS_LBL;
+  const axisY = bandA + L.densH;
+  const height = axisY + L.densH + bandB + AXIS_LBL;
 
-  const yUp = (d: number) => axisY - (d / peak) * DENS_H;
-  const yDn = (d: number) => axisY + (d / peak) * DENS_H;
+  const yUp = (d: number) => axisY - (d / peak) * L.densH;
+  const yDn = (d: number) => axisY + (d / peak) * L.densH;
 
   const selFlag = [...flagsA, ...flagsB].find((f) => f.key === sel);
 
@@ -338,10 +387,10 @@ function StatBlock({
     const brand = colorFor?.(team) ?? "var(--brand)";
     const logo = logoFor?.(team);
     const yFn = up ? yUp : yDn;
-    const labelY = up ? axisY - DENS_H / 2 : axisY + DENS_H / 2;
+    const labelY = up ? axisY - L.densH / 2 : axisY + L.densH / 2;
     // 0.34 of the unit slot, capped at the 24px bar spec: the leftover is air,
     // and the gap between neighbours is the separator, never a stroke.
-    const slot = (PLOT_W - GUTTER - PAD_R) / (axisMax - axisMin);
+    const slot = (L.plotW - L.gutter - PAD_R) / (axisMax - axisMin);
     const barW = Math.min(24, Math.max(3, slot * 0.34));
     return (
       <g>
@@ -361,7 +410,7 @@ function StatBlock({
           </path>
         )}
         {cs.map((b) => {
-          const h = (b.mass / peak) * DENS_H;
+          const h = (b.mass / peak) * L.densH;
           // Clamp into the plot: the value-0 bar would otherwise hang half
           // its width over the team-label gutter.
           const left = Math.max(x(axisMin), x(b.v) - barW / 2);
@@ -385,16 +434,16 @@ function StatBlock({
           // Row 0 is nearest the density; later rows stack outward.
           const outer = up
             ? bandA - f.row * CHIP_H
-            : axisY + DENS_H + (f.row + 1) * CHIP_H;
-          const strikeY = f.edge === null
-            ? (up ? axisY - DENS_H - 5 : axisY + DENS_H + 12)
+            : axisY + L.densH + (f.row + 1) * CHIP_H;
+          const strikeY = !f.showChip
+            ? (up ? axisY - L.densH - 5 : axisY + L.densH + 12)
             : (up ? outer - 2 : outer - 12);
           const edgeY = up ? outer - 12 : outer - 2;
           // A flag with no edge is a market we cannot act on: it keeps a short
           // stub and its strike, never a full-height stem competing with the
           // rungs that DO carry a verdict.
-          const stemEnd = f.edge === null
-            ? (up ? axisY - DENS_H - 2 : axisY + DENS_H + 2)
+          const stemEnd = !f.showChip
+            ? (up ? axisY - L.densH - 2 : axisY + L.densH + 2)
             : (up ? outer + 2 : outer - CHIP_H + 2);
           const on = f.key === sel;
           const tone = f.edge === null ? "var(--muted)" : f.edge > 0 ? "var(--pos)" : "var(--neg)";
@@ -404,13 +453,19 @@ function StatBlock({
             <g key={f.key} style={{ cursor: "pointer" }}
                onClick={() => onSel(on ? null : f.key)}>
               <line x1={f.x} x2={f.x} y1={axisY} y2={stemEnd}
-                    stroke={f.edge === null ? "var(--border)" : "var(--muted)"}
-                    strokeWidth={on ? 2 : 1} strokeOpacity={f.edge === null ? 1 : 0.8} />
-              <text x={f.x} y={strikeY} fontSize={9} textAnchor="middle"
-                    fill="var(--muted)" style={{ fontVariantNumeric: "tabular-nums" }}>
-                {f.strike}
-              </text>
-              {f.edge !== null && (
+                    stroke={!f.showChip ? "var(--border)" : "var(--muted)"}
+                    strokeWidth={on ? 2 : 1} strokeOpacity={!f.showChip ? 1 : 0.8} />
+              {/* On a phone a stub is a BARE tick: 25-yard strikes land ~16px
+                  apart there, so printing every "275+" would collide into
+                  mush. The strike stays in the tap popover, which is the
+                  whole point of keeping stubs tappable. */}
+              {(f.showChip || !L.narrow) && (
+                <text x={f.x} y={strikeY} fontSize={9} textAnchor="middle"
+                      fill="var(--muted)" style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {f.strike}
+                </text>
+              )}
+              {f.showChip && f.edge !== null && (
                 <text x={f.x} y={edgeY} fontSize={big ? 11.5 : 10}
                       fontWeight={big ? 800 : 700} textAnchor="middle" fill={tone}
                       style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -438,7 +493,7 @@ function StatBlock({
         </span>
         {unit && <span style={{ fontSize: 10, color: "var(--muted)" }}>{unit}</span>}
       </div>
-      <svg width={PLOT_W} height={height} viewBox={`0 0 ${PLOT_W} ${height}`}
+      <svg width={L.plotW} height={height} viewBox={`0 0 ${L.plotW} ${height}`}
            role="img" aria-label={`${label}: simulated distributions and live Kalshi markets`}
            style={{ display: "block", maxWidth: "none" }}>
         {side(tA, dA, binsA, cntA, flagsA, true)}
@@ -456,7 +511,7 @@ function StatBlock({
 
       {selFlag && (
         <div role="status" style={{
-          position: "absolute", left: Math.min(Math.max(8, selFlag.x - 150), PLOT_W - 300),
+          position: "absolute", left: Math.min(Math.max(8, selFlag.x - 150), Math.max(8, L.plotW - 300)),
           top: 4, zIndex: 2, maxWidth: 300,
           background: "var(--card)", border: "1px solid var(--brand)",
           borderRadius: 8, padding: "7px 9px", fontSize: 11.5, lineHeight: 1.45,
@@ -554,6 +609,36 @@ export default function TeamStats({
   const [view, setView] = useState<"chart" | "table">("chart");
   const [sel, setSel] = useState<string | null>(null);
 
+  // Measured container width -> layout.
+  //
+  // A CALLBACK REF, not useLayoutEffect+[]: the chart container does not
+  // exist on first render (the panel is showing "Loading team stats…"), so
+  // an effect that reads a ref once would find null, never re-run, and leave
+  // the layout stuck at the 900px desktop default — which is exactly the
+  // horizontal scrolling this change exists to remove. The callback fires
+  // when the node actually appears.
+  //
+  // State is a NUMBER and the identity of `attachBox` is stable, so nothing
+  // here can feed its own setState back into a dependency (brief rule 4);
+  // the epsilon guard also drops no-op resizes.
+  const [boxW, setBoxW] = useState(0);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const attachBox = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
+    if (!el) return;
+    const apply = (w: number) => setBoxW((prev) => (Math.abs(prev - w) < 1 ? prev : w));
+    apply(el.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;   // SSR / old engines
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) apply(e.contentRect.width);
+    });
+    ro.observe(el);
+    roRef.current = ro;
+  }, []);
+  useEffect(() => () => roRef.current?.disconnect(), []);
+  const L = useMemo(() => layoutFor(boxW), [boxW]);
+
   // Lazy: mounts only when the panel is open; the loader is memoized per
   // (namespace, week). Deps are PRIMITIVES only (brief rule 4).
   useEffect(() => {
@@ -633,17 +718,19 @@ export default function TeamStats({
         {priced ? " Prices update live; no edge is shown on a one-sided or very wide book." : ""}
       </div>
 
-      {/* Wide content scrolls inside its own container; the page never does. */}
-      <div style={{ overflowX: "auto" }}>
+      {/* The CHART fits its container at every width, so it never scrolls.
+          Only the table view — a real table with a sensible minimum — keeps
+          the scroll container. */}
+      <div ref={attachBox} style={{ overflowX: view === "chart" ? "hidden" : "auto" }}>
         {view === "chart" ? (
-          <div style={{ minWidth: PLOT_W }}>
+          <div>
             {ROWS.map((r) => (
               <StatBlock
                 key={r.key} statKey={r.key} label={r.label} unit={r.unit}
                 definition={doc.definitions?.[r.key]}
                 cols={cols} sideOf={sideOf} stats={game.stats} quotes={quotes}
                 colorFor={colorFor} logoFor={logoFor}
-                sel={sel} onSel={setSel}
+                sel={sel} onSel={setSel} L={L}
               />
             ))}
           </div>

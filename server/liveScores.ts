@@ -35,6 +35,8 @@ interface LiveClient {
 }
 
 const app = express();
+/** Process start, reported by /api/health so a stalled deploy is obvious. */
+const STARTED_AT = new Date().toISOString();
 app.use(cors());
 app.use(compression());
 // JSON body parser for transcription ingest (small payloads; cap at 128 KB)
@@ -697,6 +699,28 @@ app.get(
 // It also never sent SSE headers (the `// ...headers...` stub), so
 // compression() buffered the stream and the edge proxy eventually 502'd the
 // hung response. Both are fixed below.
+/**
+ * Which build is actually live?
+ *
+ * Added 2026-08-28 after an hour was spent rebuilding candidate commits and
+ * diffing minified bundle hashes to answer that question — and still only
+ * narrowing it to "one of two commits", because the two differed by an
+ * internal refactor with no observable marker. Render exposes the deployed
+ * SHA in the environment; publishing it turns a forensic exercise into a
+ * curl. No auth: it is the same commit that is already public in the repo.
+ */
+app.get("/api/health", (_req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    commit: process.env.RENDER_GIT_COMMIT ?? null,
+    branch: process.env.RENDER_GIT_BRANCH ?? null,
+    service: process.env.RENDER_SERVICE_NAME ?? null,
+    started: STARTED_AT,
+    now: new Date().toISOString(),
+  });
+});
+
 app.get("/api/live", (req: Request, res: Response) => {
   const sport = toSport(req.query.sport);
   const date = normDate(req.query.date);
@@ -1070,6 +1094,10 @@ type KalshiPayload = {
   week?: string;
   matched?: number;
   unmatched?: string[];
+  /** Stat series that failed this build; their quotes are simply absent. */
+  degraded_series?: string[];
+  /** Set when this payload is a retained older one served after a failure. */
+  stale?: boolean;
   games: KalshiGame[];
 };
 
@@ -1312,12 +1340,34 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
   // calls per 45s (a staged-empty family is a single empty page), which is
   // what keeps this route clear of the shared-IP 429 episode of 2026-08-26.
   const statSeries = Object.keys(KALSHI_STAT_SERIES);
-  const [winBy, totBy, sprBy, ...statBy] = await Promise.all([
+  const [winBy, totBy, sprBy] = await Promise.all([
     kalshiMarketsBySeries("KXNCAAFGAME"),
     kalshiMarketsBySeries("KXNCAAFTOTAL"),
     kalshiMarketsBySeries("KXNCAAFSPREAD"),
-    ...statSeries.map((s) => kalshiMarketsBySeries(s)),
   ]);
+
+  // The stat families fan out INDEPENDENTLY (allSettled, not all). Going from
+  // 3 series to 13 multiplied the chance that one of them 429s or times out,
+  // and under Promise.all a single bad series took down the whole feed —
+  // every card on the page would lose its Kalshi column because one staged-
+  // empty stat ladder hiccuped. Now a failed series costs only its own stat,
+  // and it is LOGGED rather than swallowed, because the 2026-08-26 incident
+  // was expensive precisely because it was invisible.
+  const statSettled = await Promise.allSettled(
+    statSeries.map((s) => kalshiMarketsBySeries(s))
+  );
+  const statBy = statSettled.map((r) =>
+    r.status === "fulfilled" ? r.value : new Map<string, any[]>()
+  );
+  const failedSeries = statSeries.filter((_, i) => statSettled[i].status === "rejected");
+  if (failedSeries.length) {
+    for (const [i, r] of statSettled.entries()) {
+      if (r.status === "rejected") {
+        console.error(`[kalshi] series ${statSeries[i]} failed:`,
+          (r as PromiseRejectedResult).reason?.message ?? r);
+      }
+    }
+  }
 
   const games = matches.map(({ slug, ev, teamA, teamB }): KalshiGame => {
     const suffix = String(ev.event_ticker).replace(/^KXNCAAFGAME-/, "");
@@ -1421,6 +1471,9 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     week,
     matched: games.length,
     unmatched,
+    // Named so a degraded feed is visible to whoever is looking at the JSON,
+    // not just to the server log.
+    degraded_series: failedSeries.length ? failedSeries : undefined,
     games,
   };
 }
@@ -1469,6 +1522,18 @@ app.get(
       res.json(await work);
     } catch (err: any) {
       console.error("[/api/kalshi/cfb] failed:", err?.message ?? err);
+      // STALE-IF-ERROR: a transient upstream failure should not blank every
+      // price on the page. The last good payload is worth far more than an
+      // empty one for the minute it takes Kalshi to answer again, so serve
+      // it (flagged `stale`) and only fall back to empty when we have never
+      // had a good build for this week.
+      const stale = KALSHI_CACHE.get(key);
+      if (stale) {
+        console.warn(`[/api/kalshi/cfb] serving stale payload for ${key} ` +
+          `(${Math.round((Date.now() - stale.at) / 1000)}s old)`);
+        res.json({ ...stale.payload, stale: true, reason: "upstream_unavailable" });
+        return;
+      }
       // Never throw at the client: an unavailable market feed just hides the row.
       res.json({
         available: false,

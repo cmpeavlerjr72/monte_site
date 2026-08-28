@@ -149,6 +149,39 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   — every stroke, label and the axis wear theme tokens, `--pos`/`--neg`
   appear only on a signed edge chip, and the numeric table view is one
   toggle away as the relief the validator requires.
+  MOBILE: the chart FITS its container at every width and never scrolls
+  horizontally (the table view keeps the scroll box). Layout is
+  MEASURED — a callback ref + ResizeObserver feeding `layoutFor(width)`
+  — deliberately NOT a scaling viewBox, which at 375px in a 900px design
+  is a 0.42 factor that would render 9px labels at 3.8px. Fonts are
+  fixed; DENSITY is what gives: under 560px the gutter shrinks, and each
+  team keeps at most 4 chips per stat, ranked by |edge| so the markets
+  that survive are the ones worth acting on. Everything else stays a
+  bare tappable stub (>=40px hit rect, strike text suppressed at narrow
+  widths because 25-yard strikes land ~16px apart there); the popover
+  still carries its full verdict. Use a CALLBACK ref, never
+  `useLayoutEffect` + `[]`: the chart container does not exist on first
+  render (the panel is showing "Loading…"), so a one-shot effect finds
+  null and silently leaves the layout at the desktop default — that was
+  the actual bug.
+
+## Server health and Kalshi resilience
+
+`/api/health` reports the DEPLOYED commit (`RENDER_GIT_COMMIT`), branch,
+service and process start. Added 2026-08-28 after identifying the live
+build took rebuilding candidate commits and diffing minified bundle
+hashes — and still only narrowed it to two. Check this route first when
+asking "did my deploy land?"; a stale `started` also exposes a stalled
+deploy.
+
+The Kalshi stat-series fan-out (13 series, was 3) uses
+`Promise.allSettled`, NOT `Promise.all`: one series that 429s or times
+out costs only its own stat family, is logged, and is named in the
+payload's `degraded_series`. `/api/kalshi/cfb` is also STALE-IF-ERROR —
+on a build failure it serves the last good payload flagged `stale`
+rather than blanking every price on the page. Never revert either to a
+plain `Promise.all` / empty-on-error: the 2026-08-26 incident was
+expensive because the failure was invisible.
 
 ## My-Kalshi portal (owner-only)
 
