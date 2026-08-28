@@ -19,7 +19,14 @@ LIVE data (2026-08-27): the live scoreboard is BROWSER-DIRECT from ESPN
 id — because ESPN's multi-group query returns id-less stub events whenever
 one group has no games, and ESPN's Akamai edge blocks the Render egress IP
 outright: every server-mediated path 502s while browsers are fine). The
-server /api/scoreboard is fallback only. Per-game gamecast (field strip on
+server /api/scoreboard is fallback only. The poll is keyed on the SLATE's
+kick dates, never the wall-clock date (2026-08-28: polling "today" made
+every finished slate — finals, provisional grading, gamecasts — vanish at
+midnight ET; ESPN serves past scoreboard dates indefinitely, verified back
+through 2025). Multi-day slates use ESPN's range syntax, whose END is
+EXCLUSIVE (the hook pads +1 day — dropping that pad silently kills the last
+slate day's live coverage). Cadence is adaptive: 20s in-game, 60s pregame,
+a single fetch once every event is final. Per-game gamecast (field strip on
 live cards, Live panel: drive field, win/cover/over% chart, drive log) lives
 in `src/components/LiveGamecast.tsx` + `src/lib/espnGame.ts`; the sim↔live
 join indexes EVERY ESPN name form (shortDisplayName alone matched 27/46 FCS

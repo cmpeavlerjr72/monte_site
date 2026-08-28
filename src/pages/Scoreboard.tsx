@@ -994,57 +994,8 @@ const URL_WEEK = (getSearchParam("week") || "").trim().toLowerCase();
 /* --------------------- page --------------------- */
 function ScoreboardPage() {
 
-  // --- LIVE: inside Scoreboard() component, just above the cards useMemo ---
-  const todayET = useMemo(
-    () =>
-      new Date()
-        .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
-        .replace(/-/g, ""),
-    []
-  );
-
-  // call the hook safely INSIDE a component
-  const livePayload = useLiveScoreboard(todayET, "cfb");
-
-  // normalize and index the live games
-  const liveGames: LiveGame[] = useMemo(
-    () => (livePayload ? mapEspnToLiveGames(livePayload) : []),
-    [livePayload]
-  );
-
-  const liveMap = useMemo(() => {
-    // One key per cross-combination of each side's name forms: ESPN's short
-    // names ("ETSU", "LIU", "SE Missouri State") joined only 27 of 46 FCS
-    // week-0 sim games; short+location+displayName joined all 46. First
-    // writer wins — school-name forms don't collide across real games.
-    const m = new Map<string, LiveGame>();
-    for (const g of liveGames) {
-      const homes = g.homeNames?.length ? g.homeNames : [g.homeTeam ?? ""];
-      const aways = g.awayNames?.length ? g.awayNames : [g.awayTeam ?? ""];
-      for (const h of homes) {
-        for (const a of aways) {
-          const k = pairKey(a, h);
-          if (!m.has(k)) m.set(k, g);
-        }
-      }
-    }
-    return m;
-  }, [liveGames]);
-
-  const getCardLive = useCallback(
-    (game: { teamA: string; teamB: string }) => {
-      const lg = liveMap.get(pairKey(game.teamA, game.teamB));
-      const inProgress = lg?.state === "in";
-      let aScore: number | undefined, bScore: number | undefined;
-      if (lg) {
-        const aMatchesAway = nameMatches(lg.awayNames, lg.awayTeam, game.teamA);
-        aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
-        bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
-      }
-      return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
-    },
-    [liveMap]
-  );
+  // --- LIVE scoreboard block: lives BELOW the week-row loads so the ESPN
+  // poll can key on the slate's dates (see "LIVE: slate-date scoreboard"). ---
 
   /* ---- Season + dataset catalog (weeks, fetched at runtime) ----
    *
@@ -1401,6 +1352,82 @@ function ScoreboardPage() {
 
     return () => { alive = false; ac.abort(); };
   }, [showFcs, season, fcsNs, selectedWeek, weekOptions]);
+
+  /* ---- LIVE: slate-date scoreboard (browser-direct ESPN) ----
+   *
+   * The poll asks for the SLATE's kick dates (every loaded row: FBS JSON,
+   * FCS JSON, legacy CSV meta), NOT the wall-clock date. ESPN serves any
+   * past date's scoreboard indefinitely, so a finished slate keeps its
+   * finals, provisional grading, and gamecast panels the morning after —
+   * polling "today" made all of it vanish at midnight ET (2026-08-28
+   * incident). todayET is only the fallback while no rows have loaded.
+   * The hook keys on the joined date STRING, so this memo's array identity
+   * churn never re-triggers the poll (AGENT_BRIEF rule 4). */
+  const todayET = useMemo(
+    () =>
+      new Date()
+        .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+        .replace(/-/g, ""),
+    []
+  );
+
+  const slateDates = useMemo(() => {
+    const days = new Set<string>();
+    const add = (ms?: number) => {
+      if (!Number.isFinite(ms)) return;
+      days.add(
+        new Date(ms as number)
+          .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+          .replace(/-/g, "")
+      );
+    };
+    for (const { row } of jsonGames) add(parseKickoffMs(row.date, undefined, row.time_utc).ms);
+    for (const { row } of fcsGames) add(parseKickoffMs(row.date, undefined, row.time_utc).ms);
+    for (const m of Object.values(meta)) add(m.kickoffMs);
+    return days.size ? [...days].sort() : [todayET];
+  }, [jsonGames, fcsGames, meta, todayET]);
+
+  const livePayload = useLiveScoreboard(slateDates, "cfb");
+
+  // normalize and index the live games
+  const liveGames: LiveGame[] = useMemo(
+    () => (livePayload ? mapEspnToLiveGames(livePayload) : []),
+    [livePayload]
+  );
+
+  const liveMap = useMemo(() => {
+    // One key per cross-combination of each side's name forms: ESPN's short
+    // names ("ETSU", "LIU", "SE Missouri State") joined only 27 of 46 FCS
+    // week-0 sim games; short+location+displayName joined all 46. First
+    // writer wins — school-name forms don't collide across real games.
+    const m = new Map<string, LiveGame>();
+    for (const g of liveGames) {
+      const homes = g.homeNames?.length ? g.homeNames : [g.homeTeam ?? ""];
+      const aways = g.awayNames?.length ? g.awayNames : [g.awayTeam ?? ""];
+      for (const h of homes) {
+        for (const a of aways) {
+          const k = pairKey(a, h);
+          if (!m.has(k)) m.set(k, g);
+        }
+      }
+    }
+    return m;
+  }, [liveGames]);
+
+  const getCardLive = useCallback(
+    (game: { teamA: string; teamB: string }) => {
+      const lg = liveMap.get(pairKey(game.teamA, game.teamB));
+      const inProgress = lg?.state === "in";
+      let aScore: number | undefined, bScore: number | undefined;
+      if (lg) {
+        const aMatchesAway = nameMatches(lg.awayNames, lg.awayTeam, game.teamA);
+        aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
+        bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
+      }
+      return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
+    },
+    [liveMap]
+  );
 
   /* ---- Expanded panel. Lifted out of the card so the panel can render as a
    * separate full-width grid item: a card must never change size because
