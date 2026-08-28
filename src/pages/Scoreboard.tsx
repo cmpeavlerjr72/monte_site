@@ -38,6 +38,7 @@ import GameBetsPanel, {
 import SuggestedBetsIndex from "../components/SuggestedBetsIndex";
 import MyBookPanel from "../components/MyBookPanel";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
+import { useRestingReview } from "../lib/restingReview";
 import {
   readModeFilter, readShowTails, readSuggestSort, readTypeFilter, readUnit,
   writeModeFilter, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
@@ -48,7 +49,7 @@ import type { FeeParams } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
-  parseNcaafTicker, buildCodeToSlug,
+  parseNcaafTicker, buildCodeToSlug, buildPortalYesP,
   type PortalBet, type PortalTotals, type SeedPair,
 } from "../lib/kalshiPortal";
 import LegPicker from "../components/LegPicker";
@@ -712,14 +713,57 @@ export function panelRowEnd(openIdx: number, cols: number, total: number): numbe
 /** "edge" ranks by the biggest absolute market edge the game can show. */
 type SortBy = "kickoff" | "edge";
 
+/**
+ * THE KICK-TIME TIER. Finals sink; nothing that might still be playing does.
+ *
+ * A board sorted on kickoff alone puts Saturday's noon finals above Saturday
+ * night's kickoffs for the rest of the day, so by evening the live games are
+ * buried under games that are over. Sorting by "is it done" first fixes that,
+ * and the ORDER of the tiers is the whole design:
+ *
+ *   0  IN PROGRESS         the only games where something is happening now.
+ *   1  KICKED, NOT JOINED  the clock says it has started but the live feed has
+ *                          not joined it. It MAY be in progress — many games
+ *                          never get an ESPN entry at all (verified 2026-08-28:
+ *                          Lafayette/Georgetown has none on the wk0 board), and
+ *                          a blocked-espn network has none for anything. Never
+ *                          bury a game on the strength of a feed that is
+ *                          allowed to be absent.
+ *   2  UPCOMING            genuinely pregame, soonest first — the old default.
+ *   3  DONE                post / final / graded.
+ *
+ * The evidence is the same pair the suggestions gate reads: the LIVE JOIN's
+ * state, and the clock. A `post`/`final` state or a graded result is positive
+ * evidence of doneness and outranks the clock; absence of a join is not
+ * evidence of anything, which is exactly why tier 1 exists between them.
+ *
+ * The EDGE sort keeps its own logic untouched: it answers "where is the biggest
+ * mispricing", and a tier applied to it would silently re-rank the answer.
+ */
+export function kickTier(c: CardGame, now: number): 0 | 1 | 2 | 3 {
+  const state = String(c.live?.state || "").toLowerCase();
+  if (c.liveInProgress || state === "in") return 0;
+  const graded = Boolean(c.spreadResult || c.totalResult || c.mlResult);
+  if (state === "post" || state === "final" || c.scoreSource === "CSV_FINALS" || graded) return 3;
+  const k = c.kickoffMs;
+  if (typeof k === "number" && Number.isFinite(k) && k <= now) return 1;
+  return 2;
+}
+
 function sortCards(
   cards: CardGame[],
   sortBy: SortBy,
-  edges?: Map<string, GameEdges> | null
+  edges?: Map<string, GameEdges> | null,
+  /** The page's ticking clock. Only the kickoff sort reads it — a game crosses
+   *  from "upcoming" to "kicked" on its own, without waiting for a feed. */
+  now: number = Date.now(),
 ): CardGame[] {
   const out = [...cards];
   out.sort((x, y) => {
     if (sortBy === "kickoff") {
+      const tx = kickTier(x, now);
+      const ty = kickTier(y, now);
+      if (tx !== ty) return tx - ty;
       const ax = x.kickoffMs ?? Number.POSITIVE_INFINITY;
       const ay = y.kickoffMs ?? Number.POSITIVE_INFINITY;
       if (ax !== ay) return ax - ay;
@@ -2091,6 +2135,15 @@ function ScoreboardPage() {
     () => computePortalBets(portal.payload, kalshiBySlug, portalSeeds, statYesP),
     [portal.payload, kalshiBySlug, portalSeeds, statYesP]
   );
+  /** ticker -> P(YES) of the RAW market: seeds for the game lines, published
+   *  rungs for the per-team stat ladders. Literally the function the held
+   *  positions above are priced with (`buildPortalYesP`), handed to the
+   *  resting-order review so the two can never disagree about what a market
+   *  is worth. */
+  const portalYesP = useMemo(
+    () => buildPortalYesP(kalshiBySlug, portalSeeds, statYesP),
+    [kalshiBySlug, portalSeeds, statYesP]
+  );
   const portalNote = useMemo(() => {
     if (!portalToken) return "log in with your portal password";
     switch (portal.status) {
@@ -2107,8 +2160,41 @@ function ScoreboardPage() {
     }
   }, [portalToken, portal.status, portalBook]);
 
+  /**
+   * A TICKING WALL CLOCK — for every rule that is a function of "how long until
+   * kickoff": the card ORDER's kick tier, the suggestions' pregame gate, the
+   * maker/taker timing bands and the resting-order review.
+   *
+   * It must MOVE on its own. Before this, `Date.now()` was read inside the
+   * `suggestGames` memo, which meant the clock only advanced when `baseCards`
+   * changed identity — i.e. when the ESPN live poll delivered. That is a real
+   * dependency on a feed that is allowed to fail: `useLiveScoreboard` only calls
+   * `setPayload` when a tier ANSWERS, so on a network that blocks espn.com with
+   * no published snapshot (or after every event goes final and the poll stops),
+   * the memo's `now` freezes at page load and a game never drops off the card no
+   * matter how long the tab stays open.
+   *
+   * 30s is chosen against the 5-minute pregame buffer: worst case a game leaves
+   * the card 30s later than its exact instant, still ~4.5 min before kickoff.
+   * No cycle to worry about — an interval that sets a NUMBER, with no
+   * dependency on anything it sets (the loop the render guard exists to prevent
+   * needs an effect whose deps its own setState recreates).
+   *
+   * Declared HERE, above the card sort, because the sort now reads it: a
+   * `const` used before its declaration in the same function body is a
+   * temporal-dead-zone crash, not a hoist.
+   */
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
+
   const cards = useMemo(() => {
-    const sorted = sortCards(baseCards, sortBy, slateEdges);
+    // `nowMs`, not Date.now(): the kick tier has to move with the clock, or a
+    // game that kicks off while the tab sits open never leaves the pregame
+    // block (the same frozen-clock bug the suggestions gate had).
+    const sorted = sortCards(baseCards, sortBy, slateEdges, nowMs);
     // Games the owner has orders or fills on pin to the top, keeping the
     // chosen sort's order within each half (stable partition).
     if (!portalBook.bySlug.size) return sorted;
@@ -2116,7 +2202,7 @@ function ScoreboardPage() {
       ...sorted.filter((c) => portalBook.bySlug.has(c.key)),
       ...sorted.filter((c) => !portalBook.bySlug.has(c.key)),
     ];
-  }, [baseCards, sortBy, slateEdges, portalBook]);
+  }, [baseCards, sortBy, slateEdges, portalBook, nowMs]);
 
 
   // Apply conference filter (game shows if either team is in selected conference)
@@ -2154,31 +2240,6 @@ function ScoreboardPage() {
     () => weekOptions.find((w) => w.legacyKey === selectedWeek)?.label ?? selectedWeek,
     [weekOptions, selectedWeek]
   );
-
-  /**
-   * A TICKING WALL CLOCK, for the Suggested Bets card and nothing else.
-   *
-   * The pregame gate and the maker/taker timing bands are both functions of
-   * "how long until kickoff", so they need a clock that MOVES. Before this,
-   * `Date.now()` was read inside the `suggestGames` memo, which meant the
-   * clock only advanced when `baseCards` changed identity — i.e. when the ESPN
-   * live poll delivered. That is a real dependency on a feed that is allowed to
-   * fail: `useLiveScoreboard` only calls `setPayload` when a tier ANSWERS, so on
-   * a network that blocks espn.com with no published snapshot (or after every
-   * event goes final and the poll stops), the memo's `now` freezes at page load
-   * and a game never drops off the card no matter how long the tab stays open.
-   *
-   * 30s is chosen against the 5-minute pregame buffer: worst case a game leaves
-   * the card 30s later than its exact instant, still ~4.5 min before kickoff.
-   * No cycle to worry about — an interval that sets a NUMBER, with no
-   * dependency on anything it sets (the loop the render guard exists to prevent
-   * needs an effect whose deps its own setState recreates).
-   */
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
-    return () => window.clearInterval(t);
-  }, []);
 
   /** Index of the expanded card in the filtered list, and the card itself. */
   /* Games offered to the owner-only Suggested Bets card.
@@ -2247,6 +2308,25 @@ function ScoreboardPage() {
     typeFilter: betType,
     showTails: betTails,
     sort: betSort,
+  });
+
+  /**
+   * THE RESTING-ORDER REVIEW — the other half of the same clock.
+   *
+   * `useSuggestions` deliberately excludes every ticker the account already
+   * holds or has resting, which is why the app went silent about a market the
+   * moment an order rested on it. This is the compute that speaks for those:
+   * same games, same 30s clock, same timing bands, same pricing function the
+   * portal's held positions use. Owner-gated identically — no portal session,
+   * no orders to review.
+   */
+  const restingReview = useRestingReview({
+    portal: ownerOn ? portal.payload : null,
+    games: ownerOn ? suggestGames : NO_SUGGEST_GAMES,
+    kalshiBySlug,
+    feeParams: kalshiFees,
+    yesP: portalYesP,
+    nowMs,
   });
 
   const openIdx = useMemo(
@@ -2567,6 +2647,8 @@ function ScoreboardPage() {
           {ownerOn && (
             <SuggestedBetsIndex
               suggestions={suggestions}
+              review={restingReview}
+              token={portalToken}
               unit={unit}
               sort={betSort}
               onSort={onBetSort}
@@ -2673,6 +2755,9 @@ function ScoreboardPage() {
                 useMean={useMean}
                 kalshi={c.jsonRow ? kalshiBySlug.get(c.key) : undefined}
                 book={portalBook.bySlug.get(c.key)}
+                // Owner only, and only for the per-order ✕ on a resting row
+                // this app placed. The strip is read-only without it.
+                bookToken={ownerOn ? portalToken : ""}
                 parlayOpen={parlayOpen}
                 openKind={isOpen ? openPanel!.kind : null}
                 onToggle={(kind) => togglePanel(c.key, kind)}
@@ -2814,8 +2899,9 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 
 
 export function GameCard({
-  card, gdata, useMean = false, kalshi, book, parlayOpen, openKind, onToggle,
-  weekLabel, condensed = false, onAddLeg, season, flash = false, bets,
+  card, gdata, useMean = false, kalshi, book, bookToken = "", parlayOpen,
+  openKind, onToggle, weekLabel, condensed = false, onAddLeg, season,
+  flash = false, bets,
 }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
@@ -2825,6 +2911,9 @@ export function GameCard({
   kalshi?: KalshiGame;
   /** The owner's bets on this game (portal), with money metrics. */
   book?: PortalBet[];
+  /** Portal password, owner sessions only. Its ONLY use is the per-order ✕ on
+   *  a resting row this app placed; empty means the strip stays read-only. */
+  bookToken?: string;
   parlayOpen: boolean;
   /** Which panel this card currently owns, or null. Panels render OUTSIDE the
    *  card (full grid width) so expanding one never resizes the card itself. */
@@ -3076,7 +3165,7 @@ export function GameCard({
         <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />
       )}
 
-      {book && book.length > 0 && <MyBookStrip bets={book} />}
+      {book && book.length > 0 && <MyBookStrip bets={book} token={bookToken} />}
 
       {/* Action buttons.
           Player panels are gated on the export's has_players FLAG rather than

@@ -199,23 +199,39 @@ check(/no time to fill/.test(thinAt45),
  * ======================================================================== */
 console.log("\nStatic wiring (Scoreboard.tsx / SuggestedBets.tsx)");
 
+// The compute moved out of the card into `src/lib/useSuggestions.ts` when the
+// owner surface split into an INDEX plus a per-game panel (2026-08-28), and the
+// resting-order REVIEW joined it later the same day. The clock rules did not
+// move — so these checks follow them to their new files rather than being
+// deleted, which is what a guard is for.
 const board = read("src/pages/Scoreboard.tsx");
-const cardSrc = read("src/components/SuggestedBets.tsx");
+const computeSrc = read("src/lib/useSuggestions.ts");
+const reviewSrc = read("src/lib/restingReview.ts");
 
 check(/setInterval\(\(\) => setNowMs\(Date\.now\(\)\)/.test(board),
   "the page ticks nowMs on an interval (not once at mount)");
-check(/nowMs=\{nowMs\}/.test(board),
-  "…and passes it to SuggestedBets");
+check(/useSuggestions\(\{[\s\S]*?\n\s*nowMs,/.test(board),
+  "…and passes it into the ONE suggestions compute");
+check(/useRestingReview\(\{[\s\S]*?\n\s*nowMs,/.test(board),
+  "…and into the resting-order review, so both move on the same clock");
+check(/sortCards\(baseCards, sortBy, slateEdges, nowMs\)/.test(board),
+  "…and into the card sort, so a game changes tier when it kicks");
 check(!/kickoffMs === "number" && c\.kickoffMs <= now/.test(board),
   "the `started` roll-up no longer folds a kick-time test in (the gate owns the clock)");
 check(/liveState: c\.live\?\.state/.test(board),
   "…and forwards ESPN's RAW state, so 'no join' is distinguishable from 'pre'");
-check(/pregameVerdict\(g, nowMs\)/.test(cardSrc),
-  "the card gates every game through pregameVerdict against that clock");
-check(/}, \[games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs\]\)/.test(cardSrc),
+check(/pregameVerdict\(g, nowMs\)/.test(computeSrc),
+  "the compute gates every game through pregameVerdict against that clock");
+check(/}, \[games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs\]\)/.test(computeSrc),
   "…and nowMs is a DEPENDENCY of the compute, so a kicked game drops off on its own");
-check(/buildSuggestions\(candidates, feeParams, held, unit, nowMs\)/.test(cardSrc),
+check(/buildSuggestions\(candidates, feeParams, held, unit, nowMs\)/.test(computeSrc),
   "one clock drives both the gate and the bands (no second Date.now())");
+check(/pregameVerdict\(game, nowMs\)/.test(reviewSrc),
+  "the resting review refuses a game that is no longer pregame");
+check(/timingFor\(game\.kickoffMs, nowMs\)/.test(reviewSrc),
+  "…and takes its take bar from the SHARED band ladder, on the same clock");
+check(!/\bDate\.now\(\)/.test(reviewSrc),
+  "…and never reads a clock of its own");
 
 console.log(failures ? `\nFAILED (${failures})` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);
