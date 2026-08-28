@@ -54,8 +54,10 @@ export default function App() {
       {/* ✅ your branded header (logo, colors) */}
       <Header />
 
-      {/* Renders only where an install is actually possible (Chromium's
-          beforeinstallprompt, or iOS), and never once installed. */}
+      {/* Global mount: renders once, under the header, above every routed
+          page. Shows only where an install is actually possible (Chromium's
+          beforeinstallprompt, iOS, or the Android manual-path fallback), and
+          never once installed (standalone or a detected related app). */}
       <InstallPrompt />
 
       <main style={{ maxWidth: 1200, margin: "20px auto", padding: "0 16px 40px" }}>

@@ -91,6 +91,38 @@ export function isIOS(): boolean {
   return /Macintosh/.test(ua) && (navigator.maxTouchPoints ?? 0) > 1;
 }
 
+/** Android, where an install is possible but Chrome may never offer it to us. */
+export function isAndroid(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Android/.test(navigator.userAgent || "");
+}
+
+/**
+ * Best-effort "is our own app already installed on this device?".
+ *
+ * Chrome suppresses `beforeinstallprompt` for a while after someone installs
+ * or dismisses, so its absence does NOT mean "cannot install" — which is why
+ * the Android fallback button exists. This is the one signal that separates
+ * the two cases, and it only works when the manifest lists itself under
+ * `related_applications`.
+ *
+ * Unavailable everywhere but Chromium, so a false answer is the safe
+ * default: worst case an installed visitor sees a button for something they
+ * have already done, which beats an uninstalled visitor seeing nothing.
+ */
+export async function hasInstalledRelatedApp(): Promise<boolean> {
+  try {
+    const nav = navigator as Navigator & {
+      getInstalledRelatedApps?: () => Promise<Array<{ platform?: string; url?: string }>>;
+    };
+    if (typeof nav.getInstalledRelatedApps !== "function") return false;
+    const apps = await nav.getInstalledRelatedApps();
+    return Array.isArray(apps) && apps.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD) return;
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;

@@ -8,6 +8,13 @@
   "display": "standalone",
   "background_color": "#0b2d4b",
   "theme_color": "#0b2d4b",
+  "prefer_related_applications": false,
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://www.mvpeav.com/manifest.webmanifest"
+    }
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",
