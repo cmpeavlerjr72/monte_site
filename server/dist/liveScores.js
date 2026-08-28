@@ -869,6 +869,38 @@ const KALSHI_STAT_SERIES = {
     KXNCAAFTEAMSACK: "def_sacks",
     KXNCAAFTEAMINT: "def_ints",
 };
+const FEE_TTL_MS = 6 * 60 * 60 * 1000;
+let FEE_CACHE = null;
+let FEE_INFLIGHT = null;
+async function kalshiFeeParams(series) {
+    if (FEE_CACHE && Date.now() - FEE_CACHE.at < FEE_TTL_MS)
+        return FEE_CACHE.params;
+    if (FEE_INFLIGHT)
+        return FEE_INFLIGHT;
+    FEE_INFLIGHT = (async () => {
+        const out = {};
+        const settled = await Promise.allSettled(series.map((s) => kalshiJson(`/series/${s}`)));
+        for (const [i, r] of settled.entries()) {
+            if (r.status !== "fulfilled") {
+                console.warn(`[kalshi] series meta ${series[i]} failed:`, r.reason?.message ?? r.reason);
+                continue;
+            }
+            const meta = r.value?.series ?? r.value;
+            if (meta?.fee_type) {
+                out[series[i]] = {
+                    fee_type: String(meta.fee_type),
+                    fee_multiplier: Number(meta.fee_multiplier ?? 1) || 1,
+                };
+            }
+        }
+        // Only cache a useful answer, so a total outage retries next request
+        // instead of pinning an empty map for six hours.
+        if (Object.keys(out).length)
+            FEE_CACHE = { at: Date.now(), params: out };
+        return out;
+    })().finally(() => { FEE_INFLIGHT = null; });
+    return FEE_INFLIGHT;
+}
 /** The school a stat-market subtitle names, with the strike phrase stripped. */
 function statMarketTeam(subTitle) {
     const s = String(subTitle ?? "").trim();
@@ -945,8 +977,23 @@ function buildLadder(markets, toLine, toPrice) {
         const yes = toPrice(m, price);
         if (line === null || yes === null)
             continue;
-        // 3dp keeps a 30-rung ladder under ~600 bytes.
-        out.push({ line, yes_price: Math.round(yes * 1000) / 1000 });
+        // 3dp keeps a 30-rung ladder small; ticker + book sides are what the
+        // Suggested Bets card prices against.
+        //
+        // ORIENTATION: `toPrice` may MIRROR a rung (the spread ladder flips a
+        // rung that names the away team to home perspective, price -> 1-p). The
+        // book must flip with it or the card would quote a maker price against
+        // the wrong side of the market. A mirrored rung's YES is the raw
+        // market's NO, whose bid/ask is (1 - yes_ask, 1 - yes_bid).
+        const rawBid = dollars(m?.yes_bid_dollars);
+        const rawAsk = dollars(m?.yes_ask_dollars);
+        const mirrored = Math.abs(yes - price) > 1e-9;
+        out.push({
+            line, yes_price: Math.round(yes * 1000) / 1000,
+            ticker: String(m?.ticker ?? ""),
+            yes_bid: mirrored ? (rawAsk === null ? null : 1 - rawAsk) : rawBid,
+            yes_ask: mirrored ? (rawBid === null ? null : 1 - rawBid) : rawAsk,
+        });
     }
     out.sort((a, b) => a.line - b.line);
     // Collapse duplicate strikes (defensive: one rung per line).
@@ -1117,6 +1164,9 @@ async function buildKalshiCfb(season, week) {
     // empty stat ladder hiccuped. Now a failed series costs only its own stat,
     // and it is LOGGED rather than swallowed, because the 2026-08-26 incident
     // was expensive precisely because it was invisible.
+    const feeParamsP = kalshiFeeParams([
+        "KXNCAAFGAME", "KXNCAAFTOTAL", "KXNCAAFSPREAD", ...statSeries,
+    ]).catch(() => ({}));
     const statSettled = await Promise.allSettled(statSeries.map((s) => kalshiMarketsBySeries(s)));
     const statBy = statSettled.map((r) => r.status === "fulfilled" ? r.value : new Map());
     const failedSeries = statSeries.filter((_, i) => statSettled[i].status === "rejected");
@@ -1157,7 +1207,7 @@ async function buildKalshiCfb(season, week) {
                 if (!side || strike === null)
                     continue;
                 out.stat_quotes.push({
-                    stat, side, strike,
+                    stat, side, strike, ticker: String(m?.ticker ?? ""),
                     yes_bid: dollars(m?.yes_bid_dollars),
                     yes_ask: dollars(m?.yes_ask_dollars),
                 });
@@ -1219,6 +1269,7 @@ async function buildKalshiCfb(season, week) {
         // Named so a degraded feed is visible to whoever is looking at the JSON,
         // not just to the server log.
         degraded_series: failedSeries.length ? failedSeries : undefined,
+        fee_params: await feeParamsP,
         games,
     };
 }

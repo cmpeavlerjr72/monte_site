@@ -31,6 +31,8 @@ import { pctText } from "../lib/marketEdge";
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import TeamStats from "../components/TeamStats";
+import SuggestedBets, { type SuggestGame } from "../components/SuggestedBets";
+import type { FeeParams } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
@@ -1515,6 +1517,8 @@ function ScoreboardPage() {
   const [kalshiBySlug, setKalshiBySlug] = useState<Map<string, KalshiGame>>(new Map());
   /** Primitive that changes with the Kalshi payload, for the scan signature. */
   const [kalshiStamp, setKalshiStamp] = useState("");
+  /** Kalshi's own per-series fee params, forwarded by the proxy. */
+  const [kalshiFees, setKalshiFees] = useState<Record<string, FeeParams>>({});
 
   /* ---- My-Kalshi portal: the owner's resting orders + fills ----
    * Token-gated server route; polls only while a token is stored. Games the
@@ -1554,6 +1558,8 @@ function ScoreboardPage() {
         if (fcsPayload) for (const [k, v] of indexKalshiBySlug(fcsPayload)) merged.set(fcsCardKey(k), v);
 
         setKalshiBySlug(merged);
+        // Fee params are exchange-level, identical across namespaces.
+        setKalshiFees((fbsPayload?.fee_params ?? fcsPayload?.fee_params ?? {}) as Record<string, FeeParams>);
         // Primitive stamp for the scan signature — must move whenever either
         // feed does, or a refreshed FCS payload would not retrigger the scan.
         setKalshiStamp(
@@ -1562,7 +1568,7 @@ function ScoreboardPage() {
         );
       } catch (e: any) {
         if (e?.name === "AbortError") return;
-        if (alive) { setKalshiBySlug(new Map()); setKalshiStamp(""); }
+        if (alive) { setKalshiBySlug(new Map()); setKalshiStamp(""); setKalshiFees({}); }
       }
     })();
     return () => { alive = false; ac.abort(); };
@@ -2046,6 +2052,36 @@ function ScoreboardPage() {
   );
 
   /** Index of the expanded card in the filtered list, and the card itself. */
+  /* Pregame games for the owner-only Suggested Bets card.
+   *
+   * PREGAME IS A CORRECTNESS RULE: our sim fairs are pregame distributions,
+   * so a live or finished game must never produce a suggestion. Belt and
+   * braces — the live feed's own state AND the kick time, because the feed
+   * can lag a kickoff by a poll or two and that window is exactly when a
+   * stale "edge" would look most attractive.
+   *
+   * Derived from baseCards (never the sorted/filtered list) so a UI filter
+   * cannot silently shrink the book, and so it stays clear of the memo cycle
+   * the render-loop guard exists to prevent.
+   */
+  const suggestGames: SuggestGame[] = useMemo(() => {
+    const now = Date.now();
+    return baseCards.map((c) => ({
+      key: c.key,
+      slug: c.jsonRow?.slug ?? c.key,
+      ns: c.ns,
+      teamA: c.teamA,
+      teamB: c.teamB,
+      started:
+        Boolean(c.liveInProgress) ||
+        c.live?.state === "in" ||
+        c.live?.state === "final" ||
+        c.live?.state === "post" ||
+        c.scoreSource === "CSV_FINALS" ||
+        (typeof c.kickoffMs === "number" && c.kickoffMs <= now),
+    }));
+  }, [baseCards]);
+
   const openIdx = useMemo(
     () => (openPanel ? filteredCards.findIndex((c) => c.key === openPanel.key) : -1),
     [openPanel, filteredCards]
@@ -2368,6 +2404,22 @@ function ScoreboardPage() {
 
       {portalToken && portalBook.totals.n > 0 && (
         <MyBookBar totals={portalBook.totals} unmatched={portalBook.unmatched} />
+      )}
+
+      {/* Owner-only, on the same session state that powers MyBookStrip. It
+          recomputes whenever the 45s Kalshi poll delivers, so it is live
+          without a single extra request. */}
+      {portalToken && portal.status === "ok" && (
+        <div style={{ marginBottom: 16 }}>
+          <SuggestedBets
+            games={suggestGames}
+            kalshiBySlug={kalshiBySlug}
+            feeParams={kalshiFees}
+            portal={portal.payload}
+            weekId={weekId}
+            onJump={(slug) => setFlashKey(slug)}
+          />
+        </div>
       )}
 
       {(slateLoading || catalogLoading) && !filteredCards.length && (

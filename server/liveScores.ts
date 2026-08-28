@@ -1023,7 +1023,16 @@ type KalshiSide = { line: number | null; yes_price: number | null };
  * price the exact bet the BOOK is offering rather than whichever rung Kalshi
  * happens to be centred on.
  */
-type KalshiRung = { line: number; yes_price: number };
+type KalshiRung = {
+  line: number;
+  yes_price: number;
+  /** Both book sides + the ticker: the Suggested Bets card needs a real
+   *  bid/ask to do maker/taker math, and the ticker to skip markets the
+   *  owner already holds. `yes_price` stays for every existing caller. */
+  ticker?: string;
+  yes_bid?: number | null;
+  yes_ask?: number | null;
+};
 
 /**
  * Per-team STAT ladders (KXNCAAFTEAM*), added 2026-08-28 so the Team Stats
@@ -1055,6 +1064,53 @@ const KALSHI_STAT_SERIES: Record<string, string> = {
   KXNCAAFTEAMINT: "def_ints",
 };
 
+/* ---------------------------------------------------------------------------
+ * Per-series FEE PARAMETERS, read from Kalshi rather than hardcoded.
+ *
+ * This matters more than it looks. Checked 2026-08-28, every per-team family
+ * (KXNCAAFTEAMTOTAL and all nine stat ladders) is `fee_type: "quadratic"` —
+ * TAKER FEES ONLY, no maker fee — while the game-line families (GAME, TOTAL,
+ * SPREAD) are `quadratic_with_maker_fees`. A blanket "maker fee = taker/4"
+ * therefore OVERSTATES the cost of resting an order on exactly the markets
+ * this site cares about, and would suppress marginal edges that are real.
+ *
+ * Series metadata is effectively static, so it is fetched on a 6h TTL: 13
+ * calls twice a day, which is nothing next to the 45s quote poll.
+ * ------------------------------------------------------------------------ */
+type KalshiFeeParams = { fee_type: string; fee_multiplier: number };
+const FEE_TTL_MS = 6 * 60 * 60 * 1000;
+let FEE_CACHE: { at: number; params: Record<string, KalshiFeeParams> } | null = null;
+let FEE_INFLIGHT: Promise<Record<string, KalshiFeeParams>> | null = null;
+
+async function kalshiFeeParams(series: string[]): Promise<Record<string, KalshiFeeParams>> {
+  if (FEE_CACHE && Date.now() - FEE_CACHE.at < FEE_TTL_MS) return FEE_CACHE.params;
+  if (FEE_INFLIGHT) return FEE_INFLIGHT;
+  FEE_INFLIGHT = (async () => {
+    const out: Record<string, KalshiFeeParams> = {};
+    const settled = await Promise.allSettled(
+      series.map((s) => kalshiJson(`/series/${s}`))
+    );
+    for (const [i, r] of settled.entries()) {
+      if (r.status !== "fulfilled") {
+        console.warn(`[kalshi] series meta ${series[i]} failed:`, r.reason?.message ?? r.reason);
+        continue;
+      }
+      const meta = (r.value as any)?.series ?? r.value;
+      if (meta?.fee_type) {
+        out[series[i]] = {
+          fee_type: String(meta.fee_type),
+          fee_multiplier: Number(meta.fee_multiplier ?? 1) || 1,
+        };
+      }
+    }
+    // Only cache a useful answer, so a total outage retries next request
+    // instead of pinning an empty map for six hours.
+    if (Object.keys(out).length) FEE_CACHE = { at: Date.now(), params: out };
+    return out;
+  })().finally(() => { FEE_INFLIGHT = null; });
+  return FEE_INFLIGHT;
+}
+
 /** The school a stat-market subtitle names, with the strike phrase stripped. */
 function statMarketTeam(subTitle: unknown): string {
   const s = String(subTitle ?? "").trim();
@@ -1067,6 +1123,8 @@ function statMarketTeam(subTitle: unknown): string {
 type KalshiStatQuote = {
   /** team_stats.json stat key. */
   stat: string;
+  /** Kalshi market ticker — joins to the owner's positions/resting orders. */
+  ticker: string;
   /** Which side of THIS game — resolved server-side, so no client name join. */
   side: "A" | "B";
   strike: number;
@@ -1098,6 +1156,8 @@ type KalshiPayload = {
   degraded_series?: string[];
   /** Set when this payload is a retained older one served after a failure. */
   stale?: boolean;
+  /** series ticker -> Kalshi's own fee params. Never hardcode these. */
+  fee_params?: Record<string, { fee_type: string; fee_multiplier: number }>;
   games: KalshiGame[];
 };
 
@@ -1177,8 +1237,23 @@ function buildLadder(
     const line = toLine(m);
     const yes = toPrice(m, price);
     if (line === null || yes === null) continue;
-    // 3dp keeps a 30-rung ladder under ~600 bytes.
-    out.push({ line, yes_price: Math.round(yes * 1000) / 1000 });
+    // 3dp keeps a 30-rung ladder small; ticker + book sides are what the
+    // Suggested Bets card prices against.
+    //
+    // ORIENTATION: `toPrice` may MIRROR a rung (the spread ladder flips a
+    // rung that names the away team to home perspective, price -> 1-p). The
+    // book must flip with it or the card would quote a maker price against
+    // the wrong side of the market. A mirrored rung's YES is the raw
+    // market's NO, whose bid/ask is (1 - yes_ask, 1 - yes_bid).
+    const rawBid = dollars(m?.yes_bid_dollars);
+    const rawAsk = dollars(m?.yes_ask_dollars);
+    const mirrored = Math.abs(yes - price) > 1e-9;
+    out.push({
+      line, yes_price: Math.round(yes * 1000) / 1000,
+      ticker: String(m?.ticker ?? ""),
+      yes_bid: mirrored ? (rawAsk === null ? null : 1 - rawAsk) : rawBid,
+      yes_ask: mirrored ? (rawBid === null ? null : 1 - rawBid) : rawAsk,
+    });
   }
   out.sort((a, b) => a.line - b.line);
   // Collapse duplicate strikes (defensive: one rung per line).
@@ -1353,6 +1428,9 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
   // empty stat ladder hiccuped. Now a failed series costs only its own stat,
   // and it is LOGGED rather than swallowed, because the 2026-08-26 incident
   // was expensive precisely because it was invisible.
+  const feeParamsP = kalshiFeeParams([
+    "KXNCAAFGAME", "KXNCAAFTOTAL", "KXNCAAFSPREAD", ...statSeries,
+  ]).catch(() => ({} as Record<string, KalshiFeeParams>));
   const statSettled = await Promise.allSettled(
     statSeries.map((s) => kalshiMarketsBySeries(s))
   );
@@ -1400,7 +1478,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
         const strike = dollars(m?.floor_strike);
         if (!side || strike === null) continue;
         out.stat_quotes.push({
-          stat, side, strike,
+          stat, side, strike, ticker: String(m?.ticker ?? ""),
           yes_bid: dollars(m?.yes_bid_dollars),
           yes_ask: dollars(m?.yes_ask_dollars),
         });
@@ -1474,6 +1552,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     // Named so a degraded feed is visible to whoever is looking at the JSON,
     // not just to the server log.
     degraded_series: failedSeries.length ? failedSeries : undefined,
+    fee_params: await feeParamsP,
     games,
   };
 }

@@ -8,7 +8,15 @@
 export type KalshiSide = { line: number | null; yes_price: number | null };
 
 /** One strike of a ladder. See the server for the sign conventions. */
-export type KalshiRung = { line: number; yes_price: number };
+export type KalshiRung = {
+  line: number;
+  yes_price: number;
+  /** Ticker + both book sides, oriented to THIS rung's YES (the server
+   *  mirrors an away-team spread rung's book along with its price). */
+  ticker?: string;
+  yes_bid?: number | null;
+  yes_ask?: number | null;
+};
 
 export type KalshiGame = {
   slug: string;
@@ -33,6 +41,8 @@ export type KalshiGame = {
  */
 export type KalshiStatQuote = {
   stat: string;
+  /** Kalshi market ticker — joins to the owner's positions/resting orders. */
+  ticker?: string;
   side: "A" | "B";
   strike: number;
   yes_bid: number | null;
@@ -113,6 +123,12 @@ export type KalshiPayload = {
   reason?: string;
   matched?: number;
   unmatched?: string[];
+  /** Stat series that failed this build; their quotes are simply absent. */
+  degraded_series?: string[];
+  /** Retained older payload served after an upstream failure. */
+  stale?: boolean;
+  /** series ticker -> Kalshi's own fee params. Never hardcode these. */
+  fee_params?: Record<string, { fee_type: string; fee_multiplier: number }>;
   games: KalshiGame[];
 };
 

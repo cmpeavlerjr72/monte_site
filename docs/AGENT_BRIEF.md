@@ -183,6 +183,49 @@ rather than blanking every price on the page. Never revert either to a
 plain `Promise.all` / empty-on-error: the 2026-08-26 incident was
 expensive because the failure was invisible.
 
+## Suggested bets (owner-only, READ-ONLY)
+
+`src/components/SuggestedBets.tsx` + `src/lib/suggestedBets.ts`. Rendered
+only while the portal session is `ok` — the same state that powers
+MyBookStrip.
+
+The FBS maker pipeline (`scripts/fbs_maker_pipeline.py` in cfb-props-sim)
+remains the PLACEMENT AUTHORITY. This card is its read-only twin for
+at-the-bar decisions: it mirrors the pipeline's constants by name
+(take 0.06, rest 0.03, margin 0.05, min price 0.03, max spread 0.30, sim
+0.05–0.95, prefer 0.35–0.65, 2 rungs per ladder / 1 per winner, $30 per
+ladder) and has NO placement controls. If the two ever disagree the
+pipeline is right and this file is the bug.
+
+- ZERO new Kalshi load: the compute is a pure function of the quotes
+  already flowing through the page's 45s `/api/kalshi/cfb` poll, so it is
+  live for free. "Refresh" re-runs the compute only — never a fetch, never
+  orderbook depth, never a per-market fan-out.
+- PREGAME ONLY, a correctness rule: sim fairs are pregame distributions,
+  so a live or final game must never yield a suggestion. Gated on the live
+  state AND the kick time, because the feed can lag a kickoff by a poll
+  and that is exactly when a stale edge looks best.
+- Markets the account already holds or is resting on are skipped, joined
+  by ticker against the portal payload (the payload now carries `ticker`
+  on stat quotes and ladder rungs for this).
+- FEES ARE NEVER GROSS. Every displayed edge is net of the fee for that
+  row's mode at that row's price, and the tap popover itemizes it. Fee
+  params come from KALSHI'S OWN per-series metadata (`fee_params` in the
+  proxy payload, 6h TTL), never hardcoded: checked 2026-08-28, every
+  per-team family is `fee_type: "quadratic"` — TAKER FEES ONLY, resting is
+  FREE — while the game lines are `quadratic_with_maker_fees`. A blanket
+  maker = taker/4 overstates the cost of exactly the markets this site
+  quotes. The constants are the fallback for a failed lookup, and the
+  fallback assumes maker-charging because an overstated fee costs a
+  marginal bet while an understated one invents an edge.
+- Sizing spends the fee: $30 per ladder is TOTAL OUTLAY
+  (price x count + fee), with the fee rounded UP to the cent per order the
+  way the exchange charges it. The pipeline was corrected to match in the
+  same change — one convention, both places.
+- Sim fairs are the published `team_stats.json` rungs read VERBATIM; a
+  strike off the grid simply has no bet. The client never recomputes a
+  distribution, only subtracts and compares.
+
 ## My-Kalshi portal (owner-only)
 
 `/api/portfolio/cfb` (server) — password-gated (`x-cfb-token` header vs
