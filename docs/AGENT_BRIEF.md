@@ -242,9 +242,25 @@ expensive because the failure was invisible.
 
 ## Suggested bets (owner-only) — and the app's order entry
 
-`src/components/SuggestedBets.tsx` + `src/lib/suggestedBets.ts` +
-`src/lib/placeOrders.ts`. Rendered only while the portal session is `ok` —
-the same state that powers MyBookStrip.
+`src/components/SuggestedBetsIndex.tsx` (the ranked INDEX in the My Book
+console) + `src/components/SuggestedBets.tsx` (the per-game BETS PANEL, and
+the app's only order entry) + `src/lib/useSuggestions.ts` (the compute) +
+`src/lib/suggestedBets.ts` (selection) + `src/lib/placeOrders.ts`. All three
+surfaces render only while the portal session is `ok` — the same state that
+powers MyBookStrip.
+
+**TWO SURFACES, ONE COMPUTE (2026-08-28).** Discovery is cross-game and
+ranking belongs at the top of the page; deciding and placing is per-game and
+belongs beside that game's projections. So the index shows ONE ROW PER GAME
+(teams, kick, N bets, best net edge) and places nothing, and tapping a row
+scrolls to the card, flashes it and opens its `bets` panel — where the
+ladders, the mode/type filters, the tails reveal and the confirm slip live.
+`useSuggestions` is called ONCE in Scoreboard and the filter/sort state lives
+there too, so the index count, the card's "Bets" badge and the panel rows can
+never disagree. A ladder's "See projection →" swaps the open panel for the
+chart it came from (`teamstats` with a `{team, stat}` focus, or `scores` for
+a game line); the still-visible Bets tab is the way back. No new network:
+opening a panel is a slice of a compute the page already ran.
 
 The FBS maker pipeline (`scripts/fbs_maker_pipeline.py` in cfb-props-sim)
 remains the AUTOMATED placement authority and stays POST-ONLY-ONLY. This
