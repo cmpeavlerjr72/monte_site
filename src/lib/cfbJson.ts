@@ -833,11 +833,46 @@ export type TeamStatDist = {
   reason?: string;
 };
 
+/**
+ * The per-game GAME-LINE block (exporter schema 2, 2026-08-28).
+ *
+ * The three game-line families had no published fair before this: their
+ * probabilities existed only inside the maker pipeline, which recomputes them
+ * per seed. These are those numbers, published, so Suggested Bets can price a
+ * live winner / spread / total quote by SUBTRACTION alone.
+ *
+ * `marginRungs` is keyed by a SIGNED half-integer K = P(home − away > K),
+ * K ∈ [−29.5, 29.5]. Signed because Kalshi's spread ladder lists a rung per
+ * team and the server normalises every rung to home perspective, where a rung
+ * at line L means P(margin > −L) — so a dog rung (L > 0) reads a negative
+ * key. `totalRungs` is P(home + away > K) for K ∈ [24.5, 89.5]; the UNDER is
+ * that market's NO, i.e. 1 − the same number.
+ *
+ * Absent on a week published before schema 2 (and on any namespace that has
+ * none): the card then simply builds no game-line candidate. Quiet, not an
+ * error. A strike off either grid has no bet — NEVER interpolate.
+ */
+export type TeamStatsGameLines = {
+  /** P(teamA wins), teamA = HOME. Matches summary.json's A_win_prob (the
+   *  exporter asserts it to 0.005 before publishing). */
+  winProbHome: number | null;
+  /** P(teamB wins), teamB = AWAY. */
+  winProbAway: number | null;
+  /** { "-7.5": P(home margin > −7.5) } — signed keys, see above. */
+  marginRungs: Record<string, number> | null;
+  /** { "48.5": P(total > 48.5) }. */
+  totalRungs: Record<string, number> | null;
+};
+
 export type TeamStatsGame = {
   teamA: string;
   teamB: string;
-  /** team name (VERBATIM from the published week index) -> stat -> dist. */
+  /** team name (VERBATIM from the published week index) -> stat -> dist.
+   *  EMPTY for a game-level-only namespace (FCS has no player sweep, so it
+   *  publishes the game block alone) — expected, not a partial file. */
   stats: Record<string, Record<string, TeamStatDist>>;
+  /** Game lines (schema 2). Undefined on an older file. */
+  game?: TeamStatsGameLines;
 };
 
 export type TeamStats = {
@@ -880,6 +915,27 @@ function parseTeamStatDist(raw: any): TeamStatDist | null {
     q90: numOrNull(raw.q90),
     rungs,
     reason: raw.reason != null ? String(raw.reason) : undefined,
+  };
+}
+
+const rungMap = (raw: any): Record<string, number> | null => {
+  if (!raw || typeof raw !== "object") return null;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const p = num(v);
+    if (p !== undefined) out[k] = p;
+  }
+  return out;
+};
+
+/** The schema-2 `game` block, or undefined on a file that has none. */
+function parseGameLines(raw: any): TeamStatsGameLines | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  return {
+    winProbHome: numOrNull(raw.win_prob_home),
+    winProbAway: numOrNull(raw.win_prob_away),
+    marginRungs: rungMap(raw.margin_rungs),
+    totalRungs: rungMap(raw.total_rungs),
   };
 }
 
@@ -928,6 +984,7 @@ export async function getTeamStats(
       teamA: String(g?.teamA ?? ""),
       teamB: String(g?.teamB ?? ""),
       stats,
+      game: parseGameLines(g?.game),
     };
   }
 

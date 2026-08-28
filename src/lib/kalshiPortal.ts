@@ -164,11 +164,22 @@ export type PortalBet = {
   kalshiP: number | null; kalshiEV: number | null;
   simP: number | null; simEV: number | null;
   slugs: string[]; title?: string;
+  /** Legs in the entry (1 = a straight bet). A combo renders on EVERY leg's
+   *  card, so the display has to be able to say "3-leg" there. */
+  legN: number;
+  /** RESTING ORDERS ONLY — the partial-fill picture. `count` is what is still
+   *  working, so "38 of 57 filled" needs the other two numbers; the filled 38
+   *  come back separately as a held position (positions are the ground truth).
+   *  Null on positions. */
+  filled: number | null; initial: number | null;
 };
 
 export type PortalTotals = {
   n: number; risked: number; toWin: number; fees: number;
   kalshiEV: number | null; simEV: number | null;
+  /** How many of the n bets each source could actually price. A summed EV over
+   *  a subset must never be presented as if it covered the whole book. */
+  simPriced: number; kalshiPriced: number;
 };
 
 export function computePortalBets(
@@ -193,6 +204,7 @@ export function computePortalBets(
   const push = (
     e: PortalOrder | PortalPosition, kind: PortalBet["kind"],
     count: number | null, price: number | null, fees: number,
+    fill?: { filled: number | null; initial: number | null },
   ) => {
     if (count === null || price === null || count <= 0) return;
     const legs = e.legs?.length
@@ -230,6 +242,8 @@ export function computePortalBets(
       kalshiP, kalshiEV: kalshiP === null ? null : kalshiP * count - risked,
       simP, simEV: simP === null ? null : simP * count - risked,
       slugs, title: e.title,
+      legN: legs.length,
+      filled: fill?.filled ?? null, initial: fill?.initial ?? null,
     };
     bets.push(bet);
     for (const s of slugs) {
@@ -242,17 +256,21 @@ export function computePortalBets(
   if (payload) {
     for (const p of payload.positions) push(p, "position", p.count, p.avg_price, p.fees ?? 0);
     for (const o of payload.orders) {
-      push(o, "order", o.remaining, o.side === "no" ? o.no_price : o.yes_price, 0);
+      push(o, "order", o.remaining, o.side === "no" ? o.no_price : o.yes_price, 0,
+           { filled: o.filled, initial: o.initial });
     }
   }
 
-  const totals: PortalTotals = { n: bets.length, risked: 0, toWin: 0, fees: 0, kalshiEV: null, simEV: null };
+  const totals: PortalTotals = {
+    n: bets.length, risked: 0, toWin: 0, fees: 0,
+    kalshiEV: null, simEV: null, simPriced: 0, kalshiPriced: 0,
+  };
   for (const b of bets) {
     totals.risked += b.risked;
     totals.toWin += b.toWin;
     totals.fees += b.fees;
-    if (b.kalshiEV !== null) totals.kalshiEV = (totals.kalshiEV ?? 0) + b.kalshiEV;
-    if (b.simEV !== null) totals.simEV = (totals.simEV ?? 0) + b.simEV;
+    if (b.kalshiEV !== null) { totals.kalshiEV = (totals.kalshiEV ?? 0) + b.kalshiEV; totals.kalshiPriced++; }
+    if (b.simEV !== null) { totals.simEV = (totals.simEV ?? 0) + b.simEV; totals.simPriced++; }
   }
   return { bets, bySlug, unmatched, totals };
 }

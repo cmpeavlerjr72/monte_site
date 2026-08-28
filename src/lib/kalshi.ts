@@ -16,6 +16,21 @@ export type KalshiRung = {
   ticker?: string;
   yes_bid?: number | null;
   yes_ask?: number | null;
+  /** TRUE when this rung's YES is the raw market's NO (an away-team spread
+   *  rung, flipped to home perspective). Prices already account for it;
+   *  ORDER ENTRY must not — buying this rung's YES is a NO order on
+   *  `ticker`. Absent on a server that predates the flag: treat as false. */
+  mirrored?: boolean;
+};
+
+/** One side of the game-winner market, with the ticker and the real book.
+ *  `winner.teamX_price` is only a midpoint; this is what can be priced and
+ *  placed. Absent on an older server payload. */
+export type KalshiWinnerQuote = {
+  side: "A" | "B";
+  ticker: string;
+  yes_bid: number | null;
+  yes_ask: number | null;
 };
 
 export type KalshiGame = {
@@ -23,6 +38,8 @@ export type KalshiGame = {
   event_ticker: string;
   /** Implied probabilities, 0..1. teamA = home. */
   winner: { teamA_price: number | null; teamB_price: number | null };
+  /** Both winner markets with tickers + books; [] or absent when none. */
+  winner_quotes?: KalshiWinnerQuote[];
   /** line = total points; yes_price = implied P(over line). */
   total: KalshiSide;
   /** line is HOME-perspective (negative = home favored). */

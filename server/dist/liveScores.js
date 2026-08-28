@@ -968,7 +968,12 @@ function pickLadderRung(markets) {
 const LADDER_MIN_PRICE = 0.03;
 const LADDER_MAX_PRICE = 0.97;
 /** Every usefully-priced rung of a ladder, ascending by line. */
-function buildLadder(markets, toLine, toPrice) {
+function buildLadder(markets, toLine, toPrice, 
+/** Does this market get flipped to our orientation? Declared by the CALLER
+ *  (which knows why), never inferred from the numbers: the old
+ *  `|yes - price| > 1e-9` test cannot tell a mirrored 50c rung from an
+ *  unmirrored one, and order entry needs the answer to be exact. */
+isMirrored = () => false) {
     const out = [];
     for (const m of markets) {
         const price = marketPrice(m);
@@ -988,12 +993,13 @@ function buildLadder(markets, toLine, toPrice) {
         // market's NO, whose bid/ask is (1 - yes_ask, 1 - yes_bid).
         const rawBid = dollars(m?.yes_bid_dollars);
         const rawAsk = dollars(m?.yes_ask_dollars);
-        const mirrored = Math.abs(yes - price) > 1e-9;
+        const mirrored = isMirrored(m);
         out.push({
             line, yes_price: Math.round(yes * 1000) / 1000,
             ticker: String(m?.ticker ?? ""),
             yes_bid: mirrored ? (rawAsk === null ? null : 1 - rawAsk) : rawBid,
             yes_ask: mirrored ? (rawBid === null ? null : 1 - rawBid) : rawAsk,
+            mirrored,
         });
     }
     out.sort((a, b) => a.line - b.line);
@@ -1184,6 +1190,7 @@ async function buildKalshiCfb(season, week) {
             slug,
             event_ticker: ev.event_ticker,
             winner: { teamA_price: null, teamB_price: null },
+            winner_quotes: [],
             total: { line: null, yes_price: null },
             spread: { line: null, yes_price: null },
             total_ladder: [],
@@ -1218,10 +1225,21 @@ async function buildKalshiCfb(season, week) {
         for (const m of winBy.get(`KXNCAAFGAME-${suffix}`) ?? []) {
             const k = cfbNameKey(m?.yes_sub_title ?? "");
             const price = marketPrice(m);
-            if (k === keyA)
+            const side = k === keyA ? "A" : k === keyB ? "B" : null;
+            if (!side)
+                continue;
+            if (side === "A")
                 out.winner.teamA_price = price;
-            else if (k === keyB)
+            else
                 out.winner.teamB_price = price;
+            // Never price-filtered the way ladder rungs are: a 2c longshot winner
+            // market is exactly where a take-side edge lives (wk0 had one at
+            // sim 0.099 vs a 2c ask), and there is no ladder here to keep small.
+            out.winner_quotes.push({
+                side, ticker: String(m?.ticker ?? ""),
+                yes_bid: dollars(m?.yes_bid_dollars),
+                yes_ask: dollars(m?.yes_ask_dollars),
+            });
         }
         // Total: "Over X.5 points scored"; floor_strike is the line.
         const totalMarkets = totBy.get(`KXNCAAFTOTAL-${suffix}`) ?? [];
@@ -1231,16 +1249,13 @@ async function buildKalshiCfb(season, week) {
         // Spreads: each rung reads "<Team> wins by over X.5". Normalise to
         // home-perspective so a rung is always "P(home covers line)":
         // a rung naming the away team is mirrored (line flips sign, price -> 1-p).
+        const spreadNamesHome = (m) => cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "") === keyA;
         out.spread_ladder = buildLadder(spreadMarkets, (m) => {
             const floor = dollars(m?.floor_strike);
             if (floor === null)
                 return null;
-            const who = cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");
-            return who === keyA ? -floor : floor;
-        }, (m, price) => {
-            const who = cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");
-            return who === keyA ? price : 1 - price;
-        });
+            return spreadNamesHome(m) ? -floor : floor;
+        }, (m, price) => (spreadNamesHome(m) ? price : 1 - price), (m) => !spreadNamesHome(m));
         const totRung = pickLadderRung(totalMarkets);
         if (totRung) {
             out.total.line = dollars(totRung.m?.floor_strike);

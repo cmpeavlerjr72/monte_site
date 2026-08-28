@@ -1033,6 +1033,19 @@ type KalshiRung = {
   ticker?: string;
   yes_bid?: number | null;
   yes_ask?: number | null;
+  /**
+   * TRUE when this rung's YES is the RAW market's NO.
+   *
+   * The spread ladder is normalised to home perspective, so a rung whose
+   * market names the away team is mirrored: line flips sign, price -> 1-p,
+   * and the book becomes (1 - yes_ask, 1 - yes_bid). Everything reading a
+   * PRICE can ignore this. Anything that PLACES an order cannot: buying this
+   * rung's YES means sending a NO order on `ticker`, and getting that
+   * backwards is the opposite bet at the same price. Reported explicitly
+   * rather than re-derived, because the old price-comparison test for
+   * "mirrored" is degenerate at exactly 50c.
+   */
+  mirrored?: boolean;
 };
 
 /**
@@ -1133,10 +1146,31 @@ type KalshiStatQuote = {
   yes_ask: number | null;
 };
 
+/**
+ * One side of the game-WINNER market (KXNCAAFGAME), with the ticker and both
+ * book sides.
+ *
+ * `winner.teamX_price` is a midpoint and always has been — enough to show a
+ * price, useless for maker/taker math and unusable for order entry. Suggested
+ * Bets needs the same three things it needs from a stat quote: a real bid/ask
+ * to price against, and a ticker to skip a market the owner already holds and
+ * to place on. Kalshi lists a market per team, so both sides travel; the dog
+ * is reachable either as its own market's YES or as the favourite's NO, which
+ * is how the maker pipeline prices it.
+ */
+type KalshiWinnerQuote = {
+  side: "A" | "B";
+  ticker: string;
+  yes_bid: number | null;
+  yes_ask: number | null;
+};
+
 type KalshiGame = {
   slug: string;
   event_ticker: string;
   winner: { teamA_price: number | null; teamB_price: number | null };
+  /** Both winner markets with tickers + books; [] when none are listed. */
+  winner_quotes: KalshiWinnerQuote[];
   total: KalshiSide;
   spread: KalshiSide;
   /** Full ladders, so the client can match the book's line exactly. */
@@ -1229,7 +1263,12 @@ const LADDER_MAX_PRICE = 0.97;
 function buildLadder(
   markets: any[],
   toLine: (m: any) => number | null,
-  toPrice: (m: any, price: number) => number | null
+  toPrice: (m: any, price: number) => number | null,
+  /** Does this market get flipped to our orientation? Declared by the CALLER
+   *  (which knows why), never inferred from the numbers: the old
+   *  `|yes - price| > 1e-9` test cannot tell a mirrored 50c rung from an
+   *  unmirrored one, and order entry needs the answer to be exact. */
+  isMirrored: (m: any) => boolean = () => false
 ): KalshiRung[] {
   const out: KalshiRung[] = [];
   for (const m of markets) {
@@ -1248,12 +1287,13 @@ function buildLadder(
     // market's NO, whose bid/ask is (1 - yes_ask, 1 - yes_bid).
     const rawBid = dollars(m?.yes_bid_dollars);
     const rawAsk = dollars(m?.yes_ask_dollars);
-    const mirrored = Math.abs(yes - price) > 1e-9;
+    const mirrored = isMirrored(m);
     out.push({
       line, yes_price: Math.round(yes * 1000) / 1000,
       ticker: String(m?.ticker ?? ""),
       yes_bid: mirrored ? (rawAsk === null ? null : 1 - rawAsk) : rawBid,
       yes_ask: mirrored ? (rawBid === null ? null : 1 - rawBid) : rawAsk,
+      mirrored,
     });
   }
   out.sort((a, b) => a.line - b.line);
@@ -1454,6 +1494,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
       slug,
       event_ticker: ev.event_ticker,
       winner: { teamA_price: null, teamB_price: null },
+      winner_quotes: [],
       total: { line: null, yes_price: null },
       spread: { line: null, yes_price: null },
       total_ladder: [],
@@ -1490,8 +1531,18 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     for (const m of winBy.get(`KXNCAAFGAME-${suffix}`) ?? []) {
       const k = cfbNameKey(m?.yes_sub_title ?? "");
       const price = marketPrice(m);
-      if (k === keyA) out.winner.teamA_price = price;
-      else if (k === keyB) out.winner.teamB_price = price;
+      const side = k === keyA ? "A" : k === keyB ? "B" : null;
+      if (!side) continue;
+      if (side === "A") out.winner.teamA_price = price;
+      else out.winner.teamB_price = price;
+      // Never price-filtered the way ladder rungs are: a 2c longshot winner
+      // market is exactly where a take-side edge lives (wk0 had one at
+      // sim 0.099 vs a 2c ask), and there is no ladder here to keep small.
+      out.winner_quotes.push({
+        side, ticker: String(m?.ticker ?? ""),
+        yes_bid: dollars(m?.yes_bid_dollars),
+        yes_ask: dollars(m?.yes_ask_dollars),
+      });
     }
 
     // Total: "Over X.5 points scored"; floor_strike is the line.
@@ -1508,18 +1559,17 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     // Spreads: each rung reads "<Team> wins by over X.5". Normalise to
     // home-perspective so a rung is always "P(home covers line)":
     // a rung naming the away team is mirrored (line flips sign, price -> 1-p).
+    const spreadNamesHome = (m: any) =>
+      cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "") === keyA;
     out.spread_ladder = buildLadder(
       spreadMarkets,
       (m) => {
         const floor = dollars(m?.floor_strike);
         if (floor === null) return null;
-        const who = cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");
-        return who === keyA ? -floor : floor;
+        return spreadNamesHome(m) ? -floor : floor;
       },
-      (m, price) => {
-        const who = cfbNameKey(String(m?.yes_sub_title ?? "").split(/\s+wins\s+by\s+/i)[0] ?? "");
-        return who === keyA ? price : 1 - price;
-      }
+      (m, price) => (spreadNamesHome(m) ? price : 1 - price),
+      (m) => !spreadNamesHome(m)
     );
 
     const totRung = pickLadderRung(totalMarkets);

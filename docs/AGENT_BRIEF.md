@@ -58,7 +58,10 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   slug-keyed joins (props_odds.json) are untouched. The Kalshi map is re-keyed
   to match. Nothing promises the two slug spaces are disjoint.
 - FCS is game-level only: `has_players:false`, no players/props files. UI
-  branches on the FLAG, not on the 404.
+  branches on the FLAG, not on the 404. Since 2026-08-28 it DOES publish
+  `team_stats.json` — the `game` block alone, `stats: {}` — so FCS games
+  produce game-line suggestions; anything reading `stats` must treat empty
+  as expected there, not as a partial file.
 - A missing FCS week/dataset is the EXPECTED pre-publish state → quiet empty
   state, never `setWeekError`. "Both" degrades to FBS-only.
 - Kalshi joins by normalized team-name pair via `server/cfbNames.ts` (pure, so
@@ -103,9 +106,30 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   `td_offensive` is rush+rec only and is a FLOOR for Kalshi's team-TD
   market, whose wording does not exclude defensive/return TDs; Kalshi
   counts OT1/OT2 only and never 2-pt conversions). Published by
-  cfb-props-sim `export_team_stats.py`; built from the PLAYER sweep, so
-  the FCS namespace 404s forever = expected "not published" state
-  (`TeamStatsNotPublished`). The "Team Stats" panel draws each stat as a
+  cfb-props-sim `export_team_stats.py`.
+  **SCHEMA 2 (2026-08-28) adds a per-game `game` block** beside `stats`:
+  `{n_sims, ties, win_prob_home, win_prob_away, win_prob_home_published,
+  margin_rungs:{K: P(home−away > K)}, total_rungs:{K: P(home+away > K)}}`
+  — the GAME LINES, computed per seed from the same compact.json points
+  and parsed into `TeamStatsGameLines` (camelCase) by `cfbJson.ts`. It
+  exists because the three game-line families had no published fair
+  anywhere: those probabilities lived only inside the maker pipeline, so
+  the Suggested Bets card could not price a winner/spread/total quote at
+  all. `margin_rungs` keys are SIGNED half-integers (−29.5..29.5) and
+  that is load-bearing: a spread rung normalised to home perspective at
+  line L is P(margin > −L), so every dog rung reads a NEGATIVE key.
+  `total_rungs` runs 24.5..89.5; the Under is the same market's NO, i.e.
+  `1 −` the rung. `win_prob_home` is summary.json's exact A_win_prob
+  convention (tie-split) and the exporter ASSERTS it against the
+  published value per game (0.005) before writing — a side swap would
+  otherwise be invisible. A strike off either grid has no bet; NEVER
+  interpolate.
+  **FCS publishes this file too** (since 2026-08-28) — game block only,
+  with `stats: {}`, because that namespace has no player sweep. It is no
+  longer a permanent 404: an FCS week the exporter has not reached yet
+  still 404s and is still the quiet `TeamStatsNotPublished` state, and
+  an empty `stats` map is EXPECTED there, never a partial file. The
+  "Team Stats" panel draws each stat as a
   MIRRORED DENSITY on ONE continuous axis — teamA's distribution above
   the line, teamB's below — with live Kalshi markets as flags on the
   line. This shape was chosen against a stated bar: readable "to
@@ -257,9 +281,7 @@ they can never change what a surviving row costs.
 A second filter row (2026-08-28) buckets by bet TYPE — All / Game lines / TD
 props / Yardage / Team totals — via `familyForSeries` in `suggestedBets.ts`,
 mapping each row's Kalshi series: game lines are KXNCAAFGAME/SPREAD/TOTAL
-(no candidate source feeds this bucket yet — the card only ever builds
-per-team-stat candidates via `statCandidates`, so it renders empty until a
-game-line candidate builder ships); TD props are the RSHTD/RECTD families;
+(fed by `gameCandidates`, see below); TD props are the RSHTD/RECTD families;
 Yardage is RECYDS/RSHYDS/YDS; Team totals is TEAMTOTAL plus the
 receptions/rush-att/sacks/INTs families (folded in rather than a fifth
 chip). It drops whole LADDERS, not rows, because a ladder never mixes series
@@ -315,6 +337,44 @@ because the portal payload carries `orders_live`.
 - Sim fairs are the published `team_stats.json` rungs read VERBATIM; a
   strike off the grid simply has no bet. The client never recomputes a
   distribution, only subtracts and compares.
+
+**Game lines (`gameCandidates`, 2026-08-28).** Winner / spread / total
+candidates against the published `game` block. Four rules, each of which is a
+way to lose money if it is wrong:
+
+- **NO is the mirror**, exactly as the pipeline's `price_side`: sim → 1−sim,
+  book → (1−yes_ask, 1−yes_bid). That is the ONLY way an Under (the NO of an
+  over rung) or a dog (the NO of the favourite) exists at all. Both contracts
+  of every market are emitted and `buildSuggestions` keeps **one row per
+  TICKER**, mirroring the pipeline's "price both, keep the better". Without
+  that cap a ladder could take both halves of one market — a self-hedge that
+  pays two fees to bet on nothing.
+- **Spread rungs are HOME-perspective**, so a rung's YES is P(margin > −line)
+  and the published margin grid is signed. A rung whose raw market names the
+  AWAY team is `mirrored` (server flag, declared by the caller of
+  `buildLadder`, never inferred from the numbers — the old
+  `|yes − price| > 1e-9` test is degenerate at 50c): the ORDER SIDE flips
+  even though the price does not, so buying that rung's YES sends a **NO**
+  order. Backwards here is the opposite bet at the right price.
+- **Ladder identity is the RAW market's team**, matching the pipeline's
+  `ladder_key`: spreads group per named team (P(home by >7.5) and P(away by
+  >7.5) are not complements), totals share one ladder, and BOTH winner
+  markets share one at `MAX_RUNGS_WINNER` = 1, because buying "A wins" and
+  selling "B wins" are one bet seen from either end.
+- Rows carry `rungText` ("−7.5", "Over 48.5") because the grouped-ladder
+  popover's stat wording, `${strike}+`, is not a bet for a game line. A
+  ladder whose rungs name DIFFERENT teams spells out both full labels rather
+  than collapsing to one team's name.
+
+The winner market needed a server change to be priceable at all:
+`winner.teamX_price` is a midpoint, so the payload now also carries
+`winner_quotes[]` (side, ticker, yes_bid, yes_ask) — and unlike ladder rungs
+it is NOT price-filtered, because a 2c longshot is exactly where a take-side
+edge lives (wk0 had one at sim 0.099 vs a 2c ask). Candidates are built per
+CARD NAMESPACE (`card.ns`), so FCS cards contribute game lines from the FCS
+dataset's own file. Verified 2026-08-28 against the maker pipeline's wk0 plan
+(`plan_2026_wk00_20260828T094424-wk0.json`) at the book that plan recorded:
+**52/52 game-line rows agree on sim_p, mode, price and net edge**.
 
 ## My Book console (owner-only) — where owner features go
 

@@ -54,8 +54,8 @@ import type { TeamStats as TeamStatsDoc } from "../lib/cfbJson";
 import type { KalshiGame } from "../lib/kalshi";
 import type { PortalPayload } from "../lib/kalshiPortal";
 import {
-  buildSuggestions, groupLadders, heldTickerSet, statCandidates,
-  MIN_MAKER_EDGE, TAKE_THRESHOLD,
+  buildSuggestions, gameCandidates, groupLadders, heldTickerSet,
+  statCandidates, MIN_MAKER_EDGE, TAKE_THRESHOLD,
   type Candidate, type FeeParams, type LadderGroup,
 } from "../lib/suggestedBets";
 import {
@@ -224,23 +224,35 @@ export default function SuggestedBets({
       if (g.started) continue;
       const kg = kalshiBySlug.get(g.key);
       if (!kg) continue;
-      const doc = docs[String(g.ns)];
-      const stats = doc?.games?.[g.slug]?.stats;
-      if (!stats) continue;
-      candidates.push(...statCandidates(
-        // `key` is what the scoreboard scrolls to; `slug` only indexes the
-        // published stats above.
-        kg, g.key, g.teamA, g.teamB,
-        (stat) => SHORT[stat] ?? stat,
-        (team, stat, strike) => {
-          // Published rung, read verbatim. No interpolation, no client-side
-          // distribution math — a strike off the grid simply has no bet.
-          const r = stats[team]?.[stat]?.rungs;
-          const v = r?.[String(strike)];
-          return typeof v === "number" ? v : null;
-        },
-        (stat) => SERIES_FOR_STAT[stat] ?? "",
-      ));
+      // Per-CARD namespace, never the page's season: a merged "Both" slate
+      // holds FBS and FCS cards at once and each reads its own dataset.
+      const published = docs[String(g.ns)]?.games?.[g.slug];
+      if (!published) continue;
+      const stats = published.stats;
+      if (stats && Object.keys(stats).length) {
+        candidates.push(...statCandidates(
+          // `key` is what the scoreboard scrolls to; `slug` only indexes the
+          // published stats above.
+          kg, g.key, g.teamA, g.teamB,
+          (stat) => SHORT[stat] ?? stat,
+          (team, stat, strike) => {
+            // Published rung, read verbatim. No interpolation, no client-side
+            // distribution math — a strike off the grid simply has no bet.
+            const r = stats[team]?.[stat]?.rungs;
+            const v = r?.[String(strike)];
+            return typeof v === "number" ? v : null;
+          },
+          (stat) => SERIES_FOR_STAT[stat] ?? "",
+        ));
+      }
+      // Game lines (winner / spread / total). Absent on a week published
+      // before exporter schema 2 — quiet, never an error. A game-level-only
+      // namespace (FCS: no player sweep, so `stats` is empty by design)
+      // contributes THESE and only these.
+      if (published.game) {
+        candidates.push(...gameCandidates(
+          kg, g.key, g.teamA, g.teamB, published.game));
+      }
     }
     const built = buildSuggestions(candidates, feeParams, held, unit);
     return { ...built, computedAt: new Date() };
@@ -568,7 +580,12 @@ export default function SuggestedBets({
                                 padding: "3px 0",
                                 borderTop: ri === 0 ? "none" : "1px solid var(--border)",
                               }}>
-                                <span style={{ fontWeight: 700 }}>{rr.strike}+</span>
+                                {/* A stat rung is "225+"; a game line is
+                                    "−7.5" or "Over 48.5", which the builder
+                                    supplies — "48.5+" is not a bet. */}
+                                <span style={{ fontWeight: 700 }}>
+                                  {rr.rungText ?? `${rr.strike}+`}
+                                </span>
                                 <ModeChip mode={rr.mode} price={rr.price} />
                                 <span style={{ color: "var(--muted)" }}>
                                   {rr.count} ct · fee {rr.fee.toFixed(2)}
