@@ -319,6 +319,23 @@ async function fetchAllPages(baseUrl, maxPages = 8) {
     // Ensure final shape is normalized (events deduped, etc.)
     return normalizeScoreboardPayload(merged ?? {});
 }
+/** Fetch one group's pages, recording ESPN 403 sightings (and recoveries)
+ *  into the negative cache below so a persistent Akamai block quiets down
+ *  instead of retrying -- and re-logging a stack trace -- on every viewer
+ *  poll. Declared here (ahead of its definition further down the file) is
+ *  fine: these are hoisted function declarations. */
+async function fetchGroupPages(url) {
+    try {
+        const result = await fetchAllPages(url);
+        noteEspnReachable();
+        return result;
+    }
+    catch (err) {
+        if (err?.status === 403)
+            noteEspn403();
+        throw err;
+    }
+}
 /**
  * ESPN's multi-group scoreboard (`groups=80,81`) returns STUB events — `{}`,
  * no id, no competitors — whenever one of the groups has no games that date.
@@ -334,16 +351,23 @@ async function fetchScoreboardMerged(sport, dateYYYYMMDD, opts) {
     if (sport !== "cfb" || parts.length <= 1) {
         const url = espnUrl(sport, dateYYYYMMDD, opts);
         console.log("[scoreboard fetch base]", url);
-        return fetchAllPages(url);
+        return fetchGroupPages(url);
     }
     const walks = await Promise.all(parts.map(async (g) => {
         const url = espnUrl(sport, dateYYYYMMDD, { ...opts, groups: g });
         console.log("[scoreboard fetch group]", url);
         try {
-            return await fetchAllPages(url);
+            return await fetchGroupPages(url);
         }
         catch (err) {
-            console.warn(`[scoreboard] group ${g} walk failed:`, err);
+            // 403s are already recorded + logged (once, on transition) by
+            // fetchGroupPages -> noteEspn403; a full stack trace here would be
+            // exactly the per-group wallpaper this fix removes. Every other
+            // failure (timeout, 5xx, parse error) is a real signal and keeps its
+            // full trace.
+            if (err?.status !== 403) {
+                console.warn(`[scoreboard] group ${g} walk failed:`, err);
+            }
             return null;
         }
     }));
@@ -411,9 +435,65 @@ async function fetchJsonWithTimeout(url, ms = 10_000) {
             "user-agent": "Mozilla/5.0",
         },
     }, ms);
-    if (!resp.ok)
-        throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+        // .status is load-bearing: it lets callers distinguish a known,
+        // permanent-until-unblocked 403 (Akamai blocking this egress IP) from a
+        // real signal (timeout, 5xx, etc.) without re-parsing the message string.
+        const err = new Error(`HTTP ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+    }
     return await resp.json();
+}
+// ----------------------------------------------------------------------------
+// ESPN 403 negative cache
+//
+// ESPN's Akamai edge blocks this host's egress IP outright for the scoreboard
+// endpoint (documented in docs/AGENT_BRIEF.md "LIVE data") -- a known,
+// persistent-until-the-host-changes condition, not a transient blip. Before
+// this, every blocked viewer poll re-walked every group/date and logged a
+// full stack trace per attempt (6+ traces per poll cycle), wallpapering the
+// Render logs on game days for a failure mode that is already handled
+// correctly one layer up (useLiveScoreboard's fetchServer treats any non-ok
+// /api/scoreboard response as "fall through to the snapshot tier"). Once a
+// 403 is seen, skip upstream entirely for 10 minutes and answer /api/scoreboard
+// with the SAME error shape/status a genuine upstream failure already used, so
+// the client contract does not change. After the window, the next request
+// tries upstream for real -- self-heal if the IP is ever unblocked. Any OTHER
+// failure (timeout, 5xx, parse error) is a real signal and is untouched: it
+// keeps its full existing logging below.
+// ----------------------------------------------------------------------------
+const ESPN_403_COOLDOWN_MS = 10 * 60 * 1000;
+let espnBlockedUntil = null;
+// Tracks the episode (not just the current cooldown window) so the one-line
+// entry/recovery logs fire only on genuine transitions, even if ESPN keeps
+// 403'ing across several cooldown windows in a row.
+let espnBlockEpisodeActive = false;
+/** True while a 403 was seen within the last 10 minutes. */
+function espnBlockActive() {
+    if (espnBlockedUntil === null)
+        return false;
+    if (Date.now() >= espnBlockedUntil) {
+        espnBlockedUntil = null;
+        return false;
+    }
+    return true;
+}
+/** Record a 403 sighting; logs once per transition into the blocked state. */
+function noteEspn403() {
+    espnBlockedUntil = Date.now() + ESPN_403_COOLDOWN_MS;
+    if (!espnBlockEpisodeActive) {
+        espnBlockEpisodeActive = true;
+        console.warn("[scoreboard] ESPN 403 from this egress (known Akamai block) — fast-failing for 10m; blocked clients use the snapshot tier");
+    }
+}
+/** Record a successful upstream fetch; logs once on self-heal. */
+function noteEspnReachable() {
+    espnBlockedUntil = null;
+    if (espnBlockEpisodeActive) {
+        espnBlockEpisodeActive = false;
+        console.log("[scoreboard] ESPN reachable again from this egress — resuming normal upstream fetches");
+    }
 }
 // ----------------------------------------------------------------------------
 // Bounded in-memory cache for scoreboard payloads
@@ -539,6 +619,15 @@ app.get("/api/scoreboard", asyncRoute(async (req, res) => {
     const force = String(req.query.fresh || "") === "1";
     const groups = normGroups(req.query.groups);
     const limit = clampLimit(req.query.limit);
+    // Fast-fail while ESPN's Akamai edge is blocking this egress IP (negative
+    // cache above) -- no upstream attempt at all. Same error shape/status as
+    // the genuine-failure branch below, so useLiveScoreboard's fetchServer
+    // (which only checks resp.ok before falling through to the snapshot
+    // tier) sees an identical contract either way.
+    if (espnBlockActive()) {
+        res.status(502).json({ error: "scoreboard_upstream_error", sport, date });
+        return;
+    }
     try {
         const payload = await getScoreboard(sport, date, force, { groups, limit });
         res.json({ sport, date, payload, cached_at: new Date().toISOString() });
