@@ -248,10 +248,36 @@ the same state that powers MyBookStrip.
 
 The FBS maker pipeline (`scripts/fbs_maker_pipeline.py` in cfb-props-sim)
 remains the AUTOMATED placement authority and stays POST-ONLY-ONLY. This
-card mirrors its SELECTION constants by name (take 0.06, rest 0.03, margin
-0.05, min price 0.03, max spread 0.30, TAIL band 0.20–0.80, prefer 0.35–0.65,
-2 rungs per ladder / 1 per winner, $30 per ladder). If the two disagree on
-selection the pipeline is right and this file is the bug.
+card mirrors its SELECTION constants by name (take 0.06/0.045/0.03 by time to
+kick, rest 0.03, margin 0.05, min price 0.03, max spread 0.30, TAIL band
+0.20–0.80, prefer 0.35–0.65, 2 rungs per ladder / 1 per winner, $30 per
+ladder). If the two disagree on selection the pipeline is right and this file
+is the bug.
+
+**THE TIMING BANDS (2026-08-28).** Maker vs taker is a TIME decision. A rest
+buys the fee saving (per-team families charge no maker fee at all) plus a tick
+or more of price improvement, and pays for it with FILL RISK — which grows as
+the book thins into kickoff and is hard-capped by our own `pull-prekickoff`
+chain cancelling every unfilled rest at kick−30min. So the take bar comes DOWN
+as the alternative gets worse: 6¢ beyond 24h, 4.5¢ from 3–24h, 3¢ inside 3h,
+and inside the last HOUR resting is not offered at all — a row that cannot
+clear the (already relaxed) take bar is DROPPED, with the reason in words in
+the suppressed list, because a quote posted then is one we know gets pulled
+unfilled. `timingFor`/`timingWords` in suggestedBets.ts; the row's popover says
+where it sits ("2h to kick — resting has little time to fill before the kick−30
+pull, so the take bar 3¢ (from 6¢)"). Band edges are exclusive at the top:
+exactly 24h is `near`, exactly 1h is `imminent`. An UNKNOWN kickoff is the
+`far` band — a missing time must never be why a bar gets easier.
+
+The Python is the source, as with the tail band: `timing_band` +
+`TAKE_FAR/TAKE_NEAR/TAKE_LATE` + `BAND_NEAR_H/BAND_LATE_H/REST_CUTOFF_H` in
+cfb-props-sim's `kalshi_team_edges.py`, imported by `fbs_maker_pipeline.py` for
+its plan pricing, its approve-time live check, AND its ESCALATION rule — which
+was already this idea hard-coded at one point ("a maker quote that has not
+filled by Friday will not fill by Saturday"). Verified 2026-08-28: identical
+mode decisions on both sides at 30h/6h/2h/45min across three probes sized to
+land between rungs, and the wk0 plan at 20.7–27.7h to kick changed ZERO rows
+vs the old flat 0.06 rule.
 
 **The TAIL band (2026-08-28).** A contract is TAIL unless BOTH its sim
 probability AND the ask it would pay sit inside [0.20, 0.80] —
@@ -361,9 +387,27 @@ because the portal payload carries `orders_live`.
   live for free. "Refresh" re-runs the compute only — never a fetch, never
   orderbook depth, never a per-market fan-out.
 - PREGAME ONLY, a correctness rule: sim fairs are pregame distributions,
-  so a live or final game must never yield a suggestion. Gated on the live
-  state AND the kick time, because the feed can lag a kickoff by a poll
-  and that is exactly when a stale edge looks best.
+  so a live or final game must never yield a suggestion. `pregameVerdict` in
+  suggestedBets.ts owns the rule and the reasoning; the page hands it two
+  UNMIXED signals — `started`/`liveState` (the feed alone) and `kickoffMs`.
+  Suggestible only if (live state `pre` or absent) AND kick > now + 5 min.
+  **Both signals veto**: a live `in`/`post`/`final` beats a kickoff still in
+  the future (early start, bad schedule row), and the CLOCK beats a live `pre`
+  that is past its kick time. That second one is the argued call — a genuine
+  weather delay and a feed that has not updated yet are indistinguishable from
+  here, and the costs are wildly asymmetric (one marginal bet missed vs. money
+  staked on a distribution we know is wrong), so `pre` does not win. With
+  NEITHER signal (no kickoff, no ESPN join) the game is dropped and COUNTED in
+  the card footer.
+- **The clock has to MOVE.** `nowMs` is a 30s `setInterval` in Scoreboard.tsx,
+  passed in as a prop and a dependency of the compute memo — that is what makes
+  a game fall off the card when it kicks. It used to be a `Date.now()` read
+  inside a memo keyed on `baseCards`, i.e. a clock that only advanced when the
+  ESPN live poll delivered: on a network that blocks espn.com, or simply after
+  the poll stops (it does, once every event is final), `now` froze at page load
+  and a kicked-off game never left. `node scripts/check_suggest_timing.mjs`
+  guards both halves — the gate's truth table (including the ESPN-gap and
+  delayed-kick cases) and the static wiring that keeps the clock ticking.
 - Markets the account already holds or is resting on are skipped, joined
   by ticker against the portal payload (the payload now carries `ticker`
   on stat quotes and ladder rungs for this).
@@ -674,9 +718,11 @@ precached bundle hash on the controlled client.
 `node scripts/check_render_loops.mjs` (effects/memos) ·
 `node scripts/check_fcs_names.mjs` (server/cfbNames.ts or team_info.csv;
 needs a fresh server/dist) · `node scripts/check_fcs_slate.mjs` (FCS wiring,
-namespaces, empty states, logo assets) · SSR words-screenshot for UI
-changes · no hardcoded colors · report ≤300 words + gate table unless
-findings warrant more.
+namespaces, empty states, logo assets) ·
+`node scripts/check_suggest_timing.mjs` (the pregame gate + the maker/taker
+timing bands, whenever suggestedBets.ts or the `suggestGames` memo moves) ·
+SSR words-screenshot for UI changes · no hardcoded colors · report ≤300 words
++ gate table unless findings warrant more.
 
 The two `check_fcs_*` scripts run the SHIPPED code (compiled server module /
 the real `.ts` loaders under node's type stripping) against fixtures, so they

@@ -2081,21 +2081,56 @@ function ScoreboardPage() {
     [weekOptions, selectedWeek]
   );
 
-  /** Index of the expanded card in the filtered list, and the card itself. */
-  /* Pregame games for the owner-only Suggested Bets card.
+  /**
+   * A TICKING WALL CLOCK, for the Suggested Bets card and nothing else.
    *
-   * PREGAME IS A CORRECTNESS RULE: our sim fairs are pregame distributions,
-   * so a live or finished game must never produce a suggestion. Belt and
-   * braces — the live feed's own state AND the kick time, because the feed
-   * can lag a kickoff by a poll or two and that window is exactly when a
-   * stale "edge" would look most attractive.
+   * The pregame gate and the maker/taker timing bands are both functions of
+   * "how long until kickoff", so they need a clock that MOVES. Before this,
+   * `Date.now()` was read inside the `suggestGames` memo, which meant the
+   * clock only advanced when `baseCards` changed identity — i.e. when the ESPN
+   * live poll delivered. That is a real dependency on a feed that is allowed to
+   * fail: `useLiveScoreboard` only calls `setPayload` when a tier ANSWERS, so on
+   * a network that blocks espn.com with no published snapshot (or after every
+   * event goes final and the poll stops), the memo's `now` freezes at page load
+   * and a game never drops off the card no matter how long the tab stays open.
+   *
+   * 30s is chosen against the 5-minute pregame buffer: worst case a game leaves
+   * the card 30s later than its exact instant, still ~4.5 min before kickoff.
+   * No cycle to worry about — an interval that sets a NUMBER, with no
+   * dependency on anything it sets (the loop the render guard exists to prevent
+   * needs an effect whose deps its own setState recreates).
+   */
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  /** Index of the expanded card in the filtered list, and the card itself. */
+  /* Games offered to the owner-only Suggested Bets card.
+   *
+   * PREGAME IS A CORRECTNESS RULE: our sim fairs are pregame distributions, so
+   * a live or finished game must never produce a suggestion. The rule itself
+   * lives in `pregameVerdict` (suggestedBets.ts) so it is stated once, in
+   * words, next to the reasoning; this memo's job is only to hand over the two
+   * SIGNALS it judges, unmixed:
+   *
+   *   started   — the FEED's verdict alone. It deliberately no longer ORs in a
+   *               kick-time test: the clock is the gate's own second signal,
+   *               and folding it in here made "which one fired?" unanswerable
+   *               and hid the fact that the clock was not moving.
+   *   liveState — ESPN's raw state, or undefined where the feed never joined
+   *               this game (common: Lafayette/Georgetown has no ESPN entry at
+   *               all on the wk0 board).
+   *
+   * Kickoff comes along for the ride: it is the "Soonest" sort key, the gate's
+   * clock leg, AND the timing band that sets each row's take/rest bar.
    *
    * Derived from baseCards (never the sorted/filtered list) so a UI filter
    * cannot silently shrink the book, and so it stays clear of the memo cycle
    * the render-loop guard exists to prevent.
    */
   const suggestGames: SuggestGame[] = useMemo(() => {
-    const now = Date.now();
     return baseCards.map((c) => ({
       key: c.key,
       slug: c.jsonRow?.slug ?? c.key,
@@ -2103,13 +2138,13 @@ function ScoreboardPage() {
       teamA: c.teamA,
       teamB: c.teamB,
       kickoffMs: typeof c.kickoffMs === "number" ? c.kickoffMs : undefined,
+      liveState: c.live?.state,
       started:
         Boolean(c.liveInProgress) ||
         c.live?.state === "in" ||
         c.live?.state === "final" ||
         c.live?.state === "post" ||
-        c.scoreSource === "CSV_FINALS" ||
-        (typeof c.kickoffMs === "number" && c.kickoffMs <= now),
+        c.scoreSource === "CSV_FINALS",
     }));
   }, [baseCards]);
 
@@ -2428,6 +2463,7 @@ function ScoreboardPage() {
               docs={teamStatsDocs}
               unit={unit}
               token={portalToken}
+              nowMs={nowMs}
               onJump={(slug) => setFlashKey(slug)}
             />
           )}

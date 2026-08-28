@@ -55,7 +55,9 @@ import type { KalshiGame } from "../lib/kalshi";
 import type { PortalPayload } from "../lib/kalshiPortal";
 import {
   buildSuggestions, gameCandidates, groupLadders, heldTickerSet,
-  statCandidates, orderFee, MIN_MAKER_EDGE, TAKE_THRESHOLD, TAIL_HI, TAIL_LO,
+  statCandidates, orderFee, pregameVerdict, timingWords,
+  MIN_MAKER_EDGE, TAKE_THRESHOLD, TAKE_THRESHOLD_LATE, TAKE_THRESHOLD_NEAR,
+  TAIL_HI, TAIL_LO,
   type Candidate, type FeeParams, type LadderGroup, type Suggestion,
 } from "../lib/suggestedBets";
 import {
@@ -95,9 +97,15 @@ export type SuggestGame = {
   ns: Season;
   teamA: string;
   teamB: string;
-  /** True when the game has kicked, is live, or is final. */
+  /** The LIVE FEED's verdict alone: an in-progress event, a post/final state,
+   *  or a finals CSV. Never a kick-time test — the clock is the gate's own
+   *  second signal (see `pregameVerdict`). */
   started: boolean;
-  /** Kickoff, epoch ms — the "Soonest" sort key. Undefined sorts last. */
+  /** ESPN's raw state ("pre"/"in"/"post"/"final"), or undefined where the feed
+   *  never joined this game — which is common, not exceptional. */
+  liveState?: string;
+  /** Kickoff, epoch ms — the "Soonest" sort key, the pregame gate's clock leg,
+   *  and the row's maker/taker timing band. Undefined sorts last. */
   kickoffMs?: number;
 };
 
@@ -217,7 +225,7 @@ function GameHeader({
 }
 
 export default function SuggestedBets({
-  games, kalshiBySlug, feeParams, portal, docs, unit, token, onJump,
+  games, kalshiBySlug, feeParams, portal, docs, unit, token, nowMs, onJump,
 }: {
   games: SuggestGame[];
   kalshiBySlug: Map<string, KalshiGame>;
@@ -232,6 +240,12 @@ export default function SuggestedBets({
   unit: number;
   /** Portal password — the same header the reads use. Placement needs it. */
   token: string;
+  /** A TICKING wall clock from the page (30s), not `Date.now()` read here.
+   *  Both time-dependent rules on this card — the pregame gate and the
+   *  maker/taker timing bands — must move on their own, not only when the ESPN
+   *  live poll happens to deliver. It is also a dependency of the compute memo,
+   *  which is what makes a game DROP OFF the card when it kicks. */
+  nowMs: number;
   onJump?: (cardKey: string) => void;
 }) {
   const [sel, setSel] = useState<string | null>(null);
@@ -246,12 +260,26 @@ export default function SuggestedBets({
    *  Confirm replays server-side instead of placing twice. */
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
 
-  const { rows, tailRows, tailMarkets, suppressed, computedAt } = useMemo(() => {
+  const {
+    rows, tailRows, tailMarkets, suppressed, computedAt, pregameCount, blindCount,
+  } = useMemo(() => {
     const held = heldTickerSet(portal?.positions, portal?.orders);
     const candidates: Candidate[] = [];
+    // Games that are genuinely pregame, and games dropped for having NEITHER a
+    // kickoff time nor a live state — the one refusal a reader could otherwise
+    // mistake for "no edges here".
+    let nPregame = 0, nBlind = 0;
     for (const g of games) {
-      // PREGAME ONLY.
-      if (g.started) continue;
+      // PREGAME ONLY — the rule, its precedence and its reasoning all live in
+      // `pregameVerdict`. It runs against the page's ticking clock, so this
+      // whole memo re-evaluates every 30s and a game LEAVES the card when it
+      // kicks, with or without an ESPN join.
+      const verdict = pregameVerdict(g, nowMs);
+      if (!verdict.ok) {
+        if (verdict.reason === "no kickoff time and no live state") nBlind += 1;
+        continue;
+      }
+      nPregame += 1;
       const kg = kalshiBySlug.get(g.key);
       if (!kg) continue;
       // Per-CARD namespace, never the page's season: a merged "Both" slate
@@ -273,6 +301,7 @@ export default function SuggestedBets({
             return typeof v === "number" ? v : null;
           },
           (stat) => SERIES_FOR_STAT[stat] ?? "",
+          g.kickoffMs,
         ));
       }
       // Game lines (winner / spread / total). Absent on a week published
@@ -281,14 +310,21 @@ export default function SuggestedBets({
       // contributes THESE and only these.
       if (published.game) {
         candidates.push(...gameCandidates(
-          kg, g.key, g.teamA, g.teamB, published.game));
+          kg, g.key, g.teamA, g.teamB, published.game, g.kickoffMs));
       }
     }
-    const built = buildSuggestions(candidates, feeParams, held, unit);
-    return { ...built, computedAt: new Date() };
+    // ONE clock for the gate above and the timing bands inside: two Date.now()
+    // reads a few ms apart can land on opposite sides of a band edge.
+    const built = buildSuggestions(candidates, feeParams, held, unit, nowMs);
+    return {
+      ...built, computedAt: new Date(),
+      pregameCount: nPregame, blindCount: nBlind,
+    };
     // `nonce` is the manual refresh: it re-runs the compute against whatever
     // feed the page currently holds, and never triggers a fetch of its own.
-  }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce]);
+    // `nowMs` ticks every 30s upstream, which is what makes a kicked-off game
+    // fall out of this list on its own.
+  }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs]);
 
   // Card key -> game, so a same-game run of ladder rows can carry a header
   // and the "Soonest" sort can find a kickoff.
@@ -364,7 +400,6 @@ export default function SuggestedBets({
 
   const shownCount = sections.reduce((n, s) => n + s.groups.length, 0);
   const hiddenByFilter = allGroups.length - shownCount;
-  const pregameCount = games.filter((g) => !g.started).length;
   // Undefined on a server that predates order entry: treat as staged-off,
   // which is the safe reading.
   const ordersLive = portal?.orders_live === true;
@@ -497,13 +532,31 @@ export default function SuggestedBets({
               width: 6, height: 6, borderRadius: 999, background: "var(--pos)",
               display: "inline-block", flex: "none",
             }} />
+            {/* The take bar is a LADDER now, so it is printed as one rather
+                than as a single number that is wrong for most of the slate.
+                Rest keeps one bar but gains a cutoff: none inside 1h. */}
             <span>
               Live · {pregameCount} pregame game{pregameCount === 1 ? "" : "s"} ·
-              {" "}${unit}/ladder · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+ /
-              {" "}take {Math.round(TAKE_THRESHOLD * 100)}¢+ · edges NET of fee,
-              re-checked at placement
+              {" "}${unit}/ladder · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+
+              {" "}(none inside 1h of kick) / take
+              {" "}{Math.round(TAKE_THRESHOLD * 100)}¢ &gt;24h,
+              {" "}{(TAKE_THRESHOLD_NEAR * 100).toFixed(1)}¢ 3–24h,
+              {" "}{Math.round(TAKE_THRESHOLD_LATE * 100)}¢ under 3h ·
+              {" "}edges NET of fee, re-checked at placement
             </span>
           </div>
+
+          {/* The one pregame refusal a reader could mistake for "no edges".
+              Everything else the gate drops (kicked off, live, final) is
+              self-evidently gone; a game with neither a kickoff time nor an
+              ESPN join is not, so it is counted out loud. */}
+          {blindCount > 0 && (
+            <div style={{ fontSize: 10, color: "var(--muted)" }}>
+              {blindCount} game{blindCount === 1 ? "" : "s"} skipped: no kickoff
+              time and no live state, so there is no way to tell whether they
+              have started.
+            </div>
+          )}
 
           {sections.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--muted)" }}>
@@ -656,6 +709,13 @@ export default function SuggestedBets({
                             printed without a verdict colour.
                           </div>
                         )}
+                        {/* TIME CONTEXT, in words. The mode chip already says
+                            REST or TAKE; this says why that bar was the bar —
+                            "2h to kick — resting has little time to fill before
+                            the kick−30 pull, so the take bar 3¢ (from 6¢)". */}
+                        <div style={{ color: "var(--muted)", marginBottom: 4 }}>
+                          {timingWords(g.timing)}
+                        </div>
                         {single ? (
                           <>
                             Sim {Math.round(head.simP * 100)}% · price {cents(head.price)} ·

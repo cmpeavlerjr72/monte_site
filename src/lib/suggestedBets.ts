@@ -36,7 +36,11 @@ import type { KalshiGame, KalshiStatQuote } from "./kalshi";
 import type { TeamStatsGameLines } from "./cfbJson";
 
 /* ------------------------- pipeline constants ---------------------------- */
-/** `--take-threshold`: cross the ask only at this edge after taker fee. */
+/** `--take-threshold`: cross the ask only at this edge after taker fee.
+ *
+ *  This is the FAR band's bar (>24h to kick). See THE TIMING BANDS below — the
+ *  bar relaxes as kickoff approaches, because a rest that never fills is worth
+ *  nothing and the pre-kickoff chain pulls it at kick−30 regardless. */
 export const TAKE_THRESHOLD = 0.06;
 /** `--min-maker-edge`: rest only at this edge after maker fee. */
 export const MIN_MAKER_EDGE = 0.03;
@@ -103,6 +107,207 @@ export const isTail = (simP: number, ask: number): boolean =>
  *  flag names. Same numbers, deliberately not a second knob. */
 export const SIM_LO = TAIL_LO;
 export const SIM_HI = TAIL_HI;
+
+/* ============================ THE TIMING BANDS ============================ */
+/**
+ * Maker vs taker is a TIME decision, not just an edge decision (user, 2026-08-28:
+ * "the maker/taker logic should take the timing into consideration").
+ *
+ * WHY. A resting order buys two things — the fee saving (on the per-team
+ * families, a rest is FREE where a take is not) and the price improvement of
+ * a tick or more under the ask. It pays for them with FILL RISK. That risk is
+ * not constant: it is a function of how much time the quote has left to sit
+ * there. And the time left is bounded twice over —
+ *
+ *   1. the book thins and the spread tightens into kickoff, so a quote a tick
+ *      under the ask is passed by more often the later it is posted, and
+ *   2. the standing pre-kickoff chain CANCELS every unfilled rest at
+ *      kick−30min (`PULL_BEFORE_KICK_MIN` in fbs_maker_pipeline.py). A rest
+ *      posted with 40 minutes to kick has ten minutes of life, not forty.
+ *
+ * So the same 4-cent net edge is a good rest on Tuesday and a bad one at
+ * 5:30pm on Saturday, and the take bar — which exists to make us pay the taker
+ * fee only for an edge big enough to be worth it — should come DOWN as the
+ * alternative (resting) gets worse. That is the whole content of the ladder:
+ *
+ *   t > 24h        take ≥ 6.0¢   rest ≥ 3¢     the original, unchanged
+ *   3h < t ≤ 24h   take ≥ 4.5¢   rest ≥ 3¢     resting still has a session
+ *   1h < t ≤ 3h    take ≥ 3.0¢   rest ≥ 3¢     hours, not days, to fill
+ *   t ≤ 1h         take ≥ 3.0¢   NO REST       ~30 min before the pull
+ *
+ * The last row is the one with teeth: inside an hour a rest has essentially no
+ * time to fill before the kick−30 cancel, so a row that cannot clear the take
+ * bar is DROPPED rather than suggested as a rest we know will be pulled. It is
+ * reported as a suppression (with that reason in words), never silently.
+ *
+ * MIRRORED IN PYTHON, by name, next to the tail band: `TAKE_FAR/TAKE_NEAR/
+ * TAKE_LATE`, `BAND_NEAR_H/BAND_LATE_H/REST_CUTOFF_H` and `timing_band()` in
+ * cfb-props-sim `scripts/kalshi_team_edges.py`, imported by
+ * `fbs_maker_pipeline.py` for both its plan pricing and its ESCALATION rule —
+ * which was already this idea in one hard-coded step ("a maker quote that has
+ * not filled by Friday will not fill by Saturday"). Same numbers, so a plan row
+ * and a card row at equal time-to-kick reach the same verdict. If the two ever
+ * disagree, the Python is the source and this file is the bug.
+ */
+export const TAKE_THRESHOLD_NEAR = 0.045;
+export const TAKE_THRESHOLD_LATE = 0.03;
+/** Band edges, in ms of time-to-kick. */
+export const BAND_NEAR_MS = 24 * 60 * 60 * 1000;
+export const BAND_LATE_MS = 3 * 60 * 60 * 1000;
+/** Inside this, a rest has no time to fill before the kick−30 pull. */
+export const REST_CUTOFF_MS = 60 * 60 * 1000;
+
+export type TimingBand = "far" | "near" | "soon" | "imminent";
+
+export type Timing = {
+  band: TimingBand;
+  /** Net edge after taker fee required to cross the ask in this band. */
+  takeThreshold: number;
+  /** May a rest be suggested at all? False only inside REST_CUTOFF_MS. */
+  restOk: boolean;
+  /** Time to kick in ms; null when the kickoff is unknown. */
+  msToKick: number | null;
+};
+
+/**
+ * The band for one game. An UNKNOWN kickoff is treated as `far`: the strictest
+ * take bar and resting allowed, i.e. exactly the pre-2026-08-28 behaviour. A
+ * missing time must never be the reason a bar gets easier — the relaxation is
+ * paid for by knowing that time is short, and we do not know that.
+ */
+export function timingFor(kickoffMs: number | null | undefined, now: number): Timing {
+  if (typeof kickoffMs !== "number" || !Number.isFinite(kickoffMs)) {
+    return { band: "far", takeThreshold: TAKE_THRESHOLD, restOk: true, msToKick: null };
+  }
+  const dt = kickoffMs - now;
+  if (dt > BAND_NEAR_MS) {
+    return { band: "far", takeThreshold: TAKE_THRESHOLD, restOk: true, msToKick: dt };
+  }
+  if (dt > BAND_LATE_MS) {
+    return { band: "near", takeThreshold: TAKE_THRESHOLD_NEAR, restOk: true, msToKick: dt };
+  }
+  if (dt > REST_CUTOFF_MS) {
+    return { band: "soon", takeThreshold: TAKE_THRESHOLD_LATE, restOk: true, msToKick: dt };
+  }
+  return { band: "imminent", takeThreshold: TAKE_THRESHOLD_LATE, restOk: false, msToKick: dt };
+}
+
+/** "2h to kick" / "35 min to kick" / "3d to kick". Rounded the way a person
+ *  says it, because this number is read, not computed against. */
+export function timeToKickText(msToKick: number | null): string {
+  if (msToKick === null) return "kick time unknown";
+  if (msToKick <= 0) return "past kick time";
+  const mins = Math.round(msToKick / 60000);
+  if (mins < 90) return `${mins} min to kick`;
+  const hours = msToKick / 3600000;
+  if (hours < 48) return `${hours < 10 ? hours.toFixed(1) : Math.round(hours)}h to kick`;
+  return `${Math.round(hours / 24)}d to kick`;
+}
+
+/** The popover's sentence: where we are in the ladder and what it changed. */
+export function timingWords(t: Timing): string {
+  const when = timeToKickText(t.msToKick);
+  const bar = `take bar ${(t.takeThreshold * 100).toFixed(t.takeThreshold * 100 % 1 ? 1 : 0)}¢`;
+  switch (t.band) {
+    case "far":
+      return t.msToKick === null
+        ? `${when} — treated as far out: full ${bar}, resting allowed.`
+        : `${when} — plenty of time for a rest to fill, so the full ${bar} stands.`;
+    case "near":
+      return `${when} — a rest still has a session to fill, but not days, ` +
+             `so the ${bar} (from 6¢).`;
+    case "soon":
+      return `${when} — resting has little time to fill before the kick−30 ` +
+             `pull, so the ${bar} (from 6¢).`;
+    case "imminent":
+      return `${when} — inside the last hour a rest would be cancelled at ` +
+             `kick−30 before it filled, so REST is off the table and only a ` +
+             `${bar} take qualifies.`;
+  }
+}
+
+/* ========================= PREGAME ONLY — the gate ======================== */
+/**
+ * A game is suggestible ONLY while it is genuinely pregame. This is a
+ * CORRECTNESS rule, not a preference: every fair on this card is a pregame
+ * distribution, so an "edge" measured against a live book is not an edge, it is
+ * a wrong number pointed at real money.
+ *
+ * Two independent signals, and BOTH must say pregame when both exist:
+ *
+ *   LIVE STATE  — ESPN's `state` for the game, when the feed has joined it at
+ *                 all ("pre" / "in" / "post" / "final"). Positive evidence, but
+ *                 only when present: many games never get an ESPN join (verified
+ *                 2026-08-28 — Lafayette/Georgetown has NO espn entry on the
+ *                 wk0 board), and a blocked-espn.com network has none at all.
+ *   THE CLOCK   — the scheduled kickoff, minus a buffer.
+ *
+ * PRECEDENCE, and why it is the conservative one. The tempting rule is
+ * "live-state `pre` wins over the clock", on the grounds that a DELAYED kick is
+ * still genuinely pregame and its fairs are still valid — which is true. It is
+ * rejected anyway, because the two situations that produce (state=pre, clock
+ * passed) are indistinguishable from here:
+ *
+ *   (a) a real weather/TV delay — the fairs are fine, and refusing to suggest
+ *       costs us one marginal bet, or
+ *   (b) a feed that has simply not updated yet — ESPN flips `pre`→`in` on its
+ *       own cadence, our poll adds up to another 60s, and that lag window is
+ *       EXACTLY when a stale pregame fair against a book that has already
+ *       started moving looks like the best edge on the card.
+ *
+ * We cannot tell (a) from (b), and the costs are wildly asymmetric: (a) loses a
+ * marginal bet, (b) loses money on a distribution we know is wrong. So the
+ * clock is a VETO that `pre` cannot override — "both signals must agree when
+ * both exist". By the same asymmetry the reverse direction is absolute too: a
+ * live state of `in`/`post`/`final` vetoes a kickoff time still in the future
+ * (an early start, or a bad schedule row).
+ *
+ * The 5-minute buffer is not decoration: kick times drift by a minute or two,
+ * and a bet placed 60 seconds before kickoff has to survive the confirm slip,
+ * the server's live-book re-check, and the exchange — with nothing left over.
+ *
+ * WITH NEITHER SIGNAL there is no evidence the game has not started, so it is
+ * dropped and COUNTED (the card prints the count in words). A suppression the
+ * reader cannot see is how a filter becomes a mystery.
+ */
+export const PREGAME_BUFFER_MS = 5 * 60 * 1000;
+
+export type PregameInputs = {
+  /** The FEED's verdict and nothing else: an in-progress live event, a `post`
+   *  or `final` state, or a finals CSV that already has this score. It must NOT
+   *  fold in a kick-time test — the clock is this function's own second signal,
+   *  and mixing them here is how a "which one fired?" answer gets lost. */
+  started?: boolean;
+  /** Raw ESPN state, present only where the feed joined this game. */
+  liveState?: string;
+  /** Scheduled kickoff, epoch ms. */
+  kickoffMs?: number;
+};
+
+export type PregameVerdict = { ok: true } | { ok: false; reason: string };
+
+export function pregameVerdict(g: PregameInputs, now: number): PregameVerdict {
+  const state = (g.liveState || "").toLowerCase();
+
+  // 1. THE FEED. `in`/`post`/`final` (or a finals source) vetoes outright, even
+  //    against a kickoff still in the future — an early start or a wrong
+  //    schedule row is not a reason to price a live game off pregame fairs.
+  if (state && state !== "pre") return { ok: false, reason: `live state ${state}` };
+  if (g.started) return { ok: false, reason: "live feed says under way" };
+
+  // 2. THE CLOCK — a veto that a live `pre` cannot override (see above).
+  if (typeof g.kickoffMs === "number" && Number.isFinite(g.kickoffMs)) {
+    return g.kickoffMs - now > PREGAME_BUFFER_MS
+      ? { ok: true }
+      : { ok: false, reason: "inside 5 min of kickoff" };
+  }
+
+  // 3. No clock. A live `pre` is then the only evidence we have, and it IS
+  //    evidence — take it. With neither signal, refuse.
+  if (state === "pre") return { ok: true };
+  return { ok: false, reason: "no kickoff time and no live state" };
+}
+
 /** `--mid-lo` / `--mid-hi`: preferred rungs, where the book is thickest. */
 export const MID_LO = 0.35;
 export const MID_HI = 0.65;
@@ -194,6 +399,9 @@ export type Suggestion = {
   /** Outside the [TAIL_LO, TAIL_HI] band on the sim, the ask, or both. Never
    *  ranked among the defaults; shown muted behind the "show tails" toggle. */
   tail: boolean;
+  /** Where this game sat in the timing ladder when the row was priced — the
+   *  bar this row had to clear, and the popover's sentence. */
+  timing: Timing;
 };
 
 export type Suppressed = {
@@ -213,7 +421,10 @@ const floorTick = (v: number) => Math.floor(v / TICK + 1e-9) * TICK;
  * would skip it.
  */
 function priceOne(
-  simP: number, bid: number | null, ask: number | null, fp: FeeParams | undefined
+  simP: number, bid: number | null, ask: number | null, fp: FeeParams | undefined,
+  /** Where this game sits in the timing ladder. Sets the take bar, and decides
+   *  whether resting is on the table at all. */
+  timing: Timing,
 ): { mode: "REST" | "TAKE"; price: number; edgePer: number } | { reason: string } {
   if (bid === null || ask === null) return { reason: "no two-sided book" };
   if (bid <= 0 || ask >= 1) return { reason: "one-sided book" };
@@ -229,8 +440,19 @@ function priceOne(
   // out of the default list in `buildSuggestions` instead.
 
   const edgeTake = simP - ask - takerFeePer(ask, fp);
-  if (edgeTake >= TAKE_THRESHOLD) {
+  if (edgeTake >= timing.takeThreshold) {
     return { mode: "TAKE", price: ask, edgePer: edgeTake };
+  }
+  // INSIDE THE LAST HOUR THERE IS NO REST. The pre-kickoff chain cancels every
+  // unfilled rest at kick−30, so a quote posted now has minutes of life; a row
+  // that could not clear the (already relaxed) take bar is DROPPED rather than
+  // dressed up as a bet we know will be pulled unfilled.
+  if (!timing.restOk) {
+    return {
+      reason: `${timeToKickText(timing.msToKick)} — no time to fill before ` +
+              `the kick−30 pull, and take edge ${(edgeTake * 100).toFixed(1)}¢ ` +
+              `is under ${Math.round(timing.takeThreshold * 100)}¢`,
+    };
   }
   const price = Math.min(round2(ask - TICK), floorTick(simP - MAKER_MARGIN));
   if (price < MIN_PRICE - 1e-9) return { reason: `penny quote (${(price * 100).toFixed(0)}c)` };
@@ -261,6 +483,9 @@ export type Candidate = {
   simP: number;
   bid: number | null;
   ask: number | null;
+  /** This game's kickoff, epoch ms. Sets the row's timing band; absent means
+   *  the `far` band (the strictest take bar) — see `timingFor`. */
+  kickoffMs?: number;
 };
 
 /**
@@ -268,7 +493,9 @@ export type Candidate = {
  * sim sits in [0.35, 0.65] first, then the highest edge-after-fee per dollar
  * of risk, capped at 2 per ladder (1 for a winner market).
  */
-type Priced = Candidate & { mode: "REST" | "TAKE"; price: number; edgePer: number };
+type Priced = Candidate & {
+  mode: "REST" | "TAKE"; price: number; edgePer: number; timing: Timing;
+};
 
 /** What one compute produces. `rows` is the list; `tailRows` is the opt-in
  *  reveal; `tailMarkets` is what the footer counts. */
@@ -345,6 +572,7 @@ function selectLadders(
         outlay: round2(p.price * count + fee),
         feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
         tail,
+        timing: p.timing,
       });
     }
   }
@@ -357,7 +585,12 @@ export function buildSuggestions(
   feeParams: Record<string, FeeParams>,
   heldTickers: Set<string>,
   /** Dollars of risk per ladder — the user's unit size. */
-  unit: number = LADDER_RISK
+  unit: number = LADDER_RISK,
+  /** The instant every row is priced against. Passed in rather than read here
+   *  so ONE clock drives the pregame gate upstream and the timing bands below —
+   *  two `Date.now()` calls a few ms apart can straddle a band edge and put a
+   *  row's chip out of step with its own popover. */
+  now: number = Date.now(),
 ): BuildResult {
   const suppressed: Suppressed[] = [];
   const priced: Priced[] = [];
@@ -370,12 +603,13 @@ export function buildSuggestions(
       suppressed.push({ label: c.label, reason: "already held or resting", ticker: c.ticker });
       continue;
     }
-    const r = priceOne(c.simP, c.bid, c.ask, feeParams[c.series]);
+    const timing = timingFor(c.kickoffMs, now);
+    const r = priceOne(c.simP, c.bid, c.ask, feeParams[c.series], timing);
     if ("reason" in r) {
       suppressed.push({ label: c.label, reason: r.reason, ticker: c.ticker });
       continue;
     }
-    priced.push({ ...c, ...r });
+    priced.push({ ...c, ...r, timing });
   }
 
   // ONE CONTRACT PER MARKET — the pipeline's shape, and a correctness rule.
@@ -467,7 +701,9 @@ export function statCandidates(
   teamB: string,
   statLabel: (stat: string) => string,
   rungP: (team: string, stat: string, strike: number) => number | null,
-  seriesFor: (stat: string) => string
+  seriesFor: (stat: string) => string,
+  /** Kickoff, epoch ms — the row's timing band. See `timingFor`. */
+  kickoffMs?: number,
 ): Candidate[] {
   const out: Candidate[] = [];
   for (const q of (game.stat_quotes ?? []) as KalshiStatQuote[]) {
@@ -485,6 +721,7 @@ export function statCandidates(
       series: seriesFor(q.stat),
       simP: p,
       bid: q.yes_bid, ask: q.yes_ask,
+      kickoffMs,
     });
   }
   return out;
@@ -535,6 +772,8 @@ export function gameCandidates(
   teamA: string,
   teamB: string,
   lines: TeamStatsGameLines,
+  /** Kickoff, epoch ms — the row's timing band. See `timingFor`. */
+  kickoffMs?: number,
 ): Candidate[] {
   const out: Candidate[] = [];
   // The NO contract's own book. Mirrors the pipeline's (1 - ya, 1 - yb).
@@ -556,7 +795,7 @@ export function gameCandidates(
     const noTeam = q.side === "A" ? teamB : teamA;
     const base = {
       ticker: q.ticker, slug: cardKey, ladder: winLadder,
-      series: "KXNCAAFGAME", strike: 0, statText: "",
+      series: "KXNCAAFGAME", strike: 0, statText: "", kickoffMs,
     };
     out.push({
       ...base, team: yesTeam, label: `${yesTeam} to win`,
@@ -580,7 +819,7 @@ export function gameCandidates(
     const base = {
       ticker: r.ticker, slug: cardKey,
       ladder: `${cardKey}|KXNCAAFSPREAD|${namedTeam}`,
-      series: "KXNCAAFSPREAD", strike: r.line, statText: "",
+      series: "KXNCAAFSPREAD", strike: r.line, statText: "", kickoffMs,
     };
     out.push({
       ...base, team: teamA,
@@ -606,7 +845,7 @@ export function gameCandidates(
     if (typeof p !== "number" || !r.ticker) continue;
     const base = {
       ticker: r.ticker, slug: cardKey, ladder: totLadder,
-      series: "KXNCAAFTOTAL", strike: r.line, team: "", statText: "",
+      series: "KXNCAAFTOTAL", strike: r.line, team: "", statText: "", kickoffMs,
     };
     out.push({
       ...base, label: `Over ${r.line} points`, rungText: `Over ${r.line}`,
@@ -700,6 +939,9 @@ export type LadderGroup = {
   /** Every rung is outside the tail band (the two sets never mix — they are
    *  selected in separate passes). Drives the muting and the TAIL badge. */
   tail: boolean;
+  /** A ladder is one GAME, so every rung shares one timing band. The popover's
+   *  time-context sentence comes from here. */
+  timing: Timing;
 };
 
 export function groupLadders(
@@ -736,6 +978,7 @@ export function groupLadders(
       headline,
       each: round2(unit / group.length),
       tail: rungs.every((r) => r.tail),
+      timing: best.timing,
     });
   }
   groups.sort((a, b) => b.bestEdge - a.bestEdge);
