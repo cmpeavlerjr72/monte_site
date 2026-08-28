@@ -27,7 +27,7 @@ import {
   getJsonWeekGames, getCompactJson, getCompactCached,
   type JsonGame, type JsonWeekRow,
 } from "../lib/cfbJson";
-import { pctText } from "../lib/marketEdge";
+import MyBookStrip from "../components/MyBook";
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import TeamStats from "../components/TeamStats";
@@ -2955,49 +2955,12 @@ function ResultPill({ label, text, result, provisional }: {
  * Deliberately neutral coloring — which direction counts as "good" is a
  * betting decision the product has not made yet.
  * ========================================================================= */
-/** "$X.XX", sign-aware. */
-const usd = (v: number): string => `${v < 0 ? "−" : ""}$${Math.abs(v).toFixed(2)}`;
-
-/** EV chip: dollars vs the stake, plus the source probability and its
- *  american odds in small text (same convention as the market rows). */
-function EvChip({ tag, ev, p }: { tag: string; ev: number | null; p: number | null }) {
-  if (ev === null || p === null) {
-    return <span className="mybook__ev"><b>{tag} —</b></span>;
-  }
-  return (
-    <span className="mybook__ev" data-neg={ev < 0 ? "true" : undefined}>
-      <b>{tag} {ev >= 0 ? "+" : ""}{usd(ev)}</b>
-      <i>{pctText(p)} {americanOdds(p)}</i>
-    </span>
-  );
-}
-
-/** The owner's book on this game. Labels are CHEER-side (a held NO is
- *  flipped to the complement bet); each bet shows stake → payout, fees
- *  paid, and EV under the live Kalshi mid and under the sim. */
-function MyBookStrip({ bets }: { bets: PortalBet[] }) {
-  return (
-    <div className="mybook" title="Your Kalshi book on this game">
-      {bets.map((b) => (
-        <div key={b.key} className="mybook__bet" title={b.title || undefined}>
-          <span className="mybook__l1">
-            <span className="mybook__mark">{b.combo ? "\uD83D\uDD17" : b.kind === "position" ? "\u2714" : "\u23F3"}</span>
-            <b>{b.label}</b>
-            <span className="mybook__ct">×{Number(b.count.toFixed(2))}</span>
-          </span>
-          <span className="mybook__l2">
-            risk {usd(b.risked)} → win {usd(b.toWin)}
-            {b.fees > 0 && <> · fees {usd(b.fees)}</>}
-          </span>
-          <span className="mybook__l3">
-            <EvChip tag="Kalshi EV" ev={b.kalshiEV} p={b.kalshiP} />
-            <EvChip tag="Sim EV" ev={b.simEV} p={b.simP} />
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
+/* The owner's per-card book block moved to src/components/MyBook.tsx
+   (2026-08-28): ONE LINE PER BET -- mark, the bet in words, the stake, and
+   the sim's EV as the single verdict -- with count, risk to payout, fees and
+   both sources' probability/odds behind a tap. The three-line version that
+   lived here (glyph + label + count / risk-win-fees / two EV chips carrying a
+   tag, dollars, a probability AND american odds) failed the bar test. */
 
 type SlateResultCount = { win: number; loss: number; push: number };
 type MarketAgg = { win: number; loss: number; push: number; pnl: number };

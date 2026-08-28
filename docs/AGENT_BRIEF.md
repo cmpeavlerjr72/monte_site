@@ -447,6 +447,43 @@ writes alike. It was extracted from the read route when order entry landed
 so a mutating endpoint could not drift away from it. The auth gate must
 ALWAYS predate any mutating endpoint.
 
+### The held-book display (`src/components/MyBook.tsx`) — bar-test rules
+
+`MyBookStrip` (the block on a game card) and `MyBookBar` (the console's "Book"
+row) both live here; neither is defined in Scoreboard.tsx any more. Same bar as
+MarketEdge and the Team Stats panel, and the same failure behind the rewrite —
+the old strip spent three dense lines per bet (glyph + label + ×count / "risk $X
+→ win $Y · fees $Z" / two EV chips each carrying a tag, dollars, a probability
+AND american odds), which the user called "still very wordy and not visually
+appealing".
+
+- At rest a bet is ONE LINE: the held/resting mark, the bet in CHEER-SIDE
+  words, the stake as a compact chip, and ONE verdict — **the sim's EV in
+  dollars**, coloured. Nothing else. An EV that rounds to zero wears the
+  neutral token; an unpriceable family (TD/FG/TO, an off-grid strike) shows a
+  muted "—" and the popover says why.
+- Everything else is in the TAP POPOVER, in words, one fact per line: count,
+  risk → payout, fees paid, Kalshi's probability/odds and EV, the sim's, the
+  parlay's leg count, and a resting order's FILL STATE ("38 of 57 ordered have
+  filled" — `PortalBet.filled/initial`; `count` is only what is still working).
+- Held vs resting is SHAPE (filled dot vs hollow ring) with a words legend in
+  the header, never colour — `--pos`/`--neg` mean the sign of an EV here and
+  nothing else. Stake and verdict columns are FIXED widths so they line up down
+  the strip. Rows are 40px buttons; the popover is placed by index arithmetic
+  (fixed `ROW_H`), has a Close button and no document listener.
+- A summed EV states its own coverage: `PortalTotals.simPriced` /
+  `kalshiPriced` feed "across the 5 of 6 it can price". Never present a subset
+  sum as the whole book.
+- `cheerLabel` writes the per-team stat families as bets ("UNC 175+ rec yds",
+  NO side as "UNC under 175 rec yds") in Kalshi's own wording. Its `STAT_WORDS`
+  is display vocabulary and deliberately covers MORE families than
+  `STAT_FOR_SERIES`: TD/FG/TO cannot be priced but can be HELD, and a held bet
+  must still read as a bet.
+- Contrast is MEASURED, not assumed: `--mybook-dim` (one step from `--muted`
+  toward `--text`) and the EV chip's ink (one step from `--pos`/`--neg` toward
+  `--text`) exist because the bare tokens measured 4.0–4.3 on this block's
+  tinted surfaces at 9–13px. Both fixes lift light and dark at once.
+
 ### Order entry (2026-08-28) — the family's first MUTATING routes
 
     POST /api/portfolio/cfb/orders          place 1..N limit orders

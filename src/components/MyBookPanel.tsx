@@ -17,9 +17,8 @@ import { useState } from "react";
 import DryRunBadge from "./DryRunBadge";
 import { cancelAppOrders, placeErrorText, type PlaceResponse } from "../lib/placeOrders";
 import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
+import { MyBookBar } from "./MyBook";
 import type { PortalTotals } from "../lib/kalshiPortal";
-
-const usd = (v: number) => `$${Math.abs(v).toFixed(2)}`;
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -167,18 +166,10 @@ export default function MyBookPanel({
 
       {token && totals.n > 0 && (
         <Row label="Book">
-          <div className="mybook-bar" style={{ margin: 0 }}>
-            <span>{totals.n} bet{totals.n === 1 ? "" : "s"}</span>
-            <span>risk {usd(totals.risked)} → win {usd(totals.toWin)}</span>
-            <span data-neg={totals.kalshiEV !== null && totals.kalshiEV < 0 ? "true" : undefined}>
-              Kalshi EV {totals.kalshiEV === null ? "—" : (totals.kalshiEV >= 0 ? "+" : "−") + usd(totals.kalshiEV)}
-            </span>
-            <span data-neg={totals.simEV !== null && totals.simEV < 0 ? "true" : undefined}>
-              Sim EV {totals.simEV === null ? "—" : (totals.simEV >= 0 ? "+" : "−") + usd(totals.simEV)}
-            </span>
-            <span>fees {usd(totals.fees)}</span>
-            {unmatched > 0 && <span className="mybook-bar__dim">{unmatched} off-slate</span>}
-          </div>
+          {/* Same compression as one bet on a card: what is at stake, then the
+              ONE verdict. Risk → payout, fees, both sources' EV and how many
+              bets each could price are behind the tap. */}
+          <MyBookBar totals={totals} unmatched={unmatched} />
         </Row>
       )}
 

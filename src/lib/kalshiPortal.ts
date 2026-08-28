@@ -109,8 +109,35 @@ export function parseNcaafTicker(ticker: string) {
   return { fam, code, strike, strikeTeam, n, other, strikeIsHome };
 }
 
+/**
+ * Bet-slip wording for the per-team stat families, keyed by the ticker's
+ * family segment. This is the DISPLAY vocabulary, not the pricing mapping —
+ * `STAT_FOR_SERIES` in teamStatMarkets.ts stays the single authority for which
+ * families the sim can price, and this map deliberately covers MORE of them:
+ * TD/FG/TO are unpriceable (they render a "—" verdict) but they can still be
+ * HELD, and a held bet must read as a bet ("UNLV 4+ TDs"), never as a raw
+ * ticker fragment ("TEAMTD UNLV4").
+ */
+const STAT_WORDS: Record<string, string> = {
+  TEAMTOTAL: "points",
+  TEAMRECYDS: "rec yds",
+  TEAMRSHYDS: "rush yds",
+  TEAMYDS: "total yds",
+  TEAMREC: "receptions",
+  TEAMRSHATT: "rush att",
+  TEAMRSHTD: "rush TDs",
+  TEAMRECTD: "rec TDs",
+  TEAMSACK: "sacks",
+  TEAMINT: "INTs",
+  TEAMTD: "TDs",
+  TEAMFG: "FGs",
+  TEAMTO: "turnovers",
+};
+
 /** Label of the outcome the owner is CHEERING for — NO sides are flipped to
- *  the complement bet ("no UND -24.5" reads "LIU +24.5"). */
+ *  the complement bet ("no UND -24.5" reads "LIU +24.5"). Strikes keep
+ *  KALSHI'S OWN wording ("175+", never "174.5+"): the house rule is that a
+ *  number on screen is the one the venue settles on. */
 export function cheerLabel(ticker: string, side: string): string {
   const t = parseNcaafTicker(ticker);
   if (!t) return ticker;
@@ -122,6 +149,14 @@ export function cheerLabel(ticker: string, side: string): string {
   }
   if (t.fam === "GAME" && t.strikeTeam) {
     return `${no ? (t.other || "opp") : t.strikeTeam} ML`;
+  }
+  const words = STAT_WORDS[t.fam];
+  if (words && t.n !== null && t.strikeTeam) {
+    // A stat market is a threshold, so its NO is "stays under", not a mirror
+    // strike — say that in words rather than inventing a line.
+    return no
+      ? `${t.strikeTeam} under ${t.n} ${words}`
+      : `${t.strikeTeam} ${t.n}+ ${words}`;
   }
   return `${t.fam} ${t.strike}`.trim();
 }
