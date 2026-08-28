@@ -31,7 +31,10 @@ import MyBookStrip from "../components/MyBook";
 import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import TeamStats from "../components/TeamStats";
-import GameBetsPanel, { type ProjectionTarget } from "../components/SuggestedBets";
+import GameBetsPanel, {
+  PlaceStrip, findGroupById,
+  type ProjectionTarget, type ScoreMetric,
+} from "../components/SuggestedBets";
 import SuggestedBetsIndex from "../components/SuggestedBetsIndex";
 import MyBookPanel from "../components/MyBookPanel";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
@@ -1458,13 +1461,19 @@ function ScoreboardPage() {
   const [openPanel, setOpenPanel] = useState<{ key: string; kind: PanelKind } | null>(null);
 
   /**
-   * A pre-focus payload for the panel that is about to open — today only the
-   * Team Stats chart uses it ("See projection →" on a suggested bet jumps to
-   * that team's stat instead of dumping the reader at the top of a 13-stat
-   * chart). It is CLEARED on every other panel change, so it can never leak
-   * into a panel that was opened for some other reason.
+   * A pre-focus payload for the panel that is about to open, sent by "See
+   * projection →" on a suggested bet. It carries THE VALUE BEING PRICED, not
+   * just which chart: a team-stat target names its strike (so the Team Stats
+   * chart can highlight that one flag out of eleven) and a scores target names
+   * its metric and line (so the scores panel opens on the right tab with the
+   * marker already on the number). It also carries the originating ladder's
+   * id, which is what lets the projection panel offer a place strip for that
+   * exact bet.
+   *
+   * CLEARED on every other panel change, so it can never leak into a panel
+   * that was opened for some other reason — and with it goes the place strip.
    */
-  const [panelFocus, setPanelFocus] = useState<{ team: string; stat: string } | null>(null);
+  const [panelFocus, setPanelFocus] = useState<ProjectionTarget | null>(null);
 
   const togglePanel = useCallback((key: string, kind: PanelKind) => {
     setPanelFocus(null);
@@ -1479,7 +1488,7 @@ function ScoreboardPage() {
   /** Swap the OPEN card's panel for the chart a suggestion came from. Getting
    *  back is the "Bets" tab still sitting on the card above the panel. */
   const focusPanel = useCallback((
-    key: string, kind: PanelKind, focus: { team: string; stat: string } | null,
+    key: string, kind: PanelKind, focus: ProjectionTarget | null,
   ) => {
     setPanelFocus(focus);
     setOpenPanel({ key, kind });
@@ -2691,7 +2700,34 @@ function ScoreboardPage() {
                     onClose={closePanel}
                     // Only ever set for the panel it was aimed at, so a stale
                     // payload cannot re-scroll a chart opened by hand.
-                    focus={openPanel.kind === "teamstats" ? panelFocus : null}
+                    focus={
+                      (openPanel.kind === "teamstats" && panelFocus?.kind === "teamstats") ||
+                      (openPanel.kind === "scores" && panelFocus?.kind === "scores")
+                        ? panelFocus : null
+                    }
+                    /* PLACE FROM THE PROJECTION. Owner-gated exactly like the
+                       bets panel, and only when the reader ARRIVED from a bets
+                       row (the focus carries a ladder id) — never a general
+                       place-from-chart affordance.
+                       The ladder is looked up LIVE, on every render, against
+                       the compute that re-runs on the 45s feed poll and the
+                       30s clock. Nothing is cached: a ladder that has gone
+                       (kickoff, a filter, a moved book) resolves to null and
+                       the strip says so instead of pricing a ghost. */
+                    placeStrip={
+                      ownerOn && panelFocus?.groupId &&
+                      (openPanel.kind === "teamstats" || openPanel.kind === "scores") ? (
+                        <PlaceStrip
+                          group={findGroupById(
+                            suggestions.bySlug.get(openCard.key), panelFocus.groupId)}
+                          unit={unit}
+                          token={portalToken}
+                          feeParams={kalshiFees}
+                          quotedAt={suggestions.computedAt}
+                          ordersLive={portal.payload?.orders_live === true}
+                        />
+                      ) : null
+                    }
                     // The bets panel is composed HERE rather than plumbed
                     // through the host: it needs page state (filters, unit,
                     // token, the compute) that no other panel does.
@@ -2712,7 +2748,10 @@ function ScoreboardPage() {
                         onProject={(t: ProjectionTarget) => focusPanel(
                           openCard.key,
                           t.kind === "scores" ? "scores" : "teamstats",
-                          t.kind === "teamstats" ? { team: t.team, stat: t.stat } : null,
+                          // The WHOLE target travels: which chart, which value
+                          // on it, and which ladder sent us — the panel needs
+                          // all three to open on the bet rather than near it.
+                          t,
                         )}
                       />
                     ) : null}
@@ -3465,7 +3504,7 @@ export function SimVsKalshi({ card, kalshi, useMean }: {
  * ========================================================================= */
 function CardPanelHost({
   card, kind, gdata, week, season, weekId, useMean, kalshi, onAddLeg, onClose,
-  focus = null, betsPanel = null,
+  focus = null, betsPanel = null, placeStrip = null,
 }: {
   card: CardGame;
   kind: PanelKind;
@@ -3479,11 +3518,16 @@ function CardPanelHost({
   kalshi?: KalshiGame;
   onAddLeg: (leg: Leg) => void;
   onClose: () => void;
-  /** Team-stat pre-focus from a suggested bet's "See projection →". */
-  focus?: { team: string; stat: string } | null;
+  /** Pre-focus from a suggested bet's "See projection →" — which chart, and
+   *  the exact value being priced on it. */
+  focus?: ProjectionTarget | null;
   /** The owner's bets panel, composed by the page (it needs page state no
    *  other panel does). Null for every other kind, and for a non-owner. */
   betsPanel?: React.ReactNode;
+  /** The one-line place bar for the bet that sent the reader to this chart.
+   *  Composed by the page for the same reason `betsPanel` is, and null unless
+   *  the arrival came from a bets row on a live owner session. */
+  placeStrip?: React.ReactNode;
 }) {
   const jsonRow = card.jsonRow;
 
@@ -3558,7 +3602,16 @@ function CardPanelHost({
           flipToEspnHome={!espnHomeIsA}
         />
       )}
-      {kind === "scores" && <ScoresPanel card={card} gdata={gdata} season={season} />}
+      {/* The bet that sent the reader here, placeable without navigating back.
+          Above the chart, because it is the reason this panel is open. */}
+      {(kind === "scores" || kind === "teamstats") && placeStrip}
+
+      {kind === "scores" && (
+        <ScoresPanel
+          card={card} gdata={gdata} season={season}
+          focus={focus?.kind === "scores" ? focus : null}
+        />
+      )}
       {kind === "players" && <PlayersPanel card={card} week={week} season={season} />}
       {/* card.hasPlayers guards these as well as the buttons: a panel can
           outlive its card's tab (deep link, stale open state). */}
@@ -3589,7 +3642,7 @@ function CardPanelHost({
           kalshi={kalshi}
           colorFor={(t) => getTeamColors(t)?.primary}
           logoFor={(t) => getTeamLogo(t) || undefined}
-          focus={focus}
+          focus={focus?.kind === "teamstats" ? focus : null}
         />
       )}
       {/* Owner-only, and already gated twice before it gets here: the page
@@ -3611,9 +3664,114 @@ function CardPanelHost({
   );
 }
 
-/* ---------------------- Simulated score distribution ---------------------- */
-function ScoresPanel({ card, gdata, season }: {
+/* ---------------------- Simulated score distribution ----------------------
+ * HOUSE GRAMMAR, the same one TeamStats.tsx is the reference for — see the
+ * long note at the top of that file for why it looks like this.
+ *
+ * What this panel used to be: a Recharts histogram with a grid, a Y axis of
+ * raw seed counts, a bin-count selector, a hover tooltip that said "Count:
+ * 37", and a card underneath printing Under / At / Over with fair odds. Five
+ * numbers at rest, none of them the decision, and the one thing a reader
+ * actually wants — "does my side cover?" — assembled in their head.
+ *
+ * What it is now:
+ *   ONE SHAPE on one axis. Scores are counts, so the shape is DISCRETE
+ *     columns at integer-width bins and stays that way: the mass sitting on
+ *     3, 7 and 10 in a spread is real decision information, and a smoothed
+ *     curve would erase exactly the part a bettor is paid to see. (Continuous
+ *     stats get the density silhouette instead; that lives in TeamStats.)
+ *   COLOUR IS SEMANTIC, and only on the spread, where the sign is the
+ *     meaning: seeds left of zero are the left team winning, so they wear the
+ *     left team's brand. Totals get one fill — there is no side to a total.
+ *   LINES ARE FLAGS. The book's line (where we have one) and the reader's own
+ *     typed line are stems crossing the shape, labelled in the venue's own
+ *     wording. Each flag carries ONE number: our probability at that line, in
+ *     words ("covers 58%", "over 61%"). Everything else — the push mass, the
+ *     other side, the fair odds — is one tap away in the popover.
+ *   NO EDGE NUMBER. When the reader arrived from a bet, the place strip above
+ *     is already showing it, and printing it twice invites the two to differ.
+ *
+ * The axis is measured, not fixed, for the same reason TeamStats' is: a
+ * viewBox that scales turns 9px labels into 4px ones on a phone.
+ */
+
+/** One integer-width bin: `v` is its CENTRE in axis units. */
+type ScoreCol = { v: number; mass: number };
+
+/**
+ * Integer-width bins over integer-valued seed scores.
+ *
+ * WIDTH 1 IS THE POINT, and the window is what buys it. A 10,000-seed margin
+ * has a couple of 60-point blowouts at each end; drawn to the raw range that
+ * is a 170-wide axis, which forces 2- or 5-point bins and erases the very
+ * thing a spread bettor reads — the mass sitting on exactly 3, exactly 7,
+ * exactly 10. So the axis is the MIDDLE 99%: the half a percent of seeds at
+ * each end is not drawn, and the caption says so. Mass is still a fraction of
+ * ALL seeds, so every column means what it says; the missing tail is missing,
+ * not redistributed.
+ *
+ * The wider steps below survive only as a guard against a pathological range;
+ * a CFB margin or total does not reach them once the window is applied.
+ */
+function scoreColumns(series: number[]): {
+  cols: ScoreCol[]; step: number; trimmed: number;
+} {
+  if (!series.length) return { cols: [], step: 1, trimmed: 0 };
+  const n = series.length;
+  const sorted = [...series].sort((a, b) => a - b);
+  const q = (f: number) => sorted[Math.min(n - 1, Math.max(0, Math.round(f * (n - 1))))];
+  const lo = q(0.005), hi = q(0.995);
+  const span = hi - lo + 1;
+  const step = span <= 140 ? 1 : span <= 280 ? 2 : 5;
+  const base = Math.floor(lo / step) * step;
+  const counts = new Map<number, number>();
+  let trimmed = 0;
+  for (const x of series) {
+    if (x < lo || x > hi) { trimmed++; continue; }
+    const b = Math.floor((x - base) / step) * step + base;
+    counts.set(b, (counts.get(b) ?? 0) + 1);
+  }
+  const cols = [...counts]
+    .map(([start, c]) => ({ v: start + (step - 1) / 2, mass: c / n }))
+    .sort((a, b) => a.v - b.v);
+  return { cols, step, trimmed: trimmed / n };
+}
+
+/** P(< L), P(= L), P(> L) over the seeds. Counts, never an approximation. */
+function sideProbs(series: number[], L: number) {
+  let u = 0, a = 0, o = 0;
+  for (const x of series) {
+    if (Math.abs(x - L) < 1e-9) a++; else if (x < L) u++; else o++;
+  }
+  const n = Math.max(1, series.length);
+  return { under: u / n, at: a / n, over: o / n };
+}
+
+const pct0 = (p: number) => `${Math.round(p * 100)}%`;
+/** U+2212 MINUS, not a hyphen: "−7.5" reads as a spread at 11px. */
+const spreadWords = (L: number) => `${L > 0 ? "+" : "−"}${Math.abs(L)}`;
+
+/** A line drawn on the shape. At most two: the book's and the reader's. */
+type ScoreFlag = {
+  key: string;
+  x: number;
+  /** The line in the venue's own wording — "−7.5", "48.5". */
+  label: string;
+  /** The ONE number, in words: "covers 58%" / "over 61%". */
+  verdict: string;
+  /** The full derivation, popover only. */
+  detail: string;
+  /** The book's line is dashed and muted; the reader's own is solid accent. */
+  book: boolean;
+  row: 0 | 1;
+};
+
+function ScoresPanel({ card, gdata, season, focus = null }: {
   card: CardGame; gdata?: GameData; season: Season;
+  /** "See projection →" from a game-line bet: which tab, and the line that bet
+   *  is priced at, pre-loaded into the reader's own line box so the marker is
+   *  on the chart the moment it opens. */
+  focus?: { metric: ScoreMetric; line?: number } | null;
 }) {
   const jsonRow = card.jsonRow;
   const hasSeedRows = Boolean(gdata?.rowsA?.length);
@@ -3659,59 +3817,160 @@ function ScoresPanel({ card, gdata, season }: {
 
   const [metric, setMetric] = useState<Metric>("spread");
   const [teamOrder, setTeamOrder] = useState<0|1>(0);
-  const [bins, setBins] = useState<number|"auto">("auto");
   const [teamLine, setTeamLine] = useState<string>("");
+  /** Which flag's derivation is open. Tap to open, tap again to close. */
+  const [sel, setSel] = useState<string | null>(null);
+
+  /* ---- measured width -> layout. A callback ref, not an effect on [], for
+   * the reason TeamStats documents: the plot box does not exist on the first
+   * render (the panel is still loading compact.json), so a one-shot read finds
+   * null and the layout stays stuck at the desktop default. ---- */
+  const [boxW, setBoxW] = useState(0);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const attachBox = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
+    if (!el) return;
+    const apply = (w: number) => setBoxW((prev) => (Math.abs(prev - w) < 1 ? prev : w));
+    apply(el.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) apply(e.contentRect.width);
+    });
+    ro.observe(el);
+    roRef.current = ro;
+  }, []);
+  useEffect(() => () => roRef.current?.disconnect(), []);
+
+  /* ---- PRE-FOCUS from a game-line suggestion.
+   * Applied ONCE per payload, and it forces `teamOrder` back to 0 on purpose:
+   * the line travels in the exporter's home-perspective convention, which is
+   * the axis's convention only while the home team is on the left. Flipping
+   * the sides after the jump is the reader's own choice and re-signs the axis
+   * with it; silently dropping a home-perspective number onto a flipped axis
+   * would put the marker on the wrong side of zero. ---- */
+  const appliedFocus = useRef<string>("");
+  const fMetric = focus?.metric;
+  const fLine = focus?.line;
+  useEffect(() => {
+    if (!fMetric) return;
+    const key = `${fMetric}|${fLine ?? ""}`;
+    if (appliedFocus.current === key) return;
+    appliedFocus.current = key;
+    setMetric(fMetric);
+    setTeamOrder(0);
+    if (typeof fLine === "number") setTeamLine(String(fLine));
+  }, [fMetric, fLine]);
 
   const series = useMemo(
     () => (panelData ? metricSeries(panelData, metric, teamOrder) : []),
     [panelData, metric, teamOrder]
   );
-  const qScore = useMemo(()=> quantiles(series), [series]);
-  const hist = useMemo(() => {
-    if (!series.length) return [] as HistBin[];
-    const opts:any = {}; if (bins!=="auto") opts.bins = Math.max(1, Number(bins));
-    return computeHistogram(series, opts);
-  }, [series, bins]);
-  const teamProb = useMemo(() => {
-    if (!series.length) return null as null | { under:number; at:number; over:number; line:number };
-    const L = Number(teamLine); if (!Number.isFinite(L)) return null;
-    let u=0,a=0,o=0; for (const x of series) { if (Math.abs(x-L)<1e-9) a++; else if (x<L) u++; else o++; }
-    const n = series.length;
-    return { under:u/n, at:a/n, over:o/n, line:L };
-  }, [series, teamLine]);
-  const lineBinLabel = useMemo(
-    () => (teamProb && hist.length ? findBinLabelForValue(hist, teamProb.line) : undefined),
-    [teamProb, hist]
-  );
-  const tickPlan = useMemo(() => buildTickPlan(hist, qScore), [hist, qScore]);
+  const { cols, step, trimmed } = useMemo(() => scoreColumns(series), [series]);
+  const median = useMemo(() => quantiles(series)?.med ?? null, [series]);
 
+  const leftTeam  = teamOrder === 0 ? card.teamA : card.teamB;
+  const rightTeam = teamOrder === 0 ? card.teamB : card.teamA;
   const leftColor  = (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
   const rightColor = (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
 
-  const binColors = useMemo(() => {
-    if (!hist.length) return [] as string[];
-    if (metric === "spread") {
-      return hist.map(h => {
-        const mid = (h.start + h.end) / 2;
-        if (mid < 0) return leftColor;
-        if (mid > 0) return rightColor;
-        return "var(--border)";
-      });
+  /* ---- the two lines, in AXIS units ----
+   * The book's spread is published home-perspective; the axis is written from
+   * the LEFT team's side, so it negates with the swap. A total has no side and
+   * never does. Per-team totals have no published book line at all. */
+  const bookLine = useMemo(() => {
+    if (metric === "spread" && typeof card.oddsSpread === "number") {
+      return teamOrder === 0 ? card.oddsSpread : -card.oddsSpread;
     }
-    if (metric === "total") {
-      const med = qScore?.med ?? 0;
-      return hist.map(h => ((h.start + h.end) / 2) < med ? leftColor : rightColor);
+    if (metric === "total" && typeof card.oddsTotal === "number") return card.oddsTotal;
+    return undefined;
+  }, [metric, teamOrder, card.oddsSpread, card.oddsTotal]);
+
+  const userLine = Number(teamLine);
+  const hasUserLine = teamLine.trim() !== "" && Number.isFinite(userLine);
+
+  /** One minus sign across the whole panel — U+2212, never a hyphen. */
+  const axisNum = (v: number) => (v < 0 ? `−${Math.abs(v)}` : String(v));
+
+  /* ---- geometry ---- */
+  const plotW = Math.max(280, Math.min(boxW || 900, 900));
+  const narrow = plotW < 560;
+  const densH = narrow ? 96 : 128;
+  const BAND = 60;                       // two label rows above the shape
+  const axisY = BAND + densH;
+  const height = axisY + 16;
+  const padL = 8, padR = 8;
+
+  const axisSpan = useMemo(() => {
+    if (!cols.length) return { min: 0, max: 1 };
+    let min = cols[0].v - step / 2;
+    let max = cols[cols.length - 1].v + step / 2;
+    // A line outside the simulated range still has to be visible: that IS the
+    // finding ("the book is off the end of our distribution"), and clipping it
+    // would hide the strongest read on the chart.
+    for (const L of [bookLine, hasUserLine ? userLine : undefined]) {
+      if (typeof L !== "number") continue;
+      min = Math.min(min, L - step);
+      max = Math.max(max, L + step);
     }
-    if (metric === "teamLeft")  return hist.map(() => leftColor);
-    if (metric === "teamRight") return hist.map(() => rightColor);
-    return hist.map(() => "var(--brand)");
-  }, [hist, metric, leftColor, rightColor, qScore?.med]);
+    if (metric === "spread") { min = Math.min(min, 0); max = Math.max(max, 0); }
+    return { min, max };
+  }, [cols, step, bookLine, hasUserLine, userLine, metric]);
+
+  const x = (v: number) =>
+    padL + ((v - axisSpan.min) / Math.max(1e-9, axisSpan.max - axisSpan.min)) *
+      (plotW - padL - padR);
+  const peak = Math.max(1e-9, ...cols.map((c) => c.mass));
+  const slot = (plotW - padL - padR) / Math.max(1e-9, (axisSpan.max - axisSpan.min) / step);
+  const barW = Math.max(1, slot * 0.86);
+
+  const colColor = (v: number) => {
+    if (metric === "spread") return v < 0 ? leftColor : v > 0 ? rightColor : "var(--border)";
+    if (metric === "teamLeft") return leftColor;
+    if (metric === "teamRight") return rightColor;
+    return "var(--brand)";
+  };
+
+  /* ---- flags ---- */
+  const flags = useMemo(() => {
+    if (!series.length) return [] as ScoreFlag[];
+    const n = series.length;
+    const make = (L: number, book: boolean): ScoreFlag => {
+      const p = sideProbs(series, L);
+      const label = metric === "spread" ? spreadWords(L) : String(L);
+      const verdict = metric === "spread"
+        ? `covers ${pct0(p.under)}`
+        : `over ${pct0(p.over)}`;
+      const detail = metric === "spread"
+        ? `${leftTeam} ${label} \u2014 ${leftTeam} covers ${pct0(p.under)} ` +
+          `(fair ${americanOdds(p.under)}) \u00b7 push ${pct0(p.at)} \u00b7 ` +
+          `${rightTeam} ${spreadWords(-L)} covers ${pct0(p.over)} ` +
+          `(fair ${americanOdds(p.over)}). ${n} simulated games.`
+        : `${metric === "total" ? "Game total" : `${metric === "teamLeft" ? leftTeam : rightTeam} points`} ${label} \u2014 ` +
+          `over ${pct0(p.over)} (fair ${americanOdds(p.over)}) \u00b7 exactly ${label} ${pct0(p.at)} \u00b7 ` +
+          `under ${pct0(p.under)} (fair ${americanOdds(p.under)}). ${n} simulated games.`;
+      return {
+        key: book ? "book" : "yours", x: x(L), label,
+        verdict, detail, book, row: 0,
+      };
+    };
+    const out: ScoreFlag[] = [];
+    if (typeof bookLine === "number") out.push(make(bookLine, true));
+    if (hasUserLine) out.push(make(userLine, false));
+    // Two labels 40px apart would overprint. The reader's own line keeps the
+    // near row; the book's steps up.
+    if (out.length === 2 && Math.abs(out[0].x - out[1].x) < 78) out[0].row = 1;
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, metric, bookLine, hasUserLine, userLine, leftTeam, rightTeam, plotW, axisSpan.min, axisSpan.max]);
+
+  const selFlag = flags.find((f) => f.key === sel) ?? null;
 
   if (compactLoading) return <SkeletonChart height={220} />;
   if (compactError) {
     return (
       <div style={{ fontSize: 13, color: "var(--muted)", padding: 6 }}>
-        Couldn\u2019t load the distribution: {compactError}
+        Couldn&rsquo;t load the distribution: {compactError}
       </div>
     );
   }
@@ -3719,62 +3978,180 @@ function ScoresPanel({ card, gdata, season }: {
     return <div style={{ fontSize: 13, color: "var(--muted)", padding: 6 }}>No simulated scores for this game.</div>;
   }
 
+  /** The words legend, said once, so position and colour can carry the rest. */
+  const legend = metric === "spread"
+    ? <>Shaded columns = <strong>our simulation</strong> &middot; flags = <strong>a betting line</strong> &middot;
+        the % under a flag is our chance <strong>{leftTeam}</strong> covers it.</>
+    : metric === "total"
+      ? <>Shaded columns = <strong>our simulation</strong> &middot; flags = <strong>a betting line</strong> &middot;
+          the % under a flag is our chance the game goes <strong>Over</strong> it.</>
+      : <>Shaded columns = <strong>our simulation</strong> &middot; flags = <strong>a betting line</strong> &middot;
+          the % under a flag is our chance{" "}
+          <strong>{metric === "teamLeft" ? leftTeam : rightTeam}</strong> goes over it.</>;
+
   return (
-    <div>
+    <div style={{ display: "grid", gap: 6 }}>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
         {(["spread","total","teamLeft","teamRight"] as Metric[]).map(m => (
-          <button key={m} className="ui-btn" data-on={metric===m ? "true" : "false"} onClick={()=>setMetric(m)}>
-            {m==="spread"?"Spread":m==="total"?"Total":m==="teamLeft"?`${panelData.teamA} total`:`${panelData.teamB} total`}
+          <button key={m} className="ui-btn" data-on={metric===m ? "true" : "false"}
+                  onClick={()=>{ setMetric(m); setSel(null); }}
+                  style={{ fontSize: 12 }}>
+            {m==="spread"?"Spread":m==="total"?"Total":m==="teamLeft"?`${leftTeam} total`:`${rightTeam} total`}
           </button>
         ))}
         <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <button className="ui-btn" onClick={()=>setTeamOrder(t=>t===0?1:0)}>
-            {teamOrder===0 ? `${panelData.teamA} vs ${panelData.teamB}` : `${panelData.teamB} vs ${panelData.teamA}`}
+          <button className="ui-btn" style={{ fontSize: 12 }}
+                  onClick={()=>{ setTeamOrder(t=>t===0?1:0); setSel(null); }}>
+            {leftTeam} vs {rightTeam}
           </button>
-          <label style={{ fontSize:12, color:"var(--muted)" }}>Bins:</label>
-          <select className="ui-sel" value={String(bins)} onChange={(e)=>setBins(e.target.value==="auto" ? "auto" : Number(e.target.value))}>
-            <option value="auto">Auto</option><option value="20">20</option><option value="30">30</option><option value="40">40</option>
-          </select>
-          <label style={{ fontSize:12, color:"var(--muted)" }}>Line:</label>
-          <NumberSpinner value={teamLine} onChange={setTeamLine} step={0.5} placeholder={metric==="spread" ? "-6.5" : "55.5"} />
+          {/* Label and spinner are ONE flex item: split, "Your line:" is
+              orphaned on the row above the box it names at phone width. */}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flex: "none" }}>
+            <label style={{ fontSize:12, color:"var(--muted)" }}>Your line</label>
+            <NumberSpinner value={teamLine} onChange={(v) => { setTeamLine(v); setSel(null); }}
+                           step={0.5} placeholder={metric==="spread" ? "-6.5" : "55.5"} width={84} />
+          </span>
         </div>
       </div>
 
-      <div style={{ height: 220, marginTop: 6 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={hist} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
-            <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
-            <XAxis
-              dataKey="bin" interval={0} height={22} tickLine={false} axisLine={false}
-              tick={planTick(tickPlan)}
-            />
-            <YAxis allowDecimals={false} width={28} tick={{ fontSize: 11 }} />
-            <Tooltip
-              contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12 }}
-              labelStyle={{ color:"var(--muted)" }} itemStyle={{ color:"var(--text)" }}
-              formatter={(v:any)=>[v,"Count"]}
-            />
-            {teamProb && lineBinLabel && (
-              <ReferenceLine x={lineBinLabel} ifOverflow="extendDomain" stroke="var(--accent)" strokeDasharray="4 4"
-                label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }} />
-            )}
-            <Bar dataKey="count" name="Frequency">
-              {hist.map((_, i) => (<Cell key={i} fill={binColors[i]} />))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      <div style={{ fontSize: 11.5, color: "var(--text)" }}>{legend}</div>
 
-      {teamProb && (
-        <div className="card" style={{ marginTop:6, padding:8, fontSize:13 }}>
-          <b>Probability vs Line</b>
-          <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:4 }}>
-            <span><b>Under (Cover)</b>: {(teamProb.under*100).toFixed(1)}% ({americanOdds(teamProb.under)})</span>
-            <span><b>At</b>: {(teamProb.at*100).toFixed(1)}%</span>
-            <span><b>Over (Not Cover)</b>: {(teamProb.over*100).toFixed(1)}% ({americanOdds(teamProb.over)})</span>
-          </div>
+      {/* The SPREAD's two halves are the only place colour carries identity
+          here, so it is named — in words, once — rather than left for the
+          reader to infer from the card above. */}
+      {metric === "spread" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 10.5, color: "var(--muted)" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span aria-hidden="true" style={{
+              width: 9, height: 9, borderRadius: 3, background: leftColor,
+              opacity: 0.55, display: "inline-block", flex: "none",
+            }} />
+            left of 0 = {leftTeam} wins
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span aria-hidden="true" style={{
+              width: 9, height: 9, borderRadius: 3, background: rightColor,
+              opacity: 0.55, display: "inline-block", flex: "none",
+            }} />
+            right of 0 = {rightTeam} wins
+          </span>
         </div>
       )}
+
+      <div ref={attachBox} style={{ position: "relative", overflowX: "hidden" }}>
+        <svg width={plotW} height={height} viewBox={`0 0 ${plotW} ${height}`}
+             role="img"
+             aria-label={`Simulated ${metric === "spread" ? "margin" : "points"} distribution with betting lines`}
+             style={{ display: "block", maxWidth: "none" }}>
+          {/* PICK'EM. On a spread the sign is the whole story, so zero gets a
+              hairline of its own \u2014 position then reads without a scale. */}
+          {metric === "spread" && (
+            <line x1={x(0)} x2={x(0)} y1={BAND} y2={axisY}
+                  stroke="var(--border)" strokeWidth={1} />
+          )}
+
+          {cols.map((c) => {
+            const h = (c.mass / peak) * densH;
+            const left = Math.max(x(axisSpan.min), x(c.v) - barW / 2);
+            const right = Math.min(x(axisSpan.max), x(c.v) + barW / 2);
+            return (
+              <rect key={c.v} x={left} y={axisY - h}
+                    width={Math.max(1, right - left)} height={Math.max(0.6, h)}
+                    fill={colColor(c.v)} opacity={0.34}
+                    stroke="var(--muted)" strokeWidth={barW > 3 ? 1 : 0} strokeOpacity={0.4}>
+                <title>{`${pct0(c.mass)} of games at ${step === 1 ? c.v : `${c.v - (step - 1) / 2}\u2013${c.v + (step - 1) / 2}`}`}</title>
+              </rect>
+            );
+          })}
+
+          {/* THE axis, drawn on top of the shape. */}
+          <line x1={x(axisSpan.min)} x2={x(axisSpan.max)} y1={axisY} y2={axisY}
+                stroke="var(--text)" strokeWidth={1.5} strokeLinecap="round" />
+          {/* Axis numbers wear the SAME minus sign the flags do (U+2212, not a
+              hyphen): "-7" and "−7.5" side by side read as two conventions. */}
+          <text x={x(axisSpan.min)} y={height - 3} fontSize={9} fill="var(--muted)"
+                textAnchor="start" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {axisNum(Math.round(axisSpan.min))}
+          </text>
+          {metric === "spread" && (
+            <text x={x(0)} y={height - 3} fontSize={9} fill="var(--muted)" textAnchor="middle">0</text>
+          )}
+          <text x={x(axisSpan.max)} y={height - 3} fontSize={9} fill="var(--muted)"
+                textAnchor="end" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {axisNum(Math.round(axisSpan.max))}
+          </text>
+          {median !== null && (() => {
+            // The median caption takes whichever top corner has no flag near
+            // it: at a low line the two labels collide at phone width.
+            const crowdedLeft = flags.some((f) => f.x < plotW / 2);
+            return (
+              <text x={crowdedLeft ? plotW - padR : padL} y={BAND + 11}
+                    fontSize={10} fill="var(--muted)"
+                    textAnchor={crowdedLeft ? "end" : "start"}>
+                {`median ${axisNum(Math.round(median))}`}
+              </text>
+            );
+          })()}
+
+          {/* FLAGS: one stem crossing the shape, two label rows outside it, so
+              no text is ever set on a coloured fill. */}
+          {flags.map((f) => {
+            const on = f.key === sel;
+            const top = f.row === 0 ? BAND : BAND - 26;
+            const tone = f.book ? "var(--muted)" : "var(--accent)";
+            return (
+              <g key={f.key} style={{ cursor: "pointer" }}
+                 onClick={() => setSel(on ? null : f.key)}>
+                <line x1={f.x} x2={f.x} y1={axisY} y2={top}
+                      stroke={tone} strokeWidth={on ? 2.5 : f.book ? 1 : 2}
+                      strokeDasharray={f.book ? "4 3" : undefined} />
+                <circle cx={f.x} cy={axisY} r={f.book ? 2.5 : 3.5} fill={tone} />
+                <text x={f.x} y={top - 15} fontSize={10.5} fontWeight={800}
+                      textAnchor="middle" fill={tone}
+                      style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {f.label}
+                </text>
+                <text x={f.x} y={top - 3} fontSize={f.book ? 10 : 11.5}
+                      fontWeight={f.book ? 700 : 800} textAnchor="middle"
+                      fill={f.book ? "var(--muted)" : "var(--text)"}>
+                  {f.verdict}
+                </text>
+                {/* >=40px tap target, invisible */}
+                <rect x={f.x - 20} y={top - 28} width={40} height={axisY - top + 28}
+                      fill="transparent">
+                  <title>{f.detail}</title>
+                </rect>
+              </g>
+            );
+          })}
+        </svg>
+
+        {selFlag && (
+          <div role="status" style={{
+            position: "absolute",
+            left: Math.min(Math.max(4, selFlag.x - 150), Math.max(4, plotW - 300)),
+            top: 2, zIndex: 2, maxWidth: 300,
+            background: "var(--card)", border: "1px solid var(--brand)",
+            borderRadius: 8, padding: "7px 9px", fontSize: 11.5, lineHeight: 1.45,
+            color: "var(--text)", boxShadow: "0 4px 14px var(--shadow)",
+          }}>
+            {selFlag.detail}
+            <button type="button" className="ui-btn" onClick={() => setSel(null)}
+                    style={{ marginLeft: 8, padding: "1px 7px", fontSize: 10.5 }}>
+              Close
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+        {series.length.toLocaleString()} simulated games, one column per
+        {step === 1 ? " point" : ` ${step} points`}
+        {trimmed > 0.0001 ? ", middle 99% of the range shown" : ""}.
+        {typeof bookLine === "number"
+          ? " The dashed flag is the book's line; tap either flag for the full read."
+          : " Type a line above to mark it."}
+      </div>
     </div>
   );
 }
