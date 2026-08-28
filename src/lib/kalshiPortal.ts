@@ -67,6 +67,12 @@ export type PortalPosition = {
 export type PortalPayload = {
   fetched_at: string; orders: PortalOrder[]; fills: PortalFill[];
   positions: PortalPosition[];
+  /** Order-entry staging state (server's CFB_ORDERS_LIVE). FALSE means the
+   *  order routes validate, cap, re-check the book and log — and submit
+   *  nothing. The confirm popup wears its DRY RUN badge off this, so the
+   *  staging is visible BEFORE the press, not only in the response. Optional
+   *  because a server that predates order entry simply omits it. */
+  orders_live?: boolean;
 };
 
 /** "KXNCAAFSPREAD-26AUG27CARKUTM-UTM4" -> "26AUG27CARKUTM" (else null). */

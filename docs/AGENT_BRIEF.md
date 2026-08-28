@@ -183,19 +183,34 @@ rather than blanking every price on the page. Never revert either to a
 plain `Promise.all` / empty-on-error: the 2026-08-26 incident was
 expensive because the failure was invisible.
 
-## Suggested bets (owner-only, READ-ONLY)
+## Suggested bets (owner-only) — and the app's order entry
 
-`src/components/SuggestedBets.tsx` + `src/lib/suggestedBets.ts`. Rendered
-only while the portal session is `ok` — the same state that powers
-MyBookStrip.
+`src/components/SuggestedBets.tsx` + `src/lib/suggestedBets.ts` +
+`src/lib/placeOrders.ts`. Rendered only while the portal session is `ok` —
+the same state that powers MyBookStrip.
 
 The FBS maker pipeline (`scripts/fbs_maker_pipeline.py` in cfb-props-sim)
-remains the PLACEMENT AUTHORITY. This card is its read-only twin for
-at-the-bar decisions: it mirrors the pipeline's constants by name
-(take 0.06, rest 0.03, margin 0.05, min price 0.03, max spread 0.30, sim
-0.05–0.95, prefer 0.35–0.65, 2 rungs per ladder / 1 per winner, $30 per
-ladder) and has NO placement controls. If the two ever disagree the
-pipeline is right and this file is the bug.
+remains the AUTOMATED placement authority and stays POST-ONLY-ONLY. This
+card mirrors its SELECTION constants by name (take 0.06, rest 0.03, margin
+0.05, min price 0.03, max spread 0.30, sim 0.05–0.95, prefer 0.35–0.65, 2
+rungs per ladder / 1 per winner, $30 per ladder). If the two disagree on
+selection the pipeline is right and this file is the bug.
+
+Since 2026-08-28 the card also PLACES, via the endpoints below. The card
+starts COLLAPSED (header = "Suggested bets (N) · computed HH:MM:SS" +
+chevron; the state persists in try/catch'd localStorage under
+`cfb.suggestedBets.open`). Every row gets a **Place** button — a grouped
+ladder places all its rungs as ONE request behind ONE confirm — and the
+kill switch sits in the card header in BOTH states, on purpose: a control
+that pulls resting money must not hide behind a collapsed panel.
+
+The confirm popup is the bar-test pattern: the bet in words, a mode chip,
+contracts, stake + fee + total, net edge, "prices as of HH:MM:SS ·
+re-verified against the live book at placement", then Confirm/Cancel. It
+wears an unmissable DRY RUN badge in `--accent` — never `--pos`/`--neg`,
+which on this card mean one thing only (the sign of an edge); a staged
+order must not read as a bad bet. The badge is known BEFORE the press
+because the portal payload carries `orders_live`.
 
 - ZERO new Kalshi load: the compute is a pure function of the quotes
   already flowing through the page's 45s `/api/kalshi/cfb` poll, so it is
@@ -246,9 +261,83 @@ yes_price_dollars, fee_cost). Client: `src/lib/kalshiPortal.ts` (poll
 segment against kalshiBySlug — never a second name join. Scoreboard pins
 games with a book and badges them (`MyBookStrip`). Historical note: the
 old "no credentials anywhere in this repo" stance was deliberately
-amended 2026-08-26 (env-only, never code). This route family is where
-order entry would live; the auth gate must ALWAYS predate any mutating
-endpoint.
+amended 2026-08-26 (env-only, never code). The gate is `portalGate()` —
+ONE implementation, called first by every route in this family, reads and
+writes alike. It was extracted from the read route when order entry landed
+so a mutating endpoint could not drift away from it. The auth gate must
+ALWAYS predate any mutating endpoint.
+
+### Order entry (2026-08-28) — the family's first MUTATING routes
+
+    POST /api/portfolio/cfb/orders          place 1..N limit orders
+    POST /api/portfolio/cfb/orders/cancel   {order_id} | {all:true}
+
+Body: `{idempotency_key, orders:[{ticker, side:"yes"|"no",
+mode:"rest"|"take", price_dollars, count_fp}]}`.
+
+**Execution policy (user decision 2026-08-28).** AUTOMATED flows remain
+post-only-only — the maker pipeline and `kalshi_client_min.py` have no
+taker code path and must not grow one. HUMAN-CONFIRMED app orders MAY
+take, bounded by the confirmed limit price. The client sends INTENT
+(`mode`) and the SERVER derives the mechanics:
+
+| mode   | post_only | time_in_force        | meaning |
+|--------|-----------|----------------------|---------|
+| `rest` | true      | good_till_canceled   | cannot cross; exchange kills it rather than filling taker |
+| `take` | false     | immediate_or_cancel  | LIMIT order at the confirmed price — fills at that price or better, never worse |
+
+There is NO market-order path and there must never be one. `post_only`,
+`type`, `time_in_force`, `buy_max_cost` &c. are REJECTED if sent, so taker
+semantics are reachable only through the declared mode.
+`immediate_or_cancel` is documented on Kalshi's order-create surface, but
+the V2 endpoint we post to has silently ignored a field before
+(`expiration_ts`, probed 2026-08-26) — so a take order is READ BACK after
+placement and the response reports what actually happened, including a
+remainder that rested. A 400 that names the TIF downgrades to GTC once and
+flags `tif_downgraded` (a 400 is a validation rejection, so nothing was
+placed and the retry cannot double up).
+
+**Rails, all server-side, all in `server/liveScores.ts`:**
+
+1. `portalGate` (timing-safe password, 5 misses = 60s lockout).
+2. NCAAF tickers only (`ORDERS_TICKER_RE`) — the app cannot reach any
+   other market.
+3. Mode-derived post_only/TIF + a strict field allowlist; never a market
+   order.
+4. Per-order cost cap **$40** (price x count + fee).
+5. Per-request cap **$80**, at most 8 orders.
+6. Rolling 24h cap **$400** — IN-MEMORY, so a Render restart resets it.
+   Stated honestly rather than hidden: it throttles a runaway loop within
+   one process lifetime, it is not an accounting system.
+7. Live orderbook re-read per ticker immediately before signing. `rest`
+   rejects if the price would CROSS; `take` rejects if the ask is WORSE
+   than the confirmed price. Either returns the FRESH book so the client
+   can say "book moved: ask now 0.52" and the human reconfirms.
+8. Idempotency: a replayed key returns the ORIGINAL result, never a second
+   placement; a key in flight gets 409. The client mints one key per
+   confirm press, so a phone double-tap cannot place twice.
+9. `client_order_id = "cfbapp-<key>-<i>"` — attributable, and the maker
+   pipeline's status tools skip these.
+10. Every request/response appended to a JSONL audit log AND
+    `console.log`'d (Render's disk is ephemeral; the log stream is not).
+    Path: `CFB_ORDERS_AUDIT_PATH`, default `os.tmpdir()`.
+11. **DRY-RUN STAGED.** Unless `CFB_ORDERS_LIVE === "1"` the endpoint does
+    everything — auth, validation, caps, live book re-check, idempotency,
+    audit log — and submits NOTHING, answering `{dry_run:true,
+    would_place:[…]}`. Going live is ONE env var in Render, no code
+    change and no deploy. **No agent ever sets that variable, anywhere,
+    including local tests.**
+
+The cancel route is deliberately NOT gated on `CFB_ORDERS_LIVE`:
+cancelling only ever REDUCES exposure, and a kill switch staged off is not
+a kill switch. It can still only reach `cfbapp-`-tagged resting orders, so
+the maker pipeline's own book is untouchable from here.
+
+Testing this family: run the server on a FREE port (never 8080) with
+`CFB_PORTAL_PASSWORD` set locally and Kalshi creds ABSENT. The dry-run path
+is then fully exercisable — the live-book re-check uses the PUBLIC
+orderbook GET, so it works credential-free, while the signing path is
+simply never reached. NEVER place a live order.
 
 ## Hard-won rules (each cost a real incident)
 

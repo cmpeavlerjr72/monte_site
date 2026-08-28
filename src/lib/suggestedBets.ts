@@ -106,6 +106,11 @@ export type Suggestion = {
   statText: string;
   strike: number;
   mode: "REST" | "TAKE";
+  /** Which contract the bet BUYS. Load-bearing for order entry: `price`,
+   *  `bid` and `ask` are all YES-denominated and `simP` is P(YES), so every
+   *  stat-ladder candidate is a YES buy. Anything that ever adds a NO
+   *  candidate must set this, or the placed order is the opposite bet. */
+  side: "yes" | "no";
   simP: number;
   price: number;
   /** Per-order fee in dollars at the sized count. */
@@ -162,6 +167,9 @@ export type Candidate = {
   statText: string;
   strike: number;
   series: string;
+  /** See `Suggestion.side`. Defaults to a YES buy, which is what every
+   *  stat-ladder rung is. */
+  side?: "yes" | "no";
   simP: number;
   bid: number | null;
   ask: number | null;
@@ -234,7 +242,7 @@ export function buildSuggestions(
         key: `${p.ticker}|${p.mode}`,
         ticker: p.ticker, slug: p.slug, ladder, label: p.label,
         team: p.team, statText: p.statText, strike: p.strike,
-        mode: p.mode, simP: p.simP, price: p.price,
+        mode: p.mode, side: p.side ?? "yes", simP: p.simP, price: p.price,
         fee, edge: p.edgePer, count,
         outlay: round2(p.price * count + fee),
         feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",

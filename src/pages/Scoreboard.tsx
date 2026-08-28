@@ -2417,6 +2417,7 @@ function ScoreboardPage() {
             feeParams={kalshiFees}
             portal={portal.payload}
             weekId={weekId}
+            token={portalToken}
             onJump={(slug) => setFlashKey(slug)}
           />
         </div>

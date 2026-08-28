@@ -6,6 +6,7 @@ import AbortController from "abort-controller";
 import compression from "compression";
 import crypto from "crypto";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 // Pure, so scripts/check_fcs_names.mjs can verify the Kalshi join against the
@@ -1566,19 +1567,31 @@ async function portalPositions() {
     return portalResolveMve(out);
 }
 let portalCache = null;
-app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
+/**
+ * THE auth gate for the whole portal family — reads AND writes.
+ *
+ * Extracted from the read route on 2026-08-28 for exactly one reason: the
+ * first MUTATING endpoint (order entry, below) must be unable to drift away
+ * from the gate the reads use. There is one implementation; every route in
+ * this family calls it first, before parsing a body and before touching a
+ * credential.
+ *
+ * Returns true when the caller is the owner. When it returns false it has
+ * ALREADY written the response — the caller must simply return.
+ */
+function portalGate(req, res) {
     // Personal financial data: never cacheable by intermediaries.
     res.set("Cache-Control", "no-store");
     if (!PORTAL_SECRET) {
         res.status(503).json({ error: "portal_not_configured" });
-        return;
+        return false;
     }
     if (Date.now() < portalLockUntil) {
         res.status(429).json({
             error: "locked",
             retry_in_s: Math.ceil((portalLockUntil - Date.now()) / 1000),
         });
-        return;
+        return false;
     }
     const got = Buffer.from(String(req.header("x-cfb-token") || ""), "utf8");
     const want = Buffer.from(PORTAL_SECRET, "utf8");
@@ -1590,9 +1603,14 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
             console.warn("[portal] too many failed logins — locked 60s");
         }
         res.status(401).json({ error: "bad_password" });
-        return;
+        return false;
     }
     portalFails = 0;
+    return true;
+}
+app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
+    if (!portalGate(req, res))
+        return;
     if (portalCache && Date.now() - portalCache.at < PORTAL_TTL_MS) {
         res.json(portalCache.payload);
         return;
@@ -1624,9 +1642,583 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
     }
     const payload = {
         fetched_at: new Date().toISOString(), orders, fills, positions,
+        orders_live: ORDERS_LIVE,
     };
     portalCache = { at: Date.now(), payload };
     res.json(payload);
+}));
+// ============================================================================
+// ORDER ENTRY — the portal family's FIRST mutating endpoints (real money)
+//
+//   POST /api/portfolio/cfb/orders          place 1..N limit orders
+//   POST /api/portfolio/cfb/orders/cancel   cancel this app's resting orders
+//
+// Both sit behind `portalGate` — the same timing-safe password + lockout the
+// reads use, checked before a body is parsed and before a key is loaded. The
+// gate predated this code by design; nothing here weakens it.
+//
+// ---------------------------------------------------------------------------
+// EXECUTION POLICY (user decision 2026-08-28)
+// ---------------------------------------------------------------------------
+// AUTOMATED flows stay post-only-only: `scripts/fbs_maker_pipeline.py` and
+// `kalshi_client_min.py` in cfb-props-sim have no taker code path and must not
+// grow one. HUMAN-CONFIRMED orders from this app MAY take liquidity, because a
+// human read the price and pressed Confirm — but ONLY as a LIMIT order at that
+// confirmed price. There is no market-order path here and there must never be
+// one: the confirmed price is a hard slippage bound.
+//
+// The client never sends `post_only`, `type` or `time_in_force`. It sends an
+// intent — `mode: "rest" | "take"` — and the SERVER derives the wire fields:
+//   rest  -> post_only true,  GTC                (cannot cross; exchange kills
+//                                                 it rather than filling taker)
+//   take  -> post_only false, immediate_or_cancel (fills at the standing price
+//                                                 up to the confirmed limit, or
+//                                                 not at all)
+// A strict field allowlist rejects any body that tries to set those directly,
+// so "taker semantics" can only ever be reached through the declared mode.
+//
+// immediate_or_cancel: documented on Kalshi's order-create surface
+// (kalshi-rfq/docs/kalshi-api-reference.md §4.9). The V2 event-scoped endpoint
+// we post to is documented as "same semantics, different order shape", but
+// this endpoint has a PROVEN history of accepting a field and silently
+// ignoring it (`expiration_ts`, probed 2026-08-26). So we do not trust it: a
+// take order is read back after placement and the response reports what
+// actually happened, including a remainder that rested. If the create is
+// rejected 400 *because of* the TIF, we retry once with GTC and flag
+// `tif_downgraded` — a 400 is a validation rejection, so nothing was placed
+// and the retry cannot double up.
+//
+// ---------------------------------------------------------------------------
+// HARD RAILS (all server-side; the client cannot relax any of them)
+// ---------------------------------------------------------------------------
+//   1. Auth: portalGate (timing-safe password, 5 misses = 60s lockout).
+//   2. NCAAF tickers only — the app cannot reach any other market.
+//   3. Mode-derived post_only/TIF; NEVER a market order. Strict allowlist.
+//   4. Per-order cost cap $40 (price x count + fee).
+//   5. Per-request cost cap $80, at most 8 orders.
+//   6. Rolling 24h cost cap $400.
+//   7. Live book re-checked per ticker immediately before signing:
+//        rest -> reject if the price would CROSS the standing ask
+//        take -> reject if the standing ask is WORSE than the confirmed price
+//      Either rejection returns the fresh book so the client can say
+//      "book moved: ask now 0.52" and the human can reconfirm.
+//   8. Idempotency: a replayed key returns the ORIGINAL result, never a
+//      second placement. A key already in flight gets 409.
+//   9. client_order_id = "cfbapp-<key>-<i>" so these orders are attributable
+//      and the maker pipeline's status tools can skip them.
+//  10. Every request and response appended to a JSONL audit log AND written to
+//      the console (Render's disk is ephemeral; the log stream is not).
+//  11. DRY-RUN STAGED: without CFB_ORDERS_LIVE=1 everything above runs and
+//      nothing is submitted. Going live is one env var in Render, no deploy.
+//
+// The 24h ledger is IN-MEMORY. A Render restart (deploy, idle spin-down, OOM)
+// resets it to zero. That is stated plainly rather than hidden: it is a
+// throttle against a runaway loop within one process lifetime, not an
+// accounting system. The exchange-side balance is the real limit.
+// ============================================================================
+/** The one switch. NEVER set this from code, a script, or a test. */
+const ORDERS_LIVE = process.env.CFB_ORDERS_LIVE === "1";
+/** client_order_id prefix — the attribution tag. */
+const ORDERS_TAG = "cfbapp-";
+const ORDERS_MAX_ORDERS = 8;
+const ORDERS_CAP_ORDER = 40;
+const ORDERS_CAP_REQUEST = 80;
+const ORDERS_CAP_24H = 400;
+const ORDERS_IDEM_TTL_MS = 24 * 60 * 60 * 1000;
+const ORDERS_IDEM_MAX = 500;
+/** NCAAF families only. This is what stops a malformed or hostile body from
+ *  reaching, say, a politics market. */
+const ORDERS_TICKER_RE = /^KXNCAAF[A-Z0-9]{1,20}(-[A-Z0-9]{1,32}){1,3}$/;
+const ORDERS_KEY_RE = /^[A-Za-z0-9_-]{8,64}$/;
+/** Disk is ephemeral on Render — the console line is the durable copy. */
+const ORDERS_AUDIT_PATH = process.env.CFB_ORDERS_AUDIT_PATH || path.join(os.tmpdir(), "cfb_orders_audit.jsonl");
+function ordersAudit(rec) {
+    const line = JSON.stringify({ at: new Date().toISOString(), ...rec });
+    console.log("[orders]", line);
+    try {
+        fs.appendFileSync(ORDERS_AUDIT_PATH, line + "\n");
+    }
+    catch (err) {
+        console.warn("[orders] audit file write failed:", err?.message ?? err);
+    }
+}
+/** Fee as the exchange charges it: rounded UP to the cent, per order.
+ *  Taker = 0.07·C·P·(1−P); maker = a quarter of that. The maker number is
+ *  deliberately the PESSIMISTIC one — most NCAAF team families charge no
+ *  maker fee at all — because a cap should never be loosened by an optimistic
+ *  fee estimate. */
+function ordersFee(price, count, mode) {
+    const taker = 0.07 * price * (1 - price) * count;
+    const raw = mode === "take" ? taker : taker / 4;
+    return Math.ceil(raw * 100) / 100;
+}
+const ordersSpend = [];
+/** Dollars committed in the last 24h of THIS process's life (see caveat above). */
+function ordersSpent24h() {
+    const cut = Date.now() - ORDERS_IDEM_TTL_MS;
+    while (ordersSpend.length && ordersSpend[0].at < cut)
+        ordersSpend.shift();
+    return ordersSpend.reduce((s, e) => s + e.cost, 0);
+}
+const ordersIdem = new Map();
+const ordersInflight = new Set();
+function ordersIdemGet(key) {
+    const cut = Date.now() - ORDERS_IDEM_TTL_MS;
+    for (const [k, v] of ordersIdem)
+        if (v.at < cut)
+            ordersIdem.delete(k);
+    return ordersIdem.get(key)?.result ?? null;
+}
+function ordersIdemPut(key, result) {
+    ordersIdem.set(key, { at: Date.now(), result });
+    while (ordersIdem.size > ORDERS_IDEM_MAX) {
+        const oldest = ordersIdem.keys().next().value;
+        if (oldest === undefined)
+            break;
+        ordersIdem.delete(oldest);
+    }
+}
+/** Signed request WITH a body. Writes are NEVER retried on a network error or
+ *  a 5xx: the order may already have landed, and a blind retry is how you get
+ *  two (kalshi_client_min.py::_req carries the same rule). */
+async function portalSend(method, apiPath, body) {
+    const key = portalPrivateKey();
+    if (!key || !PORTAL_KEY_ID)
+        throw new Error("portal_credentials_missing");
+    const ts = String(Date.now());
+    // Same scheme as portalGet: the signed path EXCLUDES the query string.
+    const signPath = "/trade-api/v2" + apiPath.split("?", 1)[0];
+    const sig = crypto.sign("sha256", Buffer.from(ts + method + signPath), {
+        key,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+    });
+    const r = await fetchWithTimeout(`${KALSHI_BASE}${apiPath}`, {
+        method,
+        headers: {
+            "KALSHI-ACCESS-KEY": PORTAL_KEY_ID,
+            "KALSHI-ACCESS-SIGNATURE": sig.toString("base64"),
+            "KALSHI-ACCESS-TIMESTAMP": ts,
+            accept: "application/json",
+            "content-type": "application/json",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+    }, 12_000);
+    const text = await r.text();
+    let json = {};
+    try {
+        json = text.trim() ? JSON.parse(text) : {};
+    }
+    catch {
+        json = { text: text.slice(0, 400) };
+    }
+    return { status: r.status, json };
+}
+/** Best YES bid / YES ask from the live orderbook.
+ *
+ *  A Kalshi book holds only BIDS, in two lists. A NO bid at q IS a YES ask at
+ *  1 − q, so yes_ask = 1 − best no bid (verified against banked snapshots in
+ *  cfb-props-sim's kalshi_client_min.py::book_from_orderbook). An EMPTY side
+ *  is null, never a fabricated 0.00/1.00: "nobody is bidding" and "somebody
+ *  bids zero" are different facts. `orderbook_fp` quotes dollar strings, the
+ *  older `orderbook` quotes integer cents; both are normalised here. */
+async function ordersBook(ticker) {
+    const j = await kalshiJson(`/markets/${encodeURIComponent(ticker)}/orderbook?depth=5`);
+    const ob = j?.orderbook_fp || j?.orderbook || {};
+    const best = (levels) => {
+        let out = null;
+        for (const lv of Array.isArray(levels) ? levels : []) {
+            const px = Number(Array.isArray(lv) ? lv[0] : NaN);
+            if (!Number.isFinite(px))
+                continue;
+            const d = px > 1 ? px / 100 : px; // cents vs dollars
+            out = out === null ? d : Math.max(out, d);
+        }
+        return out;
+    };
+    const r4 = (v) => Math.round(v * 10000) / 10000;
+    const yesBid = best(ob.yes_dollars ?? ob.yes);
+    const noBid = best(ob.no_dollars ?? ob.no);
+    return {
+        yes_bid: yesBid,
+        yes_ask: noBid === null ? null : r4(1 - noBid),
+        no_bid: noBid,
+        no_ask: yesBid === null ? null : r4(1 - yesBid),
+    };
+}
+/** Reject a body that tries to dictate execution mechanics instead of intent.
+ *  Returns an error string, or null when clean. */
+function ordersForbidden(obj, where) {
+    const banned = [
+        "post_only", "time_in_force", "tif", "type", "order_type", "action",
+        "buy_max_cost", "sell_position_floor", "reduce_only", "taker", "cross",
+        "market", "self_trade_prevention_type", "expiration_ts", "order_group_id",
+        "subaccount",
+    ];
+    for (const k of banned) {
+        if (k in obj) {
+            return `${where}: "${k}" is server-derived from mode and may not be sent`;
+        }
+    }
+    return null;
+}
+app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
+    if (!portalGate(req, res))
+        return;
+    const body = (req.body ?? {});
+    const bad = (status, payload) => {
+        ordersAudit({ event: "reject", status, ...payload });
+        res.status(status).json(payload);
+    };
+    const forbidden = ordersForbidden(body, "request");
+    if (forbidden) {
+        bad(400, { error: "forbidden_field", detail: forbidden });
+        return;
+    }
+    for (const k of Object.keys(body)) {
+        if (k !== "idempotency_key" && k !== "orders") {
+            bad(400, { error: "unexpected_field", detail: `request: "${k}"` });
+            return;
+        }
+    }
+    const key = String(body.idempotency_key ?? "");
+    if (!ORDERS_KEY_RE.test(key)) {
+        bad(400, { error: "bad_idempotency_key", detail: "8-64 chars of [A-Za-z0-9_-]" });
+        return;
+    }
+    // Idempotency BEFORE anything else that costs money or a network call.
+    const replay = ordersIdemGet(key);
+    if (replay) {
+        ordersAudit({ event: "replay", key, status: replay.status });
+        res.status(replay.status).json({ ...replay.body, replayed: true });
+        return;
+    }
+    if (ordersInflight.has(key)) {
+        res.status(409).json({ error: "in_flight", idempotency_key: key });
+        return;
+    }
+    ordersInflight.add(key);
+    try {
+        const raw = body.orders;
+        if (!Array.isArray(raw) || raw.length === 0) {
+            bad(400, { error: "no_orders" });
+            return;
+        }
+        if (raw.length > ORDERS_MAX_ORDERS) {
+            bad(400, { error: "too_many_orders", max: ORDERS_MAX_ORDERS });
+            return;
+        }
+        const wire = [];
+        for (let i = 0; i < raw.length; i++) {
+            const o = (raw[i] ?? {});
+            const f = ordersForbidden(o, `orders[${i}]`);
+            if (f) {
+                bad(400, { error: "forbidden_field", detail: f });
+                return;
+            }
+            for (const k of Object.keys(o)) {
+                if (!["ticker", "side", "mode", "price_dollars", "count_fp"].includes(k)) {
+                    bad(400, { error: "unexpected_field", detail: `orders[${i}]: "${k}"` });
+                    return;
+                }
+            }
+            const ticker = String(o.ticker ?? "");
+            if (!ORDERS_TICKER_RE.test(ticker)) {
+                bad(400, { error: "bad_ticker", detail: `orders[${i}]: ${ticker.slice(0, 60)}` });
+                return;
+            }
+            const side = o.side === "yes" || o.side === "no" ? o.side : null;
+            if (!side) {
+                bad(400, { error: "bad_side", detail: `orders[${i}]` });
+                return;
+            }
+            const mode = o.mode === "rest" || o.mode === "take" ? o.mode : null;
+            if (!mode) {
+                bad(400, { error: "bad_mode", detail: `orders[${i}]: mode must be "rest" or "take"` });
+                return;
+            }
+            const price = Number(o.price_dollars);
+            const cents = Math.round(price * 100);
+            if (!Number.isFinite(price) || Math.abs(price * 100 - cents) > 1e-6 ||
+                cents < 1 || cents > 99) {
+                bad(400, { error: "bad_price", detail: `orders[${i}]: whole cents in 0.01..0.99` });
+                return;
+            }
+            const count = Number(o.count_fp);
+            if (!Number.isInteger(count) || count < 1 || count > 10_000) {
+                bad(400, { error: "bad_count", detail: `orders[${i}]: 1..10000 whole contracts` });
+                return;
+            }
+            const fee = ordersFee(price, count, mode);
+            const cost = Math.round((price * count + fee) * 100) / 100;
+            if (cost > ORDERS_CAP_ORDER + 1e-9) {
+                bad(400, {
+                    error: "cap_order", detail: `orders[${i}] costs $${cost.toFixed(2)}`,
+                    cap: ORDERS_CAP_ORDER,
+                });
+                return;
+            }
+            wire.push({
+                ticker, side, mode, price_dollars: price, count, fee, cost,
+                client_order_id: `${ORDERS_TAG}${key}-${i}`,
+                // `price` on this endpoint is ALWAYS the YES price: side "bid" buys
+                // YES at it, side "ask" sells YES at it — which IS buying NO at 1−p.
+                yes_price: side === "yes" ? price : Math.round((1 - price) * 100) / 100,
+                book_side: side === "yes" ? "bid" : "ask",
+            });
+        }
+        const total = Math.round(wire.reduce((s, w) => s + w.cost, 0) * 100) / 100;
+        if (total > ORDERS_CAP_REQUEST + 1e-9) {
+            bad(400, { error: "cap_request", total, cap: ORDERS_CAP_REQUEST });
+            return;
+        }
+        const spent = ordersSpent24h();
+        if (spent + total > ORDERS_CAP_24H + 1e-9) {
+            bad(400, {
+                error: "cap_24h", total, spent_24h: Math.round(spent * 100) / 100,
+                cap: ORDERS_CAP_24H,
+                note: "in-memory ledger; a server restart resets it",
+            });
+            return;
+        }
+        // --- live book re-check, immediately before signing anything ---------
+        const tickers = [...new Set(wire.map((w) => w.ticker))];
+        const books = new Map();
+        try {
+            await Promise.all(tickers.map(async (t) => books.set(t, await ordersBook(t))));
+        }
+        catch (err) {
+            bad(502, { error: "book_unavailable", detail: String(err?.message ?? err).slice(0, 200) });
+            return;
+        }
+        const checkedAt = new Date().toISOString();
+        const rejected = [];
+        for (const w of wire) {
+            const bk = books.get(w.ticker);
+            // The ask we would be lifting, in the order's own denomination.
+            const ask = w.side === "yes" ? bk.yes_ask : bk.no_ask;
+            if (w.mode === "rest") {
+                // A resting order must NOT cross. post_only would have the exchange
+                // kill it, but a rejection we can explain beats one we cannot.
+                if (ask !== null && w.price_dollars >= ask - 1e-9) {
+                    rejected.push({
+                        ...pickWire(w), reason: "would_cross",
+                        message: `book moved: ask now ${ask.toFixed(2)} — resting at ` +
+                            `${w.price_dollars.toFixed(2)} would cross it`,
+                        book: bk,
+                    });
+                }
+            }
+            else if (ask === null) {
+                rejected.push({
+                    ...pickWire(w), reason: "no_offer",
+                    message: "nothing offered on that side right now", book: bk,
+                });
+            }
+            else if (ask > w.price_dollars + 1e-9) {
+                // Take: the confirmed price is a hard bound. A worse ask needs a human.
+                rejected.push({
+                    ...pickWire(w), reason: "book_moved",
+                    message: `book moved: ask now ${ask.toFixed(2)}`, book: bk,
+                });
+            }
+        }
+        if (rejected.length) {
+            const payload = {
+                error: "book_moved", dry_run: !ORDERS_LIVE, checked_at: checkedAt,
+                rejected, placed: [], would_place: [],
+            };
+            ordersAudit({ event: "book_reject", key, rejected });
+            ordersIdemPut(key, { status: 409, body: payload });
+            res.status(409).json(payload);
+            return;
+        }
+        const wouldPlace = wire.map((w) => ({
+            ...pickWire(w),
+            book: books.get(w.ticker),
+            post_only: w.mode === "rest",
+            time_in_force: w.mode === "rest" ? "good_till_canceled" : "immediate_or_cancel",
+        }));
+        ordersAudit({
+            event: "request", key, live: ORDERS_LIVE, total,
+            orders: wouldPlace, spent_24h: Math.round(spent * 100) / 100,
+        });
+        // --- DRY RUN: everything above ran; only the submit is skipped --------
+        if (!ORDERS_LIVE) {
+            const payload = {
+                dry_run: true, idempotency_key: key, checked_at: checkedAt,
+                placed: [], would_place: wouldPlace,
+                totals: {
+                    cost: total, spent_24h: Math.round(spent * 100) / 100,
+                    remaining_24h: Math.round((ORDERS_CAP_24H - spent) * 100) / 100,
+                },
+                note: "CFB_ORDERS_LIVE is not set — nothing was submitted to Kalshi.",
+            };
+            ordersAudit({ event: "dry_run", key, total });
+            ordersIdemPut(key, { status: 200, body: payload });
+            res.status(200).json(payload);
+            return;
+        }
+        if (!portalPrivateKey() || !PORTAL_KEY_ID) {
+            bad(503, { error: "kalshi_credentials_missing" });
+            return;
+        }
+        // --- LIVE: submit one at a time, so a partial failure is legible ------
+        const placed = [];
+        const errors = [];
+        for (const w of wire) {
+            const wireBody = {
+                ticker: w.ticker,
+                client_order_id: w.client_order_id,
+                side: w.book_side,
+                price: w.yes_price.toFixed(4),
+                count: w.count.toFixed(2),
+                // Derived from MODE. Never from the request.
+                time_in_force: w.mode === "rest" ? "good_till_canceled" : "immediate_or_cancel",
+                self_trade_prevention_type: w.mode === "rest" ? "maker" : "taker_at_cross",
+                post_only: w.mode === "rest",
+            };
+            let resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
+            let tifDowngraded = false;
+            // A 400 is a validation rejection: nothing was created, so retrying is
+            // not a double-placement risk. Only retried when the TIF is the thing
+            // being rejected, and only once.
+            if (resp.status === 400 && w.mode === "take" &&
+                /time_in_force|immediate/i.test(JSON.stringify(resp.json))) {
+                wireBody.time_in_force = "good_till_canceled";
+                tifDowngraded = true;
+                ordersAudit({ event: "tif_downgrade", key, ticker: w.ticker });
+                resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
+            }
+            const orderId = String(resp.json?.order_id || resp.json?.order?.order_id || "");
+            if ((resp.status === 200 || resp.status === 201) && orderId) {
+                ordersSpend.push({ at: Date.now(), cost: w.cost });
+                // Read back: this endpoint has silently ignored a field before, so
+                // what the exchange DID is reported, not what we asked for.
+                let state = null;
+                try {
+                    const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
+                    const ord = back?.order || back || {};
+                    state = {
+                        status: String(ord.status || ""),
+                        filled: portalNum(ord.fill_count_fp ?? ord.fill_count),
+                        remaining: portalNum(ord.remaining_count_fp ?? ord.remaining_count),
+                    };
+                }
+                catch { /* the placement stands; we just cannot describe it yet */ }
+                placed.push({ ...pickWire(w), order_id: orderId, tif_downgraded: tifDowngraded, state });
+                ordersAudit({ event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state });
+            }
+            else {
+                errors.push({
+                    ...pickWire(w), http_status: resp.status,
+                    message: String(resp.json?.error?.message || resp.json?.message ||
+                        resp.json?.text || "order rejected").slice(0, 200),
+                });
+                ordersAudit({ event: "place_failed", key, ticker: w.ticker, status: resp.status, resp: JSON.stringify(resp.json).slice(0, 300) });
+            }
+        }
+        const after = ordersSpent24h();
+        const payload = {
+            dry_run: false, idempotency_key: key, checked_at: checkedAt,
+            placed, errors, would_place: [],
+            totals: {
+                cost: Math.round(placed.reduce((s, p) => s + p.cost, 0) * 100) / 100,
+                spent_24h: Math.round(after * 100) / 100,
+                remaining_24h: Math.round((ORDERS_CAP_24H - after) * 100) / 100,
+            },
+        };
+        const status = placed.length ? 200 : 502;
+        ordersIdemPut(key, { status, body: payload });
+        res.status(status).json(payload);
+    }
+    finally {
+        ordersInflight.delete(key);
+    }
+}));
+/** The subset of a wire order that is safe and useful to echo back.
+ *  `yes_price`/`book_side` are included so the YES-denomination translation
+ *  (a NO buy at q is a YES ask at 1−q) is visible in the dry-run response and
+ *  in the audit log — i.e. reviewable without a live order. */
+function pickWire(w) {
+    return {
+        ticker: w.ticker, side: w.side, mode: w.mode,
+        price_dollars: w.price_dollars, count: w.count,
+        fee: w.fee, cost: w.cost, client_order_id: w.client_order_id,
+        yes_price: w.yes_price, book_side: w.book_side,
+    };
+}
+/** This app's resting orders — the ONLY ones the cancel route may touch.
+ *  Cursor always drained (kalshi-rfq's 2026-07-22 page-1-only incident: a
+ *  partial list made a reconciler re-place 833 orders instead of 167). */
+async function ordersRestingApp() {
+    const out = [];
+    let cursor = "";
+    for (let page = 0; page < 10; page++) {
+        const body = await portalGet("/portfolio/orders?status=resting&limit=200" +
+            (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
+        for (const o of body?.orders || []) {
+            const coid = String(o.client_order_id || "");
+            if (!coid.startsWith(ORDERS_TAG))
+                continue; // never ours to cancel
+            out.push({
+                order_id: String(o.order_id || ""),
+                client_order_id: coid,
+                ticker: String(o.ticker || ""),
+            });
+        }
+        cursor = String(body?.cursor || "");
+        if (!cursor)
+            break;
+    }
+    return out;
+}
+// The kill switch. Deliberately NOT gated on CFB_ORDERS_LIVE: cancelling can
+// only ever REDUCE exposure, and a kill switch that is staged off is not a
+// kill switch. It can still only reach orders tagged `cfbapp-` — the maker
+// pipeline's own resting book is untouchable from here.
+app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
+    if (!portalGate(req, res))
+        return;
+    const body = (req.body ?? {});
+    const all = body.all === true;
+    const orderId = typeof body.order_id === "string" ? body.order_id.trim() : "";
+    if (all === Boolean(orderId)) {
+        res.status(400).json({ error: "bad_request", detail: 'send {order_id} OR {all:true}' });
+        return;
+    }
+    if (!portalPrivateKey() || !PORTAL_KEY_ID) {
+        res.status(503).json({ error: "kalshi_credentials_missing" });
+        return;
+    }
+    let mine;
+    try {
+        mine = await ordersRestingApp();
+    }
+    catch (err) {
+        res.status(502).json({ error: "resting_read_failed", detail: String(err?.message ?? err).slice(0, 200) });
+        return;
+    }
+    const targets = all ? mine : mine.filter((o) => o.order_id === orderId);
+    if (!all && targets.length === 0) {
+        ordersAudit({ event: "cancel_refused", order_id: orderId, reason: "not_app_order" });
+        res.status(404).json({
+            error: "not_app_order",
+            detail: "that order is not a resting cfbapp- order; this route cannot cancel it",
+        });
+        return;
+    }
+    const cancelled = [];
+    const failed = [];
+    for (const t of targets) {
+        const r = await portalSend("DELETE", `/portfolio/events/orders/${encodeURIComponent(t.order_id)}`);
+        if (r.status >= 200 && r.status < 300)
+            cancelled.push(t);
+        else
+            failed.push({ ...t, http_status: r.status });
+    }
+    ordersAudit({ event: "cancel", all, scanned: mine.length, cancelled: cancelled.length, failed: failed.length });
+    res.json({ scanned: mine.length, cancelled, failed });
 }));
 // Unknown /api routes must answer JSON. Without this the SPA catch-all below
 // serves index.html for a typo'd or removed endpoint, and the client blows up
