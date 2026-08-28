@@ -132,20 +132,33 @@ function FieldSurface({ h, bits, showNumbers = false, minimal = false, redZoneDi
   );
 }
 
-function BallMarker({ x, y, color, dir }: {
+function BallMarker({ x, y, color, dir, logo, size = 7 }: {
   x: number; y: number; color: string; dir?: AttackDir;
+  /** Possessing team's logo — rendered on a white puck at the ball spot;
+   *  falls back to the team-color dot when the logo is missing. */
+  logo?: string;
+  size?: number;
 }) {
   // Attacking the home goal line (dir −1) means moving RIGHT on screen.
   const dx = dir === undefined ? 0 : dir === -1 ? 1 : -1;
+  const r = size / 2;
   return (
     <g>
       {dx !== 0 && (
         <polygon
-          points={`${x + dx * 3.1},${y - 1.7} ${x + dx * 5.4},${y} ${x + dx * 3.1},${y + 1.7}`}
+          points={`${x + dx * (r + 0.7)},${y - 1.7} ${x + dx * (r + 3)},${y} ${x + dx * (r + 0.7)},${y + 1.7}`}
           fill="#fff" opacity={0.9}
         />
       )}
-      <circle cx={x} cy={y} r={2.3} fill={color} stroke="#fff" strokeWidth={0.7} />
+      {logo ? (
+        <>
+          <circle cx={x} cy={y} r={r + 0.6} fill="#fff" opacity={0.94} />
+          <image href={logo} x={x - r} y={y - r} width={size} height={size}
+            preserveAspectRatio="xMidYMid meet" />
+        </>
+      ) : (
+        <circle cx={x} cy={y} r={2.3} fill={color} stroke="#fff" strokeWidth={0.7} />
+      )}
     </g>
   );
 }
@@ -164,6 +177,7 @@ export function FieldStrip({ situation, bits, condensed = false }: {
   const possHome = sit.possessionId !== undefined && sit.possessionId === bits.homeId;
   const possColor = (possHome ? bits.homeColor : bits.awayColor) ?? "var(--text)";
   const possAbbrev = possHome ? bits.homeAbbrev : bits.awayAbbrev;
+  const possLogo = possHome ? bits.homeLogo : bits.awayLogo;
   const fd = firstDownYL(sit, sit.attackDir);
 
   return (
@@ -180,7 +194,8 @@ export function FieldStrip({ situation, bits, condensed = false }: {
             stroke={FIRST_DOWN_YELLOW} strokeWidth={0.7} />
         )}
         {sit.yardLine !== undefined && (
-          <BallMarker x={xOf(sit.yardLine)} y={h / 2} color={possColor} dir={sit.attackDir} />
+          <BallMarker x={xOf(sit.yardLine)} y={h / 2} color={possColor} dir={sit.attackDir}
+            logo={possLogo} size={7} />
         )}
       </svg>
       <div style={{
@@ -210,6 +225,7 @@ function DriveField({ drive, situation, bits }: {
   const possId = drive?.teamId ?? situation?.possessionId;
   const possHome = possId !== undefined && possId === bits.homeId;
   const possColor = (possHome ? bits.homeColor : bits.awayColor) ?? "#fff";
+  const possLogo = drive?.teamLogo ?? (possHome ? bits.homeLogo : bits.awayLogo);
   const ballYL = situation?.yardLine ?? drive?.ballYL;
   const fd = firstDownYL(situation, dir);
 
@@ -242,7 +258,8 @@ function DriveField({ drive, situation, bits }: {
           stroke={FIRST_DOWN_YELLOW} strokeWidth={0.85} />
       )}
       {ballYL !== undefined && (
-        <BallMarker x={xOf(ballYL)} y={h / 2} color={possColor} dir={dir} />
+        <BallMarker x={xOf(ballYL)} y={h / 2} color={possColor} dir={dir}
+          logo={possLogo} size={8.5} />
       )}
     </svg>
   );
