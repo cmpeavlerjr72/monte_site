@@ -254,6 +254,22 @@ The mode filter (All / Maker / Taker) drops ROWS and a section left with
 none disappears; both it and the sort persist. Filters are PRESENTATION —
 they can never change what a surviving row costs.
 
+A second filter row (2026-08-28) buckets by bet TYPE — All / Game lines / TD
+props / Yardage / Team totals — via `familyForSeries` in `suggestedBets.ts`,
+mapping each row's Kalshi series: game lines are KXNCAAFGAME/SPREAD/TOTAL
+(no candidate source feeds this bucket yet — the card only ever builds
+per-team-stat candidates via `statCandidates`, so it renders empty until a
+game-line candidate builder ships); TD props are the RSHTD/RECTD families;
+Yardage is RECYDS/RSHYDS/YDS; Team totals is TEAMTOTAL plus the
+receptions/rush-att/sacks/INTs families (folded in rather than a fifth
+chip). It drops whole LADDERS, not rows, because a ladder never mixes series
+(keyed by (game, stat, side) in `statCandidates`) — unlike the mode filter,
+which can split one ladder's rungs across REST/TAKE. Both filters persist
+and compose (AND, not OR). An unrecognised future series falls through a
+name heuristic (`KXNCAAF` + `TEAM...` prefix = a per-team stat family, else
+game-level) before giving up and returning `null`, which still counts the
+row under "All" — never a crash, never a silently dropped suggestion.
+
 **Mode at a glance.** `--mode-rest` / `--mode-take` (+ `-ink`) in
 theme.css are a CATEGORICAL channel, chosen by RUNNING the dataviz palette
 validator, never by eye. They must stay disjoint from `--pos`/`--neg`,

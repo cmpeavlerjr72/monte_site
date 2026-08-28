@@ -118,6 +118,9 @@ export type Suggestion = {
    *  stat-ladder candidate is a YES buy. Anything that ever adds a NO
    *  candidate must set this, or the placed order is the opposite bet. */
   side: "yes" | "no";
+  /** Kalshi series ticker this rung trades on (e.g. "KXNCAAFTEAMRECYDS").
+   *  Feeds the bet-TYPE filter via `familyForSeries` below. */
+  series: string;
   simP: number;
   price: number;
   /** Per-order fee in dollars at the sized count. */
@@ -252,7 +255,8 @@ export function buildSuggestions(
         key: `${p.ticker}|${p.mode}`,
         ticker: p.ticker, slug: p.slug, ladder, label: p.label,
         team: p.team, statText: p.statText, strike: p.strike,
-        mode: p.mode, side: p.side ?? "yes", simP: p.simP, price: p.price,
+        mode: p.mode, side: p.side ?? "yes", series: p.series,
+        simP: p.simP, price: p.price,
         fee, edge: p.edgePer, count,
         outlay: round2(p.price * count + fee),
         feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
@@ -305,6 +309,57 @@ export function statCandidates(
   return out;
 }
 
+/* ------------------------------ bet-type family ---------------------------- */
+/**
+ * The second filter row's buckets (user spec, 2026-08-28):
+ *   Game lines  — KXNCAAFGAME / KXNCAAFSPREAD / KXNCAAFTOTAL
+ *   TD props    — KXNCAAFTEAMRSHTD / KXNCAAFTEAMRECTD
+ *   Yardage     — KXNCAAFTEAMRECYDS / KXNCAAFTEAMRSHYDS / KXNCAAFTEAMYDS
+ *   Team stats  — KXNCAAFTEAMTOTAL + the receptions/rush-att/sacks/INTs
+ *                 families, rather than a fifth chip.
+ * A ladder never mixes series (it is keyed by (game, stat, side) in
+ * `statCandidates`), so the family is computed once per group, not per row.
+ */
+export type BetFamily = "game" | "td" | "yardage" | "team";
+
+const FAMILY_BY_SERIES: Record<string, BetFamily> = {
+  KXNCAAFGAME: "game",
+  KXNCAAFSPREAD: "game",
+  KXNCAAFTOTAL: "game",
+  KXNCAAFTEAMRSHTD: "td",
+  KXNCAAFTEAMRECTD: "td",
+  KXNCAAFTEAMRECYDS: "yardage",
+  KXNCAAFTEAMRSHYDS: "yardage",
+  KXNCAAFTEAMYDS: "yardage",
+  KXNCAAFTEAMTOTAL: "team",
+  KXNCAAFTEAMREC: "team",
+  KXNCAAFTEAMRSHATT: "team",
+  KXNCAAFTEAMSACK: "team",
+  KXNCAAFTEAMINT: "team",
+};
+
+/**
+ * Bet-type bucket for a series. The table above is the explicit spec; a
+ * series Kalshi adds later (or a candidate source that has not shipped yet,
+ * e.g. game-winner/spread/total) falls through to a name heuristic instead of
+ * vanishing — Kalshi's own naming convention is `KXNCAAF` + (`TEAM...` for a
+ * per-team stat market, anything else for a game-level one), so that split is
+ * the fallback. Only a malformed/empty series returns `null`, meaning the row
+ * still counts and shows under "All" — it just has no more specific chip.
+ * NEVER throw on an unrecognised family.
+ */
+export function familyForSeries(series: string): BetFamily | null {
+  if (series in FAMILY_BY_SERIES) return FAMILY_BY_SERIES[series];
+  const rest = (series || "").toUpperCase().replace(/^KXNCAAF/, "");
+  if (!rest) return null;
+  if (rest.startsWith("TEAM")) {
+    if (rest.includes("TD")) return "td";
+    if (rest.includes("YDS") || rest.includes("YARD")) return "yardage";
+    return "team"; // per-team stat family we have not named yet — closest bucket
+  }
+  return "game"; // not TEAM-prefixed: a game-level family (spread/total/half/OT/…)
+}
+
 /* ------------------------------- grouping --------------------------------- */
 /**
  * Presentation-only: fold a ladder's picked rungs (nested markets — 2 per
@@ -319,6 +374,10 @@ export type LadderGroup = {
   slug: string;
   /** Rungs sorted by strike ascending, for popover itemization. */
   rungs: Suggestion[];
+  /** Bet-TYPE bucket for the second filter row (see `familyForSeries`).
+   *  `null` only for a malformed/unrecognised series — the group still shows
+   *  under "All". */
+  family: BetFamily | null;
   /** Best rung's net edge — drives ranking AND the at-rest verdict chip. */
   bestEdge: number;
   /** Single-line headline for a >1-rung ladder, e.g. "NMST 14+ & 17+ points". */
@@ -344,6 +403,7 @@ export function groupLadders(
       ladder,
       slug: best.slug,
       rungs,
+      family: familyForSeries(rungs[0].series),
       bestEdge: best.edge,
       headline: rungs.length > 1 ? `${best.team} ${strikes} ${best.statText}` : best.label,
       each: round2(unit / group.length),

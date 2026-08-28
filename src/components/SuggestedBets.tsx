@@ -67,8 +67,8 @@ import {
 import { SERIES_FOR_STAT } from "../lib/teamStatMarkets";
 import {
   readCardOpen, writeCardOpen, readModeFilter, writeModeFilter,
-  readSuggestSort, writeSuggestSort,
-  type ModeFilter, type SuggestSort,
+  readSuggestSort, writeSuggestSort, readTypeFilter, writeTypeFilter,
+  type ModeFilter, type SuggestSort, type BetTypeFilter,
 } from "../lib/ownerPrefs";
 import DryRunBadge from "./DryRunBadge";
 import { getTeamLogo } from "../utils/teamLogo";
@@ -210,6 +210,7 @@ export default function SuggestedBets({
   const [nonce, setNonce] = useState(0);
   const [open, setOpen] = useState<boolean>(() => readCardOpen());
   const [modeFilter, setModeFilter] = useState<ModeFilter>(() => readModeFilter());
+  const [typeFilter, setTypeFilter] = useState<BetTypeFilter>(() => readTypeFilter());
   const [sort, setSort] = useState<SuggestSort>(() => readSuggestSort());
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
    *  Confirm replays server-side instead of placing twice. */
@@ -267,11 +268,17 @@ export default function SuggestedBets({
    *
    * Sorting orders SECTIONS, never rows across sections — games stay
    * atomic in both orders. Within a section rows are always best-edge first.
-   * The mode filter drops ROWS; a section left with none disappears.
+   * The mode filter drops ROWS (a ladder can mix REST/TAKE rungs); the
+   * bet-type filter drops whole LADDERS (a ladder never mixes series, so its
+   * `family` is one value). Both compose — either can empty a section.
    */
   const sections = useMemo(() => {
-    const kept = modeFilter === "all" ? allGroups : allGroups.filter((g) =>
-      g.rungs.some((r) => (modeFilter === "rest") === (r.mode === "REST")));
+    const kept = allGroups.filter((g) => {
+      const modeOk = modeFilter === "all" ||
+        g.rungs.some((r) => (modeFilter === "rest") === (r.mode === "REST"));
+      const typeOk = typeFilter === "all" || g.family === typeFilter;
+      return modeOk && typeOk;
+    });
     const bySlug = new Map<string, LadderGroup[]>();
     for (const g of kept) {
       const arr = bySlug.get(g.slug);
@@ -293,7 +300,7 @@ export default function SuggestedBets({
       ? (a.kickoffMs !== b.kickoffMs ? a.kickoffMs - b.kickoffMs : b.bestEdge - a.bestEdge)
       : b.bestEdge - a.bestEdge);
     return out;
-  }, [allGroups, modeFilter, sort, gameByKey]);
+  }, [allGroups, modeFilter, typeFilter, sort, gameByKey]);
 
   const shownCount = sections.reduce((n, s) => n + s.groups.length, 0);
   const hiddenByFilter = allGroups.length - shownCount;
@@ -382,6 +389,26 @@ export default function SuggestedBets({
             </div>
           </div>
 
+          {/* Second filter row: bet TYPE, by Kalshi series family. Same chip
+              styling as the mode/sort row above — one visual system. Composes
+              with the mode filter (both apply); an unrecognised future series
+              (`family` null) only shows under "All", never crashes. */}
+          <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Bet type filter">
+            {([
+              ["all", "All"], ["game", "Game lines"], ["td", "TD props"],
+              ["yardage", "Yardage"], ["team", "Team totals"],
+            ] as const).map(([v, label]) => (
+              <button
+                key={v} type="button" className="ui-btn"
+                data-on={typeFilter === v ? "true" : "false"}
+                onClick={() => { setTypeFilter(v); writeTypeFilter(v); }}
+                style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           {/* The words legend the bar test asks for: say which colour is
               which, once, instead of making the reader infer it. */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 10.5, color: "var(--muted)", flexWrap: "wrap" }}>
@@ -421,7 +448,7 @@ export default function SuggestedBets({
           {sections.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--muted)" }}>
               {hiddenByFilter > 0
-                ? `Nothing in this mode — ${hiddenByFilter} suggestion${hiddenByFilter === 1 ? "" : "s"} hidden by the filter.`
+                ? `Nothing matches these filters — ${hiddenByFilter} suggestion${hiddenByFilter === 1 ? "" : "s"} hidden.`
                 : "Nothing clears the thresholds right now."}
             </div>
           ) : (
@@ -574,7 +601,7 @@ export default function SuggestedBets({
 
           {hiddenByFilter > 0 && sections.length > 0 && (
             <div style={{ fontSize: 10, color: "var(--muted)" }}>
-              {hiddenByFilter} suggestion{hiddenByFilter === 1 ? "" : "s"} hidden by the mode filter.
+              {hiddenByFilter} suggestion{hiddenByFilter === 1 ? "" : "s"} hidden by the filters.
             </div>
           )}
 

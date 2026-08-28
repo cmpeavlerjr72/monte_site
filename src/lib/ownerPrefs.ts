@@ -57,6 +57,16 @@ export function readModeFilter(): ModeFilter {
 }
 export const writeModeFilter = (v: ModeFilter): void => write(FILTER_KEY, v);
 
+/** Bet-TYPE filter, second filter row. "all" | "game" (lines) | "td" (props)
+ *  | "yardage" | "team" (totals + receptions/rush-att/sacks/INTs). */
+export type BetTypeFilter = "all" | "game" | "td" | "yardage" | "team";
+const TYPE_FILTER_KEY = "cfb.suggestedBets.type";
+export function readTypeFilter(): BetTypeFilter {
+  const v = read(TYPE_FILTER_KEY);
+  return v === "game" || v === "td" || v === "yardage" || v === "team" ? v : "all";
+}
+export const writeTypeFilter = (v: BetTypeFilter): void => write(TYPE_FILTER_KEY, v);
+
 /** "edge" = best net edge first; "soon" = earliest kickoff first. */
 export type SuggestSort = "edge" | "soon";
 const SORT_KEY = "cfb.suggestedBets.sort";
