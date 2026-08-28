@@ -348,6 +348,15 @@ type CardGame = {
   mlPickProb?: number;   // 0..1 win probability for that team
   mlFair?: string;       // American odds string from that prob (e.g. -165 / +145)
   mlResult?: "win" | "loss" | "push";
+  /**
+   * True only when spread/total/ML results above came from grading a LIVE
+   * final (ESPN, `live.state === "final"`) because the dataset had no
+   * verified finals yet. Dataset finals (scoreSource CSV_FINALS) are the
+   * grading truth (INV-44) — this flag exists so the UI can mark a
+   * live-graded badge provisional until the week re-publishes. Absent/false
+   * on every other path, including CSV_FINALS.
+   */
+  resultsProvisional?: boolean;
   scoreSource?: "CSV_FINALS" | "LIVE" | "UPCOMING";
   liveInProgress?: boolean;
   liveStatusText?: string;
@@ -707,6 +716,62 @@ function sortCards(
 const fcsCardKey = (slug: string) => `fcs:${slug}`;
 
 /**
+ * Grade the sim's spread/total/ML picks against a pair of final scores.
+ *
+ * Pure function factored out of `buildJsonCards` so the SAME math grades
+ * verified dataset finals (scoreSource CSV_FINALS) and, absent those, a live
+ * ESPN final (resultsProvisional) — one grading path, not two that can drift.
+ * `finA`/`finB` and `medA`/`medB` must already be in the same A/B orientation
+ * as `spread`/`totalLine` (home-perspective, teamA=home).
+ */
+function gradeAgainstFinals(
+  finA: number,
+  finB: number,
+  teamA: string,
+  teamB: string,
+  medA: number,
+  medB: number,
+  spread: number | undefined,
+  totalLine: number | undefined,
+  mlPickTeam: string | undefined
+): {
+  spreadResult?: "win" | "loss" | "push";
+  totalResult?: "win" | "loss" | "push";
+  mlResult?: "win" | "loss" | "push";
+} {
+  let spreadResult: "win" | "loss" | "push" | undefined;
+  let totalResult: "win" | "loss" | "push" | undefined;
+  let mlResult: "win" | "loss" | "push" | undefined;
+
+  if (Number.isFinite(spread)) {
+    const s = spread as number;
+    const coverA = (finA + s) > finB ? 1 : (finA + s) < finB ? -1 : 0;
+    const pickedA = ((medA + s) - medB) > 0;
+    spreadResult = coverA === 0
+      ? "push"
+      : ((coverA > 0 && pickedA) || (coverA < 0 && !pickedA)) ? "win" : "loss";
+  }
+
+  if (Number.isFinite(totalLine)) {
+    const lineT = totalLine as number;
+    const gameTotal = finA + finB;
+    const predTotal = medA + medB;
+    const actualSide = gameTotal > lineT ? "Over" : gameTotal < lineT ? "Under" : "Push";
+    const predictedSide = predTotal > lineT ? "Over" : predTotal < lineT ? "Under" : "Push";
+    totalResult = (actualSide === "Push" || predictedSide === "Push")
+      ? "push"
+      : (actualSide === predictedSide ? "win" : "loss");
+  }
+
+  if (typeof mlPickTeam === "string") {
+    if (finA === finB) mlResult = "push";
+    else mlResult = ((finA > finB ? teamA : teamB) === mlPickTeam) ? "win" : "loss";
+  }
+
+  return { spreadResult, totalResult, mlResult };
+}
+
+/**
  * Build cards from one dataset's week index + summaries.
  *
  * Lifted out of the page (it was an inline useMemo) so the FBS and FCS slates
@@ -824,35 +889,25 @@ function buildJsonCards(
     let spreadResult: "win" | "loss" | "push" | undefined;
     let totalResult: "win" | "loss" | "push" | undefined;
     let mlResult: "win" | "loss" | "push" | undefined;
+    let resultsProvisional: boolean | undefined;
 
     if (hasFinals) {
-      const finA = fA as number;
-      const finB = fB as number;
-
-      if (Number.isFinite(spread)) {
-        const s = spread as number;
-        const coverA = (finA + s) > finB ? 1 : (finA + s) < finB ? -1 : 0;
-        const pickedA = ((medA + s) - medB) > 0;
-        spreadResult = coverA === 0
-          ? "push"
-          : ((coverA > 0 && pickedA) || (coverA < 0 && !pickedA)) ? "win" : "loss";
-      }
-
-      if (Number.isFinite(totalLine)) {
-        const lineT = totalLine as number;
-        const gameTotal = finA + finB;
-        const predTotal = medA + medB;
-        const actualSide = gameTotal > lineT ? "Over" : gameTotal < lineT ? "Under" : "Push";
-        const predictedSide = predTotal > lineT ? "Over" : predTotal < lineT ? "Under" : "Push";
-        totalResult = (actualSide === "Push" || predictedSide === "Push")
-          ? "push"
-          : (actualSide === predictedSide ? "win" : "loss");
-      }
-
-      if (typeof mlPickTeam === "string") {
-        if (finA === finB) mlResult = "push";
-        else mlResult = ((finA > finB ? teamA : teamB) === mlPickTeam) ? "win" : "loss";
-      }
+      // Verified dataset finals — the grading truth (INV-44: never grade off
+      // pbp/live scores when the dataset has its own verified column).
+      ({ spreadResult, totalResult, mlResult } = gradeAgainstFinals(
+        fA as number, fB as number, teamA, teamB, medA, medB, spread, totalLine, mlPickTeam
+      ));
+    } else if (lg?.state === "final" && Number.isFinite(aScore) && Number.isFinite(bScore)) {
+      // No dataset finals yet (published pregame) but ESPN already has this
+      // game final. Grade off the live score with the identical math so the
+      // card's badges light up same-day instead of sitting blank until the
+      // week re-publishes; resultsProvisional marks it as such. A mid-game
+      // live score (state "in") is deliberately NOT graded here — only a
+      // final is a real outcome to grade against.
+      ({ spreadResult, totalResult, mlResult } = gradeAgainstFinals(
+        aScore as number, bScore as number, teamA, teamB, medA, medB, spread, totalLine, mlPickTeam
+      ));
+      resultsProvisional = true;
     }
 
     out.push({
@@ -872,6 +927,7 @@ function buildJsonCards(
       finalA: dispFinalA,
       finalB: dispFinalB,
       mlPickTeam, mlPickProb, mlFair, mlResult,
+      resultsProvisional,
       scoreSource,
       liveInProgress: inProgress,
       liveStatusText: statusText ?? lg?.statusText,
@@ -1940,6 +1996,32 @@ function ScoreboardPage() {
     return lo === hi ? ` · ${fmt(lo)} sims` : ` · ${fmt(lo)}\u2013${fmt(hi)} sims`;
   }, [filteredCards]);
 
+  /**
+   * Slate-wide ATS/Total/ML grading tally for the strip above the cards grid.
+   * Recomputed from `filteredCards` -- the exact array the grid below maps
+   * over -- so a conference filter narrows the record along with the cards.
+   * Counts BOTH verified (CSV_FINALS) and live-graded (resultsProvisional)
+   * results; provisionalGames counts distinct graded cards that are live-only
+   * so far, for the "(n provisional)" suffix.
+   */
+  const slateTally = useMemo(() => {
+    const mk = () => ({ win: 0, loss: 0, push: 0 });
+    const ats = mk(), tot = mk(), ml = mk();
+    let provisionalGames = 0;
+    let anyGraded = false;
+    for (const c of filteredCards) {
+      let cardGraded = false;
+      if (c.spreadResult) { ats[c.spreadResult]++; cardGraded = true; }
+      if (c.totalResult) { tot[c.totalResult]++; cardGraded = true; }
+      if (c.mlResult) { ml[c.mlResult]++; cardGraded = true; }
+      if (cardGraded) {
+        anyGraded = true;
+        if (c.resultsProvisional) provisionalGames++;
+      }
+    }
+    return { ats, tot, ml, provisionalGames, anyGraded };
+  }, [filteredCards]);
+
   // Compact toolbar tokens — the row must fit on one line at desktop widths.
   const CTL = { maxWidth: 190 } as const;
   const LBL = { fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" } as const;
@@ -2263,6 +2345,10 @@ function ScoreboardPage() {
           onAddLeg={addLegFromTopEdges}
         />
       )}
+
+      {/* Slate tally: running ATS/Total/ML record for the displayed (filtered)
+          slate. Only when at least one visible card has a graded result. */}
+      {slateTally.anyGraded && <SlateTallyBar tally={slateTally} condensed={condensed} />}
 
       {/* Cards grid.
           Cards are fixed-size grid items; an expanded panel is a SEPARATE
@@ -2589,6 +2675,24 @@ export function GameCard({
 
       <WinProbBar card={card} aColor={aColors?.primary} bColor={bColors?.primary} condensed={condensed} />
 
+      {/* Pick grading. Verified dataset finals (INV-44 truth) and live-graded
+          finals (card.resultsProvisional) render the identical pill — a
+          dotted underline + tooltip is the only visual difference until the
+          week re-publishes with dataset finals. */}
+      {(card.spreadResult || card.totalResult || card.mlResult) && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {card.spreadResult && card.pickSpread && (
+            <ResultPill label="ATS" text={card.pickSpread} result={card.spreadResult} provisional={card.resultsProvisional} />
+          )}
+          {card.totalResult && card.pickTotal && (
+            <ResultPill label="Total" text={card.pickTotal} result={card.totalResult} provisional={card.resultsProvisional} />
+          )}
+          {card.mlResult && card.mlPickTeam && (
+            <ResultPill label="ML" text={card.mlPickTeam} result={card.mlResult} provisional={card.resultsProvisional} />
+          )}
+        </div>
+      )}
+
       {/* Live ball spot + down & distance, straight off the scoreboard poll. */}
       {liveNow && lv?.situation && (
         <FieldStrip situation={lv.situation} bits={liveBits} condensed={condensed} />
@@ -2673,6 +2777,26 @@ export function WinProbBar({ card, aColor, bColor, condensed = false }: {
   );
 }
 
+/* ============================== Pick result pill =============================
+ * Win/loss/push badge for one graded pick (ATS / Total / ML). Same pill for
+ * verified dataset finals and live-graded finals — `provisional` only adds a
+ * dotted underline + tooltip, it never changes color or text.
+ * ========================================================================= */
+function ResultPill({ label, text, result, provisional }: {
+  label: string; text: string; result: "win" | "loss" | "push"; provisional?: boolean;
+}) {
+  return (
+    <span
+      className="result-pill"
+      data-result={result}
+      data-provisional={provisional ? "true" : undefined}
+      title={provisional ? "graded from live final — verified on re-publish" : undefined}
+    >
+      {label} · {text} · {result.toUpperCase()}
+    </span>
+  );
+}
+
 /* ============================ Sim vs Kalshi block ===========================
  * An aligned two-source comparison instead of a run-on sentence: one label
  * column, one column per source, one delta. Naming the sources once in a
@@ -2742,6 +2866,39 @@ function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatched: num
       </span>
       <span>fees {usd(totals.fees)}</span>
       {unmatched > 0 && <span className="mybook-bar__dim">{unmatched} off-slate</span>}
+    </div>
+  );
+}
+
+type SlateResultCount = { win: number; loss: number; push: number };
+
+/** ATS/Total/ML record strip for the currently filtered slate. Verified and
+ *  live-graded results are counted identically — see `slateTally` above; the
+ *  "(n provisional)" suffix is the only place that distinction shows. */
+function SlateTallyBar({ tally, condensed }: {
+  tally: { ats: SlateResultCount; tot: SlateResultCount; ml: SlateResultCount; provisionalGames: number };
+  condensed?: boolean;
+}) {
+  const fmtRecord = (r: SlateResultCount) => {
+    const n = r.win + r.loss + r.push;
+    if (!n) return null;
+    return `${r.win}–${r.loss}${r.push > 0 ? `–${r.push}` : ""}`;
+  };
+  const parts: string[] = [];
+  const ats = fmtRecord(tally.ats); if (ats) parts.push(`ATS ${ats}`);
+  const tot = fmtRecord(tally.tot); if (tot) parts.push(`Totals ${tot}`);
+  const ml = fmtRecord(tally.ml); if (ml) parts.push(`ML ${ml}`);
+  if (!parts.length) return null;
+
+  return (
+    <div className="slate-tally-bar" style={condensed ? { fontSize: 11, padding: "5px 10px" } : undefined}>
+      <b>Slate record</b>
+      <span>{parts.join(" · ")}</span>
+      {tally.provisionalGames > 0 && (
+        <span className="slate-tally-bar__dim">
+          ({tally.provisionalGames} provisional)
+        </span>
+      )}
     </div>
   );
 }

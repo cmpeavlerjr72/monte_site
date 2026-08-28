@@ -724,6 +724,57 @@ input:focus, select:focus, textarea:focus {
 .mybook-bar span[data-neg] { color: var(--neg); }
 .mybook-bar__dim { color: var(--muted); }
 
+/* Pick grading pill (ATS/Total/ML) on a game card. Same color-mix pattern as
+   .parlay-edge / .top-edges__edge. data-provisional marks a live-graded
+   result (dataset finals not published yet) with a dotted underline. */
+.result-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.result-pill[data-result="win"] {
+  color: var(--pos);
+  background: color-mix(in oklab, var(--pos) 14%, var(--card));
+  border-color: color-mix(in oklab, var(--pos) 35%, transparent);
+}
+.result-pill[data-result="loss"] {
+  color: var(--neg);
+  background: color-mix(in oklab, var(--neg) 14%, var(--card));
+  border-color: color-mix(in oklab, var(--neg) 35%, transparent);
+}
+.result-pill[data-result="push"] {
+  color: var(--muted);
+  background: var(--fill);
+  border-color: var(--border);
+}
+.result-pill[data-provisional="true"] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+/* Slate-wide grading tally, above the cards grid. Same strip pattern as
+   .mybook-bar, neutral (not brand-tinted) since it isn't book-specific. */
+.slate-tally-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0 0 12px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.slate-tally-bar__dim { color: var(--muted); }
+
 /* Series-family filter chips on the team & game props column. */
 .edge-serieschips { display: flex; flex-wrap: wrap; gap: 3px; padding: 0 2px 5px; }
 .edge-serieschips .ui-btn { font-size: 9.5px; font-weight: 700; padding: 2px 7px; }
