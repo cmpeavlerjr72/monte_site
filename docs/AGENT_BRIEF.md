@@ -196,6 +196,43 @@ endpoint.
    series paging, 25-75c rung filter picks the LINE, ladders for
    at-book-line pricing, 45s TTL).
 
+## Installable app (PWA)
+
+The site installs to a phone home screen: `public/manifest.webmanifest`
+(name MVPEAV, `start_url` /cfb/scoreboard, standalone, navy `#0b2d4b`),
+`public/icons/*` (192/512/512-maskable/180 apple-touch, regenerate with
+`node scripts/make_pwa_icons.mjs` if the brand asset changes), and the iOS
+meta + `viewport-fit=cover` in `index.html`. Because the status bar is
+`black-translucent`, the header's `env(safe-area-inset-*)` padding in
+`src/index.css` is load-bearing — drop it and the notch eats the nav.
+
+`src/sw.ts` (vite-plugin-pwa, `injectManifest`) is an APP-SHELL worker and
+must stay one. Rule 3 above has to hold in EFFECT, not just at the call
+site, so:
+
+- The ONLY registered routes are workbox's precache route (hashed
+  `assets/*` + `index.html`, 4 entries) and a network-first navigation
+  route. Everything else — `/api/*`, ESPN, HuggingFace, Kalshi — matches
+  nothing, so the router never calls `respondWith` and the browser fetches
+  normally. NEVER add `setDefaultHandler` or runtime caching for any
+  origin, and never precache `public/logos|data|duckdb` (8MB of it, and it
+  is DATA).
+- `skipWaiting` + `clientsClaim` + network-first navigations: a Render
+  deploy must be live on the next launch. A pinned worker serving last
+  week's numbers is a data bug, not a cosmetic one. Registration is
+  hand-written in `src/lib/pwa.ts` (`injectRegister: false`) and reloads
+  only on a REPLACEMENT controller, never on the first claim.
+- `src/components/InstallPrompt.tsx` shows an install bar only where an
+  install can happen: Chromium's `beforeinstallprompt`, or iOS (which has
+  no install API in ANY browser — every engine there is WebKit — so it
+  gets the Share → Add to Home Screen guide instead). Hidden when already
+  standalone, and a dismissal sticks in localStorage.
+
+Verifying a SW change means serving `dist` and checking, in a real browser:
+the page is controlled on second load, `/api` appears in no cache, the
+shell renders with the data hosts blackholed, and a rebuild flips the
+precached bundle hash on the controlled client.
+
 ## Gates for every change
 
 `npx tsc` (app AND server if touched) · `npm run build` ·

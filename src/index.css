@@ -96,3 +96,116 @@ a { color: inherit; text-decoration: none; }
 /* Safety: stop right-scroll */
 html, body { width:100%; max-width:100%; overflow-x:hidden; }
 *,*::before,*::after { box-sizing: border-box; }
+
+/* ===========================================================================
+   Installed-app (PWA) chrome
+   ---------------------------------------------------------------------------
+   index.html ships viewport-fit=cover and, on iOS,
+   apple-mobile-web-app-status-bar-style=black-translucent — which means the
+   status bar is drawn OVER the page and the home indicator sits on top of the
+   last row of content. env(safe-area-inset-*) is what buys that space back;
+   it resolves to 0 in an ordinary browser tab, so none of this shows up on
+   desktop. The header takes the inset as PADDING (not margin) so the navy bar
+   continues under the notch instead of leaving a white strip above it.
+   ======================================================================== */
+.site-header {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* The parlay slip is fixed to the bottom edge — the home indicator would
+   otherwise sit across its last control. */
+.parlay-slip {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ------------------------------------------------------- install prompt --- */
+/* A slim bar under the header, never an overlay: it must not cover a card. */
+.install-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1200px;
+  margin: 10px auto 0;
+  padding: 8px 10px 8px 14px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px var(--shadow);
+  font-size: 14px;
+}
+.install-bar__text { flex: 1 1 auto; min-width: 0; color: var(--muted); }
+.install-bar__cta {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--brand);
+  color: var(--brand-contrast);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.install-bar__x {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+@media (max-width: 420px) {
+  .install-bar { margin-inline: 12px; font-size: 13px; }
+}
+
+/* iOS has no install API, so the button opens instructions instead. Bottom
+   sheet, because that is where the Share button it points at lives. */
+.install-sheet__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in oklab, var(--text) 45%, transparent);
+}
+.install-sheet {
+  width: min(420px, 100%);
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px 16px;
+  box-shadow: 0 -6px 28px var(--shadow);
+}
+.install-sheet__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.install-sheet__steps {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  counter-reset: step;
+}
+.install-sheet__steps li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--fill);
+  font-size: 14px;
+}
+.install-glyph { width: 22px; height: 22px; flex: 0 0 auto; color: var(--brand-text); }
+.install-sheet__note { margin: 12px 0 0; font-size: 12px; color: var(--muted); }

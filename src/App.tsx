@@ -1,6 +1,7 @@
 // src/App.tsx
 import { Routes, Route, Navigate } from "react-router-dom";
 import Header from "./components/Header";
+import InstallPrompt from "./components/InstallPrompt";
 
 // ✅ restore your theme files
 import "./theme.css";
@@ -52,6 +53,10 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
       {/* ✅ your branded header (logo, colors) */}
       <Header />
+
+      {/* Renders only where an install is actually possible (Chromium's
+          beforeinstallprompt, or iOS), and never once installed. */}
+      <InstallPrompt />
 
       <main style={{ maxWidth: 1200, margin: "20px auto", padding: "0 16px 40px" }}>
         {/* Hub */}

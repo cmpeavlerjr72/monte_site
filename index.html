@@ -2,8 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- viewport-fit=cover lets the page paint under the notch/home indicator;
+         the header/nav pay it back with env(safe-area-inset-*) padding. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>CFB Simulator</title>
+
+    <!-- PWA: installable shell. Colors mirror what the header actually paints,
+         which is var(--brand) in src/index.css — navy in light, the lightened
+         brand blue in dark (see src/theme.css). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0b2d4b" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#3178c6" media="(prefers-color-scheme: dark)" />
+    <meta name="application-name" content="MVPEAV" />
+
+    <!-- iOS installability. black-translucent puts the status bar OVER the
+         page, so the header's safe-area padding is load-bearing, not cosmetic. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="MVPEAV" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+
     <style>
       body { margin:0; font-family: system-ui, Arial, sans-serif; }
       #root { min-height: 100vh; }

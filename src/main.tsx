@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import { registerServiceWorker } from "./lib/pwa";
 import "./theme.css";
 import "./index.css";
 
@@ -23,3 +24,6 @@ ReactDOM.createRoot(rootEl).render(
     </BrowserRouter>
   </React.StrictMode>
 );
+
+// App-shell service worker (production builds only — see src/sw.ts).
+registerServiceWorker();
