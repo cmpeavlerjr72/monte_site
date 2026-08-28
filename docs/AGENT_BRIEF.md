@@ -165,6 +165,35 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   null and silently leaves the layout at the desktop default — that was
   the actual bug.
 
+## The card market block (`MarketEdge.tsx`) — bar-test rules
+
+Every card's Kalshi block is VERDICT-FIRST (user, 2026-08-28, same bar as the
+Team Stats panel: "easy and intuitive to someone who has had a beer or two").
+Its predecessor was a four-column grid — sim %, sim American odds, Kalshi %,
+Kalshi American odds, edge — and drew the same verdict the Team Stats chip
+table did: "too many words and it all kind of runs together". Do not put the
+arithmetic back. The rules:
+
+- At rest a row is THE BET IN WORDS plus ONE number, the edge in whole cents,
+  in a `--pos`/`--neg` chip (a rounded-to-zero edge wears `--muted`, never a
+  green "+0¢"). Sim probability, Kalshi price and both American odds live in
+  the TAP POPOVER, written in words — same shape as the Team Stats flags.
+- The label is rebuilt from the MarketRow's STRUCTURED fields (`sideTeam` /
+  `line` / `side`), never by re-parsing `row.market`; team names come from the
+  data verbatim (rule 1). The line sits in its own non-shrinking span so
+  truncation eats the school name and never the number — the old grid printed
+  "North Carolin…" and lost the +7.5 entirely.
+- A signed bar sits on a shared zero tick, fixed ±20¢ domain so bars compare
+  ACROSS cards, not just within one. Fixed `ROW_H`/`HEAD_H` let the popover be
+  placed by index arithmetic instead of a measurement effect.
+- An approximate Kalshi strike keeps its mark (dotted underline, the
+  `.result-pill` provisional convention) and explains itself on tap. Spread
+  strikes are quoted home-perspective, so the popover NAMES the home team
+  rather than printing a bare "-10.5" under a row that reads "+10".
+- Rows are 40px buttons (tap target), the popover has a Close button and no
+  document-level listener, and nothing here touches `buildMarketRows` — the
+  math layer is `src/lib/marketEdge.ts` and stays presentation-free.
+
 ## Server health and Kalshi resilience
 
 `/api/health` reports the DEPLOYED commit (`RENDER_GIT_COMMIT`), branch,
