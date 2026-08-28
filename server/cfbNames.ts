@@ -87,6 +87,11 @@ export const KALSHI_TEAM_ALIASES: Record<string, string> = {
   // neither the bare-"albany" alias above nor the slate's "UAlbany". The
   // user caught it as a card with no Kalshi info at all.
   atalbany: "ualbany",
+  // Kalshi writes "Central Connecticut St." but our slate's school (CFBD
+  // spelling) is just "Central Connecticut" — no State suffix to expand
+  // into. Live 2026-08-28, KXNCAAFGAME-26AUG29CCSUSDAK (user caught the
+  // card with no Kalshi info, same symptom as UAlbany above).
+  centralconnecticutstate: "centralconnecticut",
   citadel: "thecitadel",
   penn: "pennsylvania",
   southeasternlouisiana: "selouisiana",
