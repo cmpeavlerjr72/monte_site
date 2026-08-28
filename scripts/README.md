@@ -109,3 +109,24 @@ teeth), runs the shipped graph (must settle), and then asserts statically that t
 source still obeys the two rules that make the loop impossible: the scan effect depends
 on exactly one primitive `signature`, and `edgeInputs` is derived from the unsorted card
 list rather than from `cards`.
+
+## Check: the game-line pricer agrees with the suggestions pipeline
+
+```bash
+node scripts/check_game_pricer.mjs            # needs the network
+node scripts/check_game_pricer.mjs --origin http://localhost:5173
+```
+
+Run this after touching `buildGameYesP` (`src/lib/teamStatMarkets.ts`) or
+`gameCandidates` (`src/lib/suggestedBets.ts`).
+
+Two surfaces price the same winner/spread/total markets: Suggested Bets builds
+candidates with `gameCandidates`, while the resting-order review and the portal's held
+positions go through `buildPortalYesP` → `buildGameYesP`. If those two ever read a
+different rung, one surface tells you to hold a bet the other calls dead. The check
+bundles the SHIPPED source with esbuild (never a re-typed copy), fetches the real
+published week and the real Kalshi feed for BOTH namespaces, and asserts the identity
+on every listed contract: a `yes` candidate's `simP` must equal the pricer's P(YES),
+and a `no` candidate's must equal its complement. It also asserts coverage — all three
+families, both namespaces, mirrored spread rungs included — because an equivalence over
+an empty set proves nothing. It SKIPS (exit 0) when the published data is unreachable.

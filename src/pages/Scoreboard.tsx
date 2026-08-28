@@ -44,7 +44,7 @@ import {
   writeModeFilter, writeMyGamesOpen, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
   type BetTypeFilter, type ModeFilter, type SuggestSort,
 } from "../lib/ownerPrefs";
-import { buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
+import { buildGameYesP, buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
 import type { FeeParams } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
@@ -2177,21 +2177,33 @@ function ScoreboardPage() {
   /** ticker -> P(YES) for the per-team stat ladders. The seed arrays cannot
    *  price these at all, which is why every held rec-yards position read
    *  "Sim EV —" until 2026-08-28. */
+  /** What both published-rung pricers need to know about each game on the
+   *  board. One list: the two pricers differ in which block they read, never
+   *  in which games they are asked about. */
+  const statGameRefs = useMemo(
+    () => baseCards.map((c) => ({
+      key: c.key, slug: c.jsonRow?.slug ?? c.key, ns: c.ns,
+      teamA: c.teamA, teamB: c.teamB,
+    })),
+    [baseCards]
+  );
   const statYesP = useMemo(
-    () => buildStatYesP(
-      teamStatsDocs,
-      baseCards.map((c) => ({
-        key: c.key, slug: c.jsonRow?.slug ?? c.key, ns: c.ns,
-        teamA: c.teamA, teamB: c.teamB,
-      })),
-      kalshiBySlug
-    ),
-    [teamStatsDocs, baseCards, kalshiBySlug]
+    () => buildStatYesP(teamStatsDocs, statGameRefs, kalshiBySlug),
+    [teamStatsDocs, statGameRefs, kalshiBySlug]
+  );
+  /** ticker -> P(YES) for the three GAME-LINE families off the published game
+   *  block. Without it a total/spread/winner ticker prices to null wherever the
+   *  seed arrays are not loaded — which is most of the board, and ALL of FCS
+   *  (no compacts published), so the resting review had no verdict to give on
+   *  a book made of game totals. */
+  const gameYesP = useMemo(
+    () => buildGameYesP(teamStatsDocs, statGameRefs, kalshiBySlug),
+    [teamStatsDocs, statGameRefs, kalshiBySlug]
   );
 
   const portalBook = useMemo(
-    () => computePortalBets(portal.payload, kalshiBySlug, portalSeeds, statYesP),
-    [portal.payload, kalshiBySlug, portalSeeds, statYesP]
+    () => computePortalBets(portal.payload, kalshiBySlug, portalSeeds, statYesP, gameYesP),
+    [portal.payload, kalshiBySlug, portalSeeds, statYesP, gameYesP]
   );
   /** ticker -> P(YES) of the RAW market: seeds for the game lines, published
    *  rungs for the per-team stat ladders. Literally the function the held
@@ -2199,8 +2211,8 @@ function ScoreboardPage() {
    *  resting-order review so the two can never disagree about what a market
    *  is worth. */
   const portalYesP = useMemo(
-    () => buildPortalYesP(kalshiBySlug, portalSeeds, statYesP),
-    [kalshiBySlug, portalSeeds, statYesP]
+    () => buildPortalYesP(kalshiBySlug, portalSeeds, statYesP, gameYesP),
+    [kalshiBySlug, portalSeeds, statYesP, gameYesP]
   );
   const portalNote = useMemo(() => {
     if (!portalToken) return "log in with your portal password";

@@ -57,9 +57,13 @@ function VerdictChip({ row }: { row: RestingRow }) {
         </span>
       );
     case "HOLD":
+      // A RECOMMENDATION, not a state. "HOLD" alone reads as a label on the
+      // row's condition; the words say what to do and the one number says what
+      // the rest is worth if it fills — which is the number that makes leaving
+      // it working the right call. The derivation stays in the popover.
       return (
         <span style={{ ...base, background: "var(--mode-rest)", color: "var(--mode-rest-ink)" }}>
-          HOLD
+          HOLD — rest is still right{row.restEdge === null ? "" : ` · ${signed(row.restEdge)}`}
         </span>
       );
     case "PULL":

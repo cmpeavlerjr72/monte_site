@@ -198,9 +198,18 @@ export function simYesP(ticker: string, seeds: SeedPair | undefined): number | n
  * than inside `computePortalBets`:
  *
  *   1. the SEED arrays, which price the game lines (total / spread / winner)
- *      by counting simulated outcomes, and
+ *      by counting simulated outcomes,
  *   2. the published team_stats RUNGS for the per-team stat ladders, which are
- *      not in the seed arrays at all (see `teamStatMarkets.buildStatYesP`).
+ *      not in the seed arrays at all (see `teamStatMarkets.buildStatYesP`), and
+ *   3. the published GAME block for the game lines (see
+ *      `teamStatMarkets.buildGameYesP`).
+ *
+ * (3) is not a duplicate of (1). The seeds are only loaded for games the owner
+ * already has entries on, and only when that game's compact.json exists — an
+ * FCS card publishes no compacts, so every game-line ticker there priced to
+ * null and the resting review had no verdict to give. The published block is
+ * the same number the suggestions pipeline prices those markets with, so it is
+ * the right fallback rather than a second opinion.
  *
  * Always RAW-MARKET denominated: P(the market's YES), never a side we chose.
  * A caller holding the NO takes the complement itself — the same convention
@@ -213,13 +222,14 @@ export function buildPortalYesP(
   kalshiBySlug: Map<string, KalshiGame>,
   seedsBySlug: Map<string, SeedPair>,
   statYesP?: (ticker: string) => number | null,
+  gameYesP?: (ticker: string) => number | null,
 ): (ticker: string) => number | null {
   const codeToSlug = buildCodeToSlug(kalshiBySlug);
   return (ticker: string): number | null => {
     const t = parseNcaafTicker(ticker);
     const slug = t ? codeToSlug.get(t.code) : undefined;
     return simYesP(ticker, slug ? seedsBySlug.get(slug) : undefined)
-      ?? statYesP?.(ticker) ?? null;
+      ?? statYesP?.(ticker) ?? gameYesP?.(ticker) ?? null;
   };
 }
 
@@ -280,6 +290,10 @@ export function computePortalBets(
    *  `teamStatMarkets.buildStatYesP`). Optional: without it those legs price
    *  to null exactly as they did before 2026-08-28. */
   statYesP?: (ticker: string) => number | null,
+  /** P(YES) for the GAME-LINE families off the published game block (see
+   *  `teamStatMarkets.buildGameYesP`) — what prices a held total or spread on a
+   *  game whose seed arrays were never loaded. Same optionality. */
+  gameYesP?: (ticker: string) => number | null,
 ): { bets: PortalBet[]; bySlug: Map<string, PortalBet[]>; unmatched: number; totals: PortalTotals } {
   const bets: PortalBet[] = [];
   const bySlug = new Map<string, PortalBet[]>();
@@ -291,7 +305,7 @@ export function computePortalBets(
   };
   // ONE pricing implementation, shared with the resting-order review. See
   // `buildPortalYesP`.
-  const yesP = buildPortalYesP(kalshiBySlug, seedsBySlug, statYesP);
+  const yesP = buildPortalYesP(kalshiBySlug, seedsBySlug, statYesP, gameYesP);
 
   const push = (
     e: PortalOrder | PortalPosition, kind: PortalBet["kind"],
@@ -314,9 +328,10 @@ export function computePortalBets(
     const kalshiP = mid === null ? null : e.side === "no" ? 1 - mid : mid;
     let simP: number | null = 1;
     for (const l of legs) {
-      // Seeds price the GAME lines (total/spread/winner). The per-team stat
-      // ladders are not in the seed arrays at all, so they fall through to the
-      // published rungs. Either way a NO leg is the complement.
+      // Seeds price the GAME lines (total/spread/winner) where they are
+      // loaded; the per-team stat ladders are not in the seed arrays at all,
+      // and a game with no compact has no seeds either. Both fall through to
+      // the published rungs. Either way a NO leg is the complement.
       const py = yesP(l.ticker);
       if (py === null) { simP = null; break; }
       simP *= l.side === "no" ? 1 - py : py;

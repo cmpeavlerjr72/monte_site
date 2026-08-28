@@ -140,3 +140,69 @@ export function buildStatYesP(
     return typeof p === "number" ? p : null;
   };
 }
+
+/* ------------------------- pricing a GAME-LINE market --------------------- */
+
+/**
+ * Build `ticker -> P(YES)` for the three GAME-LINE families — winner, spread
+ * and total — off the published `game` block (exporter schema 2).
+ *
+ * WHY THIS EXISTS. `buildStatYesP` covers the per-team stat families only, so
+ * until 2026-08-28 a KXNCAAFTOTAL / KXNCAAFSPREAD / KXNCAAFGAME ticker priced
+ * to null everywhere except where the game's SEED arrays happened to be loaded.
+ * The resting-order review runs on that price: a book made mostly of game
+ * totals got "— no sim price" on every row and therefore no recommendation at
+ * all, which is the one thing that surface exists to give. The held positions'
+ * Sim EV had the same hole.
+ *
+ * NO NEW MATH — and the join needs none. `gameCandidates` (suggestedBets.ts)
+ * already reads exactly these rungs off exactly these feed entries, so this
+ * walks the SAME feed structures and reads the SAME keys:
+ *
+ *   winner   the quote's side is the team, so P(YES) is that side's win prob.
+ *   spread   the published margin grid is SIGNED HOME-PERSPECTIVE, so the rung
+ *            at feed line L is `margin_rungs[String(-L)]`. On a MIRRORED rung
+ *            (an away-team market the server flipped to home perspective) the
+ *            rung's YES is the raw market's NO, so the raw market's P(YES) is
+ *            the complement. Getting that backwards prices the opposite bet at
+ *            a plausible-looking number — the worst kind of wrong.
+ *   total    the Over is the market's YES: `total_rungs[String(L)]`. Totals are
+ *            never mirrored (an over is an over from both ends), which is why
+ *            no complement appears here — the same reason `gameCandidates`
+ *            takes none.
+ *
+ * A strike that is not on the published grid, a namespace with no file, and a
+ * game not on this board all yield null. NEVER interpolate.
+ */
+export function buildGameYesP(
+  docs: Record<string, TeamStats>,
+  games: StatGameRef[],
+  kalshiBySlug: Map<string, KalshiGame>,
+): (ticker: string) => number | null {
+  // Built eagerly, one pass over the board: the feed entry IS the join (it
+  // carries the ticker), so there is nothing to parse out of the ticker itself.
+  const byTicker = new Map<string, number>();
+  for (const g of games) {
+    const lines = docs[String(g.ns)]?.games?.[g.slug]?.game;
+    const kg = kalshiBySlug.get(g.key);
+    if (!lines || !kg) continue;
+
+    for (const q of kg.winner_quotes ?? []) {
+      const p = q.side === "A" ? lines.winProbHome : lines.winProbAway;
+      if (typeof p === "number" && q.ticker) byTicker.set(q.ticker, p);
+    }
+    for (const r of kg.spread_ladder ?? []) {
+      const p = lines.marginRungs?.[String(-r.line)];
+      if (typeof p !== "number" || !r.ticker) continue;
+      byTicker.set(r.ticker, r.mirrored ? 1 - p : p);
+    }
+    for (const r of kg.total_ladder ?? []) {
+      const p = lines.totalRungs?.[String(r.line)];
+      if (typeof p === "number" && r.ticker) byTicker.set(r.ticker, p);
+    }
+  }
+  return (ticker: string): number | null => {
+    const p = byTicker.get(ticker);
+    return p === undefined ? null : p;
+  };
+}
