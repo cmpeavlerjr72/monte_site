@@ -1598,6 +1598,7 @@ async function portalOrders() {
             out.push({
                 ticker: t,
                 order_id: String(o.order_id || ""),
+                app: String(o.client_order_id || "").startsWith(ORDERS_TAG),
                 side: String(o.outcome_side || o.side || ""),
                 yes_price: portalNum(o.yes_price_dollars),
                 no_price: portalNum(o.no_price_dollars),
@@ -1755,11 +1756,17 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
 // ORDER ENTRY — the portal family's FIRST mutating endpoints (real money)
 //
 //   POST /api/portfolio/cfb/orders          place 1..N limit orders
-//   POST /api/portfolio/cfb/orders/cancel   cancel this app's resting orders
+//   POST /api/portfolio/cfb/orders/cancel   cancel this app's resting orders —
+//                                           {all:true} or ONE {order_id}
+//   POST /api/portfolio/cfb/orders/convert  one resting order -> a take
+//                                           (cancel, confirm, then IOC)
 //
-// Both sit behind `portalGate` — the same timing-safe password + lockout the
-// reads use, checked before a body is parsed and before a key is loaded. The
-// gate predated this code by design; nothing here weakens it.
+// All three sit behind `portalGate` — the same timing-safe password + lockout
+// the reads use, checked before a body is parsed and before a key is loaded.
+// The gate predated this code by design; nothing here weakens it. The cancel
+// and convert routes can only ever reach orders whose client_order_id carries
+// ORDERS_TAG: the maker pipeline's `cfbmk` book and the owner's own
+// hand-placed orders are unreachable from this app, by construction.
 //
 // ---------------------------------------------------------------------------
 // EXECUTION POLICY (user decision 2026-08-28)
@@ -2171,56 +2178,8 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
         const placed = [];
         const errors = [];
         for (const w of wire) {
-            const wireBody = {
-                ticker: w.ticker,
-                client_order_id: w.client_order_id,
-                side: w.book_side,
-                price: w.yes_price.toFixed(4),
-                count: w.count.toFixed(2),
-                // Derived from MODE. Never from the request.
-                time_in_force: w.mode === "rest" ? "good_till_canceled" : "immediate_or_cancel",
-                self_trade_prevention_type: w.mode === "rest" ? "maker" : "taker_at_cross",
-                post_only: w.mode === "rest",
-            };
-            let resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
-            let tifDowngraded = false;
-            // A 400 is a validation rejection: nothing was created, so retrying is
-            // not a double-placement risk. Only retried when the TIF is the thing
-            // being rejected, and only once.
-            if (resp.status === 400 && w.mode === "take" &&
-                /time_in_force|immediate/i.test(JSON.stringify(resp.json))) {
-                wireBody.time_in_force = "good_till_canceled";
-                tifDowngraded = true;
-                ordersAudit({ event: "tif_downgrade", key, ticker: w.ticker });
-                resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
-            }
-            const orderId = String(resp.json?.order_id || resp.json?.order?.order_id || "");
-            if ((resp.status === 200 || resp.status === 201) && orderId) {
-                ordersSpend.push({ at: Date.now(), cost: w.cost });
-                // Read back: this endpoint has silently ignored a field before, so
-                // what the exchange DID is reported, not what we asked for.
-                let state = null;
-                try {
-                    const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
-                    const ord = back?.order || back || {};
-                    state = {
-                        status: String(ord.status || ""),
-                        filled: portalNum(ord.fill_count_fp ?? ord.fill_count),
-                        remaining: portalNum(ord.remaining_count_fp ?? ord.remaining_count),
-                    };
-                }
-                catch { /* the placement stands; we just cannot describe it yet */ }
-                placed.push({ ...pickWire(w), order_id: orderId, tif_downgraded: tifDowngraded, state });
-                ordersAudit({ event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state });
-            }
-            else {
-                errors.push({
-                    ...pickWire(w), http_status: resp.status,
-                    message: String(resp.json?.error?.message || resp.json?.message ||
-                        resp.json?.text || "order rejected").slice(0, 200),
-                });
-                ordersAudit({ event: "place_failed", key, ticker: w.ticker, status: resp.status, resp: JSON.stringify(resp.json).slice(0, 300) });
-            }
+            const r = await ordersSubmitOne(w, key);
+            (r.ok ? placed : errors).push(r.echo);
         }
         const after = ordersSpent24h();
         const payload = {
@@ -2252,9 +2211,98 @@ function pickWire(w) {
         yes_price: w.yes_price, book_side: w.book_side,
     };
 }
-/** This app's resting orders — the ONLY ones the cancel route may touch.
- *  Cursor always drained (kalshi-rfq's 2026-07-22 page-1-only incident: a
- *  partial list made a reconciler re-place 833 orders instead of 167). */
+/**
+ * THE placement path — one implementation, every caller.
+ *
+ * Extracted 2026-08-28 when CONVERT (cancel a rest, then take) became a second
+ * entry point. A second copy of this would be a second set of wire semantics:
+ * the mode->post_only/TIF derivation, the 400-only TIF downgrade, the read-back
+ * of what the exchange ACTUALLY did, the 24h spend ledger and the audit lines
+ * are all rails, and rails that exist twice drift. Callers do their own
+ * validation, capping and live-book re-check BEFORE calling this; this function
+ * signs and reports, and never decides whether an order should exist.
+ *
+ * Never retried on a network error or a 5xx (see portalSend): the order may
+ * already have landed.
+ */
+async function ordersSubmitOne(w, key) {
+    const wireBody = {
+        ticker: w.ticker,
+        client_order_id: w.client_order_id,
+        side: w.book_side,
+        price: w.yes_price.toFixed(4),
+        count: w.count.toFixed(2),
+        // Derived from MODE. Never from the request.
+        time_in_force: w.mode === "rest" ? "good_till_canceled" : "immediate_or_cancel",
+        self_trade_prevention_type: w.mode === "rest" ? "maker" : "taker_at_cross",
+        post_only: w.mode === "rest",
+    };
+    let resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
+    let tifDowngraded = false;
+    // A 400 is a validation rejection: nothing was created, so retrying is
+    // not a double-placement risk. Only retried when the TIF is the thing
+    // being rejected, and only once.
+    if (resp.status === 400 && w.mode === "take" &&
+        /time_in_force|immediate/i.test(JSON.stringify(resp.json))) {
+        wireBody.time_in_force = "good_till_canceled";
+        tifDowngraded = true;
+        ordersAudit({ event: "tif_downgrade", key, ticker: w.ticker });
+        resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
+    }
+    const orderId = String(resp.json?.order_id || resp.json?.order?.order_id || "");
+    if ((resp.status === 200 || resp.status === 201) && orderId) {
+        ordersSpend.push({ at: Date.now(), cost: w.cost });
+        // Read back: this endpoint has silently ignored a field before, so
+        // what the exchange DID is reported, not what we asked for.
+        let state = null;
+        try {
+            const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
+            const ord = back?.order || back || {};
+            state = {
+                status: String(ord.status || ""),
+                filled: portalNum(ord.fill_count_fp ?? ord.fill_count),
+                remaining: portalNum(ord.remaining_count_fp ?? ord.remaining_count),
+            };
+        }
+        catch { /* the placement stands; we just cannot describe it yet */ }
+        ordersAudit({ event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state });
+        return {
+            ok: true,
+            echo: { ...pickWire(w), order_id: orderId, tif_downgraded: tifDowngraded, state },
+        };
+    }
+    ordersAudit({
+        event: "place_failed", key, ticker: w.ticker, status: resp.status,
+        resp: JSON.stringify(resp.json).slice(0, 300),
+    });
+    return {
+        ok: false,
+        echo: {
+            ...pickWire(w), http_status: resp.status,
+            message: String(resp.json?.error?.message || resp.json?.message ||
+                resp.json?.text || "order rejected").slice(0, 200),
+        },
+    };
+}
+/** One resting order's live state, straight from the exchange. Null when the
+ *  read failed — "we could not tell", which is never reported as a status. */
+async function ordersReadState(orderId) {
+    try {
+        const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
+        const ord = back?.order || back || {};
+        return {
+            status: String(ord.status || ""),
+            filled: portalNum(ord.fill_count_fp ?? ord.fill_count),
+            remaining: portalNum(ord.remaining_count_fp ?? ord.remaining_count),
+        };
+    }
+    catch {
+        return null;
+    }
+}
+/** This app's resting orders — the ONLY ones the cancel/convert routes may
+ *  touch. Cursor always drained (kalshi-rfq's 2026-07-22 page-1-only incident:
+ *  a partial list made a reconciler re-place 833 orders instead of 167). */
 async function ordersRestingApp() {
     const out = [];
     let cursor = "";
@@ -2269,6 +2317,8 @@ async function ordersRestingApp() {
                 order_id: String(o.order_id || ""),
                 client_order_id: coid,
                 ticker: String(o.ticker || ""),
+                side: String(o.outcome_side || o.side || ""),
+                remaining: portalNum(o.remaining_count_fp ?? o.remaining_count),
             });
         }
         cursor = String(body?.cursor || "");
@@ -2305,6 +2355,24 @@ app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
     }
     const targets = all ? mine : mine.filter((o) => o.order_id === orderId);
     if (!all && targets.length === 0) {
+        // TELL THE TRUTH ABOUT WHY. "Not a resting cfbapp- order" covers two very
+        // different facts — "not yours to touch" and "yours, but it already filled
+        // or was already cancelled" — and a per-order ✕ that reported the second as
+        // the first would read as a bug in the app rather than as what happened to
+        // the order. So the order is read back: if it carries our tag we report its
+        // REAL state, and a fill is never dressed up as a successful cancel.
+        const state = await ordersReadState(orderId);
+        const ours = state !== null && (await ordersOwnedByApp(orderId));
+        if (ours) {
+            ordersAudit({ event: "cancel_refused", order_id: orderId, reason: "not_resting", state });
+            res.status(409).json({
+                error: "not_resting",
+                detail: `that order is no longer resting (${state?.status || "unknown"})` +
+                    (state?.filled ? ` — ${state.filled} filled` : ""),
+                state,
+            });
+            return;
+        }
         ordersAudit({ event: "cancel_refused", order_id: orderId, reason: "not_app_order" });
         res.status(404).json({
             error: "not_app_order",
@@ -2321,8 +2389,331 @@ app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
         else
             failed.push({ ...t, http_status: r.status });
     }
+    // A single-order cancel reports the order's state AFTER the delete: a rest
+    // that filled between the scan and the delete comes back as filled, not as a
+    // cancel that never happened.
+    if (!all && cancelled.length === 1) {
+        cancelled[0].state = await ordersReadState(cancelled[0].order_id);
+    }
     ordersAudit({ event: "cancel", all, scanned: mine.length, cancelled: cancelled.length, failed: failed.length });
     res.json({ scanned: mine.length, cancelled, failed });
+}));
+/** Does this order carry OUR tag? The authorisation test for a single-order
+ *  route when the order is no longer in the resting list. */
+async function ordersOwnedByApp(orderId) {
+    try {
+        const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
+        const ord = back?.order || back || {};
+        return String(ord.client_order_id || "").startsWith(ORDERS_TAG);
+    }
+    catch {
+        return false;
+    }
+}
+// ============================================================================
+// CONVERT — turn one of THIS APP's resting orders into a take, in one step
+//
+//   POST /api/portfolio/cfb/orders/convert
+//   { idempotency_key, order_id, ticker, side, count_fp, limit_price }
+//
+// WHY IT IS A SERVER ROUTE and not two client calls. A rest becoming a take is
+// cancel-then-place, and the window between them is the whole risk: a client
+// that cancelled, then had its take refused (or lost the network) would leave
+// the owner with NO order and no idea. Server-side the two steps share one
+// idempotency key, one audit trail and one answer, and the composite outcome —
+// "rest cancelled, take NOT placed" — is a first-class response instead of a
+// state nobody reports.
+//
+// ORDER OF OPERATIONS, and every one of them is deliberate:
+//   1. Validate + strict field allowlist (same as placement).
+//   2. Idempotency FIRST: a replay returns the original answer. The key covers
+//      the WHOLE two-step, so a double-tap can never cancel twice or take twice.
+//   3. Verify the order is cfbapp-tagged AND still resting, and that its ticker
+//      matches the request. The pipeline's cfbmk book stays unreachable.
+//   4. Caps: this take counts against the per-order, per-request and 24h caps
+//      exactly like any other placement.
+//   5. RE-READ THE LIVE BOOK and refuse if the crossing price is worse than the
+//      confirmed limit — BEFORE anything is cancelled. The same honesty
+//      contract as a take placement: the fresh book comes back with the refusal.
+//   6. Cancel the rest, then CONFIRM the cancel by reading the order back. A
+//      cancel we cannot confirm stops the whole thing: we never place on top of
+//      an order that might still be working.
+//   7. Take the REMAINING count the cancel confirmed (never more — a rest that
+//      partly filled between the read and the cancel must not be over-bought),
+//      through `ordersSubmitOne`, the same path every other order goes down.
+//
+// DRY RUN (CFB_ORDERS_LIVE unset) mutates NOTHING — not even the cancel. A
+// staged mode that pulled a real order while placing nothing would leave the
+// owner strictly worse off, which is the opposite of staging.
+// ============================================================================
+app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
+    if (!portalGate(req, res))
+        return;
+    const body = (req.body ?? {});
+    const bad = (status, payload) => {
+        ordersAudit({ event: "convert_reject", status, ...payload });
+        res.status(status).json(payload);
+    };
+    const forbidden = ordersForbidden(body, "request");
+    if (forbidden) {
+        bad(400, { error: "forbidden_field", detail: forbidden });
+        return;
+    }
+    const ALLOWED = ["idempotency_key", "order_id", "ticker", "side", "count_fp", "limit_price"];
+    for (const k of Object.keys(body)) {
+        if (!ALLOWED.includes(k)) {
+            bad(400, { error: "unexpected_field", detail: `request: "${k}"` });
+            return;
+        }
+    }
+    const key = String(body.idempotency_key ?? "");
+    if (!ORDERS_KEY_RE.test(key)) {
+        bad(400, { error: "bad_idempotency_key", detail: "8-64 chars of [A-Za-z0-9_-]" });
+        return;
+    }
+    const replay = ordersIdemGet(key);
+    if (replay) {
+        ordersAudit({ event: "replay", key, status: replay.status, route: "convert" });
+        res.status(replay.status).json({ ...replay.body, replayed: true });
+        return;
+    }
+    if (ordersInflight.has(key)) {
+        res.status(409).json({ error: "in_flight", idempotency_key: key });
+        return;
+    }
+    ordersInflight.add(key);
+    try {
+        const orderId = String(body.order_id ?? "").trim();
+        if (!orderId || orderId.length > 64) {
+            bad(400, { error: "bad_order_id" });
+            return;
+        }
+        const ticker = String(body.ticker ?? "");
+        if (!ORDERS_TICKER_RE.test(ticker)) {
+            bad(400, { error: "bad_ticker", detail: ticker.slice(0, 60) });
+            return;
+        }
+        const side = body.side === "yes" || body.side === "no" ? body.side : null;
+        if (!side) {
+            bad(400, { error: "bad_side" });
+            return;
+        }
+        const price = Number(body.limit_price);
+        const priceCents = Math.round(price * 100);
+        if (!Number.isFinite(price) || Math.abs(price * 100 - priceCents) > 1e-6 ||
+            priceCents < 1 || priceCents > 99) {
+            bad(400, { error: "bad_price", detail: "whole cents in 0.01..0.99" });
+            return;
+        }
+        const want = Number(body.count_fp);
+        if (!Number.isInteger(want) || want < 1 || want > 10_000) {
+            bad(400, { error: "bad_count", detail: "1..10000 whole contracts" });
+            return;
+        }
+        // --- 3. it must be OURS, and still resting ---------------------------
+        let mine;
+        try {
+            mine = await ordersRestingApp();
+        }
+        catch (err) {
+            bad(502, { error: "resting_read_failed", detail: String(err?.message ?? err).slice(0, 200) });
+            return;
+        }
+        const rest = mine.find((o) => o.order_id === orderId);
+        if (!rest) {
+            const state = await ordersReadState(orderId);
+            const ours = state !== null && (await ordersOwnedByApp(orderId));
+            bad(ours ? 409 : 404, ours
+                ? {
+                    error: "not_resting", state,
+                    detail: `that order is no longer resting (${state?.status || "unknown"})` +
+                        (state?.filled ? ` — ${state.filled} filled` : ""),
+                }
+                : {
+                    error: "not_app_order",
+                    detail: "that order is not a resting cfbapp- order; this route cannot touch it",
+                });
+            return;
+        }
+        if (rest.ticker !== ticker) {
+            bad(409, {
+                error: "ticker_mismatch",
+                detail: `order ${orderId} is on ${rest.ticker}, not ${ticker}`,
+            });
+            return;
+        }
+        // Never take more than is still working. The client sends the remaining it
+        // last saw; the exchange's own number wins when it is smaller.
+        const count = rest.remaining !== null && Number.isFinite(rest.remaining)
+            ? Math.min(want, Math.floor(rest.remaining))
+            : want;
+        if (count < 1) {
+            bad(409, {
+                error: "nothing_resting",
+                detail: "that order has nothing left working to convert",
+            });
+            return;
+        }
+        // --- 4. caps: this take counts, like any other placement --------------
+        const fee = ordersFee(price, count, "take");
+        const cost = Math.round((price * count + fee) * 100) / 100;
+        if (cost > ORDERS_CAP_ORDER + 1e-9) {
+            bad(400, { error: "cap_order", detail: `costs $${cost.toFixed(2)}`, cap: ORDERS_CAP_ORDER });
+            return;
+        }
+        if (cost > ORDERS_CAP_REQUEST + 1e-9) {
+            bad(400, { error: "cap_request", total: cost, cap: ORDERS_CAP_REQUEST });
+            return;
+        }
+        const spent = ordersSpent24h();
+        if (spent + cost > ORDERS_CAP_24H + 1e-9) {
+            bad(400, {
+                error: "cap_24h", total: cost, spent_24h: Math.round(spent * 100) / 100,
+                cap: ORDERS_CAP_24H, note: "in-memory ledger; a server restart resets it",
+            });
+            return;
+        }
+        const w = {
+            ticker, side, mode: "take", price_dollars: price, count, fee, cost,
+            client_order_id: `${ORDERS_TAG}${key}-cv`,
+            yes_price: side === "yes" ? price : Math.round((1 - price) * 100) / 100,
+            book_side: side === "yes" ? "bid" : "ask",
+        };
+        // --- 5. live book, BEFORE anything is cancelled -----------------------
+        let bk;
+        try {
+            bk = await ordersBook(ticker);
+        }
+        catch (err) {
+            bad(502, { error: "book_unavailable", detail: String(err?.message ?? err).slice(0, 200) });
+            return;
+        }
+        const checkedAt = new Date().toISOString();
+        const ask = side === "yes" ? bk.yes_ask : bk.no_ask;
+        if (ask === null || ask > price + 1e-9) {
+            const payload = {
+                error: ask === null ? "no_offer" : "book_moved",
+                dry_run: !ORDERS_LIVE, checked_at: checkedAt,
+                detail: ask === null
+                    ? "nothing offered on that side right now — the rest was left alone"
+                    : `book moved: ask now ${ask.toFixed(2)} — the rest was left alone`,
+                book: bk, cancel: null, placed: [],
+            };
+            ordersAudit({ event: "convert_book_reject", key, order_id: orderId, ask, limit: price });
+            ordersIdemPut(key, { status: 409, body: payload });
+            res.status(409).json(payload);
+            return;
+        }
+        const wouldPlace = {
+            ...pickWire(w), book: bk,
+            post_only: false, time_in_force: "immediate_or_cancel",
+        };
+        ordersAudit({
+            event: "convert_request", key, live: ORDERS_LIVE, order_id: orderId,
+            ticker, side, count, price, ask, cost, spent_24h: Math.round(spent * 100) / 100,
+        });
+        // --- DRY RUN: nothing is cancelled and nothing is placed --------------
+        if (!ORDERS_LIVE) {
+            const payload = {
+                dry_run: true, idempotency_key: key, checked_at: checkedAt,
+                would_cancel: { order_id: orderId, ticker, remaining: rest.remaining },
+                would_place: [wouldPlace], placed: [], cancel: null,
+                totals: {
+                    cost, spent_24h: Math.round(spent * 100) / 100,
+                    remaining_24h: Math.round((ORDERS_CAP_24H - spent) * 100) / 100,
+                },
+                note: "CFB_ORDERS_LIVE is not set — the resting order was NOT cancelled " +
+                    "and nothing was submitted to Kalshi.",
+            };
+            ordersAudit({ event: "convert_dry_run", key, order_id: orderId });
+            ordersIdemPut(key, { status: 200, body: payload });
+            res.status(200).json(payload);
+            return;
+        }
+        if (!portalPrivateKey() || !PORTAL_KEY_ID) {
+            bad(503, { error: "kalshi_credentials_missing" });
+            return;
+        }
+        // --- 6. cancel the rest, and CONFIRM it -------------------------------
+        const del = await portalSend("DELETE", `/portfolio/events/orders/${encodeURIComponent(orderId)}`);
+        const afterCancel = await ordersReadState(orderId);
+        const cancelOk = del.status >= 200 && del.status < 300 &&
+            (afterCancel === null || afterCancel.status === "" ||
+                !/resting|open/i.test(afterCancel.status));
+        if (!cancelOk) {
+            const payload = {
+                dry_run: false, idempotency_key: key, checked_at: checkedAt,
+                error: "cancel_failed",
+                detail: `the resting order could not be cancelled (HTTP ${del.status})` +
+                    `${afterCancel ? ` — it reads ${afterCancel.status}` : ""}. ` +
+                    "Nothing was placed; the rest is still yours to pull.",
+                cancel: { ok: false, order_id: orderId, http_status: del.status, state: afterCancel },
+                placed: [], errors: [],
+            };
+            ordersAudit({ event: "convert_cancel_failed", key, order_id: orderId, status: del.status, state: afterCancel });
+            ordersIdemPut(key, { status: 409, body: payload });
+            res.status(409).json(payload);
+            return;
+        }
+        ordersAudit({ event: "convert_cancelled", key, order_id: orderId, state: afterCancel });
+        // What was actually left unfilled at the moment of the cancel. Smaller than
+        // the client's number when the rest partly filled in between.
+        const leftover = afterCancel && afterCancel.remaining !== null &&
+            Number.isFinite(afterCancel.remaining)
+            ? Math.floor(afterCancel.remaining)
+            : count;
+        const takeCount = Math.min(count, Math.max(leftover, 0));
+        const cancelEcho = { ok: true, order_id: orderId, ticker, state: afterCancel };
+        if (takeCount < 1) {
+            const payload = {
+                dry_run: false, idempotency_key: key, checked_at: checkedAt,
+                error: "cancelled_nothing_left",
+                detail: "The rest was cancelled, but it had already filled — there was " +
+                    "nothing left to take. Your fills show as a held position.",
+                cancel: cancelEcho, placed: [], errors: [],
+            };
+            ordersIdemPut(key, { status: 409, body: payload });
+            res.status(409).json(payload);
+            return;
+        }
+        if (takeCount !== count) {
+            // Re-price the smaller order so the echoed fee/cost are the real ones.
+            w.count = takeCount;
+            w.fee = ordersFee(price, takeCount, "take");
+            w.cost = Math.round((price * takeCount + w.fee) * 100) / 100;
+            ordersAudit({ event: "convert_shrunk", key, order_id: orderId, from: count, to: takeCount });
+        }
+        // --- 7. the take, down the ONE placement path -------------------------
+        const sub = await ordersSubmitOne(w, key);
+        const after = ordersSpent24h();
+        if (!sub.ok) {
+            const payload = {
+                dry_run: false, idempotency_key: key, checked_at: checkedAt,
+                error: "cancelled_not_placed",
+                detail: "The resting order was CANCELLED but the take was NOT placed. " +
+                    "You have no order on this market right now.",
+                cancel: cancelEcho, placed: [], errors: [sub.echo],
+            };
+            ordersAudit({ event: "convert_take_failed", key, order_id: orderId, echo: sub.echo });
+            ordersIdemPut(key, { status: 409, body: payload });
+            res.status(409).json(payload);
+            return;
+        }
+        const payload = {
+            dry_run: false, idempotency_key: key, checked_at: checkedAt,
+            cancel: cancelEcho, placed: [sub.echo], errors: [],
+            totals: {
+                cost: w.cost, spent_24h: Math.round(after * 100) / 100,
+                remaining_24h: Math.round((ORDERS_CAP_24H - after) * 100) / 100,
+            },
+        };
+        ordersAudit({ event: "convert_done", key, order_id: orderId, placed: sub.echo?.order_id });
+        ordersIdemPut(key, { status: 200, body: payload });
+        res.status(200).json(payload);
+    }
+    finally {
+        ordersInflight.delete(key);
+    }
 }));
 // Unknown /api routes must answer JSON. Without this the SPA catch-all below
 // serves index.html for a typo'd or removed endpoint, and the client blows up
