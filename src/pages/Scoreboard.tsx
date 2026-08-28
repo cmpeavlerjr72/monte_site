@@ -65,6 +65,10 @@ type LiveGame = {
    *  short name alone missed 19 of 46 FCS week-0 games (2026-08-27). */
   homeNames?: string[];
   awayNames?: string[];
+  /** Canceled/postponed/suspended/forfeit — ESPN reports state "post" with a
+   *  0-0 score and completed:false (Lafayette@Georgetown 2026-08-27), which
+   *  must NEVER be graded as a real final. Bets on a no-contest push. */
+  noContest?: boolean;
   /** Ball spot / down & distance / possession — present only while live. */
   situation?: LiveSituation;
 };
@@ -113,6 +117,11 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
     const name  = String(type.name || "").toUpperCase();    // e.g. 'STATUS_FINAL'
     const done  = Boolean(type.completed);
     if (done || name.includes("FINAL") || state === "post") state = "final";
+    // A "final" that never completed is a cancellation-family status, not a
+    // result (STATUS_CANCELED arrives as state post, completed false, 0-0).
+    const noContest =
+      /CANCEL|POSTPON|SUSPEND|FORFEIT/.test(name) ||
+      (state === "final" && !done && !name.includes("FINAL"));
 
     // Pill text
     let statusText = type?.shortDetail || type?.detail || type?.description || "";
@@ -133,6 +142,7 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
       awayAbbrev: away?.team?.abbreviation,
       homeNames: nameForms(home?.team),
       awayNames: nameForms(away?.team),
+      noContest: noContest || undefined,
       situation: state === "in" ? parseSituation(comp) : undefined,
     };
   });
@@ -361,6 +371,10 @@ type CardGame = {
    * on every other path, including CSV_FINALS.
    */
   resultsProvisional?: boolean;
+  /** Canceled/postponed/suspended per the live feed — results above are
+   *  pushes (no action), and the record panel must count them as such
+   *  rather than pricing the status artifact 0-0. */
+  noContest?: boolean;
   scoreSource?: "CSV_FINALS" | "LIVE" | "UPCOMING";
   liveInProgress?: boolean;
   liveStatusText?: string;
@@ -880,11 +894,15 @@ function buildJsonCards(
     let dispFinalA: number | undefined;
     let dispFinalB: number | undefined;
     let scoreSource: "CSV_FINALS" | "LIVE" | "UPCOMING" = "UPCOMING";
+    const noContest = Boolean(lg?.noContest) && !hasFinals;
+
     if (hasFinals) {
       dispFinalA = fA as number;
       dispFinalB = fB as number;
       scoreSource = "CSV_FINALS";
-    } else if (Number.isFinite(aScore) && Number.isFinite(bScore)) {
+    } else if (!noContest && Number.isFinite(aScore) && Number.isFinite(bScore)) {
+      // A canceled game's 0-0 is a status artifact, not a score — never
+      // display it as a final.
       dispFinalA = aScore as number;
       dispFinalB = bScore as number;
       scoreSource = "LIVE";
@@ -901,6 +919,14 @@ function buildJsonCards(
       ({ spreadResult, totalResult, mlResult } = gradeAgainstFinals(
         fA as number, fB as number, teamA, teamB, medA, medB, spread, totalLine, mlPickTeam
       ));
+    } else if (noContest) {
+      // Canceled / postponed / suspended: every market with a pick is a PUSH
+      // (no action, stake returned) — grading the 0-0 would hand a side an
+      // ATS win and the under a total win it never earned.
+      if (Number.isFinite(spread)) spreadResult = "push";
+      if (Number.isFinite(totalLine)) totalResult = "push";
+      if (typeof mlPickTeam === "string") mlResult = "push";
+      resultsProvisional = true;
     } else if (lg?.state === "final" && Number.isFinite(aScore) && Number.isFinite(bScore)) {
       // No dataset finals yet (published pregame) but ESPN already has this
       // game final. Grade off the live score with the identical math so the
@@ -938,6 +964,7 @@ function buildJsonCards(
       liveA: aScore,
       liveB: bScore,
       live: lg,
+      noContest: noContest || undefined,
       jsonRow: row,
       pHome: typeof pA === "number" ? pA : undefined,
       nsims: summary.nsims,
@@ -2914,7 +2941,7 @@ function computeLineRecord(
 
   for (const c of cards) {
     const graded = c.scoreSource === "CSV_FINALS" || c.resultsProvisional === true;
-    if (!graded || typeof c.finalA !== "number" || typeof c.finalB !== "number") continue;
+    if (!graded) continue;
     // Each division prices off its own lines file — FCS slugs are not in the
     // FBS file and vice versa, so a wrong-division join can never mislead;
     // it just misses.
@@ -2923,6 +2950,21 @@ function computeLineRecord(
     const slug = c.jsonRow?.slug;
     const lg = slug ? wl.games[slug] : undefined;
     if (!lg) continue;
+
+    if (c.noContest) {
+      // Canceled/postponed: every market this frame could have priced is a
+      // push at 0 PnL (stake returned) — there is no score to grade.
+      const spreadLine = frame === "open" ? lg.spread.open : lg.spread.close;
+      const totalLine = frame === "open" ? lg.total.open : lg.total.close;
+      const mlHome = frame === "open" ? lg.ml.home_open : lg.ml.home_close;
+      const mlAway = frame === "open" ? lg.ml.away_open : lg.ml.away_close;
+      if (spreadLine !== null) ats.push++;
+      if (totalLine !== null) tot.push++;
+      if (typeof c.pHome === "number" && mlHome !== null && mlAway !== null) ml.push++;
+      if (spreadLine !== null || totalLine !== null) provisionalGames++;
+      continue;
+    }
+    if (typeof c.finalA !== "number" || typeof c.finalB !== "number") continue;
 
     let contributed = false;
     const add = (agg: MarketAgg, g: { result: "win" | "loss" | "push"; pnl: number } | null) => {
