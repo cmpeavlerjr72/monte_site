@@ -75,6 +75,13 @@ export const MAX_SPREAD = 0.30;
  * `fbs_maker_pipeline.py` imports. If the three disagree, the Python is right
  * and this file is the bug — the standing rule for every constant here.
  *
+ * NOT a fourth consumer, deliberately: `statBookQuality` in kalshi.ts keeps
+ * its own STAT_SIM_LO/HI of 0.05–0.95. That gate decides whether the Team
+ * Stats panel prints an edge CHIP next to a live quote — a display suppression
+ * on a surface the user has already signed off — not whether a bet is
+ * suggested or placed. Widening it would quietly strip chips off that chart,
+ * so it was left alone; raise it as a question rather than "fixing" it.
+ *
  * TAIL rows are NOT deleted: they are excluded from the default list and from
  * ranking, counted in the card footer, and revealable (muted, badged) with the
  * "show tails" toggle. Suppression that the user cannot see is how a filter
