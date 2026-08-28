@@ -81,6 +81,12 @@ export const KALSHI_TEAM_ALIASES: Record<string, string> = {
   ncaandt: "northcarolinaaandt",             // "NC A&T"
   // Longer/shorter spellings of the same school.
   albany: "ualbany",
+  // Kalshi's full form is "University at Albany" (live 2026-08-28,
+  // KXNCAAFGAME-26AUG28UNHALBY): the generic "university" strip leaves the
+  // preposition behind, so the key lands on "atalbany" — reachable by
+  // neither the bare-"albany" alias above nor the slate's "UAlbany". The
+  // user caught it as a card with no Kalshi info at all.
+  atalbany: "ualbany",
   citadel: "thecitadel",
   penn: "pennsylvania",
   southeasternlouisiana: "selouisiana",
