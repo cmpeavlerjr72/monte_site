@@ -19,6 +19,7 @@
 // team's own 20 → 80).
 
 import { useEffect, useMemo, useState } from "react";
+import { dataUrl, SEASONS } from "./cfbData";
 
 const SITE_API =
   "https://site.api.espn.com/apis/site/v2/sports/football/college-football";
@@ -274,8 +275,42 @@ export function parseProbabilities(json: any): ProbPoint[] {
 
 /* --------------------------------- hooks ---------------------------------- */
 
-/** Poll a JSON URL while mounted; pollMs=null fetches exactly once. */
-function useEspnJson(url: string | null, pollMs: number | null) {
+/* Published-snapshot fallback for networks that block espn.com (2026-08-28
+ * "work computer" incident). publish_espn_snapshots.py (sim repo) writes
+ * `espn/gamecast/<eventId>.json` = {summary, probabilities} for every FINAL
+ * game onto the current season's dataset, served SAME-ORIGIN via /api/data.
+ * One fetch per event, shared by both hooks (each file is ~0.5MB); a null
+ * result is not cached so a game that finals later can be retried. */
+const SNAPSHOT_NS = SEASONS[0];
+const gamecastSnapCache = new Map<string, Promise<any | null>>();
+
+/** Exported for the /test-gamecast harness, whose bootstrap fetch needs the
+ *  same blocked-network fallback the hooks have. */
+export function gamecastSnapshot(eventId: string): Promise<any | null> {
+  let p = gamecastSnapCache.get(eventId);
+  if (!p) {
+    p = (async () => {
+      try {
+        const url = await dataUrl(`espn/gamecast/${eventId}.json`, SNAPSHOT_NS);
+        const r = await fetch(url, { cache: "no-cache" });
+        return r.ok ? await r.json() : null;
+      } catch {
+        return null;
+      }
+    })().then((j) => {
+      if (j == null) gamecastSnapCache.delete(eventId);
+      return j;
+    });
+    gamecastSnapCache.set(eventId, p);
+  }
+  return p;
+}
+
+/** Poll a JSON URL while mounted; pollMs=null fetches exactly once.
+ *  `snapKey` ("<eventId>:summary" | "<eventId>:probabilities") names the
+ *  branch of the published gamecast snapshot to fall back to when ESPN is
+ *  unreachable — a primitive, so it is rule-4 safe as an effect dependency. */
+function useEspnJson(url: string | null, pollMs: number | null, snapKey?: string | null) {
   const [data, setData] = useState<any | null>(null);
   useEffect(() => {
     if (!url) {
@@ -284,14 +319,27 @@ function useEspnJson(url: string | null, pollMs: number | null) {
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let snapshotApplied = false;
+    async function trySnapshot() {
+      if (!snapKey || snapshotApplied) return;
+      const [eid, field] = snapKey.split(":");
+      const part = (await gamecastSnapshot(eid))?.[field];
+      if (part && !cancelled) {
+        snapshotApplied = true;
+        setData(part);
+      }
+    }
     async function pull() {
       try {
         const r = await fetch(url as string, { cache: "no-cache" });
         if (r.ok) {
           const j = await r.json();
           if (!cancelled) setData(j);
+        } else {
+          await trySnapshot();
         }
       } catch {
+        await trySnapshot();
         /* transient network error — keep the last good payload */
       }
       if (!cancelled && pollMs) timer = setTimeout(pull, pollMs);
@@ -301,13 +349,13 @@ function useEspnJson(url: string | null, pollMs: number | null) {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [url, pollMs]);
+  }, [url, pollMs, snapKey]);
   return data;
 }
 
 export function useGameSummary(eventId?: string, live?: boolean): GameSummaryLite | null {
   const url = eventId ? `${SITE_API}/summary?event=${eventId}` : null;
-  const raw = useEspnJson(url, live ? 20_000 : null);
+  const raw = useEspnJson(url, live ? 20_000 : null, eventId ? `${eventId}:summary` : null);
   return useMemo(() => (raw ? parseSummaryLite(raw) : null), [raw]);
 }
 
@@ -315,6 +363,6 @@ export function useGameProbabilities(eventId?: string, live?: boolean): ProbPoin
   const url = eventId
     ? `${CORE_API}/events/${eventId}/competitions/${eventId}/probabilities?limit=1000`
     : null;
-  const raw = useEspnJson(url, live ? 30_000 : null);
+  const raw = useEspnJson(url, live ? 30_000 : null, eventId ? `${eventId}:probabilities` : null);
   return useMemo(() => (raw ? parseProbabilities(raw) : null), [raw]);
 }

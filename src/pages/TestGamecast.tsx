@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
-import { parseSummaryLite, type LiveSituation } from "../lib/espnGame";
+import { gamecastSnapshot, parseSummaryLite, type LiveSituation } from "../lib/espnGame";
 import { parseLiveGrid, type LiveGrid } from "../lib/liveGrid";
 
 const SUMMARY =
@@ -40,7 +40,14 @@ export default function TestGamecast() {
     fetch(`${SUMMARY}${eventId}`, { cache: "no-cache" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((j) => !cancelled && setRaw(j))
-      .catch((e) => !cancelled && setErr(String(e)));
+      .catch(async (e) => {
+        // ESPN unreachable (blocked network) — same published-snapshot
+        // fallback the production hooks use; also exercises that file.
+        const snap = await gamecastSnapshot(eventId);
+        if (cancelled) return;
+        if (snap?.summary) setRaw(snap.summary);
+        else setErr(String(e));
+      });
     return () => {
       cancelled = true;
     };

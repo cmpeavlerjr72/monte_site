@@ -27,6 +27,7 @@
 // fetch — no polling — once every event is final (finals are immutable).
 
 import { useEffect, useState } from "react";
+import { dataUrl } from "./cfbData";
 
 type SportKey = "cfb" | "cbb" | "mlb";
 
@@ -144,9 +145,36 @@ async function fetchServer(dates: string[], sport: SportKey): Promise<any | null
   return mergePayloads(payloads);
 }
 
+/** Published-snapshot fallback for networks that block espn.com outright
+ *  (2026-08-28, "work computer" incident: browser-direct AND the Render proxy
+ *  are both dead there, so a blocked viewer saw nothing — not even finals).
+ *  publish_espn_snapshots.py (sim repo) mirrors the merged scoreboard per
+ *  slate date onto the season dataset, which the site serves SAME-ORIGIN via
+ *  /api/data. `ns` is the season namespace whose repo holds the snapshots. */
+async function fetchSnapshot(dates: string[], ns: string | undefined): Promise<any | null> {
+  if (!ns) return null;
+  const payloads = await Promise.all(
+    dates.map(async (d) => {
+      try {
+        const url = await dataUrl(`espn/scoreboard/${d}.json`, ns);
+        const resp = await fetch(url, { cache: "no-cache" });
+        return resp.ok ? await resp.json() : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  return mergePayloads(payloads);
+}
+
+/** True when a payload carries at least one real (id-bearing) event. */
+function hasEvents(p: any | null): boolean {
+  return !!p && Array.isArray(p.events) && p.events.some((e: any) => e?.id);
+}
+
 /** Next poll delay from the payload's event states; null = stop polling. */
 function nextDelayMs(payload: any | null): number | null {
-  if (!payload) return 20_000; // both paths failed — keep retrying
+  if (!payload) return 30_000; // every tier failed — keep retrying, gently
   const events: any[] = Array.isArray(payload.events) ? payload.events : [];
   if (!events.length) return 60_000; // empty/transient — recheck slowly
   let anyIn = false;
@@ -170,10 +198,14 @@ function nextDelayMs(payload: any | null): number | null {
  *              spanning a multi-day slate. Past dates are served by ESPN
  *              indefinitely, so finished slates stay populated.
  * @param sport "cfb", "cbb", or "mlb" (defaults to "cfb")
+ * @param snapshotNs  season namespace whose dataset carries published ESPN
+ *              snapshots (`espn/scoreboard/<date>.json`) — the last-resort
+ *              tier for networks that block espn.com. Omit to disable.
  */
 export function useLiveScoreboard(
   date: string | string[] | null | undefined,
-  sport: SportKey = "cfb"
+  sport: SportKey = "cfb",
+  snapshotNs?: string
 ) {
   const [payload, setPayload] = useState<any | null>(null);
 
@@ -189,10 +221,28 @@ export function useLiveScoreboard(
 
     async function pull() {
       let p = await fetchEspnDirect(dates, sport);
-      if (!p) p = await fetchServer(dates, sport);
+      let fromSnapshot = false;
+      // A tier that answers but carries no REAL events must not mask a later
+      // tier that has them (found 2026-08-28: a stale server proxy returned a
+      // degraded empty payload and starved the snapshot tier). An
+      // empty-but-healthy slate still stands when every tier agrees.
+      if (!hasEvents(p)) {
+        const s = await fetchServer(dates, sport);
+        if (s && (hasEvents(s) || !p)) p = s;
+      }
+      if (!hasEvents(p)) {
+        const snap = await fetchSnapshot(dates, snapshotNs);
+        if (snap && (hasEvents(snap) || !p)) {
+          p = snap;
+          fromSnapshot = true;
+        }
+      }
       if (cancelled) return;
       if (p) setPayload(p);
-      const delay = nextDelayMs(p);
+      let delay = nextDelayMs(p);
+      // A snapshot viewer re-polls our own proxy, and the file only changes
+      // when the publisher pushes — live cadence would be pure hammering.
+      if (delay != null && fromSnapshot) delay = Math.max(delay, 60_000);
       if (delay != null) timer = setTimeout(pull, delay);
     }
 
@@ -201,7 +251,7 @@ export function useLiveScoreboard(
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [datesKey, sport]);
+  }, [datesKey, sport, snapshotNs]);
 
   return payload;
 }

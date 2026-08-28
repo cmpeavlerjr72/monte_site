@@ -1387,7 +1387,10 @@ function ScoreboardPage() {
     return days.size ? [...days].sort() : [todayET];
   }, [jsonGames, fcsGames, meta, todayET]);
 
-  const livePayload = useLiveScoreboard(slateDates, "cfb");
+  // Third argument = which season dataset carries the published ESPN
+  // snapshots (the espn.com-blocked-network fallback). FCS games ride along:
+  // the snapshot files hold the merged 80+81 scoreboard.
+  const livePayload = useLiveScoreboard(slateDates, "cfb", season || SEASONS[0]);
 
   // normalize and index the live games
   const liveGames: LiveGame[] = useMemo(

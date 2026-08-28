@@ -26,7 +26,16 @@ midnight ET; ESPN serves past scoreboard dates indefinitely, verified back
 through 2025). Multi-day slates use ESPN's range syntax, whose END is
 EXCLUSIVE (the hook pads +1 day — dropping that pad silently kills the last
 slate day's live coverage). Cadence is adaptive: 20s in-game, 60s pregame,
-a single fetch once every event is final. Per-game gamecast (field strip on
+a single fetch once every event is final. LAST-RESORT tier for networks
+that block espn.com (many offices/schools): published ESPN snapshots on the
+season dataset — `espn/scoreboard/<date>.json` (merged 80+81) and
+`espn/gamecast/<eventId>.json` ({summary, probabilities}, FINAL games only)
+— written by the sim repo's `publish_espn_snapshots.py` and served
+SAME-ORIGIN via /api/data. `useLiveScoreboard` and the espnGame hooks fall
+back to them; tier rule: an answer with zero id-bearing events never masks
+a later tier that has real events (a stale server proxy taught us that).
+Run the publisher one-shot after every slate (finals are immutable) or with
+--loop on game day for delayed-live on blocked networks. Per-game gamecast (field strip on
 live cards, Live panel: drive field, win/cover/over% chart, drive log) lives
 in `src/components/LiveGamecast.tsx` + `src/lib/espnGame.ts`; the sim↔live
 join indexes EVERY ESPN name form (shortDisplayName alone matched 27/46 FCS
