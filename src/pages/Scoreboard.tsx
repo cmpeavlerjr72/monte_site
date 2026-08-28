@@ -2422,6 +2422,8 @@ export function GameCard({
     awayId: lv?.awayId,
     homeColor: (espnHomeIsA ? aColors : bColors)?.primary,
     awayColor: (espnHomeIsA ? bColors : aColors)?.primary,
+    homeLogo: (espnHomeIsA ? aLogo : bLogo) || undefined,
+    awayLogo: (espnHomeIsA ? bLogo : aLogo) || undefined,
   };
 
   const tabBtn = (kind: PanelKind, label: string, accent = false) => (
@@ -2877,6 +2879,8 @@ function CardPanelHost({
     awayId: lv?.awayId,
     homeColor: getTeamColors(espnHomeIsA ? card.teamA : card.teamB)?.primary,
     awayColor: getTeamColors(espnHomeIsA ? card.teamB : card.teamA)?.primary,
+    homeLogo: getTeamLogo(espnHomeIsA ? card.teamA : card.teamB) || undefined,
+    awayLogo: getTeamLogo(espnHomeIsA ? card.teamB : card.teamA) || undefined,
   };
 
   return (

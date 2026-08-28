@@ -111,7 +111,14 @@ export type DrivePlay = {
 export type CurrentDrive = {
   teamAbbrev?: string;
   teamId?: string;
+  teamLogo?: string;
   description?: string;
+  /** ESPN's drive result, e.g. "Punt", "Touchdown", "Interception". */
+  result?: string;
+  isScore?: boolean;
+  /** Score after the drive's last play. */
+  scoreHome?: number;
+  scoreAway?: number;
   plays: DrivePlay[];
   attackDir?: AttackDir;
   /** Ball spot after the drive's last play. */
@@ -129,6 +136,8 @@ export type PlayRef = {
 export type GameSummaryLite = {
   state?: string; // pre | in | post
   drive?: CurrentDrive;
+  /** Every drive in game order (oldest first), for the drive log. */
+  drives: CurrentDrive[];
   /** Every play in the game by id — the probabilities series joins on this. */
   playText: Map<string, PlayRef>;
   /** Sportsbook line, e.g. "TOW -2.5" (home-perspective spread). */
@@ -163,10 +172,16 @@ function parseDrive(d: any): CurrentDrive | undefined {
   }
 
   const last = plays.length ? plays[plays.length - 1] : undefined;
+  const lastRaw = Array.isArray(d.plays) && d.plays.length ? d.plays[d.plays.length - 1] : undefined;
   return {
     teamAbbrev: d.team?.abbreviation || undefined,
     teamId: idOrU(d.team?.id),
+    teamLogo: d.team?.logos?.[0]?.href || undefined,
     description: d.description || undefined,
+    result: d.displayResult || d.shortDisplayResult || undefined,
+    isScore: Boolean(d.isScore),
+    scoreHome: numOrU(lastRaw?.homeScore),
+    scoreAway: numOrU(lastRaw?.awayScore),
     plays,
     attackDir: dir,
     ballYL: last?.endYL,
@@ -196,9 +211,26 @@ export function parseSummaryLite(json: any): GameSummaryLite {
   }
 
   const pc = Array.isArray(json?.pickcenter) ? json.pickcenter[0] : undefined;
+
+  const allDrives: CurrentDrive[] = [];
+  for (const d of prev) {
+    const pd = parseDrive(d);
+    if (pd) allDrives.push(pd);
+  }
+  if (drives?.current?.plays?.length) {
+    const cd = parseDrive(drives.current);
+    // `current` can also be the just-finished drive still sitting in
+    // `previous` — dedupe on the drive's first play id.
+    const firstId = cd?.plays[0]?.id;
+    if (cd && !(firstId && allDrives.some((d) => d.plays[0]?.id === firstId))) {
+      allDrives.push(cd);
+    }
+  }
+
   return {
     state: json?.header?.competitions?.[0]?.status?.type?.state,
     drive: parseDrive(curRaw),
+    drives: allDrives,
     playText,
     pickDetails: pc?.details || undefined,
     spread: numOrU(pc?.spread),

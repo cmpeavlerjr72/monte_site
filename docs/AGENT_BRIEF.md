@@ -14,6 +14,18 @@ Data lives on HuggingFace datasets, fetched at runtime through
 `/api/data/<repo>/<path>` (allowlists in liveScores.ts) with a direct-Hub
 fallback. NOTHING bundles data into the frontend.
 
+LIVE data (2026-08-27): the live scoreboard is BROWSER-DIRECT from ESPN
+(`useLiveScoreboard` polls per group — 80 and 81 separately, merged by event
+id — because ESPN's multi-group query returns id-less stub events whenever
+one group has no games, and ESPN's Akamai edge blocks the Render egress IP
+outright: every server-mediated path 502s while browsers are fine). The
+server /api/scoreboard is fallback only. Per-game gamecast (field strip on
+live cards, Live panel: drive field, win/cover/over% chart, drive log) lives
+in `src/components/LiveGamecast.tsx` + `src/lib/espnGame.ts`; the sim↔live
+join indexes EVERY ESPN name form (shortDisplayName alone matched 27/46 FCS
+games). Harness: hidden route `/test-gamecast?event=<espn id>`. ESPN yard
+lines are ABSOLUTE 0–100, home goal line = 0.
+
 ## Divisions (FBS + FCS)
 
 FCS is a **separate dataset with an identical layout**, addressed by the

@@ -1,34 +1,37 @@
 // src/components/LiveGamecast.tsx
 //
-// Live-game visuals fed by lib/espnGame:
-//   <FieldStrip>    — compact field on every live card: ball spot, possession,
-//                     first-down line, red-zone tint. Data rides the
-//                     scoreboard poll the page already runs; zero extra fetch.
-//   <LiveGamePanel> — the break-out panel: full field with the current
-//                     drive's plays drawn on it, the drive's play-by-play
-//                     list, and ESPN's after-every-play probability series
-//                     with a WIN% / COVER% / OVER% toggle. The sim's own
-//                     pregame P(home) overlays the WIN% chart, so the live
-//                     market model is always read against our number.
+// Live-game visuals fed by lib/espnGame, styled after ESPN's gamecast:
+//   <FieldStrip>    — compact striped field on every live card: ball spot,
+//                     possession, first-down line, red-zone tint.
+//   <LiveGamePanel> — the break-out panel: broadcast-style field (striped
+//                     turf, yard numbers, translucent drive band), the
+//                     probability chart (line split home/away color at the
+//                     50% axis, quarter labels, team logos on the axis), and
+//                     a per-drive accordion play-by-play with result badges.
 //
 // Field geometry (shared): ESPN yard lines are absolute 0–100 with the HOME
-// goal line at 0. The strip renders home on the RIGHT (TV convention), so
+// goal line at 0. Home renders on the RIGHT (TV convention), so
 // x = X0 + (100 - yardLine) in a 0–120 viewBox with 10-unit endzones.
 
 import { useMemo, useState } from "react";
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
+  ComposedChart, Area, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import type {
   AttackDir, CurrentDrive, LiveSituation, ProbPoint, GameSummaryLite,
 } from "../lib/espnGame";
 import { useGameProbabilities, useGameSummary } from "../lib/espnGame";
 
-const X0 = 10; // width of each endzone in viewBox units
+const X0 = 10; // endzone width in viewBox units
 const xOf = (yardLine: number) => X0 + (100 - Math.max(0, Math.min(100, yardLine)));
 
-const FIELD_GREEN = "rgba(56,140,90,0.16)";
-const FIRST_DOWN_YELLOW = "#eab308";
+// Turf palette — deliberate literals like team hex: the field must read as
+// grass in both themes, never re-theme.
+const TURF_A = "#2f7d46";
+const TURF_B = "#2a7040";
+const LINE_WHITE = "rgba(255,255,255,0.75)";
+const NUMBER_WHITE = "rgba(255,255,255,0.55)";
+const FIRST_DOWN_YELLOW = "#ffd60a";
 
 type TeamBits = {
   homeAbbrev?: string;
@@ -37,6 +40,8 @@ type TeamBits = {
   awayColor?: string;
   homeId?: string;
   awayId?: string;
+  homeLogo?: string;
+  awayLogo?: string;
 };
 
 /** First-down spot in absolute yards, or undefined when not computable. */
@@ -47,47 +52,82 @@ function firstDownYL(sit: LiveSituation | undefined, dir: AttackDir | undefined)
   return v > 0 && v < 100 ? v : undefined; // inside an endzone = goal to go, no line
 }
 
-/** Field furniture shared by the strip and the drive field. */
-function FieldBase({ h, bits, redZoneDir }: {
+/** Broadcast-style turf: alternating 10-yard stripes, white yard lines, hash
+ *  ticks at the fives, optional yard numbers, team-color endzones.
+ *  `minimal` drops hashes and endzone text for the card-sized strip. */
+function FieldSurface({ h, bits, showNumbers = false, minimal = false, redZoneDir }: {
   h: number;
   bits: TeamBits;
-  /** When set, tint the 20 yards in front of the endzone being attacked. */
+  showNumbers?: boolean;
+  minimal?: boolean;
   redZoneDir?: AttackDir;
 }) {
-  const yPad = 2;
+  const yPad = 1.5;
   const yH = h - 2 * yPad;
-  const hashes = [];
-  for (let v = 10; v <= 90; v += 10) {
-    hashes.push(
-      <line
-        key={v}
-        x1={xOf(v)} x2={xOf(v)} y1={yPad} y2={yPad + yH}
-        stroke="var(--border)" strokeWidth={v === 50 ? 0.6 : 0.35}
-      />
+  const stripes = [];
+  for (let i = 0; i < 10; i++) {
+    stripes.push(
+      <rect key={`s${i}`} x={X0 + i * 10} y={yPad} width={10} height={yH}
+        fill={i % 2 === 0 ? TURF_A : TURF_B} />
     );
+  }
+  const lines = [];
+  for (let v = 10; v <= 90; v += 10) {
+    lines.push(
+      <line key={`l${v}`} x1={xOf(v)} x2={xOf(v)} y1={yPad} y2={yPad + yH}
+        stroke={LINE_WHITE} strokeWidth={v === 50 ? 0.45 : 0.35} />
+    );
+  }
+  const hashes = [];
+  if (!minimal) {
+    for (let v = 5; v <= 95; v += 10) {
+      for (const [y1, y2] of [[yPad, yPad + yH * 0.16], [yPad + yH * 0.84, yPad + yH]] as const) {
+        hashes.push(
+          <line key={`h${v}-${y1}`} x1={xOf(v)} x2={xOf(v)} y1={y1} y2={y2}
+            stroke={LINE_WHITE} strokeWidth={0.22} opacity={0.7} />
+        );
+      }
+    }
+  }
+  const numbers = [];
+  if (showNumbers) {
+    for (let v = 10; v <= 90; v += 10) {
+      numbers.push(
+        <text key={`n${v}`} x={xOf(v)} y={h - 2.2}
+          fill={NUMBER_WHITE} fontSize={2.8} fontWeight={700}
+          textAnchor="middle" style={{ letterSpacing: 0.5 }}>
+          {v <= 50 ? v : 100 - v}
+        </text>
+      );
+    }
   }
   return (
     <g>
-      {/* playing surface + endzones: away left, home right */}
-      <rect x={X0} y={yPad} width={100} height={yH} fill={FIELD_GREEN} rx={1} />
-      <rect x={0} y={yPad} width={X0} height={yH} fill={bits.awayColor ?? "var(--accent)"} opacity={0.85} rx={1} />
-      <rect x={110} y={yPad} width={X0} height={yH} fill={bits.homeColor ?? "var(--brand)"} opacity={0.85} rx={1} />
+      {stripes}
       {redZoneDir !== undefined && (
-        <rect
-          x={redZoneDir === -1 ? xOf(20) : X0}
-          y={yPad} width={20} height={yH}
-          fill="var(--neg)" opacity={0.12}
-        />
+        <rect x={redZoneDir === -1 ? xOf(20) : X0} y={yPad} width={20} height={yH}
+          fill="#dc2626" opacity={0.16} />
       )}
+      {lines}
       {hashes}
-      <text x={5} y={h / 2} fill="#fff" fontSize={3.4} fontWeight={800}
-        textAnchor="middle" dominantBaseline="central" style={{ letterSpacing: 0.4 }}>
-        {(bits.awayAbbrev ?? "").slice(0, 4)}
-      </text>
-      <text x={115} y={h / 2} fill="#fff" fontSize={3.4} fontWeight={800}
-        textAnchor="middle" dominantBaseline="central" style={{ letterSpacing: 0.4 }}>
-        {(bits.homeAbbrev ?? "").slice(0, 4)}
-      </text>
+      {numbers}
+      {/* endzones: away left, home right */}
+      <rect x={0} y={yPad} width={X0} height={yH} fill={bits.awayColor ?? "#444"} />
+      <rect x={110} y={yPad} width={X0} height={yH} fill={bits.homeColor ?? "#444"} />
+      {!minimal && (
+        <>
+          <text x={5} y={h / 2} fill="#fff" fontSize={2.8}
+            fontWeight={800} textAnchor="middle" dominantBaseline="central"
+            transform={`rotate(-90 5 ${h / 2})`} style={{ letterSpacing: 0.8 }}>
+            {(bits.awayAbbrev ?? "").slice(0, 5)}
+          </text>
+          <text x={115} y={h / 2} fill="#fff" fontSize={2.8}
+            fontWeight={800} textAnchor="middle" dominantBaseline="central"
+            transform={`rotate(90 115 ${h / 2})`} style={{ letterSpacing: 0.8 }}>
+            {(bits.homeAbbrev ?? "").slice(0, 5)}
+          </text>
+        </>
+      )}
     </g>
   );
 }
@@ -101,11 +141,11 @@ function BallMarker({ x, y, color, dir }: {
     <g>
       {dx !== 0 && (
         <polygon
-          points={`${x + dx * 3},${y} ${x + dx * 6},${y - 1.6} ${x + dx * 6},${y + 1.6}`}
-          fill={color} opacity={0.8}
+          points={`${x + dx * 3.1},${y - 1.7} ${x + dx * 5.4},${y} ${x + dx * 3.1},${y + 1.7}`}
+          fill="#fff" opacity={0.9}
         />
       )}
-      <circle cx={x} cy={y} r={2.2} fill={color} stroke="#fff" strokeWidth={0.6} />
+      <circle cx={x} cy={y} r={2.3} fill={color} stroke="#fff" strokeWidth={0.7} />
     </g>
   );
 }
@@ -117,7 +157,9 @@ export function FieldStrip({ situation, bits, condensed = false }: {
   bits: TeamBits;
   condensed?: boolean;
 }) {
-  const h = 26;
+  // Wide, thin strip (120:14): scales by WIDTH (height:auto) so it always
+  // fills the card instead of letterboxing inside a fixed-height box.
+  const h = 14;
   const sit = situation;
   const possHome = sit.possessionId !== undefined && sit.possessionId === bits.homeId;
   const possColor = (possHome ? bits.homeColor : bits.awayColor) ?? "var(--text)";
@@ -128,13 +170,13 @@ export function FieldStrip({ situation, bits, condensed = false }: {
     <div style={{ display: "grid", gap: 2 }} title={sit.lastPlayText}>
       <svg
         viewBox={`0 0 120 ${h}`}
-        style={{ width: "100%", height: condensed ? 22 : 30, display: "block" }}
+        style={{ width: "100%", height: "auto", maxHeight: condensed ? 34 : 44, display: "block", borderRadius: 4 }}
         role="img"
         aria-label={`${possAbbrev ?? "Offense"} ball, ${sit.downDistanceText ?? ""}`}
       >
-        <FieldBase h={h} bits={bits} redZoneDir={sit.isRedZone ? sit.attackDir : undefined} />
+        <FieldSurface h={h} bits={bits} minimal redZoneDir={sit.isRedZone ? sit.attackDir : undefined} />
         {fd !== undefined && (
-          <line x1={xOf(fd)} x2={xOf(fd)} y1={2} y2={h - 2}
+          <line x1={xOf(fd)} x2={xOf(fd)} y1={1} y2={h - 1}
             stroke={FIRST_DOWN_YELLOW} strokeWidth={0.7} />
         )}
         {sit.yardLine !== undefined && (
@@ -161,46 +203,43 @@ function DriveField({ drive, situation, bits }: {
   situation?: LiveSituation;
   bits: TeamBits;
 }) {
-  const h = 34;
+  // 4:1 field, scaled by width (height:auto) — a fixed height letterboxes
+  // the drawing into the middle third of the panel.
+  const h = 30;
   const dir = drive?.attackDir ?? situation?.attackDir;
   const possId = drive?.teamId ?? situation?.possessionId;
   const possHome = possId !== undefined && possId === bits.homeId;
-  const possColor = (possHome ? bits.homeColor : bits.awayColor) ?? "var(--text)";
+  const possColor = (possHome ? bits.homeColor : bits.awayColor) ?? "#fff";
   const ballYL = situation?.yardLine ?? drive?.ballYL;
   const fd = firstDownYL(situation, dir);
 
-  const segs = (drive?.plays ?? []).filter(
-    (p) => p.startYL !== undefined && p.endYL !== undefined && p.startYL !== p.endYL
+  // The drive band runs from where the possession started to the ball. Use
+  // the first scrimmage play (skip the kickoff, whose start is the kicker's
+  // spot on the other side of the field).
+  const scrim = (drive?.plays ?? []).filter(
+    (p) => p.startYL !== undefined && p.typeAbbrev !== "K" && p.typeAbbrev !== "EP"
   );
+  const bandFrom = scrim.length ? scrim[0].startYL : undefined;
+  const bandTo = ballYL;
 
   return (
-    <svg viewBox={`0 0 120 ${h}`} style={{ width: "100%", height: 64, display: "block" }}>
-      <FieldBase h={h} bits={bits} redZoneDir={situation?.isRedZone ? dir : undefined} />
-      {/* drive start marker */}
-      {segs.length > 0 && segs[0].startYL !== undefined && (
-        <line x1={xOf(segs[0].startYL)} x2={xOf(segs[0].startYL)} y1={3} y2={h - 3}
-          stroke="#fff" strokeWidth={0.5} strokeDasharray="1.4 1" opacity={0.7} />
+    <svg viewBox={`0 0 120 ${h}`} style={{ width: "100%", height: "auto", display: "block", borderRadius: 6 }}>
+      <FieldSurface h={h} bits={bits} showNumbers
+        redZoneDir={situation?.isRedZone ? dir : undefined} />
+      {bandFrom !== undefined && bandTo !== undefined && bandFrom !== bandTo && (
+        <rect
+          x={Math.min(xOf(bandFrom), xOf(bandTo))} y={1.5}
+          width={Math.abs(xOf(bandFrom) - xOf(bandTo))} height={h - 3}
+          fill={possColor} opacity={0.32}
+        />
       )}
-      {/* one arrow per play, staggered so back-to-back plays stay legible */}
-      {segs.map((p, i) => {
-        const x1 = xOf(p.startYL as number);
-        const x2 = xOf(p.endYL as number);
-        const y = h / 2 + (i % 2 === 0 ? -3 : 3);
-        const sgn = x2 > x1 ? 1 : -1;
-        const color = p.scoring ? FIRST_DOWN_YELLOW : possColor;
-        return (
-          <g key={p.id || i} opacity={i === segs.length - 1 ? 1 : 0.55}>
-            <line x1={x1} x2={x2} y1={y} y2={y} stroke={color} strokeWidth={1.1} />
-            <polygon
-              points={`${x2},${y} ${x2 - sgn * 2.4},${y - 1.4} ${x2 - sgn * 2.4},${y + 1.4}`}
-              fill={color}
-            />
-          </g>
-        );
-      })}
+      {bandFrom !== undefined && (
+        <line x1={xOf(bandFrom)} x2={xOf(bandFrom)} y1={1.5} y2={h - 1.5}
+          stroke="#fff" strokeWidth={0.4} strokeDasharray="1.6 1.1" opacity={0.75} />
+      )}
       {fd !== undefined && (
-        <line x1={xOf(fd)} x2={xOf(fd)} y1={2} y2={h - 2}
-          stroke={FIRST_DOWN_YELLOW} strokeWidth={0.7} />
+        <line x1={xOf(fd)} x2={xOf(fd)} y1={1.5} y2={h - 1.5}
+          stroke={FIRST_DOWN_YELLOW} strokeWidth={0.85} />
       )}
       {ballYL !== undefined && (
         <BallMarker x={xOf(ballYL)} y={h / 2} color={possColor} dir={dir} />
@@ -213,11 +252,20 @@ function DriveField({ drive, situation, bits }: {
 
 type ProbMode = "win" | "cover" | "over";
 
-function ProbChart({ points, summary, bits, simHomeWinPct }: {
+// Chart geometry is fixed so the 50%-split stroke gradient (userSpaceOnUse)
+// can be anchored to the exact pixel band the plot occupies.
+const CHART_H = 230;
+const CHART_MARGIN = { top: 8, right: 10, bottom: 0, left: -12 } as const;
+const XAXIS_H = 18;
+const PLOT_TOP = CHART_MARGIN.top;
+const PLOT_BOTTOM = CHART_H - XAXIS_H;
+
+function ProbChart({ points, summary, bits, simHomeWinPct, eventId }: {
   points: ProbPoint[];
   summary: GameSummaryLite | null;
   bits: TeamBits;
   simHomeWinPct?: number;
+  eventId: string;
 }) {
   const [mode, setMode] = useState<ProbMode>("win");
   const hasCover = points.some((p) => p.coverHome !== undefined);
@@ -235,29 +283,49 @@ function ProbChart({ points, summary, bits, simHomeWinPct }: {
     [points, effMode]
   );
 
-  // Quarter boundaries: first play at or under each threshold of game seconds
-  // remaining (3600-second regulation clock in this feed).
-  const quarterMarks = useMemo(() => {
-    const marks: { i: number; label: string }[] = [];
-    for (const [thresh, label] of [[2700, "Q2"], [1800, "Q3"], [900, "Q4"], [0, "OT"]] as const) {
+  // Quarter boundaries (3600-second regulation clock) → separator lines and
+  // ESPN-style 1st/2nd/3rd/4th labels centered inside each segment.
+  const { boundaries, tickIdxs, tickLabel } = useMemo(() => {
+    const bounds: number[] = [];
+    for (const thresh of [2700, 1800, 900]) {
       const idx = points.findIndex((p) => p.secondsLeft <= thresh);
-      if (idx > 0 && (label !== "OT" || points[idx].secondsLeft < 0)) marks.push({ i: idx, label });
+      if (idx > 0) bounds.push(idx);
     }
-    return marks;
+    const otIdx = points.findIndex((p) => p.secondsLeft < 0);
+    if (otIdx > 0) bounds.push(otIdx);
+    const edges = [0, ...bounds, Math.max(points.length - 1, 1)];
+    const names = ["1st", "2nd", "3rd", "4th", "OT"];
+    const idxs: number[] = [];
+    const label: Record<number, string> = {};
+    for (let s = 0; s < edges.length - 1 && s < names.length; s++) {
+      const mid = Math.round((edges[s] + edges[s + 1]) / 2);
+      idxs.push(mid);
+      label[mid] = names[s];
+    }
+    return { boundaries: bounds, tickIdxs: idxs, tickLabel: label };
   }, [points]);
 
   const last = points[points.length - 1];
-  const lineColor = effMode === "over" ? "var(--brand)" : bits.homeColor ?? "var(--brand)";
+  const gid = `wp-split-${eventId}`;
+  const splitStroke = `url(#${gid})`;
+  const stroke = effMode === "over" ? "var(--brand)" : splitStroke;
 
+  let leaderLogo: string | undefined;
   let readout = "";
+  let caption = "WIN PROBABILITY";
   if (last) {
     if (effMode === "win") {
       const homeUp = last.homeWin >= 50;
-      readout = `${(homeUp ? bits.homeAbbrev : bits.awayAbbrev) ?? (homeUp ? "Home" : "Away")} ${(homeUp ? last.homeWin : 100 - last.homeWin).toFixed(0)}%`;
+      leaderLogo = homeUp ? bits.homeLogo : bits.awayLogo;
+      readout = `${(homeUp ? bits.homeAbbrev : bits.awayAbbrev) ?? ""} ${(homeUp ? last.homeWin : 100 - last.homeWin).toFixed(1)}%`;
     } else if (effMode === "cover" && last.coverHome !== undefined) {
-      readout = `${summary?.pickDetails ?? `${bits.homeAbbrev ?? "Home"} cover`}: ${last.coverHome.toFixed(0)}%`;
+      caption = `COVER PROBABILITY${summary?.pickDetails ? ` · ${summary.pickDetails}` : ""}`;
+      const homeUp = last.coverHome >= 50;
+      leaderLogo = homeUp ? bits.homeLogo : bits.awayLogo;
+      readout = `${(homeUp ? bits.homeAbbrev : bits.awayAbbrev) ?? ""} ${(homeUp ? last.coverHome : 100 - last.coverHome).toFixed(1)}%`;
     } else if (effMode === "over" && last.overPct !== undefined) {
-      readout = `Over${summary?.overUnder !== undefined ? ` ${summary.overUnder}` : ""}: ${last.overPct.toFixed(0)}%`;
+      caption = `OVER${summary?.overUnder !== undefined ? ` ${summary.overUnder}` : ""} PROBABILITY`;
+      readout = `${last.overPct.toFixed(1)}%`;
     }
   }
 
@@ -278,39 +346,66 @@ function ProbChart({ points, summary, bits, simHomeWinPct }: {
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        {modeBtn("win", "Win %", true)}
-        {modeBtn("cover", "Cover %", hasCover)}
-        {modeBtn("over", "Over %", hasOver)}
+        <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color: "var(--muted)" }}>
+          {caption}
+        </span>
         <span style={{
-          marginLeft: "auto", fontSize: 13, fontWeight: 800,
-          fontVariantNumeric: "tabular-nums", color: "var(--text)",
+          display: "inline-flex", alignItems: "center", gap: 5,
+          fontSize: 14, fontWeight: 800, fontVariantNumeric: "tabular-nums",
         }}>
+          {leaderLogo && <img src={leaderLogo} alt="" width={16} height={16} style={{ objectFit: "contain" }} />}
           {readout}
         </span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+          {modeBtn("win", "Win %", true)}
+          {modeBtn("cover", "Cover %", hasCover)}
+          {modeBtn("over", "Over %", hasOver)}
+        </span>
       </div>
-      <div style={{ width: "100%", height: 200 }}>
+
+      <div style={{ position: "relative", width: "100%", height: CHART_H }}>
+        {/* Which half of the chart belongs to whom (100% top = home). */}
+        {effMode !== "over" && bits.homeLogo && (
+          <img src={bits.homeLogo} alt={bits.homeAbbrev} width={16} height={16}
+            style={{ position: "absolute", left: 24, top: PLOT_TOP + 4, zIndex: 1, opacity: 0.95, objectFit: "contain" }} />
+        )}
+        {effMode !== "over" && bits.awayLogo && (
+          <img src={bits.awayLogo} alt={bits.awayAbbrev} width={16} height={16}
+            style={{ position: "absolute", left: 24, top: PLOT_BOTTOM - 20, zIndex: 1, opacity: 0.95, objectFit: "contain" }} />
+        )}
         <ResponsiveContainer>
-          <LineChart data={data} margin={{ top: 6, right: 8, bottom: 2, left: -18 }}>
-            <XAxis dataKey="i" tick={false} axisLine={{ stroke: "var(--border)" }} tickLine={false} />
-            <YAxis
-              domain={[0, 100]} ticks={[0, 25, 50, 75, 100]}
+          <ComposedChart data={data} margin={{ ...CHART_MARGIN }}>
+            <defs>
+              <linearGradient id={gid} x1="0" y1={PLOT_TOP} x2="0" y2={PLOT_BOTTOM} gradientUnits="userSpaceOnUse">
+                <stop offset="0" stopColor={bits.homeColor ?? "var(--brand)"} />
+                <stop offset="0.5" stopColor={bits.homeColor ?? "var(--brand)"} />
+                <stop offset="0.5" stopColor={bits.awayColor ?? "var(--accent)"} />
+                <stop offset="1" stopColor={bits.awayColor ?? "var(--accent)"} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey="i" height={XAXIS_H}
+              ticks={tickIdxs} tickFormatter={(v: number) => tickLabel[v] ?? ""}
               tick={{ fontSize: 10, fill: "var(--muted)" }}
-              tickFormatter={(v: number) => `${v}%`}
+              tickLine={false} axisLine={{ stroke: "var(--border)" }}
+              interval={0} type="number" domain={[0, Math.max(points.length - 1, 1)]}
+            />
+            <YAxis
+              domain={[0, 100]} ticks={[0, 50, 100]}
+              tick={{ fontSize: 9, fill: "var(--muted)" }}
+              tickFormatter={(v: number) => (v === 50 ? "50%" : "100%")}
               axisLine={false} tickLine={false}
             />
-            <ReferenceLine y={50} stroke="var(--border)" strokeDasharray="4 3" />
+            <ReferenceLine y={50} stroke="var(--border)" />
+            {boundaries.map((b) => (
+              <ReferenceLine key={b} x={b} stroke="var(--border)" strokeDasharray="2 3" />
+            ))}
             {effMode === "win" && simHomeWinPct !== undefined && (
               <ReferenceLine
                 y={simHomeWinPct} stroke="var(--brand)" strokeDasharray="6 3"
                 label={{ value: "SIM", position: "insideRight", fontSize: 9, fill: "var(--brand)" }}
               />
             )}
-            {quarterMarks.map((q) => (
-              <ReferenceLine
-                key={q.label} x={q.i} stroke="var(--border)"
-                label={{ value: q.label, position: "insideTopLeft", fontSize: 9, fill: "var(--muted)" }}
-              />
-            ))}
             <Tooltip
               content={(props: any) => {
                 const row = props?.payload?.[0]?.payload;
@@ -320,6 +415,7 @@ function ProbChart({ points, summary, bits, simHomeWinPct }: {
                   <div style={{
                     background: "var(--card)", border: "1px solid var(--border)",
                     borderRadius: 8, padding: "6px 8px", maxWidth: 260, fontSize: 11,
+                    boxShadow: "0 4px 14px rgba(0,0,0,0.18)",
                   }}>
                     <div style={{ fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
                       {Number(row.v).toFixed(1)}%
@@ -339,13 +435,92 @@ function ProbChart({ points, summary, bits, simHomeWinPct }: {
                 );
               }}
             />
-            <Line
-              type="stepAfter" dataKey="v" stroke={lineColor} strokeWidth={2}
+            <Area
+              type="stepAfter" dataKey="v" baseValue={50}
+              stroke={stroke} strokeWidth={2.2}
+              fill={stroke} fillOpacity={0.16}
               dot={false} isAnimationActive={false}
             />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------- DriveLog -------------------------------- */
+
+function resultTone(result?: string, isScore?: boolean): string {
+  const r = (result ?? "").toLowerCase();
+  if (isScore || r.includes("touchdown") || r.includes("field goal")) return "var(--pos)";
+  if (r.includes("interception") || r.includes("fumble") || r.includes("downs") || r.includes("safety")) return "var(--neg)";
+  return "var(--muted)";
+}
+
+function DriveLog({ drives, bits, isLive }: {
+  drives: CurrentDrive[];
+  bits: TeamBits;
+  isLive: boolean;
+}) {
+  const ordered = [...drives].reverse(); // newest first
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+      {ordered.map((d, i) => {
+        const possHome = d.teamId !== undefined && d.teamId === bits.homeId;
+        const logo = d.teamLogo ?? (possHome ? bits.homeLogo : bits.awayLogo);
+        const live = isLive && i === 0 && !d.result;
+        const label = live ? "LIVE DRIVE" : (d.result ?? "—").toUpperCase();
+        return (
+          <details key={d.plays[0]?.id ?? i} open={i === 0}>
+            <summary style={{
+              display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+              padding: "7px 10px", borderTop: i === 0 ? "none" : "1px solid var(--border)",
+              background: i === 0 ? "var(--fill)" : "transparent", listStyle: "none",
+            }}>
+              {logo
+                ? <img src={logo} alt="" width={18} height={18} style={{ objectFit: "contain" }} />
+                : <span style={{
+                    width: 18, height: 18, borderRadius: 5,
+                    background: (possHome ? bits.homeColor : bits.awayColor) ?? "var(--fill)",
+                  }} />}
+              <span style={{
+                fontSize: 10, fontWeight: 800, letterSpacing: 0.5,
+                color: live ? "var(--neg)" : resultTone(d.result, d.isScore),
+              }}>
+                {live && <span style={{
+                  display: "inline-block", width: 6, height: 6, borderRadius: 999,
+                  background: "var(--neg)", marginRight: 4, verticalAlign: "middle",
+                }} />}
+                {label}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{d.description ?? ""}</span>
+              {d.scoreHome !== undefined && d.scoreAway !== undefined && (
+                <span style={{
+                  marginLeft: "auto", fontSize: 11, fontWeight: 700,
+                  fontVariantNumeric: "tabular-nums", color: "var(--text)", whiteSpace: "nowrap",
+                }}>
+                  {bits.awayAbbrev} {d.scoreAway}–{d.scoreHome} {bits.homeAbbrev}
+                </span>
+              )}
+            </summary>
+            <div>
+              {[...d.plays].reverse().map((p, j) => (
+                <div key={p.id || j} style={{
+                  padding: "5px 10px 5px 36px", fontSize: 12,
+                  borderTop: "1px solid var(--border)",
+                  background: p.scoring ? "var(--fill)" : "transparent",
+                  borderLeft: p.scoring ? "3px solid var(--pos)" : "3px solid transparent",
+                }}>
+                  {p.startDD && (
+                    <div style={{ fontWeight: 700, fontSize: 11.5 }}>{p.startDD}</div>
+                  )}
+                  <div style={{ color: "var(--muted)" }}>{p.text}</div>
+                </div>
+              ))}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -363,62 +538,39 @@ export function LiveGamePanel({ eventId, isLive, situation, bits, simHomeWinPct 
   const probs = useGameProbabilities(eventId, isLive);
 
   const drive = summary?.drive;
-  const plays = drive?.plays ?? [];
+  const drives = summary?.drives ?? [];
   const loading = summary === null && probs === null;
-  const nothing = !loading && !plays.length && !(probs && probs.length);
+  const nothing = !loading && !drives.length && !(probs && probs.length);
+  const possHome = (drive?.teamId ?? situation?.possessionId) === bits.homeId;
+  const possLogo = drive?.teamLogo ?? (possHome ? bits.homeLogo : bits.awayLogo);
 
   return (
-    <div style={{ display: "grid", gap: 10 }}>
+    <div style={{ display: "grid", gap: 12 }}>
       {isLive && (drive || situation) && (
         <div style={{ display: "grid", gap: 4 }}>
           <DriveField drive={drive} situation={situation} bits={bits} />
           <div style={{
-            display: "flex", justifyContent: "space-between", gap: 8,
+            display: "flex", alignItems: "center", gap: 6,
             fontSize: 11, color: "var(--muted)", fontVariantNumeric: "tabular-nums",
           }}>
-            <span style={{ fontWeight: 700 }}>
+            {possLogo && <img src={possLogo} alt="" width={15} height={15} style={{ objectFit: "contain" }} />}
+            <span style={{ fontWeight: 700, color: "var(--text)" }}>
               {drive?.teamAbbrev ? `${drive.teamAbbrev} drive` : ""}
-              {drive?.description ? ` · ${drive.description}` : ""}
             </span>
-            <span>{situation?.downDistanceText ?? ""}</span>
+            {drive?.description && <span>· {drive.description}</span>}
+            <span style={{ marginLeft: "auto", fontWeight: 700, color: "var(--text)" }}>
+              {situation?.downDistanceText ?? ""}
+            </span>
           </div>
         </div>
       )}
 
-      {isLive && plays.length > 0 && (
-        <div style={{
-          maxHeight: 190, overflowY: "auto",
-          border: "1px solid var(--border)", borderRadius: 8,
-        }}>
-          {[...plays].reverse().map((p, i) => (
-            <div
-              key={p.id || i}
-              style={{
-                display: "flex", gap: 8, alignItems: "baseline",
-                padding: "5px 8px", fontSize: 12,
-                borderTop: i === 0 ? "none" : "1px solid var(--border)",
-                background: i === 0 ? "var(--fill)" : "transparent",
-              }}
-            >
-              <span style={{
-                minWidth: 34, textAlign: "center", fontSize: 10, fontWeight: 800,
-                color: p.scoring ? FIRST_DOWN_YELLOW : "var(--muted)",
-                background: "var(--fill)", borderRadius: 6, padding: "1px 4px",
-              }}>
-                {p.scoring ? "SCORE" : p.typeAbbrev ?? "—"}
-              </span>
-              <span style={{ color: "var(--text)" }}>
-                {p.startDD && <b style={{ marginRight: 6, fontWeight: 700 }}>{p.startDD}</b>}
-                <span style={{ color: "var(--muted)" }}>{p.text}</span>
-              </span>
-            </div>
-          ))}
-        </div>
+      {probs && probs.length > 0 && (
+        <ProbChart points={probs} summary={summary} bits={bits}
+          simHomeWinPct={simHomeWinPct} eventId={eventId} />
       )}
 
-      {probs && probs.length > 0 && (
-        <ProbChart points={probs} summary={summary} bits={bits} simHomeWinPct={simHomeWinPct} />
-      )}
+      {drives.length > 0 && <DriveLog drives={drives} bits={bits} isLive={isLive} />}
 
       {loading && <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading live feed…</div>}
       {nothing && (

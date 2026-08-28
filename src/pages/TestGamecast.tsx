@@ -48,6 +48,8 @@ export default function TestGamecast() {
     awayId: away?.team?.id != null ? String(away.team.id) : undefined,
     homeColor: home?.team?.color ? `#${home.team.color}` : undefined,
     awayColor: away?.team?.color ? `#${away.team.color}` : undefined,
+    homeLogo: home?.team?.logos?.[0]?.href,
+    awayLogo: away?.team?.logos?.[0]?.href,
   };
 
   const lite = parseSummaryLite(raw);
