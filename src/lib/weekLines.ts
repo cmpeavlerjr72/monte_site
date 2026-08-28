@@ -50,7 +50,9 @@ export type WeekLines = {
   week: number;
   generated_at: string;
   convention: string;
-  spread_total_price: number;
+  /** Fixed juice the spread/total PnL assumes (-110 sportsbook convention).
+   *  null on venue-priced files (the FCS/Kalshi variant has no fixed vig). */
+  spread_total_price: number | null;
   /** Keyed by game slug (the site's own slug, matching card.jsonRow.slug). */
   games: Record<string, WeekLinesGame>;
 };
@@ -93,7 +95,7 @@ export function parseWeekLines(raw: any): WeekLines | null {
   if (!raw || typeof raw !== "object") return null;
   if (!isNum(raw.season) || !isNum(raw.week)) return null;
   if (!isStr(raw.generated_at) || !isStr(raw.convention)) return null;
-  if (!isNum(raw.spread_total_price)) return null;
+  if (!isNum(raw.spread_total_price) && raw.spread_total_price !== null) return null;
   if (!raw.games || typeof raw.games !== "object") return null;
 
   const games: Record<string, WeekLinesGame> = {};
