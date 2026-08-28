@@ -55,6 +55,11 @@ type LiveGame = {
   awayId?: string;
   homeAbbrev?: string;
   awayAbbrev?: string;
+  /** Every name form ESPN gives (shortDisplayName, location, displayName).
+   *  The sim<->live join and all orientation checks run over these — the
+   *  short name alone missed 19 of 46 FCS week-0 games (2026-08-27). */
+  homeNames?: string[];
+  awayNames?: string[];
   /** Ball spot / down & distance / possession — present only while live. */
   situation?: LiveSituation;
 };
@@ -71,6 +76,20 @@ const clean = (s?: string) =>
 const pairKey = (a?: string, b?: string) => {
   const aa = clean(a), bb = clean(b);
   return [aa, bb].sort().join("::");
+};
+
+/** Does any of a live team's name forms match this sim name? ESPN's
+ *  shortDisplayName alone loses ("ETSU", "LIU", "SE Missouri State"), so
+ *  every orientation check runs over the full variant list. */
+const nameMatches = (
+  names: string[] | undefined,
+  fallback: string | undefined,
+  target?: string
+) => {
+  const t = clean(target);
+  if (!t) return false;
+  const pool = names && names.length ? names : [fallback ?? ""];
+  return pool.some((n) => clean(n) === t);
 };
 
 function mapEspnToLiveGames(payload: any): LiveGame[] {
@@ -107,9 +126,20 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
       awayId: away?.team?.id != null ? String(away.team.id) : undefined,
       homeAbbrev: home?.team?.abbreviation,
       awayAbbrev: away?.team?.abbreviation,
+      homeNames: nameForms(home?.team),
+      awayNames: nameForms(away?.team),
       situation: state === "in" ? parseSituation(comp) : undefined,
     };
   });
+}
+
+/** All the name forms an ESPN team object offers, deduped. */
+function nameForms(team: any): string[] {
+  const out: string[] = [];
+  for (const n of [team?.shortDisplayName, team?.location, team?.displayName]) {
+    if (typeof n === "string" && n && !out.includes(n)) out.push(n);
+  }
+  return out;
 }
 
 
@@ -895,8 +925,21 @@ function ScoreboardPage() {
   );
 
   const liveMap = useMemo(() => {
+    // One key per cross-combination of each side's name forms: ESPN's short
+    // names ("ETSU", "LIU", "SE Missouri State") joined only 27 of 46 FCS
+    // week-0 sim games; short+location+displayName joined all 46. First
+    // writer wins — school-name forms don't collide across real games.
     const m = new Map<string, LiveGame>();
-    for (const g of liveGames) m.set(pairKey(g.awayTeam, g.homeTeam), g);
+    for (const g of liveGames) {
+      const homes = g.homeNames?.length ? g.homeNames : [g.homeTeam ?? ""];
+      const aways = g.awayNames?.length ? g.awayNames : [g.awayTeam ?? ""];
+      for (const h of homes) {
+        for (const a of aways) {
+          const k = pairKey(a, h);
+          if (!m.has(k)) m.set(k, g);
+        }
+      }
+    }
     return m;
   }, [liveGames]);
 
@@ -906,7 +949,7 @@ function ScoreboardPage() {
       const inProgress = lg?.state === "in";
       let aScore: number | undefined, bScore: number | undefined;
       if (lg) {
-        const aMatchesAway = clean(game.teamA) === clean(lg.awayTeam);
+        const aMatchesAway = nameMatches(lg.awayNames, lg.awayTeam, game.teamA);
         aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
         bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
       }
@@ -2371,7 +2414,7 @@ export function GameCard({
      never by slot. */
   const lv = card.live;
   const liveNow = Boolean(card.liveInProgress);
-  const espnHomeIsA = lv ? clean(lv.homeTeam) === clean(card.teamA) : true;
+  const espnHomeIsA = lv ? nameMatches(lv.homeNames, lv.homeTeam, card.teamA) : true;
   const liveBits = {
     homeAbbrev: lv?.homeAbbrev,
     awayAbbrev: lv?.awayAbbrev,
@@ -2826,7 +2869,7 @@ function CardPanelHost({
 
   // Same name-keyed home/away mapping as the card (neutral-site flips).
   const lv = card.live;
-  const espnHomeIsA = lv ? clean(lv.homeTeam) === clean(card.teamA) : true;
+  const espnHomeIsA = lv ? nameMatches(lv.homeNames, lv.homeTeam, card.teamA) : true;
   const liveBits = {
     homeAbbrev: lv?.homeAbbrev,
     awayAbbrev: lv?.awayAbbrev,
