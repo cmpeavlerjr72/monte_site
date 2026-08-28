@@ -42,6 +42,10 @@ import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
 import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
 import { parseSituation, type LiveSituation } from "../lib/espnGame";
 import { useLiveGrid } from "../lib/liveGrid";
+import {
+  useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML,
+  type Frame, type WeekLines,
+} from "../lib/weekLines";
 
 type LiveGame = {
   id: string;
@@ -1434,6 +1438,18 @@ function ScoreboardPage() {
     [weekOptions, selectedWeek]
   );
 
+  /**
+   * Open/close market lines for the slate tally's betting-record panel, one
+   * file per week (weeks/<weekId>/lines.json), one per DIVISION: the FBS
+   * namespace carries sportsbook consensus (Bovada/DK/Pinnacle), the FCS
+   * namespace carries Kalshi-derived lines (winner mids as ML, at-the-money
+   * rungs as spread/total). Either resolving to null is quiet and expected
+   * (pre-publish, or the division has no dataset); the tally falls back to
+   * the plain record only when BOTH are null.
+   */
+  const weekLines = useWeekLines(season, weekId);
+  const weekLinesFcs = useWeekLines(fcsOffered ? fcsNs : null, weekId);
+
   /* ---- Kalshi market data for this week (slim side-by-side on each card) ----
    * Server-cached 45s and mapped to our slugs there; the row simply does not
    * render when the feed is unavailable or a game is not listed. */
@@ -2346,9 +2362,13 @@ function ScoreboardPage() {
         />
       )}
 
-      {/* Slate tally: running ATS/Total/ML record for the displayed (filtered)
-          slate. Only when at least one visible card has a graded result. */}
-      {slateTally.anyGraded && <SlateTallyBar tally={slateTally} condensed={condensed} />}
+      {/* Slate tally: running ATS/Total/ML betting record for the displayed
+          (filtered) slate, with PnL + an Open/Close frame toggle when
+          lines.json is published for this week. Only when at least one
+          visible card has a graded result. */}
+      {slateTally.anyGraded && (
+        <SlateTallyBar tally={slateTally} cards={filteredCards} weekLines={weekLines} weekLinesFcs={weekLinesFcs} condensed={condensed} />
+      )}
 
       {/* Cards grid.
           Cards are fixed-size grid items; an expanded panel is a SEPARATE
@@ -2871,34 +2891,179 @@ function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatched: num
 }
 
 type SlateResultCount = { win: number; loss: number; push: number };
+type MarketAgg = { win: number; loss: number; push: number; pnl: number };
+const mkMarketAgg = (): MarketAgg => ({ win: 0, loss: 0, push: 0, pnl: 0 });
 
-/** ATS/Total/ML record strip for the currently filtered slate. Verified and
- *  live-graded results are counted identically — see `slateTally` above; the
- *  "(n provisional)" suffix is the only place that distinction shows. */
-function SlateTallyBar({ tally, condensed }: {
+/**
+ * ATS/Total/ML record + PnL for the currently filtered slate, at one frame
+ * (open/close). Pure aggregation over `computeLineRecord`'s own inputs —
+ * `cards` are the SAME finals `slateTally` above counts (verified dataset
+ * finals or a live-graded final; never an in-progress live score), joined to
+ * `weekLines` by `card.jsonRow.slug`. A card/market lines.json doesn't price
+ * (missing game entry, or that market's frame line is null) is skipped for
+ * THAT market — the record only counts games it could price.
+ */
+function computeLineRecord(
+  cards: CardGame[],
+  linesFbs: WeekLines | null,
+  linesFcs: WeekLines | null,
+  frame: Frame
+): { ats: MarketAgg; tot: MarketAgg; ml: MarketAgg; provisionalGames: number } {
+  const ats = mkMarketAgg(), tot = mkMarketAgg(), ml = mkMarketAgg();
+  let provisionalGames = 0;
+
+  for (const c of cards) {
+    const graded = c.scoreSource === "CSV_FINALS" || c.resultsProvisional === true;
+    if (!graded || typeof c.finalA !== "number" || typeof c.finalB !== "number") continue;
+    // Each division prices off its own lines file — FCS slugs are not in the
+    // FBS file and vice versa, so a wrong-division join can never mislead;
+    // it just misses.
+    const wl = c.division === "fcs" ? linesFcs : linesFbs;
+    if (!wl) continue;
+    const slug = c.jsonRow?.slug;
+    const lg = slug ? wl.games[slug] : undefined;
+    if (!lg) continue;
+
+    let contributed = false;
+    const add = (agg: MarketAgg, g: { result: "win" | "loss" | "push"; pnl: number } | null) => {
+      if (!g) return;
+      agg[g.result]++;
+      agg.pnl += g.pnl;
+      contributed = true;
+    };
+
+    const spreadLine = frame === "open" ? lg.spread.open : lg.spread.close;
+    add(ats, pickAndGradeSpread(c.medA, c.medB, spreadLine, c.finalA, c.finalB));
+
+    const totalLine = frame === "open" ? lg.total.open : lg.total.close;
+    add(tot, pickAndGradeTotal(c.medA, c.medB, totalLine, c.finalA, c.finalB));
+
+    if (typeof c.pHome === "number") {
+      const mlHome = frame === "open" ? lg.ml.home_open : lg.ml.home_close;
+      const mlAway = frame === "open" ? lg.ml.away_open : lg.ml.away_close;
+      add(ml, pickAndGradeML(c.pHome, mlHome, mlAway, c.finalA, c.finalB));
+    }
+
+    if (contributed && c.resultsProvisional) provisionalGames++;
+  }
+
+  return { ats, tot, ml, provisionalGames };
+}
+
+const fmtMarketRecord = (r: SlateResultCount): string | null => {
+  const n = r.win + r.loss + r.push;
+  if (!n) return null;
+  return `${r.win}–${r.loss}${r.push > 0 ? `–${r.push}` : ""}`;
+};
+
+/** "+X.XXu" / "−X.XXu", sign always shown; tone by sign (pos/neg/muted). */
+function fmtPnl(pnl: number): { text: string; color: string } {
+  const text = `${pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)}u`;
+  const color = pnl > 1e-9 ? "var(--pos)" : pnl < -1e-9 ? "var(--neg)" : "var(--muted)";
+  return { text, color };
+}
+
+/**
+ * Betting-record strip for the currently filtered slate, above the cards
+ * grid. Verified and live-graded results are counted identically — the
+ * "(n provisional)" suffix is the only place that distinction shows.
+ *
+ * Two modes:
+ *  - lines.json published for this week -> real record: W-L(-P) + PnL in
+ *    units per market, at the selected Open/Close frame (default Open — the
+ *    site's standing benchmark, bets go in early in the week).
+ *  - lines.json unpublished (weekLines null: pre-publish, or an FCS-only
+ *    view where it never publishes) -> EXACTLY the prior simple tally, no
+ *    PnL, no toggle, so those weeks keep working unchanged.
+ */
+function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed }: {
   tally: { ats: SlateResultCount; tot: SlateResultCount; ml: SlateResultCount; provisionalGames: number };
+  cards: CardGame[];
+  weekLines: WeekLines | null;
+  weekLinesFcs?: WeekLines | null;
   condensed?: boolean;
 }) {
-  const fmtRecord = (r: SlateResultCount) => {
-    const n = r.win + r.loss + r.push;
-    if (!n) return null;
-    return `${r.win}–${r.loss}${r.push > 0 ? `–${r.push}` : ""}`;
-  };
-  const parts: string[] = [];
-  const ats = fmtRecord(tally.ats); if (ats) parts.push(`ATS ${ats}`);
-  const tot = fmtRecord(tally.tot); if (tot) parts.push(`Totals ${tot}`);
-  const ml = fmtRecord(tally.ml); if (ml) parts.push(`ML ${ml}`);
-  if (!parts.length) return null;
+  const [frame, setFrame] = useState<Frame>("open");
+
+  const anyLines = weekLines !== null || weekLinesFcs !== null;
+  const rec = useMemo(
+    () => (anyLines ? computeLineRecord(cards, weekLines, weekLinesFcs, frame) : null),
+    [cards, weekLines, weekLinesFcs, frame, anyLines]
+  );
+
+  if (!anyLines || !rec) {
+    const parts: string[] = [];
+    const ats = fmtMarketRecord(tally.ats); if (ats) parts.push(`ATS ${ats}`);
+    const tot = fmtMarketRecord(tally.tot); if (tot) parts.push(`Totals ${tot}`);
+    const ml = fmtMarketRecord(tally.ml); if (ml) parts.push(`ML ${ml}`);
+    if (!parts.length) return null;
+
+    return (
+      <div className="slate-tally-bar" style={condensed ? { fontSize: 11, padding: "5px 10px" } : undefined}>
+        <b>Slate record</b>
+        <span>{parts.join(" · ")}</span>
+        {tally.provisionalGames > 0 && (
+          <span className="slate-tally-bar__dim">
+            ({tally.provisionalGames} provisional)
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  const rows: { label: string; record: string; pnl: number }[] = [];
+  const atsRec = fmtMarketRecord(rec.ats); if (atsRec) rows.push({ label: "ATS", record: atsRec, pnl: rec.ats.pnl });
+  const totRec = fmtMarketRecord(rec.tot); if (totRec) rows.push({ label: "Totals", record: totRec, pnl: rec.tot.pnl });
+  const mlRec = fmtMarketRecord(rec.ml); if (mlRec) rows.push({ label: "ML", record: mlRec, pnl: rec.ml.pnl });
+  if (!rows.length) return null;
 
   return (
-    <div className="slate-tally-bar" style={condensed ? { fontSize: 11, padding: "5px 10px" } : undefined}>
-      <b>Slate record</b>
-      <span>{parts.join(" · ")}</span>
-      {tally.provisionalGames > 0 && (
-        <span className="slate-tally-bar__dim">
-          ({tally.provisionalGames} provisional)
-        </span>
-      )}
+    <div
+      className="slate-tally-bar"
+      style={{
+        ...(condensed ? { fontSize: 11, padding: "5px 10px" } : undefined),
+        alignItems: "flex-start",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", width: "100%" }}>
+        <b>Slate record</b>
+        <div style={{ display: "inline-flex", gap: 2 }}>
+          <button
+            type="button" className="ui-btn" data-on={frame === "open" ? "true" : "false"}
+            onClick={() => setFrame("open")} style={{ padding: "2px 8px", fontSize: 11 }}
+          >
+            Open
+          </button>
+          <button
+            type="button" className="ui-btn" data-on={frame === "close" ? "true" : "false"}
+            onClick={() => setFrame("close")} style={{ padding: "2px 8px", fontSize: 11 }}
+          >
+            Close
+          </button>
+        </div>
+        {rec.provisionalGames > 0 && (
+          <span className="slate-tally-bar__dim">({rec.provisionalGames} provisional)</span>
+        )}
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 4, width: "100%" }}>
+        {rows.map((r, i) => {
+          const { text, color } = fmtPnl(r.pnl);
+          return (
+            <Fragment key={r.label}>
+              {i > 0 && <span style={{ color: "var(--muted)" }}>·</span>}
+              <span>
+                {r.label} {r.record}{" "}
+                <span style={{ color, fontWeight: 700 }}>· {text}</span>
+              </span>
+            </Fragment>
+          );
+        })}
+      </div>
+
+      <div style={{ width: "100%", fontSize: 10, color: "var(--muted)" }}>
+        spread/total priced −110 · ML at consensus price · 1u flat
+      </div>
     </div>
   );
 }
