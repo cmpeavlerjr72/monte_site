@@ -175,6 +175,11 @@ export function computePortalBets(
   payload: PortalPayload | null,
   kalshiBySlug: Map<string, KalshiGame>,
   seedsBySlug: Map<string, SeedPair>,
+  /** P(YES) for market families the SEED arrays cannot price — the per-team
+   *  stat ladders, read off the published team_stats rungs (see
+   *  `teamStatMarkets.buildStatYesP`). Optional: without it those legs price
+   *  to null exactly as they did before 2026-08-28. */
+  statYesP?: (ticker: string) => number | null,
 ): { bets: PortalBet[]; bySlug: Map<string, PortalBet[]>; unmatched: number; totals: PortalTotals } {
   const bets: PortalBet[] = [];
   const bySlug = new Map<string, PortalBet[]>();
@@ -206,7 +211,11 @@ export function computePortalBets(
     let simP: number | null = 1;
     for (const l of legs) {
       const s = slugOf(l.ticker);
-      const py = simYesP(l.ticker, s ? seedsBySlug.get(s) : undefined);
+      // Seeds price the GAME lines (total/spread/winner). The per-team stat
+      // ladders are not in the seed arrays at all, so they fall through to the
+      // published rungs. Either way a NO leg is the complement.
+      const py = simYesP(l.ticker, s ? seedsBySlug.get(s) : undefined)
+        ?? statYesP?.(l.ticker) ?? null;
       if (py === null) { simP = null; break; }
       simP *= l.side === "no" ? 1 - py : py;
     }

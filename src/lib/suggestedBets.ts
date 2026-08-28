@@ -55,7 +55,14 @@ export const MID_HI = 0.65;
 export const MAX_RUNGS = 2;
 /** Game-winner markets are a single event, never a ladder. */
 export const MAX_RUNGS_WINNER = 1;
-/** `--ladder-risk`: dollars of risk per (game, family, team-side) ladder. */
+/** `--ladder-risk`: dollars of risk per (game, family, team-side) ladder.
+ *
+ *  DEFAULT ONLY since 2026-08-28. The site's live value is the user's "Unit
+ *  size" from the My Book console (`ownerPrefs.readUnit`), threaded through
+ *  `buildSuggestions`/`groupLadders` so the displayed count, outlay and the
+ *  Place popup all size off the same number. The maker pipeline keeps its own
+ *  CLI `--ladder-risk`: two knobs, deliberately — that one sizes an unattended
+ *  book, this one sizes what a human presses Place on. */
 export const LADDER_RISK = 30;
 export const TICK = 0.01;
 
@@ -183,7 +190,9 @@ export type Candidate = {
 export function buildSuggestions(
   candidates: Candidate[],
   feeParams: Record<string, FeeParams>,
-  heldTickers: Set<string>
+  heldTickers: Set<string>,
+  /** Dollars of risk per ladder — the user's unit size. */
+  unit: number = LADDER_RISK
 ): { rows: Suggestion[]; suppressed: Suppressed[] } {
   const suppressed: Suppressed[] = [];
   type Priced = Candidate & { mode: "REST" | "TAKE"; price: number; edgePer: number };
@@ -225,7 +234,8 @@ export function buildSuggestions(
       suppressed.push({ label: p.label, reason: `ladder already has ${cap} rung(s)` });
     }
     const picked = ranked.slice(0, cap);
-    const share = LADDER_RISK / Math.max(picked.length, 1);
+    // The unit is a LADDER budget, still split across the ladder's rungs.
+    const share = unit / Math.max(picked.length, 1);
     for (const p of picked) {
       const fp = feeParams[p.series];
       const maker = p.mode === "REST";
@@ -317,7 +327,9 @@ export type LadderGroup = {
   each: number;
 };
 
-export function groupLadders(rows: Suggestion[]): LadderGroup[] {
+export function groupLadders(
+  rows: Suggestion[], unit: number = LADDER_RISK,
+): LadderGroup[] {
   const byLadder = new Map<string, Suggestion[]>();
   for (const r of rows) {
     const arr = byLadder.get(r.ladder);
@@ -334,7 +346,7 @@ export function groupLadders(rows: Suggestion[]): LadderGroup[] {
       rungs,
       bestEdge: best.edge,
       headline: rungs.length > 1 ? `${best.team} ${strikes} ${best.statText}` : best.label,
-      each: round2(LADDER_RISK / group.length),
+      each: round2(unit / group.length),
     });
   }
   groups.sort((a, b) => b.bestEdge - a.bestEdge);

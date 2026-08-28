@@ -49,34 +49,30 @@
 // server/liveScores.ts. No position bookkeeping either: after a live placement
 // the portfolio strip picks it up on its own next poll.
 
-import { useEffect, useMemo, useState } from "react";
-import { getTeamStatsCached, type TeamStats as TeamStatsDoc } from "../lib/cfbJson";
+import { useMemo, useState } from "react";
+import type { TeamStats as TeamStatsDoc } from "../lib/cfbJson";
 import type { KalshiGame } from "../lib/kalshi";
 import type { PortalPayload } from "../lib/kalshiPortal";
 import {
   buildSuggestions, groupLadders, heldTickerSet, statCandidates,
-  LADDER_RISK, MIN_MAKER_EDGE, TAKE_THRESHOLD,
+  MIN_MAKER_EDGE, TAKE_THRESHOLD,
   type Candidate, type FeeParams, type LadderGroup,
 } from "../lib/suggestedBets";
 import {
-  cancelAppOrders, newIdempotencyKey, placeErrorText, placeOrders,
+  newIdempotencyKey, placeErrorText, placeOrders,
   type PlaceOrder, type PlaceResponse,
 } from "../lib/placeOrders";
+// One mapping, both consumers: this card and the portal's held-position
+// pricing read the same series<->stat table (see teamStatMarkets.ts).
+import { SERIES_FOR_STAT } from "../lib/teamStatMarkets";
+import {
+  readCardOpen, writeCardOpen, readModeFilter, writeModeFilter,
+  readSuggestSort, writeSuggestSort,
+  type ModeFilter, type SuggestSort,
+} from "../lib/ownerPrefs";
+import DryRunBadge from "./DryRunBadge";
+import { getTeamLogo } from "../utils/teamLogo";
 import type { Season } from "../lib/cfbData";
-
-/** Our stat key -> the Kalshi series that settles it (server's map, inverted). */
-const SERIES_FOR: Record<string, string> = {
-  points: "KXNCAAFTEAMTOTAL",
-  rec_yards: "KXNCAAFTEAMRECYDS",
-  rush_yards: "KXNCAAFTEAMRSHYDS",
-  total_yards: "KXNCAAFTEAMYDS",
-  receptions: "KXNCAAFTEAMREC",
-  rush_att: "KXNCAAFTEAMRSHATT",
-  rush_td: "KXNCAAFTEAMRSHTD",
-  rec_td: "KXNCAAFTEAMRECTD",
-  def_sacks: "KXNCAAFTEAMSACK",
-  def_ints: "KXNCAAFTEAMINT",
-};
 
 /** Bet-slip wording, not column headings. */
 const SHORT: Record<string, string> = {
@@ -100,6 +96,8 @@ export type SuggestGame = {
   teamB: string;
   /** True when the game has kicked, is live, or is final. */
   started: boolean;
+  /** Kickoff, epoch ms — the "Soonest" sort key. Undefined sorts last. */
+  kickoffMs?: number;
 };
 
 const cents = (v: number) => `${Math.round(v * 100)}¢`;
@@ -107,56 +105,115 @@ const signed = (v: number) =>
   `${v > 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}¢`;
 const clock = (d: Date) => d.toLocaleTimeString();
 
-/* --------------------------- collapse memory ----------------------------- */
-// Starts COLLAPSED: this card is a dense list under everything else on the
-// page, and it is now also the card with the money buttons on it.
-const OPEN_KEY = "cfb.suggestedBets.open";
-function readOpen(): boolean {
-  try { return window.localStorage.getItem(OPEN_KEY) === "1"; }
-  catch { return false; }
+/* ------------------------------- mode colour ------------------------------ */
+// Execution mode gets its OWN categorical channel (--mode-rest / --mode-take,
+// validated in theme.css). It must never borrow --pos/--neg: on this card
+// those mean the sign of an edge and nothing else, so a red "take now" would
+// read as a bad bet. Every chip is also direct-labelled, so identity never
+// depends on colour alone.
+const modeHue = (mode: "REST" | "TAKE") =>
+  mode === "REST" ? "var(--mode-rest)" : "var(--mode-take)";
+const modeInk = (mode: "REST" | "TAKE") =>
+  mode === "REST" ? "var(--mode-rest-ink)" : "var(--mode-take-ink)";
+
+function ModeChip({ mode, price }: { mode: "REST" | "TAKE"; price?: number }) {
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 999,
+      whiteSpace: "nowrap", letterSpacing: 0.2,
+      background: modeHue(mode), color: modeInk(mode),
+    }}>
+      {mode}{price === undefined ? "" : ` @${cents(price)}`}
+    </span>
+  );
 }
-function writeOpen(v: boolean): void {
-  try { window.localStorage.setItem(OPEN_KEY, v ? "1" : "0"); }
-  catch { /* storage unavailable — the preference just will not persist */ }
+
+/** "Sat 3:30 PM" — enough to order a multi-day slate without a date column. */
+function kickText(ms: number | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
+  const d = new Date(ms);
+  return `${d.toLocaleDateString([], { weekday: "short" })} ` +
+         `${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/**
+ * The section header: AWAY @ HOME, kick time, and how many bets are in this
+ * game. teamA is HOME on every card in this app, so the away team is named
+ * first — the way a slate is read aloud. Logos are a synchronous lookup from
+ * the already-loaded team table, so they cost nothing; a school without one
+ * simply has no mark.
+ */
+function GameHeader({
+  game, slug, n, onJump,
+}: {
+  game: SuggestGame | undefined;
+  slug: string;
+  n: number;
+  onJump?: (cardKey: string) => void;
+}) {
+  const away = game?.teamB ?? "";
+  const home = game?.teamA ?? "";
+  const kick = kickText(game?.kickoffMs);
+  const logo = (name: string) => {
+    const src = getTeamLogo(name);
+    return src ? (
+      <img src={src} alt="" width={15} height={15} loading="lazy"
+           style={{ objectFit: "contain", flex: "none" }} />
+    ) : null;
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => onJump?.(slug)}
+      title="Jump to this game on the board"
+      style={{
+        display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+        width: "100%", textAlign: "left", cursor: "pointer",
+        padding: "1px 2px 3px", border: "none", background: "none",
+        color: "var(--text)", font: "inherit",
+      }}
+    >
+      {logo(away)}
+      <span style={{ fontSize: 11.5, fontWeight: 800 }}>{away || slug}</span>
+      <span style={{ fontSize: 10.5, color: "var(--muted)" }}>@</span>
+      {logo(home)}
+      <span style={{ fontSize: 11.5, fontWeight: 800 }}>{home}</span>
+      {kick && (
+        <span style={{ fontSize: 10, color: "var(--muted)" }}>· {kick}</span>
+      )}
+      <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--muted)", whiteSpace: "nowrap" }}>
+        {n} bet{n === 1 ? "" : "s"}
+      </span>
+    </button>
+  );
 }
 
 export default function SuggestedBets({
-  games, kalshiBySlug, feeParams, portal, weekId, token, onJump,
+  games, kalshiBySlug, feeParams, portal, docs, unit, token, onJump,
 }: {
   games: SuggestGame[];
   kalshiBySlug: Map<string, KalshiGame>;
   feeParams: Record<string, FeeParams>;
   portal: PortalPayload | null;
-  weekId: string;
+  /** Published team_stats per namespace. Loaded ONCE at the page level
+   *  (`useTeamStatsDocs`) because the portal's held-position pricing needs the
+   *  same documents — one loader, two consumers. */
+  docs: Record<string, TeamStatsDoc>;
+  /** Dollars of risk per ladder — the user's unit size from the My Book
+   *  console. Sizing, outlay and the Place popup all read this one number. */
+  unit: number;
   /** Portal password — the same header the reads use. Placement needs it. */
   token: string;
   onJump?: (cardKey: string) => void;
 }) {
-  const [docs, setDocs] = useState<Record<string, TeamStatsDoc>>({});
   const [sel, setSel] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
-  const [open, setOpen] = useState<boolean>(() => readOpen());
+  const [open, setOpen] = useState<boolean>(() => readCardOpen());
+  const [modeFilter, setModeFilter] = useState<ModeFilter>(() => readModeFilter());
+  const [sort, setSort] = useState<SuggestSort>(() => readSuggestSort());
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
    *  Confirm replays server-side instead of placing twice. */
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
-  const [kill, setKill] = useState<{ busy: boolean; msg: string } | null>(null);
-
-  // team_stats per namespace on the slate; the loader is memoized per
-  // (ns, week) so this costs nothing beyond what the panel already fetched.
-  const namespaces = useMemo(
-    () => Array.from(new Set(games.map((g) => String(g.ns)))).sort().join(","),
-    [games]
-  );
-  useEffect(() => {
-    let alive = true;
-    const list = namespaces ? namespaces.split(",") : [];
-    for (const ns of list) {
-      getTeamStatsCached(ns as Season, weekId)
-        .then((d) => { if (alive) setDocs((prev) => (prev[ns] ? prev : { ...prev, [ns]: d })); })
-        .catch(() => { /* not published for this namespace: no suggestions */ });
-    }
-    return () => { alive = false; };
-  }, [namespaces, weekId]);
 
   const { rows, suppressed, computedAt } = useMemo(() => {
     const held = heldTickerSet(portal?.positions, portal?.orders);
@@ -181,57 +238,81 @@ export default function SuggestedBets({
           const v = r?.[String(strike)];
           return typeof v === "number" ? v : null;
         },
-        (stat) => SERIES_FOR[stat] ?? "",
+        (stat) => SERIES_FOR_STAT[stat] ?? "",
       ));
     }
-    const built = buildSuggestions(candidates, feeParams, held);
+    const built = buildSuggestions(candidates, feeParams, held, unit);
     return { ...built, computedAt: new Date() };
     // `nonce` is the manual refresh: it re-runs the compute against whatever
     // feed the page currently holds, and never triggers a fetch of its own.
-  }, [games, kalshiBySlug, feeParams, portal, docs, nonce]);
+  }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce]);
 
-  // Presentation only: fold each ladder's picked rungs (nested markets, up to
-  // MAX_RUNGS) into one display row, ranked by its best rung's net edge.
-  // Selection and sizing already happened above; this never touches either.
-  const groups = useMemo(() => groupLadders(rows), [rows]);
-
-  // Card key -> game, so a same-game run of ladder rows can carry a header.
+  // Card key -> game, so a same-game run of ladder rows can carry a header
+  // and the "Soonest" sort can find a kickoff.
   const gameByKey = useMemo(() => new Map(games.map((g) => [g.key, g])), [games]);
 
+  // Presentation only: fold each ladder's picked rungs (nested markets, up to
+  // MAX_RUNGS) into one display row, then FILTER by execution mode and ORDER.
+  // Selection and sizing already happened above; none of this touches either,
+  // so a filter can never change what a surviving row would cost.
+  const allGroups = useMemo(() => groupLadders(rows, unit), [rows, unit]);
+
+  /**
+   * ONE SECTION PER GAME. Suggestions concentrate hard — two, three, four
+   * ladders on the same matchup is the normal case — and a flat list of them
+   * ran together no matter what divider sat between the runs. So a game is a
+   * CONTAINER: its own header and its own rows, with real space around it.
+   * A game with a single suggestion still gets a section; consistent beats
+   * clever.
+   *
+   * Sorting orders SECTIONS, never rows across sections — games stay
+   * atomic in both orders. Within a section rows are always best-edge first.
+   * The mode filter drops ROWS; a section left with none disappears.
+   */
+  const sections = useMemo(() => {
+    const kept = modeFilter === "all" ? allGroups : allGroups.filter((g) =>
+      g.rungs.some((r) => (modeFilter === "rest") === (r.mode === "REST")));
+    const bySlug = new Map<string, LadderGroup[]>();
+    for (const g of kept) {
+      const arr = bySlug.get(g.slug);
+      if (arr) arr.push(g); else bySlug.set(g.slug, [g]);
+    }
+    const out = [...bySlug].map(([slug, list]) => {
+      const inner = [...list].sort((a, b) => b.bestEdge - a.bestEdge);
+      return {
+        slug,
+        game: gameByKey.get(slug),
+        groups: inner,
+        bestEdge: inner[0].bestEdge,
+        // Unknown kickoff sorts LAST rather than first, so a missing time
+        // never masquerades as the most urgent game on the board.
+        kickoffMs: gameByKey.get(slug)?.kickoffMs ?? Infinity,
+      };
+    });
+    out.sort((a, b) => sort === "soon"
+      ? (a.kickoffMs !== b.kickoffMs ? a.kickoffMs - b.kickoffMs : b.bestEdge - a.bestEdge)
+      : b.bestEdge - a.bestEdge);
+    return out;
+  }, [allGroups, modeFilter, sort, gameByKey]);
+
+  const shownCount = sections.reduce((n, s) => n + s.groups.length, 0);
+  const hiddenByFilter = allGroups.length - shownCount;
   const pregameCount = games.filter((g) => !g.started).length;
   // Undefined on a server that predates order entry: treat as staged-off,
   // which is the safe reading.
   const ordersLive = portal?.orders_live === true;
-
-  const runKill = async () => {
-    setKill({ busy: true, msg: "" });
-    try {
-      const r = await cancelAppOrders(token);
-      const n = Array.isArray(r.body?.cancelled) ? r.body.cancelled.length : 0;
-      setKill({
-        busy: false,
-        msg: r.status === 200
-          ? (n ? `Cancelled ${n} app order${n === 1 ? "" : "s"}.`
-               : "No resting app orders to cancel.")
-          : placeErrorText(r.body as PlaceResponse),
-      });
-    } catch {
-      setKill({ busy: false, msg: "Cancel failed — network." });
-    }
-  };
 
   return (
     <section style={{
       border: "1px solid var(--brand)", borderRadius: 12,
       background: "var(--card)", padding: 10, display: "grid", gap: open ? 8 : 0,
     }}>
-      {/* Header row — present in BOTH states. The kill switch lives here on
-          purpose: a control that pulls resting money must not be hidden
-          behind a collapsed panel. */}
+      {/* Header row — present in BOTH states. The kill switch is NOT here: it
+          lives in the My Book console alongside the other owner controls. */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <button
           type="button"
-          onClick={() => { const v = !open; setOpen(v); writeOpen(v); }}
+          onClick={() => { const v = !open; setOpen(v); writeCardOpen(v); }}
           aria-expanded={open}
           style={{
             display: "flex", alignItems: "center", gap: 7, padding: "2px 4px",
@@ -239,14 +320,18 @@ export default function SuggestedBets({
             font: "inherit", cursor: "pointer", textAlign: "left",
           }}
         >
+          {/* CSS caret, not a glyph: "▶" renders in emoji presentation on
+              some platforms and came out as a blue box at phone width. */}
           <span aria-hidden="true" style={{
-            display: "inline-block", fontSize: 10, color: "var(--muted)",
-            transform: open ? "rotate(90deg)" : "none", transition: "transform .12s",
-          }}>
-            ▶
-          </span>
+            width: 0, height: 0, flex: "none",
+            borderTop: "5px solid transparent",
+            borderBottom: "5px solid transparent",
+            borderLeft: "6px solid var(--muted)",
+            transform: open ? "rotate(90deg)" : "none",
+            transition: "transform .12s",
+          }} />
           <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand-text)" }}>
-            Suggested bets ({groups.length})
+            Suggested bets ({shownCount})
           </span>
           <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
             · computed {clock(computedAt)}
@@ -257,11 +342,6 @@ export default function SuggestedBets({
           {!ordersLive && (
             <DryRunBadge title="Order entry is staged: the server validates and logs, and submits nothing." />
           )}
-          <button type="button" className="ui-btn" onClick={runKill} disabled={kill?.busy}
-                  title="Cancel every resting order this app placed (cfbapp- tagged only)"
-                  style={{ padding: "2px 8px", fontSize: 11 }}>
-            {kill?.busy ? "Cancelling…" : "Cancel my app orders"}
-          </button>
           {open && (
             <button type="button" className="ui-btn" onClick={() => setNonce((n) => n + 1)}
                     style={{ padding: "2px 8px", fontSize: 11 }}>
@@ -271,55 +351,105 @@ export default function SuggestedBets({
         </div>
       </div>
 
-      {kill?.msg && (
-        <div style={{ fontSize: 11, color: "var(--muted)" }}>{kill.msg}</div>
-      )}
-
       {open && (
         <>
-          <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
-            {pregameCount} pregame game{pregameCount === 1 ? "" : "s"} · $
-            {LADDER_RISK} per ladder · rest at {Math.round(MIN_MAKER_EDGE * 100)}¢+,
-            take at {Math.round(TAKE_THRESHOLD * 100)}¢+ (both after fee)
+          {/* Filter + order. Both persist; both are PRESENTATION — a filter
+              never changes what a surviving row costs. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 3 }} role="group" aria-label="Execution mode filter">
+              {([["all", "All"], ["rest", "Maker"], ["take", "Taker"]] as const).map(([v, label]) => (
+                <button
+                  key={v} type="button" className="ui-btn"
+                  data-on={modeFilter === v ? "true" : "false"}
+                  onClick={() => { setModeFilter(v); writeModeFilter(v); }}
+                  style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 3 }} role="group" aria-label="Sort order">
+              {([["edge", "Best edge"], ["soon", "Soonest"]] as const).map(([v, label]) => (
+                <button
+                  key={v} type="button" className="ui-btn"
+                  data-on={sort === v ? "true" : "false"}
+                  onClick={() => { setSort(v); writeSuggestSort(v); }}
+                  style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
+          {/* The words legend the bar test asks for: say which colour is
+              which, once, instead of making the reader infer it. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 10.5, color: "var(--muted)", flexWrap: "wrap" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span aria-hidden="true" style={{
+                width: 9, height: 9, borderRadius: 3, background: "var(--mode-rest)",
+                display: "inline-block", flex: "none",
+              }} />
+              rest (maker fee)
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span aria-hidden="true" style={{
+                width: 9, height: 9, borderRadius: 3, background: "var(--mode-take)",
+                display: "inline-block", flex: "none",
+              }} />
+              take now (taker fee)
+            </span>
+            <span>green/red is the EDGE, not the mode</span>
+          </div>
+
+          {/* ONE meta line. It used to be four, which is four gray lines
+              before the first bet on a phone. The header already stamps the
+              compute time, so this does not repeat it. */}
           <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "var(--muted)" }}>
             <span aria-hidden="true" style={{
               width: 6, height: 6, borderRadius: 999, background: "var(--pos)",
               display: "inline-block", flex: "none",
             }} />
-            Computed at {clock(computedAt)} · live. Edges are NET of fee. Prices
-            are re-verified against the live book at placement.
+            <span>
+              Live · {pregameCount} pregame game{pregameCount === 1 ? "" : "s"} ·
+              {" "}${unit}/ladder · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+ /
+              {" "}take {Math.round(TAKE_THRESHOLD * 100)}¢+ · edges NET of fee,
+              re-checked at placement
+            </span>
           </div>
 
-          {groups.length === 0 ? (
+          {sections.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              Nothing clears the thresholds right now.
+              {hiddenByFilter > 0
+                ? `Nothing in this mode — ${hiddenByFilter} suggestion${hiddenByFilter === 1 ? "" : "s"} hidden by the filter.`
+                : "Nothing clears the thresholds right now."}
             </div>
           ) : (
-            <div style={{ display: "grid", gap: 3 }}>
-              {groups.map((g, i) => {
+            <div style={{ display: "grid", gap: 10 }}>
+              {sections.map((sec) => (
+                <div key={sec.slug} style={{
+                  border: "1px solid var(--border)", borderRadius: 10,
+                  background: "var(--fill)", padding: 7,
+                  display: "grid", gap: 5,
+                }}>
+                  <GameHeader
+                    game={sec.game}
+                    slug={sec.slug}
+                    n={sec.groups.length}
+                    onJump={onJump}
+                  />
+                  <div style={{ display: "grid", gap: 4 }}>
+              {sec.groups.map((g) => {
                 const on = g.ladder === sel;
                 const single = g.rungs.length === 1;
                 const head = g.rungs[0];
-                // Same-game visual cue: a run of >=2 consecutive rows sharing a
-                // game reads as one concentration, not N independent picks.
-                const isRunStart = groups[i - 1]?.slug !== g.slug;
-                let runLen = 1;
-                for (let j = i + 1; j < groups.length && groups[j].slug === g.slug; j++) runLen++;
-                const game = gameByKey.get(g.slug);
+                // Mode at a glance: the row wears a slim accent in its own
+                // execution-mode hue. A ladder whose rungs disagree takes the
+                // BEST rung's hue, and shows a chip for each mode anyway.
+                const modes = Array.from(new Set(g.rungs.map((r) => r.mode)));
+                const bestMode = g.rungs.reduce((m, r) => (r.edge > m.edge ? r : m), g.rungs[0]).mode;
                 return (
                   <div key={g.ladder}>
-                    {isRunStart && runLen > 1 && game && (
-                      <div style={{
-                        fontSize: 9.5, fontWeight: 700, color: "var(--muted)",
-                        textTransform: "uppercase", letterSpacing: 0.3,
-                        borderTop: "1px solid var(--border)",
-                        padding: "5px 2px 2px", marginTop: i === 0 ? 0 : 2,
-                      }}>
-                        {game.teamA} vs {game.teamB} — {runLen} bets, one game
-                      </div>
-                    )}
                     <div style={{
                       display: "flex", alignItems: "stretch", gap: 4,
                     }}>
@@ -328,42 +458,42 @@ export default function SuggestedBets({
                         onClick={() => { setSel(on ? null : g.ladder); onJump?.(g.slug); }}
                         style={{
                           flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
-                          display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap",
-                          padding: "5px 7px", borderRadius: 7,
+                          display: "grid", gap: 3,
+                          padding: "6px 8px", borderRadius: 7,
                           border: `1px solid ${on ? "var(--brand)" : "var(--border)"}`,
+                          borderLeft: `4px solid ${modeHue(bestMode)}`,
                           background: "var(--card)", color: "var(--text)",
                           font: "inherit", fontSize: 12,
                         }}
                       >
-                        <span style={{ fontWeight: 700 }}>{single ? head.label : g.headline}</span>
-                        {single ? (
-                          <>
-                            <span style={{
-                              fontSize: 10, fontWeight: 800, padding: "1px 6px",
-                              borderRadius: 999, border: "1px solid var(--border)",
-                              color: "var(--muted)", whiteSpace: "nowrap",
-                            }}>
-                              {head.mode} @{cents(head.price)}
-                            </span>
-                            <span style={{ fontSize: 10.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                              ${LADDER_RISK} → {head.count} @ {cents(head.price)}
-                            </span>
-                          </>
-                        ) : (
+                        {/* TWO FIXED LINES, always in the same order: the bet
+                            in words, then chip / sizing / edge. The edge is
+                            the last thing on line 2 in a column of its own, so
+                            every row's number lands at the same x — a wrapping
+                            single line put them all over the place, which is
+                            what read as sloppy. */}
+                        <span style={{ fontWeight: 700, lineHeight: 1.25 }}>
+                          {single ? head.label : g.headline}
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {single
+                            ? <ModeChip mode={head.mode} price={head.price} />
+                            : modes.map((m) => <ModeChip key={m} mode={m} />)}
                           <span style={{
-                            fontSize: 10, fontWeight: 800, padding: "1px 6px",
-                            borderRadius: 999, border: "1px solid var(--border)",
-                            color: "var(--muted)", whiteSpace: "nowrap",
+                            fontSize: 10.5, color: "var(--muted)", minWidth: 0,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                           }}>
-                            {g.rungs.length} rungs · ${g.each} each
+                            {single
+                              ? `${head.count} @ ${cents(head.price)} · $${head.outlay.toFixed(2)}`
+                              : `${g.rungs.length} rungs · $${g.each} each`}
                           </span>
-                        )}
-                        <span style={{
-                          marginLeft: "auto", fontWeight: 800,
-                          fontVariantNumeric: "tabular-nums",
-                          color: g.bestEdge > 0 ? "var(--pos)" : "var(--neg)",
-                        }}>
-                          {signed(g.bestEdge)}
+                          <span style={{
+                            marginLeft: "auto", flex: "none", fontWeight: 800,
+                            fontVariantNumeric: "tabular-nums",
+                            color: g.bestEdge > 0 ? "var(--pos)" : "var(--neg)",
+                          }}>
+                            {signed(g.bestEdge)}
+                          </span>
                         </span>
                       </button>
                       {/* Every mode gets a Place button. A REST rung rests
@@ -375,7 +505,12 @@ export default function SuggestedBets({
                         className="ui-btn"
                         onClick={() => setSlip({ group: g, idem: newIdempotencyKey() })}
                         title={`Place ${g.rungs.length} order${g.rungs.length === 1 ? "" : "s"}`}
-                        style={{ padding: "0 10px", fontSize: 11, fontWeight: 800, flex: "none" }}
+                        style={{
+                          // Fixed width, so the edge column above it lines up
+                          // across every row of every section.
+                          width: 62, flex: "none", padding: 0,
+                          fontSize: 11, fontWeight: 800,
+                        }}
                       >
                         Place
                       </button>
@@ -393,7 +528,7 @@ export default function SuggestedBets({
                             fee {(head.fee * 100 / Math.max(head.count, 1)).toFixed(1)}¢/contract
                             {" "}({head.fee.toFixed(2)} total) · net edge {signed(head.edge)}
                             <div style={{ color: "var(--muted)", marginTop: 2 }}>
-                              {head.count} contracts, outlay ${head.outlay.toFixed(2)} of ${LADDER_RISK}
+                              {head.count} contracts, outlay ${head.outlay.toFixed(2)} of ${unit}
                               {" · "}fee type {head.feeType}
                               {" · "}{head.ticker}
                             </div>
@@ -407,7 +542,7 @@ export default function SuggestedBets({
                                 borderTop: ri === 0 ? "none" : "1px solid var(--border)",
                               }}>
                                 <span style={{ fontWeight: 700 }}>{rr.strike}+</span>
-                                <span style={{ color: "var(--muted)" }}>{rr.mode} @{cents(rr.price)}</span>
+                                <ModeChip mode={rr.mode} price={rr.price} />
                                 <span style={{ color: "var(--muted)" }}>
                                   {rr.count} ct · fee {rr.fee.toFixed(2)}
                                 </span>
@@ -420,7 +555,7 @@ export default function SuggestedBets({
                               </div>
                             ))}
                             <div style={{ color: "var(--muted)", marginTop: 4 }}>
-                              ${LADDER_RISK} ladder, ${g.each} per rung
+                              ${unit} ladder, ${g.each} per rung
                               {" · "}outlay ${g.rungs.reduce((s, rr) => s + rr.outlay, 0).toFixed(2)}
                               {" · "}fee type {head.feeType}
                             </div>
@@ -431,6 +566,15 @@ export default function SuggestedBets({
                   </div>
                 );
               })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {hiddenByFilter > 0 && sections.length > 0 && (
+            <div style={{ fontSize: 10, color: "var(--muted)" }}>
+              {hiddenByFilter} suggestion{hiddenByFilter === 1 ? "" : "s"} hidden by the mode filter.
             </div>
           )}
 
@@ -455,23 +599,6 @@ export default function SuggestedBets({
         />
       )}
     </section>
-  );
-}
-
-/* ------------------------------ dry-run badge ----------------------------- */
-// Deliberately NOT --pos/--neg: those two carry ONE meaning on this card (the
-// sign of an edge) and overloading them would make a staged order read as a
-// bad bet. --accent is the site's third, non-semantic hue.
-function DryRunBadge({ title }: { title?: string }) {
-  return (
-    <span title={title} style={{
-      fontSize: 9.5, fontWeight: 900, letterSpacing: 0.6, padding: "2px 7px",
-      borderRadius: 999, whiteSpace: "nowrap",
-      background: "var(--accent)", color: "var(--accent-contrast)",
-      border: "1px solid color-mix(in oklab, var(--accent) 70%, var(--text))",
-    }}>
-      DRY RUN
-    </span>
   );
 }
 

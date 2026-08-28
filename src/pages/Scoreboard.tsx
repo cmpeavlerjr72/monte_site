@@ -32,6 +32,9 @@ import BoxScore from "../components/BoxScore";
 import PlayerProps from "../components/PlayerProps";
 import TeamStats from "../components/TeamStats";
 import SuggestedBets, { type SuggestGame } from "../components/SuggestedBets";
+import MyBookPanel from "../components/MyBookPanel";
+import { readUnit, writeUnit } from "../lib/ownerPrefs";
+import { buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
 import type { FeeParams } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
@@ -1528,6 +1531,9 @@ function ScoreboardPage() {
   const [portalToken, setPortalToken] = useState<string>(() => readPortalToken());
   const [portalUiOpen, setPortalUiOpen] = useState(false);
   const portal = usePortalBook(portalToken);
+  /** Dollars of risk per ladder. One knob, every sizing site (suggestion
+   *  counts, outlay, the Place slip). Clamped on read AND on write. */
+  const [unit, setUnit] = useState<number>(() => readUnit());
   /** slug -> compact seed arrays for the games the owner has bets on, so
    *  sim EV can be priced at the bets' own strikes. Filled by an effect
    *  keyed on a primitive signature (render-loop rule 1). */
@@ -1994,9 +2000,33 @@ function ScoreboardPage() {
     return () => { alive = false; };
   }, [portalSeedSig]);
 
+  /** Published team_stats for every namespace on the board. ONE loader for
+   *  the page: the portal prices HELD stat positions off these rungs and the
+   *  Suggested bets card prices LIVE quotes off the same documents. Deps are
+   *  primitives (render-loop rule 1). */
+  const statNamespaces = useMemo(
+    () => Array.from(new Set(baseCards.map((c) => String(c.ns)))).sort().join(","),
+    [baseCards]
+  );
+  const teamStatsDocs = useTeamStatsDocs(statNamespaces, weekId);
+  /** ticker -> P(YES) for the per-team stat ladders. The seed arrays cannot
+   *  price these at all, which is why every held rec-yards position read
+   *  "Sim EV —" until 2026-08-28. */
+  const statYesP = useMemo(
+    () => buildStatYesP(
+      teamStatsDocs,
+      baseCards.map((c) => ({
+        key: c.key, slug: c.jsonRow?.slug ?? c.key, ns: c.ns,
+        teamA: c.teamA, teamB: c.teamB,
+      })),
+      kalshiBySlug
+    ),
+    [teamStatsDocs, baseCards, kalshiBySlug]
+  );
+
   const portalBook = useMemo(
-    () => computePortalBets(portal.payload, kalshiBySlug, portalSeeds),
-    [portal.payload, kalshiBySlug, portalSeeds]
+    () => computePortalBets(portal.payload, kalshiBySlug, portalSeeds, statYesP),
+    [portal.payload, kalshiBySlug, portalSeeds, statYesP]
   );
   const portalNote = useMemo(() => {
     if (!portalToken) return "log in with your portal password";
@@ -2072,6 +2102,7 @@ function ScoreboardPage() {
       ns: c.ns,
       teamA: c.teamA,
       teamB: c.teamB,
+      kickoffMs: typeof c.kickoffMs === "number" ? c.kickoffMs : undefined,
       started:
         Boolean(c.liveInProgress) ||
         c.live?.state === "in" ||
@@ -2246,57 +2277,21 @@ function ScoreboardPage() {
               Top Edges
             </button>
 
+            {/* One entry point for every owner feature. The login form, the
+                kill switch, unit size and the suggestions all live in the My
+                Book console below — this button only opens it. */}
             <button
               type="button"
               className="ui-btn"
-              data-on={portalToken ? "true" : "false"}
+              data-on={portalToken || portalUiOpen ? "true" : "false"}
               onClick={() => setPortalUiOpen((v) => !v)}
               style={{ whiteSpace: "nowrap" }}
               title={portalNote}
             >
               {portalToken
-                ? portal.status === "ok" ? "My Kalshi ✓" : "My Kalshi…"
-                : "My Kalshi"}
+                ? portal.status === "ok" ? "My Book ✓" : "My Book…"
+                : "My Book"}
             </button>
-            {portalUiOpen && (
-              <span className="portal-login">
-                {portalToken ? (
-                  <>
-                    <span className="portal-login__note">{portalNote}</span>
-                    <button
-                      type="button" className="ui-btn"
-                      onClick={() => {
-                        writePortalToken("");
-                        setPortalToken("");
-                        setPortalUiOpen(false);
-                      }}
-                    >
-                      Disconnect
-                    </button>
-                  </>
-                ) : (
-                  <form
-                    className="portal-login__form"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const t = String(new FormData(e.currentTarget).get("tok") || "").trim();
-                      if (t) {
-                        writePortalToken(t);
-                        setPortalToken(t);
-                        setPortalUiOpen(false);
-                      }
-                    }}
-                  >
-                    <input
-                      name="tok" type="password" placeholder="password"
-                      className="ui-sel" autoFocus
-                      autoComplete="current-password"
-                    />
-                    <button type="submit" className="ui-btn">Connect</button>
-                  </form>
-                )}
-              </span>
-            )}
 
             <button
               type="button"
@@ -2402,25 +2397,41 @@ function ScoreboardPage() {
         </section>
       )}
 
-      {portalToken && portalBook.totals.n > 0 && (
-        <MyBookBar totals={portalBook.totals} unmatched={portalBook.unmatched} />
-      )}
-
-      {/* Owner-only, on the same session state that powers MyBookStrip. It
-          recomputes whenever the 45s Kalshi poll delivers, so it is live
-          without a single extra request. */}
-      {portalToken && portal.status === "ok" && (
-        <div style={{ marginBottom: 16 }}>
-          <SuggestedBets
-            games={suggestGames}
-            kalshiBySlug={kalshiBySlug}
-            feeParams={kalshiFees}
-            portal={portal.payload}
-            weekId={weekId}
-            token={portalToken}
-            onJump={(slug) => setFlashKey(slug)}
-          />
-        </div>
+      {/* The owner console. Holds login, unit size, the order kill switch,
+          the cumulative book bar and the Suggested bets card — one block, so
+          the next owner feature is a row here rather than another button
+          scattered across the toolbar. */}
+      {(portalToken || portalUiOpen) && (
+        <MyBookPanel
+          token={portalToken}
+          onToken={(t) => {
+            writePortalToken(t);
+            setPortalToken(t);
+            if (!t) setPortalUiOpen(false);
+          }}
+          note={portalNote}
+          connected={portal.status === "ok"}
+          ordersLive={portal.payload?.orders_live === true}
+          unit={unit}
+          onUnit={(v) => { setUnit(v); writeUnit(v); }}
+          totals={portalBook.totals}
+          unmatched={portalBook.unmatched}
+        >
+          {/* Recomputes whenever the 45s Kalshi poll delivers, so it is live
+              without a single extra request. */}
+          {portalToken && portal.status === "ok" && (
+            <SuggestedBets
+              games={suggestGames}
+              kalshiBySlug={kalshiBySlug}
+              feeParams={kalshiFees}
+              portal={portal.payload}
+              docs={teamStatsDocs}
+              unit={unit}
+              token={portalToken}
+              onJump={(slug) => setFlashKey(slug)}
+            />
+          )}
+        </MyBookPanel>
       )}
 
       {(slateLoading || catalogLoading) && !filteredCards.length && (
@@ -2984,25 +2995,6 @@ function MyBookStrip({ bets }: { bets: PortalBet[] }) {
           </span>
         </div>
       ))}
-    </div>
-  );
-}
-
-/** Cumulative version of the card metrics, directly under the controls. */
-function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatched: number }) {
-  return (
-    <div className="mybook-bar">
-      <b>My book</b>
-      <span>{totals.n} bet{totals.n === 1 ? "" : "s"}</span>
-      <span>risk {usd(totals.risked)} → win {usd(totals.toWin)}</span>
-      <span data-neg={totals.kalshiEV !== null && totals.kalshiEV < 0 ? "true" : undefined}>
-        Kalshi EV {totals.kalshiEV === null ? "—" : (totals.kalshiEV >= 0 ? "+" : "") + usd(totals.kalshiEV)}
-      </span>
-      <span data-neg={totals.simEV !== null && totals.simEV < 0 ? "true" : undefined}>
-        Sim EV {totals.simEV === null ? "—" : (totals.simEV >= 0 ? "+" : "") + usd(totals.simEV)}
-      </span>
-      <span>fees {usd(totals.fees)}</span>
-      {unmatched > 0 && <span className="mybook-bar__dim">{unmatched} off-slate</span>}
     </div>
   );
 }

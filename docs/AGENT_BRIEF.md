@@ -227,11 +227,41 @@ selection the pipeline is right and this file is the bug.
 
 Since 2026-08-28 the card also PLACES, via the endpoints below. The card
 starts COLLAPSED (header = "Suggested bets (N) · computed HH:MM:SS" +
-chevron; the state persists in try/catch'd localStorage under
-`cfb.suggestedBets.open`). Every row gets a **Place** button — a grouped
-ladder places all its rungs as ONE request behind ONE confirm — and the
-kill switch sits in the card header in BOTH states, on purpose: a control
-that pulls resting money must not hide behind a collapsed panel.
+chevron; the state persists in try/catch'd localStorage). Every row gets a
+**Place** button — a grouped ladder places all its rungs as ONE request
+behind ONE confirm. The kill switch is NOT on this card; it is a row in the
+My Book console below.
+
+**Layout: ONE SECTION PER GAME.** Suggestions concentrate hard — three or
+four ladders on one matchup is normal — and a flat list of them read as
+"messy and sloppy" (user verdict on the divider-between-runs version). A
+game is now a CONTAINER: a header (away @ home, logos, kick time, bet
+count) over its own rows, in a bordered `--fill` block with real space
+between games. A one-suggestion game still gets a section; consistent beats
+clever. Two rules keep it from degenerating again:
+
+- **Sorting orders SECTIONS, never rows across sections.** "Best edge"
+  ranks sections by their best row; "Soonest" by kickoff ascending (an
+  unknown kickoff sorts LAST, so a missing time never looks urgent). Rows
+  inside a section are always best-edge first. Games stay atomic in both.
+- **Every row is TWO FIXED LINES**: the bet in words, then
+  chip / sizing / edge — with the edge last in its own column and the Place
+  button at a FIXED 62px. That is what makes the edge numbers line up down
+  the whole list; the earlier single wrapping line put them at a different
+  x on every row, which was the actual sloppiness.
+
+The mode filter (All / Maker / Taker) drops ROWS and a section left with
+none disappears; both it and the sort persist. Filters are PRESENTATION —
+they can never change what a surviving row costs.
+
+**Mode at a glance.** `--mode-rest` / `--mode-take` (+ `-ink`) in
+theme.css are a CATEGORICAL channel, chosen by RUNNING the dataviz palette
+validator, never by eye. They must stay disjoint from `--pos`/`--neg`,
+which on these cards mean the sign of an edge and nothing else — a red
+"take now" reads as a bad bet. Chips are direct-labelled too, so identity
+is never colour-alone, and a words legend states the mapping once. The
+tokens' measured separations and contrasts are recorded in the theme.css
+comment; re-run the validator if you change them.
 
 The confirm popup is the bar-test pattern: the bet in words, a mode chip,
 contracts, stake + fee + total, net edge, "prices as of HH:MM:SS ·
@@ -269,6 +299,51 @@ because the portal payload carries `orders_live`.
 - Sim fairs are the published `team_stats.json` rungs read VERBATIM; a
   strike off the grid simply has no bet. The client never recomputes a
   distribution, only subtracts and compares.
+
+## My Book console (owner-only) — where owner features go
+
+`src/components/MyBookPanel.tsx`. ONE block holding every "mine" feature as
+a labelled ROW: Account (login / disconnect), Unit size, Orders (the kill
+switch), Book (cumulative risk/EV), then the Suggested bets card as its
+child. It replaced a "My Kalshi" toolbar button + a floating login popover
++ a detached totals bar. **The next owner feature is a ROW here, not
+another button somewhere on the toolbar.** The toolbar keeps one "My Book"
+button, which only opens the console.
+
+**Unit size** (`src/lib/ownerPrefs.ts`) is the site's sizing knob — dollars
+of risk per ladder, clamped $1–$500 on READ and on WRITE so a hand-edited
+localStorage value cannot widen it. It replaced the hardcoded $30 and
+threads through `buildSuggestions` / `groupLadders` into the displayed
+count, the outlay and the Place slip — one number, every sizing site.
+`LADDER_RISK` in suggestedBets.ts is now only its DEFAULT. **Site unit and
+pipeline unit are separate knobs on purpose**: the sim repo's maker
+pipeline keeps its own CLI `--ladder-risk` because it sizes an unattended
+overnight book, while this sizes what a human presses Place on.
+
+## Per-team stat markets: ONE mapping (`src/lib/teamStatMarkets.ts`)
+
+Kalshi stat SERIES -> our `team_stats.json` stat key, mirroring the
+server's `KALSHI_STAT_SERIES`. TWO client consumers read it and neither may
+grow a private copy: SuggestedBets (pricing a LIVE quote) and the portal
+(pricing a HELD position). `useTeamStatsDocs` is likewise ONE page-level
+loader feeding both.
+
+That module fixed a real bug (2026-08-28): held stat positions showed
+"Sim EV —" because `simYesP` only knew the seed-priced game lines
+(total/spread/winner) and the stat ladders are not in the seed arrays at
+all. `computePortalBets` now falls through to `buildStatYesP`, which reads
+the published rungs.
+
+Two conventions are load-bearing there. **The rung key is the HALF-INTEGER
+floor**: Kalshi words a market "175+", the exporter writes
+`P(stat > 174.5)`, so `rungKeyForStrike(n) = n - 0.5` — verified against
+the published week (UNC175 -> 0.6715, TCU200 -> 0.7632, TCU225 -> 0.6298).
+**The team side comes from the TICKER, not a name join**: an event code's
+team blob is away+home, `parseNcaafTicker` already reports whether the
+strike names home, and teamA is home. Anything missing — an excluded
+family (TD/FG/TO), an unpublished namespace, a strike off the grid —
+returns null and renders "—". NEVER interpolate; that is the exporter's
+rule too.
 
 ## My-Kalshi portal (owner-only)
 
