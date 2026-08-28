@@ -406,6 +406,62 @@ async function fetchAllPages(baseUrl: string, maxPages = 8): Promise<any> {
 
 
 
+/**
+ * ESPN's multi-group scoreboard (`groups=80,81`) returns STUB events — `{}`,
+ * no id, no competitors — whenever one of the groups has no games that date.
+ * Observed 2026-08-27, an FCS-only Thursday: `groups=81` alone answered all
+ * 22 games fully populated while `80,81` served 22 empty objects (any limit,
+ * range form included). fetchAllPages drops id-less events, so the merged
+ * payload came back EMPTY on exactly the nights only one division plays —
+ * FCS Thursdays/Fridays. Fetch each group separately and merge instead.
+ */
+async function fetchScoreboardMerged(
+  sport: Sport,
+  dateYYYYMMDD: string,
+  opts?: { groups?: string; limit?: number }
+): Promise<any> {
+  const effGroups = sport === "cfb" ? opts?.groups ?? "80,81" : opts?.groups;
+  const parts = (effGroups ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (sport !== "cfb" || parts.length <= 1) {
+    const url = espnUrl(sport, dateYYYYMMDD, opts);
+    console.log("[scoreboard fetch base]", url);
+    return fetchAllPages(url);
+  }
+
+  const walks = await Promise.all(
+    parts.map(async (g) => {
+      const url = espnUrl(sport, dateYYYYMMDD, { ...opts, groups: g });
+      console.log("[scoreboard fetch group]", url);
+      try {
+        return await fetchAllPages(url);
+      } catch (err) {
+        console.warn(`[scoreboard] group ${g} walk failed:`, err);
+        return null;
+      }
+    })
+  );
+
+  let scaffold: any = null;
+  const events: any[] = [];
+  const seen = new Set<string>();
+  for (const p of walks) {
+    if (!p) continue;
+    if (!scaffold) scaffold = p;
+    for (const ev of collectArrays<any>(p.events)) {
+      const id = String(ev?.id ?? "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      events.push(ev);
+    }
+  }
+  if (!scaffold) throw new Error("scoreboard: every group walk failed");
+
+  // Kickoff order, so the merged slate is stable across group boundaries.
+  events.sort((a, b) => String(a?.date ?? "").localeCompare(String(b?.date ?? "")));
+  scaffold.events = events;
+  return scaffold;
+}
+
 function ttlFor(liveCount: number): number {
   // Shorter TTL when there are live games, longer when there aren't.
   return liveCount > 0 ? 20_000 : 120_000;
@@ -508,17 +564,16 @@ async function getScoreboard(
   if (pending) return pending;
 
   const work = (async () => {
-    const url = espnUrl(sport, dateYYYYMMDD, opts);
-    console.log("[scoreboard fetch base]", url);
-
-    let payload = await fetchAllPages(url); // pull & merge pages
+    // Per-group walk + merge (see fetchScoreboardMerged for the ESPN stub bug
+    // this works around).
+    let payload = await fetchScoreboardMerged(sport, dateYYYYMMDD, opts);
 
     // Retry only on a genuinely empty first walk. The old condition (<= 25
     // events) refetched every small slate, doubling cold-start latency and
     // upstream load for no gain.
     if ((payload?.events?.length ?? 0) === 0) {
       console.log("[scoreboard refetch] empty result; retrying pages");
-      payload = await fetchAllPages(url);
+      payload = await fetchScoreboardMerged(sport, dateYYYYMMDD, opts);
     }
 
     const liveCount = countLiveGames(payload);
