@@ -38,7 +38,13 @@ import {
   type ConvertResponse,
 } from "../lib/placeOrders";
 import { timeToKickText, timingWords } from "../lib/suggestedBets";
-import type { RestingReview, RestingRow } from "../lib/restingReview";
+import { pullIsInSight, type RestingReview, type RestingRow } from "../lib/restingReview";
+
+/* --------------------------------- clock ---------------------------------- */
+/** "8:30 PM", the viewer's own clock — the same short form `kickText` prints a
+ *  kickoff in, so a pull time and a kickoff on the same screen read alike. */
+const clockAt = (ms: number): string =>
+  new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 /* --------------------------------- money ---------------------------------- */
 /**
@@ -53,6 +59,17 @@ const usdTrim = (v: number): string =>
   Math.abs(v - Math.round(v)) < 0.005 ? `$${Math.round(v)}` : usd(v);
 
 /* ------------------------------ the verdict ------------------------------- */
+
+/**
+ * Why this row is a HOLD, in four words — the half of the chip that the
+ * horizon does not occupy. There are exactly two ways to reach HOLD (see the
+ * verdict ladder in restingReview.ts) and they are not the same sentence: with
+ * an ask on the book, crossing is possible and simply is not worth its fee;
+ * with no ask there is nothing to cross at all. Printing "take costs more than
+ * the edge" over an empty book would be a false statement about a market.
+ */
+const holdWhy = (row: RestingRow): string =>
+  row.ask === null ? "nothing offered to cross" : "take costs more than the edge";
 
 /** The chip. ONE element carrying the whole verdict — the word, and the number
  *  that made it, when there is one. */
@@ -73,6 +90,41 @@ function VerdictChip({ row }: { row: RestingRow }) {
       // row's condition; the words say what to do and the one number says what
       // the rest is worth if it fills — which is the number that makes leaving
       // it working the right call. The derivation stays in the popover.
+      //
+      // NEAR THE PULL the number changes, because the fact that matters
+      // changes. "HOLD — rest is still right · +4.2¢" was technically true on
+      // an order 40 minutes from its automatic kick−30 cancel, and it hid the
+      // terminal half: holding it does not mean waiting for a fill, it means
+      // waiting for the chain to take it off the book. So inside the ≤3h bands
+      // the chip spends its one number on the HORIZON instead of the edge —
+      // the edge is still stated quantitatively in the popover, where a
+      // derivation belongs, and the horizon is not stated anywhere else.
+      //
+      // The verdict itself is unchanged: this is the same HOLD, said with the
+      // thing a reader has to know about it.
+      if (pullIsInSight(row)) {
+        // The horizon wording is ~55 characters, which is 330px of nowrap pill
+        // on a 266px line — measured, and it ran off the left edge of the card
+        // clipping the pull time itself, i.e. losing exactly the fact this
+        // change exists to show. So THIS variant wraps inside its pill (the
+        // short one still cannot, and still must not).
+        return (
+          <span style={{
+            ...base, display: "inline-block", whiteSpace: "normal",
+            lineHeight: 1.35, textAlign: "right", borderRadius: 12,
+            background: "var(--mode-rest)", color: "var(--mode-rest-ink)",
+          }}>
+            {/* Each half is nowrap, so the ONE break the pill is allowed
+                lands on the separator. Left to itself the browser broke
+                "auto-pulls" in the middle, which turns the horizon into two
+                fragments of a word. */}
+            <span style={{ whiteSpace: "nowrap" }}>HOLD — {holdWhy(row)} ·</span>{" "}
+            <span style={{ whiteSpace: "nowrap" }}>
+              {row.pullDue ? "auto-pull is due now" : `auto-pulls ${clockAt(row.pullAtMs as number)}`}
+            </span>
+          </span>
+        );
+      }
       return (
         <span style={{ ...base, background: "var(--mode-rest)", color: "var(--mode-rest-ink)" }}>
           HOLD — rest is still right{row.restEdge === null ? "" : ` · ${signed(row.restEdge)}`}
@@ -213,7 +265,12 @@ export default function RestingBets({
                     {r.count} resting @ {cents(r.restPrice)} · wins {usdTrim(r.restWin)}
                     {" · "}{timeToKickText(r.timing.msToKick)}
                   </span>
-                  <span style={{ marginLeft: "auto", flex: "none" }}>
+                  {/* `0 1 auto` + minWidth 0, not `none`: a chip that cannot
+                      shrink cannot wrap either, and the horizon wording is
+                      wider than this line. Shrinking only ever costs the
+                      wrappable variant a second line — the nowrap ones are
+                      narrower than the track and are untouched. */}
+                  <span style={{ marginLeft: "auto", flex: "0 1 auto", minWidth: 0 }}>
                     <VerdictChip row={r} />
                   </span>
                 </span>
@@ -264,6 +321,19 @@ export default function RestingBets({
                 ) : (
                   <>
                     <div style={{ fontWeight: 700 }}>{r.reason}</div>
+                    {/* The quantitative reason above says why holding is right.
+                        This says how long "holding" lasts — the terminal fact a
+                        HOLD chip on its own never carried. */}
+                    {r.verdict === "HOLD" && (
+                      <div style={{ color: "var(--muted)" }}>
+                        Unfilled orders are pulled automatically 30 min before kick
+                        {r.pullAtMs === null
+                          ? "."
+                          : r.pullDue
+                            ? " — this one is already past that mark, so the next sweep takes it."
+                            : ` — this one at ${clockAt(r.pullAtMs)}.`}
+                      </div>
+                    )}
                     <div style={{ color: "var(--muted)" }}>{timingWords(r.timing)}</div>
                     {/* ITEMISED, in the order the money moves: payout, stake,
                         fee. The fee is named separately because it is outside

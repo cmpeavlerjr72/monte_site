@@ -109,6 +109,18 @@ export function buildFeedBook(
   return out;
 }
 
+/**
+ * The pre-kickoff chain cancels every unfilled quote at kick−30
+ * (`PULL_BEFORE_KICK_MIN` in cfb-props-sim's fbs_maker_pipeline.py, the same
+ * rule `REST_CUTOFF_MS` in suggestedBets.ts is sized against — inside the last
+ * hour a rest has ~30 minutes of life, not sixty).
+ *
+ * DISPLAY ONLY. No verdict reads it: this is the number that lets a HOLD say
+ * WHEN it stops being a hold, which is the fact a bare "HOLD — rest is still
+ * right" hid at 40 minutes from the pull.
+ */
+export const PULL_BEFORE_KICK_MS = 30 * 60 * 1000;
+
 export type RestingVerdict = "CONVERT" | "HOLD" | "PULL" | "UNPRICED";
 
 export type RestingRow = {
@@ -161,11 +173,34 @@ export type RestingRow = {
   takeFee: number | null;
   takeOutlay: number | null;
   timing: Timing;
+  /**
+   * THE HORIZON — when this specific order gets cancelled whether or not it
+   * has filled: kickoff − 30 minutes. Null when the kickoff is unknown, which
+   * is also the case `timingFor` treats as `far`, so a null can never reach a
+   * chip that wants to print a time.
+   */
+  pullAtMs: number | null;
+  /** That mark is already behind us (we are inside the last 30 minutes, and
+   *  the chain's next sweep takes this order). A time in the past must not be
+   *  printed as a future event. */
+  pullDue: boolean;
   verdict: RestingVerdict;
   /** The verdict in one sentence, for the chip's title and the popover. */
   reason: string;
   feeType: string;
 };
+
+/**
+ * Is the automatic pull close enough that a verdict has to carry it?
+ *
+ * Answered off the SHARED band ladder, not a threshold of its own: "soon" and
+ * "imminent" are the ≤3h bands, which is exactly the window in which the take
+ * bar has already relaxed because resting is running out of runway. That is
+ * the same fact stated in wording rather than in cents, so it has to move with
+ * the same boundary (the NO NEW NUMBERS doctrine at the top of this file).
+ */
+export const pullIsInSight = (r: RestingRow): boolean =>
+  r.pullAtMs !== null && (r.timing.band === "soon" || r.timing.band === "imminent");
 
 export type RestingReview = {
   rows: RestingRow[];
@@ -272,6 +307,9 @@ export function computeRestingReview({
     const restStake = round2(restPrice * count);
     const restWin = round2(count - restStake);
     const restFee = orderFee(restPrice, count, true, fp);
+    const pullAtMs = typeof game.kickoffMs === "number" && Number.isFinite(game.kickoffMs)
+      ? game.kickoffMs - PULL_BEFORE_KICK_MS
+      : null;
 
     let verdict: RestingVerdict;
     let reason: string;
@@ -320,7 +358,9 @@ export function computeRestingReview({
       restStake, restWin, restFee,
       ask, bookFrom,
       simP, takeEdge, restEdge, takeFeePer, takeFee, takeOutlay,
-      timing, verdict, reason,
+      timing,
+      pullAtMs, pullDue: pullAtMs !== null && pullAtMs <= nowMs,
+      verdict, reason,
       feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
     });
   }
