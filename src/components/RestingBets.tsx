@@ -12,8 +12,9 @@
 //                  made the app go silent about that market forever.
 //   THE INDEX      discovery. Which game has the next bet on it.
 //
-// One row per resting order this app placed, one VERDICT chip each, everything
-// behind it in the tap popover. The verdicts and their thresholds are computed
+// One row per resting order this app placed, one VERDICT chip each, the market
+// state (rest / ask / sim, one unit) on the row, the derivation behind it in
+// the tap popover. The verdicts and their thresholds are computed
 // in `src/lib/restingReview.ts`, off the SHARED band constants in
 // suggestedBets.ts — this file renders, it never decides.
 //
@@ -256,13 +257,22 @@ export default function RestingBets({
                   display: "flex", alignItems: "center", gap: 6,
                   minWidth: 0, flexWrap: "wrap", rowGap: 3,
                 }}>
-                  {/* The rest's own economics, then the clock. "wins $X" is
-                      what {count} @ {price} pays if it fills and settles our
-                      way — the same identity the My Book strip prints, on the
-                      same scope (the REMAINING order; anything already filled
-                      is a held position and is counted there). */}
+                  {/* The rest's own economics, then THE MARKET STATE, then the
+                      clock. The three prices sit together in the same unit so
+                      the market's position between our rest and the sim reads
+                      directly (owner ask 2026-08-29: a HOLD chip alone left
+                      them "in the dark as to state of the market"): rest 42¢ ·
+                      ask 51¢ · sim 58¢ says at a glance how far the book is
+                      from filling us and how close it is to a CONVERT. "wins
+                      $X" is what {count} @ {price} pays if it fills and
+                      settles our way — the same identity the My Book strip
+                      prints, on the same scope (the REMAINING order; anything
+                      already filled is a held position and is counted there). */}
                   <span style={{ fontSize: 10.5, color: "var(--muted)", minWidth: 0 }}>
-                    {r.count} resting @ {cents(r.restPrice)} · wins {usdTrim(r.restWin)}
+                    {r.count} resting @ {cents(r.restPrice)}
+                    {" · "}{r.ask === null ? "no ask" : `ask ${cents(r.ask)}`}
+                    {" · "}sim {r.simP === null ? "—" : cents(r.simP)}
+                    {" · "}wins {usdTrim(r.restWin)}
                     {" · "}{timeToKickText(r.timing.msToKick)}
                   </span>
                   {/* `0 1 auto` + minWidth 0, not `none`: a chip that cannot
