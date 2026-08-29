@@ -89,6 +89,47 @@ type LiveGame = {
   noContest?: boolean;
   /** Ball spot / down & distance / possession — present only while live. */
   situation?: LiveSituation;
+  /** Kickoff-window stadium weather, straight off the SAME scoreboard event
+   *  the rest of this join reads (`event.weather`). ESPN populates it inside
+   *  roughly 5 days of kick and omits it entirely otherwise → null. No new
+   *  fetcher exists for it and none should: because it rides the event, the
+   *  published-snapshot tier (blocked-network mode) inherits it verbatim. */
+  weather: LiveWeather | null;
+  /** `competitions[0].venue.indoor`. A dome still carries an OUTDOOR forecast
+   *  in `weather` (Fargodome: "Thunderstorms 80°"), so this flag wins on the
+   *  card — the roof is the fact that matters. */
+  indoor: boolean;
+  /** Broadcast network(s) for this game — "ESPN", "ESPN/Disney+" — or null.
+   *  Same event, same payload, same snapshot inheritance as the weather. */
+  broadcast: string | null;
+  /** Stadium and where it is. Rides `competitions[0].venue`, the same object
+   *  `indoor` above is read from. */
+  venue: LiveVenue | null;
+};
+
+/** Kickoff-window weather for one event, normalized. */
+type LiveWeather = {
+  /** Fahrenheit, rounded. Null when ESPN ships the block without a reading. */
+  temp: number | null;
+  /** ESPN's own words ("Mostly cloudy w/ t-storms") — the chip's tooltip. */
+  text: string;
+  /** AccuWeather condition code 1–44. ESPN sends it as a STRING ("4"), which
+   *  is why this is coerced rather than read through. */
+  conditionId: number | null;
+};
+
+/** Where the game is played, off the event's own venue object. */
+type LiveVenue = {
+  /** Stadium name ("Kenan Memorial Stadium"), or "" when ESPN omits it. */
+  name: string;
+  /** City, or "". */
+  city: string;
+  /** US state code, or "" — international venues carry a country instead. */
+  state: string;
+  /** "USA", "Ireland", … or "". Kept beside `state` rather than folded into
+   *  it because the card prints one or the other and needs to know which:
+   *  week 1 2026 opened at Aviva Stadium, whose address has NO state. */
+  country: string;
 };
 
 const clean = (s?: string) =>
@@ -162,8 +203,110 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
       awayNames: nameForms(away?.team),
       noContest: noContest || undefined,
       situation: state === "in" ? parseSituation(comp) : undefined,
+      weather: parseEventWeather(e?.weather),
+      indoor: comp?.venue?.indoor === true,
+      broadcast: parseEventBroadcast(comp),
+      venue: parseEventVenue(comp),
     };
   });
+}
+
+/** Broadcast networks for one competition → one short string.
+ *
+ *  ESPN's shape is `broadcasts: [{market, names: ["ESPN", "Disney+"]}]` —
+ *  an array of entries, each with an array of names (verified on the wk-1
+ *  2026 slate: 98/98 events carried one, 3 of them with two names). Both
+ *  levels are flattened, deduped in ESPN's order, and CAPPED AT TWO: this is
+ *  a line on a game card, not a distribution list, and the primary network is
+ *  the one a reader is looking for. Nothing here → null. */
+function parseEventBroadcast(comp: any): string | null {
+  const raw = Array.isArray(comp?.broadcasts) ? comp.broadcasts : [];
+  const names: string[] = [];
+  for (const b of raw) {
+    const list = Array.isArray(b?.names) ? b.names : [b?.shortName ?? b?.name];
+    for (const n of list) {
+      const s = typeof n === "string" ? n.trim() : "";
+      if (s && !names.includes(s)) names.push(s);
+    }
+  }
+  return names.length ? names.slice(0, 2).join("/") : null;
+}
+
+/** The event's venue → stadium + address, tolerant at every field. A venue
+ *  with neither a name nor a city says nothing, so it is null. */
+function parseEventVenue(comp: any): LiveVenue | null {
+  const v = comp?.venue;
+  if (!v || typeof v !== "object") return null;
+  const str = (x: any) => (typeof x === "string" ? x.trim() : "");
+  const out: LiveVenue = {
+    name: str(v.fullName),
+    city: str(v.address?.city),
+    state: str(v.address?.state),
+    country: str(v.address?.country),
+  };
+  return out.name || out.city ? out : null;
+}
+
+/** "Kenan Memorial Stadium · Chapel Hill, NC" — one compact line.
+ *  Outside the US there is no state, so the COUNTRY takes that slot
+ *  ("Aviva Stadium · Dublin, Ireland"); "USA" is never printed, because on a
+ *  college football card it is the assumption, not information. Any missing
+ *  piece simply drops out of the join, so the line is always well-formed. */
+function venueLine(v: LiveVenue): string {
+  const region = v.state || (v.country && v.country !== "USA" ? v.country : "");
+  const where = [v.city, region].filter(Boolean).join(", ");
+  return [v.name, where].filter(Boolean).join(" · ");
+}
+
+/** ESPN's per-event weather block → our shape. Tolerant by construction:
+ *  a missing block, a missing field, or a non-numeric one is null/"" and
+ *  never a throw — this is an optional garnish on a money screen, and the
+ *  block is simply absent for every game more than ~5 days out. */
+function parseEventWeather(w: any): LiveWeather | null {
+  if (!w || typeof w !== "object") return null;
+  const temp = Number(w.temperature ?? w.highTemperature);
+  const cond = Number(w.conditionId); // arrives as a string ("4"), verified 20260903
+  const text = typeof w.displayValue === "string" ? w.displayValue : "";
+  const out: LiveWeather = {
+    temp: Number.isFinite(temp) ? Math.round(temp) : null,
+    text,
+    conditionId: Number.isFinite(cond) ? cond : null,
+  };
+  return out.temp == null && !out.text ? null : out;
+}
+
+/**
+ * AccuWeather condition code → one emoji, in COARSE buckets.
+ *
+ * Source: AccuWeather's public weather-icon table (codes 1–44; 1–32 are the
+ * day icons, 33–44 the night ones), which is what ESPN's
+ * `event.weather.conditionId` is. Buckets are deliberately coarse — the chip
+ * answers "do I need to think about the weather in this game", not which of
+ * four flavours of cloud it is. Anything off the table (or a missing id)
+ * returns null and the chip renders the temperature alone.
+ */
+function weatherEmoji(conditionId: number | null): string | null {
+  const c = conditionId;
+  if (c == null || !Number.isFinite(c)) return null;
+  if (c >= 1 && c <= 2) return "☀️";   // sunny / mostly sunny
+  if (c >= 3 && c <= 6) return "⛅";   // partly sunny → intermittent clouds
+  if (c >= 7 && c <= 10) return "☁️";  // cloudy / overcast / dreary
+  if (c === 11) return "🌫️";           // fog
+  if (c >= 12 && c <= 14) return "🌧️"; // showers
+  if (c >= 15 && c <= 17) return "⛈️"; // thunderstorms
+  if (c === 18) return "🌧️";           // rain
+  if (c >= 19 && c <= 23) return "🌨️"; // flurries / snow
+  if (c >= 24 && c <= 26) return "🧊";  // ice / sleet / freezing rain
+  if (c === 29) return "🌨️";           // rain and snow
+  if (c === 30) return "🥵";           // hot
+  if (c === 31) return "🥶";           // cold
+  if (c === 32) return "💨";           // windy
+  if (c >= 33 && c <= 34) return "🌙"; // clear / mostly clear (night)
+  if (c >= 35 && c <= 38) return "☁️";  // partly → mostly cloudy (night)
+  if (c >= 39 && c <= 40) return "🌧️"; // showers (night)
+  if (c >= 41 && c <= 42) return "⛈️"; // thunderstorms (night)
+  if (c >= 43 && c <= 44) return "🌨️"; // flurries / snow (night)
+  return null; // 27/28 and anything future — text only, never a wrong picture
 }
 
 /** All the name forms an ESPN team object offers, deduped. */
@@ -3214,6 +3357,53 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 //   return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
 // }
 
+/**
+ * The kickoff-weather chip that sits just left of the kick time on a PREGAME
+ * card (the caller owns that gate — see the card header). A planning aid, so
+ * muted and one glance wide: an emoji and a temperature, with ESPN's own
+ * wording in the tooltip. A dome says "Dome" and nothing else, because the
+ * outdoor forecast ESPN still ships for it is not a fact about that game.
+ *
+ * NO colour of its own: it wears --muted ink on the card's own background,
+ * exactly like the week label and the kick time it sits next to, so it reads
+ * in both themes with no new tinted surface to measure.
+ *
+ * Renders null whenever there is nothing certain to say — the temperature is
+ * the chip's whole content, so a weather block without one is not worth a
+ * line on a betting card.
+ */
+function KickWeatherChip({
+  weather, indoor,
+}: { weather: LiveWeather | null; indoor: boolean }) {
+  if (!indoor && (!weather || weather.temp == null)) return null;
+
+  const emoji = indoor ? "🏟️" : weatherEmoji(weather?.conditionId ?? null);
+  const body = indoor ? "Dome" : `${weather?.temp}°`;
+  const title = indoor
+    ? weather?.text
+      ? `Indoor stadium — ${weather.text} outside`
+      : "Indoor stadium"
+    : weather?.text || undefined;
+
+  return (
+    <span
+      title={title}
+      style={{
+        whiteSpace: "nowrap",
+        color: "var(--muted)",
+        fontWeight: 400,
+        fontVariantNumeric: "tabular-nums",
+        marginRight: 7,
+        // Fits inside the header row's reserved 16px, so the chip arriving
+        // with the ESPN join fills a slot rather than growing the card.
+        lineHeight: "14px",
+      }}
+    >
+      {emoji ? <span aria-hidden="true">{emoji} </span> : null}
+      {body}
+    </span>
+  );
+}
 
 export function GameCard({
   card, gdata, useMean = false, kalshi, book, bookToken = "", parlayOpen,
@@ -3284,6 +3474,42 @@ export function GameCard({
     awayLogo: (espnHomeIsA ? bLogo : aLogo) || undefined,
   };
 
+  /* The PREGAME gate for the three context bits that ride the live join —
+     kickoff weather, broadcast, venue. Hoisted here because the weather chip
+     and the broadcast tag render on the header line while the venue renders
+     on its own line below it, and the two must never disagree about whether
+     this game has kicked.
+
+     Both signals veto, the same shape as the suggested-bets pregame gate: a
+     live/post/final state beats a kick time still in the future, and the
+     CLOCK beats a stale "pre". Once a game is under way the live/score UI
+     owns this space — a forecast for a kick that already happened is noise on
+     a card whose reader is now watching a result. The Date.now() read is safe
+     because the page's 30s `nowMs` tick re-renders every card, so these clear
+     themselves at kickoff rather than waiting on the feed.
+
+     BROADCAST is the one exception: it stays up while the game is LIVE,
+     because "which channel is this on" is a live question — it only drops at
+     final, where it is pure noise. */
+  const lvState = lv?.state;
+  const cardIsFinal = card.scoreSource === "CSV_FINALS" || lvState === "post" || lvState === "final";
+  const pregame =
+    !liveNow &&
+    !cardIsFinal &&
+    card.scoreSource !== "LIVE" &&
+    lvState !== "in" &&
+    (card.kickoffMs == null || card.kickoffMs > Date.now());
+  const showBroadcast = !cardIsFinal;
+  /* The venue line is RESERVED, not conditional: `venueSlot` is decided from
+     the card alone (no feed), so the empty line is already in the layout when
+     the ESPN join lands and the text fills it in place. Deciding on `lv.venue`
+     instead would mount a whole new row seconds after first paint and push
+     every card below down — the 2026-08-29 CLS lesson, exactly. Condensed
+     cards opt out entirely: that mode exists to fit more games on screen, and
+     the stadium is the least load-bearing thing on a card. */
+  const venueSlot = pregame && !condensed;
+  const venueText = venueSlot && lv?.venue ? venueLine(lv.venue) : "";
+
   /* LIVE PROGRESS on the owner's per-team stat bets (rec yds, rush yds, team
      points). The gate is deliberately narrow and cheap: a game that is UNDER
      WAY (or just finished, where "did it get there" is the whole question)
@@ -3343,7 +3569,25 @@ export function GameCard({
           : card.kickoffLabel ?? "Scheduled";
 
         return (
-          <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+          /* Header row + venue line share ONE grid cell (gap 2) rather than
+             taking two of the card's own 8px-gap slots — the venue is a
+             continuation of the header, not a section of its own. */
+          <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+          {/* minHeight reserves the row (2026-08-29 CLS work): the ESPN join
+             lands seconds after first paint, so the weather chip and broadcast
+             tag mounting into this line would otherwise nudge every card below
+             it. 16px covers the 11px label text and the 14px chips alike.
+
+             minWidth:0 here and on the wrapper is load-bearing, not tidiness:
+             a grid item's automatic minimum size is its MIN-CONTENT, and
+             Chrome takes this flex row's min-content to include the week
+             label's full width even though that span is `overflow: hidden`.
+             Without the override the row refuses to shrink and a long label
+             ("Week 14 (Rivalry Week)") plus a network and a weather chip
+             pushes the kick time clean outside the card — measured 341px of
+             content in a 272px card. With it, the label ellipsizes and the
+             kick time stays put, which is the right thing to sacrifice. */}
+          <div style={{ fontSize: 11, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", minHeight: 16, minWidth: 0 }}>
             {/* Sibling of the week label, not a child of it: that span
                 truncates with an ellipsis, and a badge inside it would be the
                 first thing clipped on a long label ("Week 14 (Rivalry Week)").
@@ -3362,6 +3606,30 @@ export function GameCard({
                 color: isLive ? "var(--neg)" : isFinal ? "var(--text)" : "var(--muted)",
               }}
             >
+              {/* Broadcast + kickoff weather ride INSIDE the status span,
+                  immediately left of the kick time they qualify. That
+                  placement is the CLS answer: this span's right edge is
+                  pinned by its own `marginLeft: auto`, so anything appearing
+                  when the ESPN join lands grows the span LEFTWARD into empty
+                  space — the kick time itself does not move, and on a card too
+                  narrow for the slack the week label (already ellipsized)
+                  absorbs it. The row's minHeight covers the vertical half. */}
+              {showBroadcast && lv?.broadcast && (
+                <span
+                  style={{
+                    whiteSpace: "nowrap", color: "var(--muted)", fontWeight: 400,
+                    marginRight: 7, lineHeight: "14px",
+                  }}
+                >
+                  {lv.broadcast}
+                </span>
+              )}
+              {pregame && (
+                <KickWeatherChip
+                  weather={lv?.weather ?? null}
+                  indoor={lv?.indoor === true}
+                />
+              )}
               {isLive && (
                 <span style={{
                   display: "inline-block", width: 6, height: 6, borderRadius: 999,
@@ -3384,6 +3652,26 @@ export function GameCard({
                 {openKind === "picker" ? "Cancel" : "+ Add leg"}
               </button>
             )}
+          </div>
+
+          {/* WHERE the game is played — stadium and town, one muted line, in
+              the same --muted ink as the header above it so both themes come
+              free. Pregame only: once the ball is in the air the live UI owns
+              the card and the venue stops being a decision input. Truncates
+              from the right on a narrow card; the stadium name is the half
+              worth keeping. */}
+          {venueSlot && (
+            <div
+              style={{
+                fontSize: 11, color: "var(--muted)", lineHeight: "14px",
+                minHeight: 14, minWidth: 0, overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}
+              title={venueText || undefined}
+            >
+              {venueText}
+            </div>
+          )}
           </div>
         );
       })()}

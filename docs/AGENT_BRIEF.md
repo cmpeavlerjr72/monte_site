@@ -42,6 +42,27 @@ join indexes EVERY ESPN name form (shortDisplayName alone matched 27/46 FCS
 games). Harness: hidden route `/test-gamecast?event=<espn id>`. ESPN yard
 lines are ABSOLUTE 0–100, home goal line = 0.
 
+**Card CONTEXT off the same event (2026-08-29).** `mapEspnToLiveGames` also
+carries `weather` / `indoor` / `broadcast` / `venue`, and the card header
+renders them beside the kick time: a weather chip (`🏟️ Dome`, else
+`<emoji> <temp>°` with ESPN's wording in the tooltip; AccuWeather condition
+codes 1–44 bucketed in `weatherEmoji`), the network(s), and a venue line
+("Kenan Memorial Stadium · Chapel Hill, NC"; a non-US address prints the
+COUNTRY where the state would go). Three rules: (1) NO new fetcher — these
+ride the scoreboard event, so the published-snapshot tier inherits them and a
+blocked network gets them free; ESPN populates `weather` only inside ~5 days
+of kick and it is simply absent otherwise. (2) PREGAME ONLY for weather and
+venue — once a game is live the live/score UI owns that space; broadcast is
+the exception, since "which channel" is a live question, and it drops at
+final. (3) The venue line's slot is RESERVED off the card alone (`venueSlot`,
+no feed) and the header row carries `minHeight`, because the join lands after
+first paint; the chips sit INSIDE the right-pinned status span so they grow
+leftward into empty space rather than moving the kick time. `minWidth: 0` on
+the header row and its wrapper is load-bearing — a grid item's automatic
+minimum size is min-content, which Chrome computes from the week label's FULL
+width, and without it a long label plus a network plus a chip pushed the kick
+time 56px outside the card.
+
 ## Divisions (FBS + FCS)
 
 FCS is a **separate dataset with an identical layout**, addressed by the
