@@ -2219,6 +2219,15 @@ function ScoreboardPage() {
     () => computeSettlementRecord(portal.settlements, kalshiBySlug, slatePairs),
     [portal.settlements, kalshiBySlug, slatePairs]
   );
+  /** slug -> the card's real team names — a second view of the same
+   *  `baseCards` list `slatePairs` above already reads, just keyed by slug
+   *  instead of pairKey. What lets the settled record's expanded rows show
+   *  real names and logos instead of the ticker's letter code (2026-08-29
+   *  ask): no new data fetching, this is display-only. */
+  const slugTeams = useMemo(
+    () => new Map(baseCards.map((c) => [c.key, { teamA: c.teamA, teamB: c.teamB }])),
+    [baseCards]
+  );
   /** ticker -> P(YES) of the RAW market: seeds for the game lines, published
    *  rungs for the per-team stat ladders. Literally the function the held
    *  positions above are priced with (`buildPortalYesP`), handed to the
@@ -2900,6 +2909,7 @@ function ScoreboardPage() {
           totals={portalBook.totals}
           unmatched={portalBook.unmatched}
           record={portalRecord}
+          slugTeams={slugTeams}
         >
           {/* The RANKED INDEX: which game, not which bet. It recomputes
               whenever the 45s Kalshi poll delivers, so it is live without a

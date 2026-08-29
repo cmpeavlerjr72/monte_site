@@ -19,7 +19,7 @@ import DryRunBadge from "./DryRunBadge";
 import { cancelAppOrders, placeErrorText, type PlaceResponse } from "../lib/placeOrders";
 import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
 import { KalshiRecordBlock, MyBookBar } from "./MyBook";
-import type { PortalTotals, SettlementRecord } from "../lib/kalshiPortal";
+import type { BetGameNames, PortalTotals, SettlementRecord } from "../lib/kalshiPortal";
 
 function Row({ label, children, top = false }: {
   label: string;
@@ -47,7 +47,7 @@ function Row({ label, children, top = false }: {
 
 export default function MyBookPanel({
   token, onToken, note, connected, ordersLive, unit, onUnit,
-  totals, unmatched, record, children,
+  totals, unmatched, record, slugTeams, children,
 }: {
   token: string;
   /** "" disconnects. Persisting is the caller's job (writePortalToken). */
@@ -66,6 +66,9 @@ export default function MyBookPanel({
    *  only when something has actually settled on them — an empty record is not
    *  a 0-0 line, it is no line. */
   record: SettlementRecord;
+  /** slug -> the card's real team names, passed straight through to
+   *  `KalshiRecordBlock` — see that component's doc for what it is used for. */
+  slugTeams: Map<string, BetGameNames>;
   /** The Suggested bets card — rendered inside the console it belongs to. */
   children?: React.ReactNode;
 }) {
@@ -191,7 +194,7 @@ export default function MyBookPanel({
           0-0 that is really "we have no data". */}
       {token && record.slate.n > 0 && (
         <Row label="Record" top>
-          <KalshiRecordBlock record={record} />
+          <KalshiRecordBlock record={record} slugTeams={slugTeams} />
         </Row>
       )}
 

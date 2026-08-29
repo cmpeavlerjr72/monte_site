@@ -46,7 +46,9 @@
 import { Fragment, useState } from "react";
 import { americanOdds, pctText } from "../lib/marketEdge";
 import CancelConfirm from "./CancelOrder";
-import type { PortalBet, PortalTotals, RecordBet, RecordLine, SettlementRecord } from "../lib/kalshiPortal";
+import { cheerLabelWithGame } from "../lib/kalshiPortal";
+import type { BetGameNames, PortalBet, PortalTotals, RecordBet, RecordLine, SettlementRecord } from "../lib/kalshiPortal";
+import { getTeamLogo } from "../utils/teamLogo";
 
 /* Geometry — fixed on purpose (see header). */
 const ROW_H = 40;
@@ -428,7 +430,17 @@ export function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatch
  * aggregate words kept underneath. Bets NOT placed through this app carry an
  * "auto" tag, because this Kalshi account is shared with the maker pipeline.
  */
-export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
+export function KalshiRecordBlock({ record, slugTeams }: {
+  record: SettlementRecord;
+  /** slug -> the card's real team names (teamA=home, teamB=away) — the same
+   *  cards every other slug join in the page reads (`buildSlatePairs`'s
+   *  source list), just keyed by slug instead of pairKey. Lets an expanded
+   *  row upgrade its wording from the ticker's letter code to real names and
+   *  logos, with no fetch of its own: a slug missing here (an off-slate
+   *  settlement, or a card that scrolled out of the current filter) just
+   *  means that one row falls back to the plain cheer-label wording. */
+  slugTeams: Map<string, BetGameNames>;
+}) {
   const [open, setOpen] = useState<string | null>(null);
   const rows: RecordLine[] = [record.slate, ...record.byType];
 
@@ -465,7 +477,7 @@ export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
                 {/* The bets FIRST — they are what the tap was asking for; the
                     derivation words stay underneath, unchanged. */}
                 <div className="mybook-record__bets">
-                  {line.bets.map((b) => <RecordBetRow key={b.key} bet={b} />)}
+                  {line.bets.map((b) => <RecordBetRow key={b.key} bet={b} slugTeams={slugTeams} />)}
                 </div>
                 {lines.map((l, i) => <div key={i}>{l}</div>)}
               </div>
@@ -489,12 +501,32 @@ export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
  * on purpose: the owner's own bets are the unmarked default, so a clean list
  * has no chrome on it at all.
  */
-function RecordBetRow({ bet }: { bet: RecordBet }) {
+function RecordBetRow({ bet, slugTeams }: { bet: RecordBet; slugTeams: Map<string, BetGameNames> }) {
   const tone: Tone = bet.result === "won" ? "pos" : bet.result === "lost" ? "neg" : "flat";
+  // `bet.key` IS the settled market's ticker (see RecordBet's own doc) — the
+  // join `slug` resolves the game, and the ticker + held `side` rebuild the
+  // words with that game's real names. Unresolved slug => cheerLabelWithGame
+  // falls back to bet.label's own wording internally.
+  const game = slugTeams.get(bet.slug);
+  const label = cheerLabelWithGame(bet.key, bet.side, game);
+  const awayLogo = game ? getTeamLogo(game.teamB) : undefined;
+  const homeLogo = game ? getTeamLogo(game.teamA) : undefined;
   return (
     <div className="mybook-record__bet">
+      {(awayLogo || homeLogo) && (
+        <span className="mybook-record__logos" aria-hidden="true">
+          {awayLogo && (
+            <img src={awayLogo} alt="" width={16} height={16} loading="lazy"
+                 className="mybook-record__logo" />
+          )}
+          {homeLogo && (
+            <img src={homeLogo} alt="" width={16} height={16} loading="lazy"
+                 className="mybook-record__logo" />
+          )}
+        </span>
+      )}
       <span className="mybook-record__mark" data-tone={tone} aria-hidden="true" />
-      <span className="mybook-record__bet-label">{bet.label}</span>
+      <span className="mybook-record__bet-label">{label}</span>
       {bet.app === false && (
         <span
           className="mybook-record__tag"

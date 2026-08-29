@@ -180,6 +180,61 @@ export function cheerLabel(ticker: string, side: string): string {
   return `${t.fam} ${t.strike}`.trim();
 }
 
+/** Real team names for one game — the minimal shape a display needs to
+ *  upgrade a bet's wording off its joined slug. `teamA` is HOME, `teamB` is
+ *  AWAY, the same convention `parseNcaafTicker`'s `strikeIsHome` and every
+ *  card in the app already use. */
+export type BetGameNames = { teamA: string; teamB: string };
+
+/**
+ * Same slip wording as `cheerLabel`, but naming the REAL team — and, for a
+ * total, the real matchup — instead of the ticker's letter code. For a
+ * display that has already joined the bet to its game (the settled record's
+ * expanded rows, via `RecordBet.slug`), a ticker fragment like "NICH −21.5"
+ * is unreadable; this says "Nicholls −21.5" instead.
+ *
+ * Falls back to `cheerLabel` whenever the ticker cannot be parsed, `game` is
+ * not known (an off-slate settlement, or a slug that resolved to no
+ * displayed card), or the family has no team-worded rendering here — never a
+ * crash, same as every other "can't join it" case in this file.
+ */
+export function cheerLabelWithGame(
+  ticker: string,
+  side: string,
+  game: BetGameNames | undefined,
+): string {
+  const fallback = () => cheerLabel(ticker, side);
+  const t = parseNcaafTicker(ticker);
+  if (!t || !game) return fallback();
+  const no = side === "no";
+  const half = t.n !== null ? t.n - 0.5 : null;
+
+  if (t.fam === "TOTAL" && half !== null) {
+    // Matchup, away @ home — a total's ticker carries no team at all, so
+    // this is the ONE family where the upgrade is identity, not a name swap.
+    return `${no ? "Under" : "Over"} ${half} · ${game.teamB} @ ${game.teamA}`;
+  }
+  if (!t.strikeTeam) return fallback();
+  const strikeName = t.strikeIsHome ? game.teamA : game.teamB;
+  const otherName = t.strikeIsHome ? game.teamB : game.teamA;
+
+  if (t.fam === "SPREAD" && half !== null) {
+    return no ? `${otherName} +${half}` : `${strikeName} -${half}`;
+  }
+  if (t.fam === "GAME") {
+    return `${no ? otherName : strikeName} ML`;
+  }
+  const words = STAT_WORDS[t.fam];
+  if (words && t.n !== null) {
+    // Same rule as cheerLabel: a stat market's NO is "stays under", not a
+    // mirrored strike, so the team stays the strike team either way.
+    return no
+      ? `${strikeName} under ${t.n} ${words}`
+      : `${strikeName} ${t.n}+ ${words}`;
+  }
+  return fallback();
+}
+
 /** P(YES) of one game market under the sim's seed arrays; null = can't. */
 export function simYesP(ticker: string, seeds: SeedPair | undefined): number | null {
   const t = parseNcaafTicker(ticker);
@@ -529,9 +584,20 @@ export function betTypeOf(ticker: string): BetTypeKey {
  * construction — they are built from the same settlements in the same pass.
  */
 export type RecordBet = {
-  /** The settled market's ticker: unique per row, so it is the React key. */
+  /** The settled market's ticker: unique per row, so it is the React key
+   *  AND the ticker — `cheerLabelWithGame` reads it as the ticker. */
   key: string;
-  /** Cheer-side slip words, from the SAME `cheerLabel` the book rows use. */
+  /** The held side, same convention as `PortalOrder.side` — needed (with
+   *  `key`) to rebuild the label with real team names in the display layer,
+   *  where `slug` resolves to a game. */
+  side: "yes" | "no";
+  /** The game this settlement joined to (see `computeSettlementRecord`'s two-
+   *  step join). Display-only — lets a consumer resolve real team names and
+   *  logos for the row without re-deriving the join. */
+  slug: string;
+  /** Cheer-side slip words, from the SAME `cheerLabel` the book rows use.
+   *  Ticker-letter-code wording — the FALLBACK a team-aware caller drops
+   *  back to when `slug` resolves to no known game. */
   label: string;
   /** revenue − cost, in dollars. Fees are outside it, as everywhere else. */
   net: number;
@@ -590,11 +656,13 @@ const emptyLine = (key: string, label: string): RecordLine => ({
  * words then name the LARGER holding — the money is unaffected either way,
  * because `cost` already sums both sides against the settlement revenue.
  */
-function recordBetOf(s: PortalSettlement): RecordBet {
+function recordBetOf(s: PortalSettlement, slug: string): RecordBet {
   const net = s.revenue - s.cost;
   const side = s.no_count > s.yes_count ? "no" : "yes";
   return {
     key: s.ticker,
+    side,
+    slug,
     label: cheerLabel(s.ticker, side),
     net,
     fees: s.fees,
@@ -681,7 +749,7 @@ export function computeSettlementRecord(
       }
     }
     if (!slug) { offSlate++; continue; }
-    const bet = recordBetOf(s);
+    const bet = recordBetOf(s, slug);
     addTo(slate, s, bet);
     const key = betTypeOf(s.ticker);
     let line = byKey.get(key);

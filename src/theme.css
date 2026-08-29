@@ -1041,6 +1041,24 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 1px solid var(--border);
 }
 .mybook-record__bet { display: flex; align-items: center; gap: 6px; min-height: 20px; }
+/* Game identity, away-then-home. Its own flex item (never `flex-wrap: wrap`
+   on the row above) so it can never end up orphaned on its own line when the
+   label wraps to two — it and the mark stay pinned to the line start, and
+   only the label grows underneath them. Absent entirely when the bet's slug
+   resolved to no known game, or when neither logo is on file. */
+.mybook-record__logos {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.mybook-record__logo {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex: none;
+  border-radius: 3px;
+}
 /* WRAPS, unlike the row labels above: a popover has vertical room and a
    truncated bet is exactly the thing this expansion exists to show. */
 .mybook-record__bet-label {
