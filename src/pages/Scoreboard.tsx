@@ -49,7 +49,7 @@ import type { FeeParams } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
-  parseNcaafTicker, buildCodeToSlug, buildPortalYesP,
+  computeSettlementRecord, parseNcaafTicker, buildCodeToSlug, buildPortalYesP,
   type PortalBet, type PortalTotals, type SeedPair,
 } from "../lib/kalshiPortal";
 import LegPicker from "../components/LegPicker";
@@ -2205,6 +2205,15 @@ function ScoreboardPage() {
     () => computePortalBets(portal.payload, kalshiBySlug, portalSeeds, statYesP, gameYesP),
     [portal.payload, kalshiBySlug, portalSeeds, statYesP, gameYesP]
   );
+  /** The REALISED record on the games this board is showing — the owner's
+   *  settled Kalshi markets, joined by the SAME event code -> slug map the live
+   *  book uses (`buildCodeToSlug`), so a settlement counts here exactly when
+   *  its game is on screen. Settlements from other weeks are excluded, not
+   *  summed. */
+  const portalRecord = useMemo(
+    () => computeSettlementRecord(portal.settlements, kalshiBySlug),
+    [portal.settlements, kalshiBySlug]
+  );
   /** ticker -> P(YES) of the RAW market: seeds for the game lines, published
    *  rungs for the per-team stat ladders. Literally the function the held
    *  positions above are priced with (`buildPortalYesP`), handed to the
@@ -2885,6 +2894,7 @@ function ScoreboardPage() {
           onUnit={(v) => { setUnit(v); writeUnit(v); }}
           totals={portalBook.totals}
           unmatched={portalBook.unmatched}
+          record={portalRecord}
         >
           {/* The RANKED INDEX: which game, not which bet. It recomputes
               whenever the 45s Kalshi poll delivers, so it is live without a

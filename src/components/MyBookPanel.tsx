@@ -7,6 +7,7 @@
 //   Unit size  dollars of risk per ladder — the number the whole site sizes on
 //   Orders     the kill switch for orders this app placed
 //   Book       the cumulative risk/EV bar, when there is a book
+//   Record     REAL settled W/L + PnL on this slate, broken out by bet type
 //   (children) the Suggested bets card
 //
 // It replaces a one-off "My Kalshi" toolbar button plus a floating login
@@ -17,18 +18,25 @@ import { useState } from "react";
 import DryRunBadge from "./DryRunBadge";
 import { cancelAppOrders, placeErrorText, type PlaceResponse } from "../lib/placeOrders";
 import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
-import { MyBookBar } from "./MyBook";
-import type { PortalTotals } from "../lib/kalshiPortal";
+import { KalshiRecordBlock, MyBookBar } from "./MyBook";
+import type { PortalTotals, SettlementRecord } from "../lib/kalshiPortal";
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({ label, children, top = false }: {
+  label: string;
+  children: React.ReactNode;
+  /** A row whose content is a STACK (the settled record) pins its label to the
+   *  first line instead of floating it beside the middle of the block. */
+  top?: boolean;
+}) {
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-      padding: "7px 0", borderTop: "1px solid var(--border)",
+      display: "flex", alignItems: top ? "flex-start" : "center", gap: 10,
+      flexWrap: "wrap", padding: "7px 0", borderTop: "1px solid var(--border)",
     }}>
       <span style={{
         fontSize: 10, fontWeight: 800, letterSpacing: 0.4, minWidth: 66,
         textTransform: "uppercase", color: "var(--muted)",
+        ...(top ? { paddingTop: 13 } : null),
       }}>
         {label}
       </span>
@@ -39,7 +47,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export default function MyBookPanel({
   token, onToken, note, connected, ordersLive, unit, onUnit,
-  totals, unmatched, children,
+  totals, unmatched, record, children,
 }: {
   token: string;
   /** "" disconnects. Persisting is the caller's job (writePortalToken). */
@@ -54,6 +62,10 @@ export default function MyBookPanel({
   onUnit: (v: number) => void;
   totals: PortalTotals;
   unmatched: number;
+  /** REAL settled results on the games this board is showing. The row renders
+   *  only when something has actually settled on them — an empty record is not
+   *  a 0-0 line, it is no line. */
+  record: SettlementRecord;
   /** The Suggested bets card — rendered inside the console it belongs to. */
   children?: React.ReactNode;
 }) {
@@ -170,6 +182,16 @@ export default function MyBookPanel({
               ONE verdict. Risk → payout, fees, both sources' EV and how many
               bets each could price are behind the tap. */}
           <MyBookBar totals={totals} unmatched={unmatched} />
+        </Row>
+      )}
+
+      {/* The REALISED half, directly under the open book: what these games
+          have already settled for. Nothing settled on this board yet (or no
+          settlement joins it) => no row at all, rather than an honest-looking
+          0-0 that is really "we have no data". */}
+      {token && record.slate.n > 0 && (
+        <Row label="Record" top>
+          <KalshiRecordBlock record={record} />
         </Row>
       )}
 

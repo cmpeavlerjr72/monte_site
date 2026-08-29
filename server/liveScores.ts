@@ -2053,7 +2053,107 @@ async function portalPositions(): Promise<PortalPosition[]> {
   return portalResolveMve(out);
 }
 
+/**
+ * ONE SETTLED MARKET — the owner's realised result, normalised to DOLLARS here
+ * so the client never meets this endpoint's unit trap.
+ *
+ * Field shapes verified live against the real account 2026-08-29 (12 NCAAF
+ * settlements). The endpoint returns:
+ *
+ *   revenue                 CENTS, as a NUMBER (5000 = $50.00). There is NO
+ *                           `revenue_dollars` sibling on this endpoint — the
+ *                           key list is exactly {event_ticker, exchange_index,
+ *                           fee_cost, market_result, no_count_fp,
+ *                           no_total_cost_dollars, revenue, settled_time,
+ *                           ticker, value, yes_count_fp,
+ *                           yes_total_cost_dollars}. A dollar sibling is still
+ *                           PREFERRED if Kalshi ever adds one (same trap the
+ *                           market endpoints sprang), which is what the
+ *                           `?? cents/100` below expresses.
+ *   *_count_fp              fixed-point STRINGS ("50.00")
+ *   *_total_cost_dollars    decimal-dollar STRINGS ("28.000000")
+ *   fee_cost                decimal-dollar STRING ("0.862400")
+ *   market_result           "yes" | "no" | "scalar" — scalar happens in
+ *                           practice (a spread that settled at an intermediate
+ *                           `value`, e.g. LAF10 at value 20 paying 20c a
+ *                           contract). Grading NEVER reads this field: the
+ *                           only honest grade is the sign of the money.
+ *
+ * FEES ARE NOT INSIDE revenue OR cost — measured, not assumed: 50 NO contracts
+ * with cost $27.50 is exactly 50 x 55c, and its fee_cost $0.2173 sits outside
+ * that; the winning side's revenue is exactly count x $1.00. So `fees` is
+ * carried as its own number and the UI itemises it separately, the same
+ * convention `computePortalBets` already uses for held positions.
+ */
+type PortalSettlement = {
+  ticker: string;
+  event_ticker: string;
+  /** Kalshi's own word for the outcome. Reported for the record, never used to
+   *  decide a win — see above. */
+  market_result: string;
+  yes_count: number;
+  no_count: number;
+  /** DOLLARS. What settlement paid out on the held contracts. */
+  revenue: number;
+  /** DOLLARS. What those contracts cost (both sides summed — one of them is
+   *  zero in every real row, but an account that bought both sides of one
+   *  market still nets correctly this way). */
+  cost: number;
+  /** DOLLARS. Charged at FILL time, outside revenue and cost. */
+  fees: number;
+  settled_time: string;
+};
+
+/**
+ * The owner's settled NCAAF markets, newest first.
+ *
+ * NCAAF-only, like `portalFills` — a KXMVE combo's settlement carries the
+ * opaque shard ticker, which joins to no game and classifies to no bet type,
+ * so including it could only ever add an uncountable row.
+ *
+ * Cap: 2 x 200 = 400 rows. The upstream list is global (every sport) and
+ * strictly descending by settled_time — measured 2026-08-29, where 400 rows
+ * reached back ~2 months and every NCAAF row sat in the first 13. A slate
+ * record only ever needs the recent end.
+ */
+async function portalSettlements(): Promise<PortalSettlement[]> {
+  const out: PortalSettlement[] = [];
+  let cursor = "";
+  for (let page = 0; page < 2; page++) {
+    const body = await portalGet("/portfolio/settlements?limit=200" +
+      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
+    for (const s of body?.settlements || []) {
+      const t = String(s.ticker || "");
+      if (!PORTAL_NCAAF.test(t)) continue;
+      const yes = portalNum(s.yes_count_fp ?? s.yes_count) ?? 0;
+      const no = portalNum(s.no_count_fp ?? s.no_count) ?? 0;
+      if (yes <= 0 && no <= 0) continue;      // nothing was held here
+      const cents = portalNum(s.revenue);
+      out.push({
+        ticker: t,
+        event_ticker: String(s.event_ticker || ""),
+        market_result: String(s.market_result || ""),
+        yes_count: yes,
+        no_count: no,
+        revenue: portalNum(s.revenue_dollars) ?? (cents === null ? 0 : cents / 100),
+        cost: (portalNum(s.yes_total_cost_dollars) ?? 0) +
+              (portalNum(s.no_total_cost_dollars) ?? 0),
+        fees: portalNum(s.fee_cost) ?? 0,
+        settled_time: String(s.settled_time || ""),
+      });
+    }
+    cursor = String(body?.cursor || "");
+    if (!cursor) break;
+  }
+  return out;
+}
+
 let portalCache: { at: number; payload: PortalPayload } | null = null;
+/** Settled money changes only when a market settles, so this cache is longer
+ *  than the book's 20s: the client rides the SAME 30s portal poll and a
+ *  freshly settled game shows up within a poll or two. */
+const PORTAL_SETTLE_TTL_MS = 60_000;
+let portalSettleCache: { at: number; payload: { fetched_at: string; settlements: PortalSettlement[] } } | null = null;
 
 /**
  * THE auth gate for the whole portal family — reads AND writes.
@@ -2129,6 +2229,26 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req: Request, res: Response) => 
     orders_live: ORDERS_LIVE,
   };
   portalCache = { at: Date.now(), payload };
+  res.json(payload);
+}));
+
+/**
+ * The owner's SETTLED NCAAF markets — the realised half of the portal.
+ *
+ * Read-only and behind the same `portalGate` as every other portal read; it
+ * adds no write surface and reaches no market the app could not already read.
+ * The client rides its existing 30s portal poll to refresh this, so it opens
+ * no new timer either.
+ */
+app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req: Request, res: Response) => {
+  if (!portalGate(req, res)) return;
+  if (portalSettleCache && Date.now() - portalSettleCache.at < PORTAL_SETTLE_TTL_MS) {
+    res.json(portalSettleCache.payload);
+    return;
+  }
+  const settlements = await portalSettlements();
+  const payload = { fetched_at: new Date().toISOString(), settlements };
+  portalSettleCache = { at: Date.now(), payload };
   res.json(payload);
 }));
 

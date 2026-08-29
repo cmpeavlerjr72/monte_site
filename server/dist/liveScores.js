@@ -1671,7 +1671,58 @@ async function portalPositions() {
     }
     return portalResolveMve(out);
 }
+/**
+ * The owner's settled NCAAF markets, newest first.
+ *
+ * NCAAF-only, like `portalFills` — a KXMVE combo's settlement carries the
+ * opaque shard ticker, which joins to no game and classifies to no bet type,
+ * so including it could only ever add an uncountable row.
+ *
+ * Cap: 2 x 200 = 400 rows. The upstream list is global (every sport) and
+ * strictly descending by settled_time — measured 2026-08-29, where 400 rows
+ * reached back ~2 months and every NCAAF row sat in the first 13. A slate
+ * record only ever needs the recent end.
+ */
+async function portalSettlements() {
+    const out = [];
+    let cursor = "";
+    for (let page = 0; page < 2; page++) {
+        const body = await portalGet("/portfolio/settlements?limit=200" +
+            (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
+        for (const s of body?.settlements || []) {
+            const t = String(s.ticker || "");
+            if (!PORTAL_NCAAF.test(t))
+                continue;
+            const yes = portalNum(s.yes_count_fp ?? s.yes_count) ?? 0;
+            const no = portalNum(s.no_count_fp ?? s.no_count) ?? 0;
+            if (yes <= 0 && no <= 0)
+                continue; // nothing was held here
+            const cents = portalNum(s.revenue);
+            out.push({
+                ticker: t,
+                event_ticker: String(s.event_ticker || ""),
+                market_result: String(s.market_result || ""),
+                yes_count: yes,
+                no_count: no,
+                revenue: portalNum(s.revenue_dollars) ?? (cents === null ? 0 : cents / 100),
+                cost: (portalNum(s.yes_total_cost_dollars) ?? 0) +
+                    (portalNum(s.no_total_cost_dollars) ?? 0),
+                fees: portalNum(s.fee_cost) ?? 0,
+                settled_time: String(s.settled_time || ""),
+            });
+        }
+        cursor = String(body?.cursor || "");
+        if (!cursor)
+            break;
+    }
+    return out;
+}
 let portalCache = null;
+/** Settled money changes only when a market settles, so this cache is longer
+ *  than the book's 20s: the client rides the SAME 30s portal poll and a
+ *  freshly settled game shows up within a poll or two. */
+const PORTAL_SETTLE_TTL_MS = 60_000;
+let portalSettleCache = null;
 /**
  * THE auth gate for the whole portal family — reads AND writes.
  *
@@ -1750,6 +1801,26 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
         orders_live: ORDERS_LIVE,
     };
     portalCache = { at: Date.now(), payload };
+    res.json(payload);
+}));
+/**
+ * The owner's SETTLED NCAAF markets — the realised half of the portal.
+ *
+ * Read-only and behind the same `portalGate` as every other portal read; it
+ * adds no write surface and reaches no market the app could not already read.
+ * The client rides its existing 30s portal poll to refresh this, so it opens
+ * no new timer either.
+ */
+app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req, res) => {
+    if (!portalGate(req, res))
+        return;
+    if (portalSettleCache && Date.now() - portalSettleCache.at < PORTAL_SETTLE_TTL_MS) {
+        res.json(portalSettleCache.payload);
+        return;
+    }
+    const settlements = await portalSettlements();
+    const payload = { fetched_at: new Date().toISOString(), settlements };
+    portalSettleCache = { at: Date.now(), payload };
     res.json(payload);
 }));
 // ============================================================================

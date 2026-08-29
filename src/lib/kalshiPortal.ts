@@ -15,6 +15,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { KalshiGame } from "./kalshi";
+// The bet-type taxonomy has ONE definition, in the suggestions engine. The
+// settled record classifies with the same function the type filter does, so a
+// series Kalshi adds later lands in the same bucket in both places (import
+// only — suggestedBets.ts is read-only).
+import { familyForSeries } from "./suggestedBets";
 
 const TOKEN_KEY = "cfb.portalToken";
 const POLL_MS = 30_000;
@@ -393,8 +398,165 @@ export function computePortalBets(
   return { bets, bySlug, unmatched, totals };
 }
 
+/* ---------------------------------------------------- the settled record ---- */
+
+/**
+ * ONE settled market, already normalised to DOLLARS by the server (see
+ * `portalSettlements` in server/liveScores.ts — the upstream `revenue` is in
+ * CENTS and has no dollar sibling, which is exactly why that conversion lives
+ * server-side and is never repeated here).
+ *
+ * `fees` were charged at FILL time and are OUTSIDE revenue and cost — measured
+ * against the real account, not assumed.
+ */
+export type PortalSettlement = {
+  ticker: string;
+  event_ticker: string;
+  /** Kalshi's own word: "yes" | "no" | "scalar". Reported, never graded on. */
+  market_result: string;
+  yes_count: number;
+  no_count: number;
+  revenue: number;
+  cost: number;
+  fees: number;
+  settled_time: string;
+};
+
+/**
+ * Bet-type buckets for the settled record.
+ *
+ * The stat families are the suggestions engine's own (`familyForSeries`), so
+ * the record and the type filter can never disagree about what a market is.
+ * The game-line bucket is the one place this goes FINER than the filter: the
+ * filter offers a single "Game lines" chip, but a settled record whose whole
+ * point is "which kind of bet is losing me money" has to separate a winner
+ * from a spread from a total. Same taxonomy, one extra level of detail.
+ */
+export type BetTypeKey = "winner" | "spread" | "total" | "td" | "yardage" | "team" | "other";
+
+const BET_TYPE_LABEL: Record<BetTypeKey, string> = {
+  winner: "Winners",
+  spread: "Spreads",
+  total: "Totals",
+  // Wording copied from the type-filter chips, deliberately: two names for one
+  // bucket is how a reader stops trusting either screen.
+  td: "TD props",
+  yardage: "Yardage",
+  team: "Team totals",
+  other: "Other",
+};
+
+/** Display order — the filter row's order, with game lines expanded. */
+const BET_TYPE_ORDER: BetTypeKey[] = ["winner", "spread", "total", "td", "yardage", "team", "other"];
+
+export function betTypeOf(ticker: string): BetTypeKey {
+  const series = String(ticker || "").split("-")[0].toUpperCase();
+  const fam = familyForSeries(series);
+  if (fam === "game") {
+    if (series === "KXNCAAFGAME") return "winner";
+    if (series === "KXNCAAFSPREAD") return "spread";
+    if (series === "KXNCAAFTOTAL") return "total";
+    // A game-level family we have no word for yet (halves, OT…). It still
+    // COUNTS — it just says "Other" rather than being labelled a guess.
+    return "other";
+  }
+  return fam ?? "other";
+}
+
+/** A settled tally: the record, the money, and the parts it came from. */
+export type RecordLine = {
+  key: string;
+  label: string;
+  /** Markets, not dollars — one settled market is one bet here. */
+  n: number;
+  w: number; l: number; push: number;
+  /** revenue − cost, in dollars. Fees are NOT in it (they are itemised). */
+  net: number;
+  revenue: number; cost: number; fees: number;
+};
+
+export type SettlementRecord = {
+  /** The headline: every settled market that joins a game on this board. */
+  slate: RecordLine;
+  /** One line per bet type PRESENT, in taxonomy order. */
+  byType: RecordLine[];
+  /** Settled markets dropped because they join no displayed game (other
+   *  weeks). Never folded into the record — said out loud in the popover. */
+  offSlate: number;
+};
+
+/** Half a cent: below it a net is not a direction, so it is a PUSH. Same
+ *  threshold `signedUsd` uses to drop a sign in MyBook. */
+const PUSH_EPS = 0.005;
+
+const emptyLine = (key: string, label: string): RecordLine => ({
+  key, label, n: 0, w: 0, l: 0, push: 0, net: 0, revenue: 0, cost: 0, fees: 0,
+});
+
+function addTo(line: RecordLine, s: PortalSettlement): void {
+  const net = s.revenue - s.cost;
+  line.n++;
+  line.net += net;
+  line.revenue += s.revenue;
+  line.cost += s.cost;
+  line.fees += s.fees;
+  if (net > PUSH_EPS) line.w++;
+  else if (net < -PUSH_EPS) line.l++;
+  else line.push++;
+}
+
+/**
+ * The owner's REAL settled results, scoped to the games on this board.
+ *
+ * Two rules the display depends on:
+ *
+ *  1. THE JOIN is the one everything else uses — the event code embedded in the
+ *     ticker, through `buildCodeToSlug(kalshiBySlug)`. A settlement that joins
+ *     no displayed game is another week's and is EXCLUDED from the record
+ *     rather than quietly inflating it; the count of those is returned so the
+ *     popover can say so.
+ *  2. THE GRADE IS THE MONEY. Win/loss/push is the sign of revenue − cost, and
+ *     nothing else. `market_result` is "yes" | "no" | "scalar", and a scalar
+ *     settlement (a spread that graded at an intermediate value — seen live,
+ *     LAF10 paying 20c a contract) has no yes/no reading at all. Grading on the
+ *     money is the only rule that is correct for all three, and it is also the
+ *     only one that is right when the held side is the NO.
+ */
+export function computeSettlementRecord(
+  settlements: PortalSettlement[] | null,
+  kalshiBySlug: Map<string, KalshiGame>,
+): SettlementRecord {
+  const codeToSlug = buildCodeToSlug(kalshiBySlug);
+  const slate = emptyLine("slate", "Slate");
+  const byKey = new Map<BetTypeKey, RecordLine>();
+  let offSlate = 0;
+
+  for (const s of settlements || []) {
+    const t = parseNcaafTicker(s.ticker);
+    // Fall back to the event ticker's own code: same code, different carrier,
+    // and it costs nothing to try before dropping a real settled bet.
+    const code = t?.code ?? portalGameCode(s.event_ticker);
+    const slug = code ? codeToSlug.get(code) : undefined;
+    if (!slug) { offSlate++; continue; }
+    addTo(slate, s);
+    const key = betTypeOf(s.ticker);
+    let line = byKey.get(key);
+    if (!line) { line = emptyLine(key, BET_TYPE_LABEL[key]); byKey.set(key, line); }
+    addTo(line, s);
+  }
+
+  const byType = BET_TYPE_ORDER
+    .map((k) => byKey.get(k))
+    .filter((l): l is RecordLine => Boolean(l));
+  return { slate, byType, offSlate };
+}
+
 export type PortalState = {
   payload: PortalPayload | null;
+  /** Settled NCAAF markets, newest first. Null until the first settlements
+   *  read lands (or if that read fails — a settlements outage must never take
+   *  the live book down with it, so it is tracked separately). */
+  settlements: PortalSettlement[] | null;
   /** "idle" = no password stored; "error" covers network/500;
    *  "unauthorized" = wrong password (offer re-login); "locked" = too many
    *  failed attempts, server cooling down; "unconfigured" = server has no
@@ -407,12 +569,14 @@ export type PortalState = {
  * token string (render-loop rule 1: primitives only in deps).
  */
 export function usePortalBook(token: string): PortalState {
-  const [state, setState] = useState<PortalState>({ payload: null, status: token ? "loading" : "idle" });
+  const [state, setState] = useState<PortalState>({
+    payload: null, settlements: null, status: token ? "loading" : "idle",
+  });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!token) {
-      setState({ payload: null, status: "idle" });
+      setState({ payload: null, settlements: null, status: "idle" });
       return;
     }
     let alive = true;
@@ -426,20 +590,39 @@ export function usePortalBook(token: string): PortalState {
           signal: ac.signal,
         });
         if (!alive) return;
-        if (r.status === 401) { setState({ payload: null, status: "unauthorized" }); return; }
-        if (r.status === 429) { setState((s) => ({ payload: s.payload, status: "locked" })); return; }
-        if (r.status === 503) { setState({ payload: null, status: "unconfigured" }); return; }
-        if (!r.ok) { setState((s) => ({ payload: s.payload, status: "error" })); return; }
+        if (r.status === 401) { setState({ payload: null, settlements: null, status: "unauthorized" }); return; }
+        if (r.status === 429) { setState((s) => ({ ...s, status: "locked" })); return; }
+        if (r.status === 503) { setState({ payload: null, settlements: null, status: "unconfigured" }); return; }
+        if (!r.ok) { setState((s) => ({ ...s, status: "error" })); return; }
         const payload = (await r.json()) as PortalPayload;
-        if (alive) setState({ payload, status: "ok" });
+        if (alive) setState((s) => ({ ...s, payload, status: "ok" }));
       } catch (err: any) {
         if (alive && err?.name !== "AbortError") {
-          setState((s) => ({ payload: s.payload, status: "error" }));
+          setState((s) => ({ ...s, status: "error" }));
         }
+        return;
+      }
+      // The SETTLED half, on the same tick — no second timer. It is fetched
+      // after the live book, never instead of it: a settlements failure leaves
+      // the book "ok" and simply keeps the last record (the block just does
+      // not update), because a realised record going stale must not look like
+      // the live portal going down.
+      try {
+        const rs = await fetch("/api/portfolio/cfb/settlements", {
+          headers: { "x-cfb-token": token },
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        if (!alive || !rs.ok) return;
+        const body = await rs.json();
+        const rows = Array.isArray(body?.settlements) ? (body.settlements as PortalSettlement[]) : [];
+        if (alive) setState((s) => ({ ...s, settlements: rows }));
+      } catch {
+        /* keep whatever record we already had */
       }
     };
 
-    setState((s) => ({ payload: s.payload, status: "loading" }));
+    setState((s) => ({ ...s, status: "loading" }));
     pull();
     timer.current = setInterval(pull, POLL_MS);
     return () => {

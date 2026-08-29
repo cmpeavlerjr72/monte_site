@@ -46,7 +46,7 @@
 import { Fragment, useState } from "react";
 import { americanOdds, pctText } from "../lib/marketEdge";
 import CancelConfirm from "./CancelOrder";
-import type { PortalBet, PortalTotals } from "../lib/kalshiPortal";
+import type { PortalBet, PortalTotals, RecordLine, SettlementRecord } from "../lib/kalshiPortal";
 
 /* Geometry — fixed on purpose (see header). */
 const ROW_H = 40;
@@ -383,4 +383,124 @@ export function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatch
       )}
     </div>
   );
+}
+
+/* ------------------------------------------------ the settled record ---- */
+
+/**
+ * THE REALISED HALF of the console: what the owner's Kalshi bets on THIS SLATE
+ * actually settled for, and which kind of bet did it.
+ *
+ * Same bar test as everything above. One line per row:
+ *
+ *     Slate            5-6-1        −$54.02
+ *     Spreads           4-4          −$6.98
+ *     ^                  ^              ^
+ *     the bet type    the record    THE VERDICT: real money, settled
+ *
+ * Two deliberate departures from the EV rows above, both because this is
+ * SETTLED money rather than an estimate:
+ *
+ *   - the money is EXACT to the cent (`signedUsd`, not the rounding
+ *     `usdShort` a live EV gets). A realised −$54.02 is a fact and rounding a
+ *     fact to −$54 makes it look like an estimate.
+ *   - the record ("5-6-1") sits on the row beside the verdict. It is not a
+ *     second number competing with the money — it is the SAMPLE the money came
+ *     from, and a −$54 with no count behind it cannot be reasoned about.
+ *     Pushes are printed only when there are any, so a clean record reads
+ *     "4-4" rather than "4-4-0".
+ *
+ * Everything else — how many markets, gross paid out, what they cost, the fees
+ * — is in the tap popover, in words, one fact per line.
+ */
+export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const rows: RecordLine[] = [record.slate, ...record.byType];
+
+  return (
+    <div className="mybook-record">
+      {rows.map((line) => {
+        const head = line.key === "slate";
+        const lines = recordLines(line, head ? record.offSlate : 0);
+        return (
+          <Fragment key={line.key}>
+            <button
+              type="button"
+              className="mybook-record__row"
+              data-head={head ? "true" : undefined}
+              data-on={open === line.key ? "true" : undefined}
+              aria-expanded={open === line.key}
+              aria-label={lines.join(" ")}
+              onClick={() => setOpen((k) => (k === line.key ? null : line.key))}
+            >
+              <span className="mybook-record__label">{line.label}</span>
+              <span className="mybook-record__wl">{recordText(line)}</span>
+              <span className="mybook__ev mybook-record__net" data-tone={toneOf(line.net)}>
+                {signedUsd(line.net)}
+              </span>
+            </button>
+            {open === line.key && (
+              <div role="status" className="mybook__pop mybook__pop--inline">
+                {lines.map((l, i) => <div key={i}>{l}</div>)}
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+/** "5-6-1", or "4-4" when nothing pushed. */
+export function recordText(line: RecordLine): string {
+  return line.push > 0
+    ? `${line.w}-${line.l}-${line.push}`
+    : `${line.w}-${line.l}`;
+}
+
+/**
+ * The row's derivation, in words. Also the button's accessible label.
+ *
+ * The fee sentence is the one that has to be exactly right, so it is measured
+ * rather than assumed: Kalshi's settlement `revenue` is the contracts' payout
+ * and `*_total_cost_dollars` is count x price — a 50-contract row at 55c costs
+ * exactly $27.50 with its $0.22 fee sitting OUTSIDE that. So the fee is stated
+ * as what it is (charged at fill, outside both numbers), and the after-fee
+ * figure is printed too, so nothing about the real money is hidden by the
+ * headline's convention.
+ */
+export function recordLines(line: RecordLine, offSlate: number): string[] {
+  const out: string[] = [];
+  const head = line.key === "slate";
+  const what = head ? "On this board" : line.label;
+  const parts = [`${line.w} won`, `${line.l} lost`];
+  if (line.push > 0) parts.push(`${line.push} pushed`);
+  out.push(`${what}: ${plural(line.n, "settled market")} — ${parts.join(", ")}.`);
+  out.push(
+    `Paid out ${usd(line.revenue)} on contracts that cost ${usd(line.cost)}, ` +
+    `so the net is ${signedUsd(line.net)}.`
+  );
+  out.push(
+    line.fees > 0
+      ? `Fees on those fills: ${usd(line.fees)} — charged when they filled, ` +
+        `outside both numbers above. After them it is ${signedUsd(line.net - line.fees)}.`
+      : "No fees on these."
+  );
+  if (head) {
+    out.push(
+      "Win or loss is the settlement money itself — paid out minus what the " +
+      "contracts cost. It is the only grade that fits a held NO and a spread " +
+      "that settles at an in-between value."
+    );
+    if (offSlate > 0) {
+      out.push(
+        offSlate === 1
+          ? "One other settled market is on a game that is not on this board — " +
+            "from another week, and not counted here."
+          : `${offSlate} other settled markets are on games that are not on this ` +
+            "board — from other weeks, and not counted here."
+      );
+    }
+  }
+  return out;
 }

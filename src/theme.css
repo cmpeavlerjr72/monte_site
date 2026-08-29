@@ -724,7 +724,7 @@ input:focus, select:focus, textarea:focus {
    in the tap popover (see src/components/MyBook.tsx). Row height is FIXED
    (40px, also the tap target) because the popover is positioned by index
    arithmetic. */
-.mybook, .mybook-bar {
+.mybook, .mybook-bar, .mybook-record {
   /* --muted alone is only ~4.3:1 on this block's brand-tinted surface and on
      --fill, which fails AA for the 9px caps and the "—" verdict. One derived
      step toward --text clears it in BOTH themes (light darkens, dark lightens)
@@ -944,6 +944,74 @@ input:focus, select:focus, textarea:focus {
   flex: 0 0 auto;
   font-size: 9px; font-weight: 800; letter-spacing: 0.5px;
   text-transform: uppercase; color: var(--mybook-dim);
+}
+
+/* The SETTLED record inside the My Book console — the slate headline, then one
+   row per bet type. Capped like .mybook-bar for the same reason: on a wide
+   console a full-bleed row strands the money a screen away from its label.
+   The headline wears the block's chrome (brand-tinted, 40px, same as the book
+   bar it sits under); the type rows are plain lines UNDER it, which is what
+   makes the breakdown read as parts of the headline rather than as four
+   equal-weight bars. */
+.mybook-record {
+  flex: 0 1 460px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.mybook-record__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mybook-record__row[data-head="true"] {
+  min-height: 40px;
+  border-color: color-mix(in oklab, var(--brand) 35%, var(--border));
+  background: color-mix(in oklab, var(--brand) 8%, var(--card));
+}
+.mybook-record__row[data-on] {
+  border-color: var(--brand);
+  background: color-mix(in oklab, var(--brand) 7%, var(--card));
+}
+.mybook-record__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.mybook-record__row[data-head="true"] .mybook-record__label { font-weight: 800; }
+/* The SAMPLE the money came from, not a second verdict — so it is dim, and it
+   never gets the --pos/--neg the money owns. */
+.mybook-record__wl {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: var(--mybook-dim);
+}
+/* Settled money is EXACT to the cent, so the chip is wider than the EV one it
+   borrows its tones from: "−$54.02" does not fit .mybook__ev's 60px, and a
+   season-long "−$1254.02" has to fit too. FIXED, not min-width — one row
+   growing to its content is what would break the money column. */
+.mybook-record__net {
+  flex: 0 0 84px;
+  padding: 3px 4px;
+  font-size: 12.5px;
 }
 
 /* Pick grading pill (ATS/Total/ML) on a game card. Same color-mix pattern as
