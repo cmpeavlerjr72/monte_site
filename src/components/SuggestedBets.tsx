@@ -878,7 +878,7 @@ type RungEdit = { include: boolean; raw: string };
  * checkbox (both on by default) and an editable contracts field prefilled with
  * the computed split. Deselecting a rung drops it from the `orders` array the
  * server already accepts — no server change, and strictly fewer orders, so
- * every cap (per-order, per-request, 24h) is satisfied a fortiori. Totals
+ * every cap (per-order, per-request) is satisfied a fortiori. Totals
  * below re-add live, net of the fee at the EDITED count, because the exchange
  * rounds the fee up per order and a bumped count can change what it costs by
  * more than the price × count arithmetic suggests.

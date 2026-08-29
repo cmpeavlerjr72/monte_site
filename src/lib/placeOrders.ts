@@ -6,7 +6,7 @@
 // server decided.
 //
 // Everything that matters is enforced server-side (server/liveScores.ts):
-// auth, NCAAF-only tickers, per-order/per-request/24h caps, the live-book
+// auth, NCAAF-only tickers, per-order/per-request caps, the live-book
 // re-check immediately before signing, idempotent replay, the audit log, and
 // the CFB_ORDERS_LIVE dry-run stage. Nothing here is a safety control — if a
 // rail appears to live in this file, it is in the wrong file.
@@ -60,7 +60,7 @@ export type PlaceResponse = {
   would_place?: PlaceEcho[];
   errors?: PlaceEcho[];
   rejected?: PlaceEcho[];
-  totals?: { cost: number; spent_24h: number; remaining_24h: number };
+  totals?: { cost: number; spent_24h: number };
   note?: string;
   /** Set on every refusal: "book_moved", "cap_order", "forbidden_field", … */
   error?: string;
@@ -144,7 +144,7 @@ export type ConvertResponse = {
   would_place?: PlaceEcho[];
   placed?: PlaceEcho[];
   errors?: PlaceEcho[];
-  totals?: { cost: number; spent_24h: number; remaining_24h: number };
+  totals?: { cost: number; spent_24h: number };
   book?: { yes_bid: number | null; yes_ask: number | null; no_bid: number | null; no_ask: number | null };
   note?: string;
   /** "book_moved" | "no_offer" | "not_resting" | "not_app_order" |
@@ -179,9 +179,6 @@ export function placeErrorText(body: PlaceResponse): string {
       return `Over the $${body.cap} per-order cap — ${body.detail ?? ""}`.trim();
     case "cap_request":
       return `Over the $${body.cap} per-slip cap (this slip: $${body.total?.toFixed(2)}).`;
-    case "cap_24h":
-      return `Over the $${body.cap} rolling 24h cap ` +
-             `($${body.spent_24h?.toFixed(2)} already committed).`;
     case "in_flight":
       return "That slip is already being placed — waiting on the exchange.";
     case "book_unavailable":

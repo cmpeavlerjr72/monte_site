@@ -2362,25 +2362,26 @@ app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req: Request, res: R
 //   3. Mode-derived post_only/TIF; NEVER a market order. Strict allowlist.
 //   4. Per-order cost cap $40 (price x count + fee).
 //   5. Per-request cost cap $80, at most 8 orders.
-//   6. Rolling 24h cost cap $400.
-//   7. Live book re-checked per ticker immediately before signing:
+//   6. Live book re-checked per ticker immediately before signing:
 //        rest -> reject if the price would CROSS the standing ask
 //        take -> reject if the standing ask is WORSE than the confirmed price
 //      Either rejection returns the fresh book so the client can say
 //      "book moved: ask now 0.52" and the human can reconfirm.
-//   8. Idempotency: a replayed key returns the ORIGINAL result, never a
+//   7. Idempotency: a replayed key returns the ORIGINAL result, never a
 //      second placement. A key already in flight gets 409.
-//   9. client_order_id = "cfbapp-<key>-<i>" so these orders are attributable
+//   8. client_order_id = "cfbapp-<key>-<i>" so these orders are attributable
 //      and the maker pipeline's status tools can skip them.
-//  10. Every request and response appended to a JSONL audit log AND written to
+//   9. Every request and response appended to a JSONL audit log AND written to
 //      the console (Render's disk is ephemeral; the log stream is not).
-//  11. DRY-RUN STAGED: without CFB_ORDERS_LIVE=1 everything above runs and
+//  10. DRY-RUN STAGED: without CFB_ORDERS_LIVE=1 everything above runs and
 //      nothing is submitted. Going live is one env var in Render, no deploy.
 //
-// The 24h ledger is IN-MEMORY. A Render restart (deploy, idle spin-down, OOM)
-// resets it to zero. That is stated plainly rather than hidden: it is a
-// throttle against a runaway loop within one process lifetime, not an
-// accounting system. The exchange-side balance is the real limit.
+// The rolling 24h cost cap ($400) was REMOVED 2026-08-29 at the owner's
+// direction — they hit it live on game day. The in-memory spend ledger stays
+// for the spent_24h line in responses and the audit trail, but nothing is
+// enforced on it: the per-order/per-slip caps and the exchange-side balance
+// are the limits. (The ledger was always process-lifetime only — a Render
+// restart resets it — so it was a runaway-loop throttle, not accounting.)
 // ============================================================================
 
 /** The one switch. NEVER set this from code, a script, or a test. */
@@ -2390,7 +2391,6 @@ const ORDERS_TAG = "cfbapp-";
 const ORDERS_MAX_ORDERS = 8;
 const ORDERS_CAP_ORDER = 40;
 const ORDERS_CAP_REQUEST = 80;
-const ORDERS_CAP_24H = 400;
 const ORDERS_IDEM_TTL_MS = 24 * 60 * 60 * 1000;
 const ORDERS_IDEM_MAX = 500;
 /** NCAAF families only. This is what stops a malformed or hostile body from
@@ -2708,15 +2708,7 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
     if (total > ORDERS_CAP_REQUEST + 1e-9) {
       bad(400, { error: "cap_request", total, cap: ORDERS_CAP_REQUEST }); return;
     }
-    const spent = ordersSpent24h();
-    if (spent + total > ORDERS_CAP_24H + 1e-9) {
-      bad(400, {
-        error: "cap_24h", total, spent_24h: Math.round(spent * 100) / 100,
-        cap: ORDERS_CAP_24H,
-        note: "in-memory ledger; a server restart resets it",
-      });
-      return;
-    }
+    const spent = ordersSpent24h(); // reported in totals; no cap enforced
 
     // --- live book re-check, immediately before signing anything ---------
     const tickers = [...new Set(wire.map((w) => w.ticker))];
@@ -2784,10 +2776,7 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
       const payload = {
         dry_run: true, idempotency_key: key, checked_at: checkedAt,
         placed: [], would_place: wouldPlace,
-        totals: {
-          cost: total, spent_24h: Math.round(spent * 100) / 100,
-          remaining_24h: Math.round((ORDERS_CAP_24H - spent) * 100) / 100,
-        },
+        totals: { cost: total, spent_24h: Math.round(spent * 100) / 100 },
         note: "CFB_ORDERS_LIVE is not set — nothing was submitted to Kalshi.",
       };
       ordersAudit({ event: "dry_run", key, total });
@@ -2814,7 +2803,6 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
       totals: {
         cost: Math.round(placed.reduce((s, p) => s + p.cost, 0) * 100) / 100,
         spent_24h: Math.round(after * 100) / 100,
-        remaining_24h: Math.round((ORDERS_CAP_24H - after) * 100) / 100,
       },
     };
     const status = placed.length ? 200 : 502;
@@ -3190,14 +3178,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
     if (cost > ORDERS_CAP_REQUEST + 1e-9) {
       bad(400, { error: "cap_request", total: cost, cap: ORDERS_CAP_REQUEST }); return;
     }
-    const spent = ordersSpent24h();
-    if (spent + cost > ORDERS_CAP_24H + 1e-9) {
-      bad(400, {
-        error: "cap_24h", total: cost, spent_24h: Math.round(spent * 100) / 100,
-        cap: ORDERS_CAP_24H, note: "in-memory ledger; a server restart resets it",
-      });
-      return;
-    }
+    const spent = ordersSpent24h(); // reported in totals; no cap enforced
 
     const w: WireOrder = {
       ticker, side, mode: "take", price_dollars: price, count, fee, cost,
@@ -3246,10 +3227,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
         dry_run: true, idempotency_key: key, checked_at: checkedAt,
         would_cancel: { order_id: orderId, ticker, remaining: rest.remaining },
         would_place: [wouldPlace], placed: [], cancel: null,
-        totals: {
-          cost, spent_24h: Math.round(spent * 100) / 100,
-          remaining_24h: Math.round((ORDERS_CAP_24H - spent) * 100) / 100,
-        },
+        totals: { cost, spent_24h: Math.round(spent * 100) / 100 },
         note: "CFB_ORDERS_LIVE is not set — the resting order was NOT cancelled " +
               "and nothing was submitted to Kalshi.",
       };
@@ -3334,10 +3312,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
     const payload = {
       dry_run: false, idempotency_key: key, checked_at: checkedAt,
       cancel: cancelEcho, placed: [sub.echo], errors: [],
-      totals: {
-        cost: w.cost, spent_24h: Math.round(after * 100) / 100,
-        remaining_24h: Math.round((ORDERS_CAP_24H - after) * 100) / 100,
-      },
+      totals: { cost: w.cost, spent_24h: Math.round(after * 100) / 100 },
     };
     ordersAudit({ event: "convert_done", key, order_id: orderId, placed: sub.echo?.order_id });
     ordersIdemPut(key, { status: 200, body: payload });
