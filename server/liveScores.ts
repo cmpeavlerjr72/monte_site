@@ -3381,26 +3381,33 @@ function pushSubsSave(): void {
 }
 
 /** Send one payload to every device; prune subscriptions the push service
- *  reports gone (404/410 = unsubscribed or expired). */
-async function pushSendAll(payload: Record<string, unknown>): Promise<{ sent: number; gone: number }> {
+ *  reports gone (404/410 = unsubscribed or expired). Failures come back WITH
+ *  the push service's own words — a 403 VAPID mismatch looked exactly like
+ *  success until the test endpoint learned to say so (live lesson 2026-08-29). */
+async function pushSendAll(payload: Record<string, unknown>): Promise<{
+  sent: number; gone: number; failures: Array<{ code: number; detail: string }>;
+}> {
   const body = JSON.stringify(payload);
   const dead = new Set<string>();
+  const failures: Array<{ code: number; detail: string }> = [];
   let sent = 0;
   await Promise.all(pushSubs.map(async (s) => {
     try {
       await webpush.sendNotification(s, body, { TTL: 3600 });
       sent++;
     } catch (err: any) {
-      const code = Number(err?.statusCode);
-      if (code === 404 || code === 410) dead.add(s.endpoint);
-      else console.warn("[push] send failed:", code || (err?.message ?? err));
+      const code = Number(err?.statusCode) || 0;
+      if (code === 404 || code === 410) { dead.add(s.endpoint); return; }
+      const detail = String(err?.body || err?.message || err).slice(0, 300);
+      failures.push({ code, detail });
+      console.warn("[push] send failed:", code, detail);
     }
   }));
   if (dead.size) {
     pushSubs = pushSubs.filter((s) => !dead.has(s.endpoint));
     pushSubsSave();
   }
-  return { sent, gone: dead.size };
+  return { sent, gone: dead.size, failures };
 }
 
 app.get("/api/push/pubkey", (req: Request, res: Response) => {
@@ -3436,7 +3443,10 @@ app.post("/api/push/test", asyncRoute(async (req: Request, res: Response) => {
     body: "This device will hear about resting fills.",
     tag: "cfb-push-test",
   });
-  res.json({ ok: true, ...r });
+  // pubkey_prefix lets the client spot a pasted-key mismatch without ever
+  // shipping the whole key back around.
+  res.json({ ok: r.sent > 0, ...r, devices: pushSubs.length,
+             pubkey_prefix: VAPID_PUBLIC.slice(0, 12) });
 }));
 
 /** "KXNCAAFSPREAD-26AUG29UNCTCU-UNC20" -> "UNC20 spread · UNCTCU". */

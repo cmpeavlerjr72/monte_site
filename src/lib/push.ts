@@ -114,14 +114,27 @@ export async function resyncPushSubscription(token: string): Promise<void> {
   }
 }
 
-/** Round-trip test: server pushes a test notification to this device. */
+/** Round-trip test: server pushes a test notification to this device.
+ *  A 200 with zero sends is a FAILURE — surface the push service's own words
+ *  (a 403 here is the classic pasted-VAPID-key mismatch). */
 export async function sendTestPush(token: string): Promise<void> {
   const r = await fetch("/api/push/test", {
     method: "POST",
     headers: { "x-cfb-token": token },
   });
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    throw new Error(String(body?.error || `test HTTP ${r.status}`));
+  const body = await r.json().catch(() => ({} as Record<string, unknown>));
+  if (!r.ok) throw new Error(String(body?.error || `test HTTP ${r.status}`));
+  const sent = Number(body?.sent ?? 0);
+  if (sent > 0) return;
+  const f = (body?.failures as Array<{ code: number; detail: string }> | undefined)?.[0];
+  const gone = Number(body?.gone ?? 0);
+  if (f) {
+    throw new Error(
+      `Push service refused (HTTP ${f.code}): ${f.detail}` +
+      (f.code === 403 || f.code === 401
+        ? " — usually a VAPID key mismatch: re-check both keys in Render env, then Disconnect/re-Enable here."
+        : ""));
   }
+  if (gone > 0) throw new Error("This device's subscription had expired — tap Enable fill alerts again.");
+  throw new Error("No device subscriptions on the server — tap Enable fill alerts again.");
 }
