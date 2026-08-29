@@ -88,7 +88,7 @@ function FillAlertsRow({ token }: { token: string }) {
         </button>
       )}
       <span style={{ fontSize: 10.5, color: msg.includes("Enabled") || msg.includes("Test sent") ? "var(--pos)" : "var(--muted)" }}>
-        {msg || "Pushes when a resting order fills, even with the site closed."}
+        {msg || "Pushes when a resting order fills and when bets settle, even with the site closed."}
       </span>
     </>
   );

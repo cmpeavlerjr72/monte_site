@@ -3324,8 +3324,8 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
 }));
 
 // ============================================================================
-// WEB PUSH — owner fill alerts (2026-08-29, owner ask: "notifications as
-// resting stuff fills so that I don't miss anything").
+// WEB PUSH — owner fill + settlement alerts (2026-08-29, owner asks:
+// "notifications as resting stuff fills" / "notifications for bets settling").
 //
 // The client half is src/lib/push.ts + the My Book "Alerts" row; the worker
 // that displays these is PUSH-ONLY (src/sw.ts — no fetch handler, by rule).
@@ -3459,8 +3459,14 @@ function pushTickerWords(t: string): string {
 
 const PUSH_FILL_POLL_MS = 60_000;
 let pushFillWatermark = Date.now(); // boot = now: never replay history
+let pushSettleWatermark = Date.now();
 let pushFillBusy = false;
 
+/** One 60s tick watches BOTH halves of a bet's life: maker fills (the order
+ *  became a position) and settlements (the position became money, owner ask
+ *  2026-08-29). Same watermark discipline for each: start at boot, advance
+ *  only after a successful fetch, so restarts never replay and blips never
+ *  skip. */
 async function pushFillPoll(): Promise<void> {
   if (pushFillBusy || !pushSubs.length) return;
   if (!portalPrivateKey() || !PORTAL_KEY_ID) return; // no Kalshi creds, nothing to poll
@@ -3499,6 +3505,50 @@ async function pushFillPoll(): Promise<void> {
     }
   } catch (err: any) {
     console.warn("[push] fill poll failed:", err?.message ?? err);
+  }
+
+  // ---- settlements: one notification per poll batch. A game settling drops
+  // a whole slate of markets inside a minute; per-market buzzes would be a
+  // drumroll, so the batch is summed with the first few itemized. Dollars are
+  // PRE-FEE, matching the Kalshi-record block (reconciles with Kalshi's app).
+  try {
+    const settlements = await portalSettlements();
+    const fresh = settlements.filter((s) =>
+      Date.parse(s.settled_time) > pushSettleWatermark);
+
+    if (fresh.length) {
+      const rows = fresh.map((s) => {
+        const net = s.revenue - s.cost;
+        return {
+          net,
+          line: `${net > 0 ? "W" : net < 0 ? "L" : "–"} ${pushTickerWords(s.ticker)} ` +
+                `${net >= 0 ? "+" : "−"}$${Math.abs(net).toFixed(2)}`,
+          title: s.event_title,
+        };
+      });
+      const wins = rows.filter((r) => r.net > 0).length;
+      const losses = rows.filter((r) => r.net < 0).length;
+      const total = rows.reduce((a, r) => a + r.net, 0);
+      const money = `${total >= 0 ? "+" : "−"}$${Math.abs(total).toFixed(2)}`;
+      const title = rows.length === 1
+        ? `Bet settled: ${wins ? "WON" : losses ? "LOST" : "flat"} ${money}`
+        : `${rows.length} bets settled: ${wins}W–${losses}L, net ${money}`;
+      const body = rows.length === 1
+        ? `${rows[0].line.slice(2)}${rows[0].title ? ` · ${rows[0].title}` : ""}`
+        : rows.slice(0, 4).map((r) => r.line).join("\n") +
+          (rows.length > 4 ? `\n…and ${rows.length - 4} more` : "");
+      await pushSendAll({
+        title, body, tag: `cfb-settle-${Date.now()}`, url: "/cfb/scoreboard",
+      });
+      console.log(`[push] settlements notified: ${rows.length} (${money})`);
+    }
+
+    for (const s of settlements) {
+      const ts = Date.parse(s.settled_time);
+      if (Number.isFinite(ts) && ts > pushSettleWatermark) pushSettleWatermark = ts;
+    }
+  } catch (err: any) {
+    console.warn("[push] settlement poll failed:", err?.message ?? err);
   } finally {
     pushFillBusy = false;
   }
