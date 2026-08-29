@@ -427,6 +427,17 @@ export type PortalSettlement = {
    *  can no longer supply it (it polls status=open, and a settled event has
    *  left that list). Null when the server's fetch failed. */
   event_title: string | null;
+  /**
+   * THIS APP placed the bet on this market (server's own orders-audit test —
+   * see `appPlacedTickers` in server/liveScores.ts). The Kalshi account is
+   * SHARED with the maker pipeline and with hand-placed orders, so a settled
+   * row is not necessarily one the owner clicked here.
+   *
+   * ABSENT means attribution is unavailable (the server's audit log is empty —
+   * it lives on ephemeral disk), NOT "not ours". The UI shows no tag at all in
+   * that state rather than calling the whole account "auto".
+   */
+  app?: boolean;
 };
 
 /** One displayed game, keyed for the title join. */
@@ -508,6 +519,36 @@ export function betTypeOf(ticker: string): BetTypeKey {
   return fam ?? "other";
 }
 
+/**
+ * ONE settled bet inside a record row — what an EXPANDED row lists.
+ *
+ * The row's headline is an aggregate, and an aggregate is exactly what could
+ * not be checked when the account's record disagreed with the owner's own
+ * ledger (2026-08-29: "Totals 2-1" could not be opened to see WHICH totals).
+ * So every tally carries its parts, and the parts sum to the headline by
+ * construction — they are built from the same settlements in the same pass.
+ */
+export type RecordBet = {
+  /** The settled market's ticker: unique per row, so it is the React key. */
+  key: string;
+  /** Cheer-side slip words, from the SAME `cheerLabel` the book rows use. */
+  label: string;
+  /** revenue − cost, in dollars. Fees are outside it, as everywhere else. */
+  net: number;
+  fees: number;
+  /** Money grade — the sign of `net`, never `market_result` (see below). */
+  result: "won" | "lost" | "push";
+  /**
+   * Placed through THIS APP. NULL = the server could not attribute (its audit
+   * log is empty), which is not the same as false and must not be tagged.
+   * Attribution is ticker-level: a market this app AND the maker pipeline both
+   * traded reads as ours. Rough cut, not a per-fill audit.
+   */
+  app: boolean | null;
+  /** ISO settled time — the sort key (newest first). */
+  settledTime: string;
+};
+
 /** A settled tally: the record, the money, and the parts it came from. */
 export type RecordLine = {
   key: string;
@@ -518,6 +559,8 @@ export type RecordLine = {
   /** revenue − cost, in dollars. Fees are NOT in it (they are itemised). */
   net: number;
   revenue: number; cost: number; fees: number;
+  /** The individual settled bets behind the tally, newest first. */
+  bets: RecordBet[];
 };
 
 export type SettlementRecord = {
@@ -536,9 +579,32 @@ const PUSH_EPS = 0.005;
 
 const emptyLine = (key: string, label: string): RecordLine => ({
   key, label, n: 0, w: 0, l: 0, push: 0, net: 0, revenue: 0, cost: 0, fees: 0,
+  bets: [],
 });
 
-function addTo(line: RecordLine, s: PortalSettlement): void {
+/**
+ * The settled market as ONE displayable bet.
+ *
+ * The SIDE is the one that was held. Both sides in a single market is possible
+ * (buying the other side back is how a position is closed on Kalshi), and the
+ * words then name the LARGER holding — the money is unaffected either way,
+ * because `cost` already sums both sides against the settlement revenue.
+ */
+function recordBetOf(s: PortalSettlement): RecordBet {
+  const net = s.revenue - s.cost;
+  const side = s.no_count > s.yes_count ? "no" : "yes";
+  return {
+    key: s.ticker,
+    label: cheerLabel(s.ticker, side),
+    net,
+    fees: s.fees,
+    result: net > PUSH_EPS ? "won" : net < -PUSH_EPS ? "lost" : "push",
+    app: s.app === true ? true : s.app === false ? false : null,
+    settledTime: s.settled_time,
+  };
+}
+
+function addTo(line: RecordLine, s: PortalSettlement, bet: RecordBet): void {
   const net = s.revenue - s.cost;
   line.n++;
   line.net += net;
@@ -548,6 +614,9 @@ function addTo(line: RecordLine, s: PortalSettlement): void {
   if (net > PUSH_EPS) line.w++;
   else if (net < -PUSH_EPS) line.l++;
   else line.push++;
+  // Same object in the slate row and its type row: display-only data, and the
+  // two lists are rendered separately, so sharing it cannot desync them.
+  line.bets.push(bet);
 }
 
 /**
@@ -583,7 +652,14 @@ export function computeSettlementRecord(
   const byKey = new Map<BetTypeKey, RecordLine>();
   let offSlate = 0;
 
-  for (const s of settlements || []) {
+  // Newest first, so an expanded row reads like a statement. The upstream list
+  // already arrives descending; sorting a COPY here makes the display order a
+  // property of this function rather than a trusted upstream accident.
+  const rows = [...(settlements || [])].sort(
+    (a, b) => String(b.settled_time || "").localeCompare(String(a.settled_time || "")),
+  );
+
+  for (const s of rows) {
     const t = parseNcaafTicker(s.ticker);
     // Fall back to the event ticker's own code: same code, different carrier,
     // and it costs nothing to try before dropping a real settled bet.
@@ -605,11 +681,12 @@ export function computeSettlementRecord(
       }
     }
     if (!slug) { offSlate++; continue; }
-    addTo(slate, s);
+    const bet = recordBetOf(s);
+    addTo(slate, s, bet);
     const key = betTypeOf(s.ticker);
     let line = byKey.get(key);
     if (!line) { line = emptyLine(key, BET_TYPE_LABEL[key]); byKey.set(key, line); }
-    addTo(line, s);
+    addTo(line, s, bet);
   }
 
   const byType = BET_TYPE_ORDER

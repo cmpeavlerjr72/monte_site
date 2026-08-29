@@ -964,7 +964,10 @@ input:focus, select:focus, textarea:focus {
 .mybook-record__row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* 6px, not 8: the row carries FOUR cells (label, record, money, rate) and on
+     a 390px phone the extra 6px is the difference between "Team totals" and
+     "Team tota…". */
+  gap: 6px;
   width: 100%;
   min-height: 30px;
   padding: 3px 8px;
@@ -1013,6 +1016,65 @@ input:focus, select:focus, textarea:focus {
   padding: 3px 4px;
   font-size: 12.5px;
 }
+/* The RATE the money came at — fee-inclusive, and dim for the same reason the
+   record is: it explains the verdict, it is not a second one. Fixed width so
+   it stays a column ("−100.0%" is the widest it gets). */
+.mybook-record__roi {
+  flex: 0 0 46px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: var(--mybook-dim);
+}
+
+/* An EXPANDED row: the settled bets the tally is made of, newest first, above
+   the words. This is what a tally could not do — the account read 8-7 against
+   the owner's own 8-5 and there was no way to open "Totals 2-1" and see which
+   totals. The lines sum to the row's headline by construction. */
+.mybook-record__bets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 5px;
+  margin-bottom: 1px;
+  border-bottom: 1px solid var(--border);
+}
+.mybook-record__bet { display: flex; align-items: center; gap: 6px; min-height: 20px; }
+/* WRAPS, unlike the row labels above: a popover has vertical room and a
+   truncated bet is exactly the thing this expansion exists to show. */
+.mybook-record__bet-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+/* Won / lost, as a mark that repeats the sign the money already carries —
+   never the only carrier (see the --pos/--neg deutan note at the top). */
+.mybook-record__mark {
+  flex: 0 0 auto;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--mybook-dim);
+}
+.mybook-record__mark[data-tone="pos"] { background: color-mix(in oklab, var(--pos) 82%, var(--text)); }
+.mybook-record__mark[data-tone="neg"] { background: color-mix(in oklab, var(--neg) 82%, var(--text)); }
+/* NOT placed through this app — the shared account's other traders. On the
+   exception only: the owner's own bets stay unmarked. */
+.mybook-record__tag {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--fill);
+  color: var(--mybook-dim);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.mybook-record__bet .mybook-record__net { flex: 0 0 72px; font-size: 11.5px; }
 
 /* Pick grading pill (ATS/Total/ML) on a game card. Same color-mix pattern as
    .parlay-edge / .top-edges__edge. data-provisional marks a live-graded

@@ -46,7 +46,7 @@
 import { Fragment, useState } from "react";
 import { americanOdds, pctText } from "../lib/marketEdge";
 import CancelConfirm from "./CancelOrder";
-import type { PortalBet, PortalTotals, RecordLine, SettlementRecord } from "../lib/kalshiPortal";
+import type { PortalBet, PortalTotals, RecordBet, RecordLine, SettlementRecord } from "../lib/kalshiPortal";
 
 /* Geometry — fixed on purpose (see header). */
 const ROW_H = 40;
@@ -393,12 +393,12 @@ export function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatch
  *
  * Same bar test as everything above. One line per row:
  *
- *     Slate            5-6-1        −$54.02
- *     Spreads           4-4          −$6.98
- *     ^                  ^              ^
- *     the bet type    the record    THE VERDICT: real money, settled
+ *     Slate            5-6-1        −$54.02   −12.4%
+ *     Spreads           4-4          −$6.98    −3.1%
+ *     ^                  ^              ^        ^
+ *     the bet type    the record    THE VERDICT  the RATE it came at
  *
- * Two deliberate departures from the EV rows above, both because this is
+ * Three deliberate departures from the EV rows above, all because this is
  * SETTLED money rather than an estimate:
  *
  *   - the money is EXACT to the cent (`signedUsd`, not the rounding
@@ -409,9 +409,24 @@ export function MyBookBar({ totals, unmatched }: { totals: PortalTotals; unmatch
  *     from, and a −$54 with no count behind it cannot be reasoned about.
  *     Pushes are printed only when there are any, so a clean record reads
  *     "4-4" rather than "4-4-0".
+ *   - ROI closes the row, DIM. Same argument as the record: −$54 says nothing
+ *     about whether the bets were bad until you know what was staked to lose
+ *     it. It is deliberately not a second chip — the money keeps the tinted
+ *     verdict slot and the rate is read off it. The pair is MIXED on purpose:
+ *     the dollars are PRE-fee (Kalshi's own number, and what the owner's
+ *     ledger reconciles to), the rate is AFTER fees (the standing metric). The
+ *     popover states all three figures so the mix cannot read as a bug.
  *
  * Everything else — how many markets, gross paid out, what they cost, the fees
  * — is in the tap popover, in words, one fact per line.
+ *
+ * TAPPING A ROW EXPANDS IT (2026-08-29). A tally is not checkable: the account
+ * read 8-7 against the owner's own 8-5 ledger and the block, though
+ * arithmetically right, could not be opened to show WHICH bets. So a row now
+ * lists its settled bets, newest first — the slip words, a win/loss mark and
+ * the signed money, which sum to the headline by construction — with the
+ * aggregate words kept underneath. Bets NOT placed through this app carry an
+ * "auto" tag, because this Kalshi account is shared with the maker pipeline.
  */
 export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -430,7 +445,10 @@ export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
               data-head={head ? "true" : undefined}
               data-on={open === line.key ? "true" : undefined}
               aria-expanded={open === line.key}
-              aria-label={lines.join(" ")}
+              // The bets the expansion SHOWS are read out here too, so the
+              // screen-reader label is the same information as the panel and
+              // not just its summary.
+              aria-label={[...lines, ...line.bets.map(betPhrase)].join(" ")}
               onClick={() => setOpen((k) => (k === line.key ? null : line.key))}
             >
               <span className="mybook-record__label">{line.label}</span>
@@ -438,9 +456,17 @@ export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
               <span className="mybook__ev mybook-record__net" data-tone={toneOf(line.net)}>
                 {signedUsd(line.net)}
               </span>
+              {/* The rate, not a second verdict — dim, and simply absent when
+                  there is no cost to divide by. */}
+              <span className="mybook-record__roi">{roiText(line)}</span>
             </button>
             {open === line.key && (
               <div role="status" className="mybook__pop mybook__pop--inline">
+                {/* The bets FIRST — they are what the tap was asking for; the
+                    derivation words stay underneath, unchanged. */}
+                <div className="mybook-record__bets">
+                  {line.bets.map((b) => <RecordBetRow key={b.key} bet={b} />)}
+                </div>
                 {lines.map((l, i) => <div key={i}>{l}</div>)}
               </div>
             )}
@@ -451,11 +477,91 @@ export function KalshiRecordBlock({ record }: { record: SettlementRecord }) {
   );
 }
 
+/**
+ * ONE settled bet inside an expanded row: what it was, whether it won, and
+ * what it paid.
+ *
+ * The mark is a SHAPE-and-position cue that repeats the sign the money already
+ * carries — colour is never the only carrier here (the same rule the held /
+ * resting dots follow), and "+$28.80" beside it is the actual grade.
+ *
+ * The "auto" tag marks a bet this app did NOT place. It sits on the exception
+ * on purpose: the owner's own bets are the unmarked default, so a clean list
+ * has no chrome on it at all.
+ */
+function RecordBetRow({ bet }: { bet: RecordBet }) {
+  const tone: Tone = bet.result === "won" ? "pos" : bet.result === "lost" ? "neg" : "flat";
+  return (
+    <div className="mybook-record__bet">
+      <span className="mybook-record__mark" data-tone={tone} aria-hidden="true" />
+      <span className="mybook-record__bet-label">{bet.label}</span>
+      {bet.app === false && (
+        <span
+          className="mybook-record__tag"
+          title="Placed outside this app — the maker pipeline, or by hand on Kalshi. Same account, same money."
+        >
+          auto
+        </span>
+      )}
+      <span className="mybook__ev mybook-record__net" data-tone={tone}>
+        {signedUsd(bet.net)}
+      </span>
+    </div>
+  );
+}
+
+/** One settled bet as a sentence — the expansion's accessible equivalent. */
+function betPhrase(b: RecordBet): string {
+  const verb = b.result === "won" ? "won" : b.result === "lost" ? "lost" : "pushed";
+  return `${b.label} ${verb} ${signedUsd(b.net)}` +
+    (b.app === false ? ", placed outside this app." : ".");
+}
+
 /** "5-6-1", or "4-4" when nothing pushed. */
 export function recordText(line: RecordLine): string {
   return line.push > 0
     ? `${line.w}-${line.l}-${line.push}`
     : `${line.w}-${line.l}`;
+}
+
+/**
+ * RETURN ON WHAT WAS RISKED — the standing metric (user, 2026-08-29):
+ *
+ *     ROI = (revenue − cost − fees) ÷ cost
+ *
+ * `cost` is the held side's stake (count × fill price, summed by `addTo`), so
+ * this is the real per-dollar-staked rate, not a rate against some notional
+ * bankroll. FEES ARE INSIDE IT: a rate that ignores the exchange's cut is not
+ * the return the account actually earned.
+ *
+ * The DOLLAR figure beside it on the row is deliberately still the PRE-FEE net
+ * — that is the number Kalshi's own app shows and the one the owner's ledger
+ * reconciles to (their +$79.42 matched pre-fee exactly). The mix is intentional
+ * and the popover reconciles all three figures in words so it can never read
+ * as a bug: net before fees, the fees, net after fees, and that the percent
+ * includes them. Callers pass the after-fee numerator.
+ *
+ * Null when there is nothing to divide by. A zero-cost row should not exist
+ * (a settled market was bought), but "no percent" is the only honest print for
+ * one, and it beats an ∞ or a NaN on a money card.
+ */
+export function roiOf(netAfterFees: number, cost: number): number | null {
+  return cost > 0.005 ? netAfterFees / cost : null;
+}
+
+/** Signed to one decimal — and, like `signedUsd`, a rounded-to-zero rate is
+ *  not a direction, so it loses its sign. */
+export function signedPct(v: number): string {
+  const pct = v * 100;
+  if (Math.abs(pct) < 0.05) return "0.0%";
+  return `${pct > 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}%`;
+}
+
+/** The row's inline rate — FEE-INCLUSIVE — or "" when it has no cost to
+ *  divide by. */
+export function roiText(line: RecordLine): string {
+  const r = roiOf(line.net - line.fees, line.cost);
+  return r === null ? "" : signedPct(r);
 }
 
 /**
@@ -486,6 +592,52 @@ export function recordLines(line: RecordLine, offSlate: number): string[] {
         `outside both numbers above. After them it is ${signedUsd(line.net - line.fees)}.`
       : "No fees on these."
   );
+  // THE RECONCILIATION, because the row's two numbers are deliberately mixed:
+  // the DOLLARS are pre-fee (what Kalshi's own app shows, and what the owner's
+  // ledger reconciles to), the RATE is fee-inclusive (the standing metric).
+  // Said in words with all three figures present, so the mix can never read as
+  // an arithmetic bug.
+  const roi = roiOf(line.net - line.fees, line.cost);
+  if (roi !== null) {
+    out.push(
+      `Return: ${signedPct(roi)} on the ${usd(line.cost)} staked — ` +
+      (line.fees > 0
+        ? `the after-fee ${signedUsd(line.net - line.fees)} over that stake. The row's ` +
+          "dollars stay pre-fee, which is what Kalshi's own app shows; the " +
+          "percent always includes fees."
+        : "the percent includes fees, and there were none on these.")
+    );
+  }
+  // ATTRIBUTION. This Kalshi account is SHARED: the maker pipeline places on
+  // it and so does the owner by hand, and those bets settle to the same
+  // balance as the ones placed here. The headline deliberately stays the WHOLE
+  // account's record — that is what settles to the balance, and ticker-level
+  // attribution is far too rough to split a headline on — so the split is said
+  // in words instead, right where the "auto" tags are visible.
+  const auto = line.bets.filter((b) => b.app === false).length;
+  if (auto > 0) {
+    out.push(
+      (auto === 1
+        ? "1 of these was placed outside this app"
+        : `${auto} of these were placed outside this app`) +
+      " — the maker pipeline, or by hand on Kalshi. Same account, same money; " +
+      'they carry the "auto" tag above.'
+    );
+  }
+  if (head && line.bets.length && line.bets.every((b) => b.app === null)) {
+    out.push(
+      "Which of these came from this app is not known right now — the app's " +
+      "own order log resets when the server restarts, so nothing is tagged " +
+      "rather than everything being called someone else's."
+    );
+  }
+  if (head && auto > 0) {
+    out.push(
+      "That split is by MARKET, not by fill: a market this app and the " +
+      "pipeline both traded would read as this app's. It is the rough cut, " +
+      "not an audit."
+    );
+  }
   if (head) {
     out.push(
       "Win or loss is the settlement money itself — paid out minus what the " +

@@ -2108,6 +2108,19 @@ type PortalSettlement = {
    *  off-slate and the record block hid itself). Null when the fetch fails;
    *  the client then simply cannot title-join that row. */
   event_title: string | null;
+  /**
+   * THIS APP placed the bet on this market — the account is SHARED with the
+   * maker pipeline and with hand-placed orders, so a settled row is not
+   * necessarily one the owner clicked here (found live 2026-08-29: a slate
+   * record read 8-7 against a mental ledger of 8-5, and the two extra bets
+   * were the pipeline's).
+   *
+   * Decided from the app's own orders audit log — see `appPlacedTickers`.
+   * ABSENT (undefined) means attribution is UNAVAILABLE, not "not ours": the
+   * audit log lives on Render's ephemeral disk and is empty after a restart,
+   * and branding a whole account "auto" would be worse than saying nothing.
+   */
+  app?: boolean;
 };
 
 /** Settled events are immutable, so titles cache for the process lifetime. */
@@ -2283,6 +2296,12 @@ app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req: Request, res: R
     return;
   }
   const settlements = await portalSettlements();
+  // ATTRIBUTION. The account is shared with the maker pipeline, so tag the
+  // markets this app actually placed on. Read here, on the settlements cache
+  // MISS, so the disk is touched at most once per PORTAL_SETTLE_TTL_MS and the
+  // tags refresh on exactly the same tick as the money they annotate.
+  const mine = appPlacedTickers();
+  if (mine) for (const s of settlements) s.app = mine.has(s.ticker);
   const payload = { fetched_at: new Date().toISOString(), settlements };
   portalSettleCache = { at: Date.now(), payload };
   res.json(payload);
@@ -2390,6 +2409,59 @@ function ordersAudit(rec: Record<string, unknown>): void {
   } catch (err: any) {
     console.warn("[orders] audit file write failed:", err?.message ?? err);
   }
+}
+
+/** Audit re-read at most this often. The settlements cache is the same 60s,
+ *  so in practice the disk is touched once per settlements refresh. */
+const ORDERS_AUDIT_TTL_MS = 60_000;
+let appTickerCache: { at: number; tickers: Set<string> | null } | null = null;
+
+/**
+ * Markets THIS APP has successfully placed an order on — the attribution
+ * source for the settled record.
+ *
+ * "SUCCESSFULLY PLACED" is exactly the `placed` audit event, and nothing else:
+ * `ordersSubmitOne` writes it only after the exchange answered 200/201 WITH an
+ * order_id (and both the place and the convert routes go through that one
+ * function, so a converted take is covered too). `request`, `dry_run`,
+ * `reject`, `book_reject` and `place_failed` are all other events and none of
+ * them means money reached the exchange — a dry run in particular must never
+ * make a pipeline bet read as ours.
+ *
+ * THE CAVEAT, deliberate and stated in the UI as well: this is TICKER-level.
+ * A market both this app and the maker pipeline traded tags as ours. That is
+ * the right rough cut for "did I click this bet or did the pipeline", not a
+ * per-fill audit — a per-fill answer would need a fill-to-order join Kalshi's
+ * fills endpoint does not offer.
+ *
+ * Returns NULL when there is nothing to read (no file, unreadable, or no
+ * `placed` line yet). Null means "we cannot attribute", NOT "none of these are
+ * ours": ORDERS_AUDIT_PATH defaults into os.tmpdir() and Render's disk is
+ * ephemeral, so a fresh process legitimately has an empty log — and tagging
+ * every settled bet on the account "auto" in that state would be a confident
+ * lie. The caller leaves `app` undefined and the UI shows no tags at all.
+ */
+function appPlacedTickers(): Set<string> | null {
+  if (appTickerCache && Date.now() - appTickerCache.at < ORDERS_AUDIT_TTL_MS) {
+    return appTickerCache.tickers;
+  }
+  let tickers: Set<string> | null = null;
+  try {
+    const set = new Set<string>();
+    for (const line of fs.readFileSync(ORDERS_AUDIT_PATH, "utf8").split("\n")) {
+      if (!line) continue;
+      let rec: any;
+      try { rec = JSON.parse(line); } catch { continue; }   // torn tail line
+      if (rec?.event !== "placed") continue;
+      const t = String(rec.ticker || "");
+      if (t) set.add(t);
+    }
+    tickers = set.size ? set : null;
+  } catch {
+    tickers = null;   // no log on this box / this process life — see above
+  }
+  appTickerCache = { at: Date.now(), tickers };
+  return tickers;
 }
 
 /** Fee as the exchange charges it: rounded UP to the cent, per order.
