@@ -1,92 +1,92 @@
 /// <reference lib="webworker" />
 /**
- * MVPEAV service worker — app shell ONLY.
+ * MVPEAV service worker — PUSH ONLY.
  *
- * The single hard rule here: this worker never caches data. Every sim slate,
- * ESPN poll, HuggingFace file and Kalshi quote must hit the network exactly as
- * it would with no worker installed, because a stale price or a stale live
- * score is worse than no app at all (and `cache: "no-store"` on those fetches,
- * rule 3 in docs/AGENT_BRIEF.md, has to stay true in EFFECT, not just in the
- * call site).
+ * This is the reviewed redesign the 2026-08-28 kill switch demanded before any
+ * worker could return. That night, TWO stranded caching workers left the
+ * owner's phone fully blank — registration alive, CacheStorage gone, every
+ * navigation answered with Response.error() — and the cure was shipping a
+ * self-destroying sw.js (`selfDestroying: true`, vite config).
  *
- * That is enforced structurally rather than by a denylist: the ONLY routes
- * registered are
- *   1. workbox's precache route, which matches an exact, hashed, same-origin
- *      URL from the build manifest and nothing else, and
- *   2. a navigation route, network-first, denylisted from /api.
- * Anything unmatched — /api/*, espn.com, huggingface.co, api.elections.kalshi.com
- * — falls through the router without `respondWith`, i.e. the browser performs
- * its normal network fetch. Do NOT add `setDefaultHandler`, and do NOT add
- * runtime caching for any origin.
+ * The redesign's answer to the stranding mode is STRUCTURAL, not more careful
+ * caching: THERE IS NO FETCH HANDLER IN THIS FILE. A worker that never calls
+ * respondWith() cannot intercept a navigation, so its worst possible failure
+ * is that notifications stop arriving — the site itself always loads exactly
+ * as if no worker existed. The old app-shell worker (workbox precache +
+ * network-first navigations) lives in git history at 010ce1b^:src/sw.ts; do
+ * NOT bring back a fetch handler, caching, or workbox imports without a design
+ * that answers the stranding mode all over again — "no fetch handler" IS this
+ * file's answer, and it holds only while that stays true.
  *
- * Update path: skipWaiting + clientsClaim, plus network-first navigations, so a
- * Render deploy is live on the next launch instead of pinning users to the
- * build they first installed.
+ * What this worker DOES: receives Web Push (fill alerts for the owner's
+ * resting Kalshi orders — see /api/push/* in server/liveScores.ts) and shows
+ * the notification; a tap focuses or opens the scoreboard.
  */
-import { clientsClaim } from "workbox-core";
-import {
-  cleanupOutdatedCaches,
-  getCacheKeyForURL,
-  precacheAndRoute,
-} from "workbox-precaching";
-import { NavigationRoute, registerRoute } from "workbox-routing";
-import { NetworkFirst } from "workbox-strategies";
+
+// An export makes this file a MODULE, which is what lets the declaration
+// below shadow lib.dom's `self: Window` with the worker global scope.
+export {};
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>;
 };
 
-self.skipWaiting();
-clientsClaim();
+// vite-plugin-pwa (injectManifest) refuses to build a worker whose COMPILED
+// output does not contain `self.__WB_MANIFEST` — and a bare `void` reference
+// is minified away. A global-property assignment is a side effect the
+// minifier must keep. Referenced, never used: nothing is cached.
+(self as unknown as Record<string, unknown>).__PRECACHE_UNUSED = self.__WB_MANIFEST;
 
-cleanupOutdatedCaches();
+self.addEventListener("install", () => {
+  void self.skipWaiting();
+});
 
-// Hashed /assets/* + index.html. Immutable filenames, so cache-first is safe:
-// a new deploy means new names and a new manifest, never a stale hit.
-precacheAndRoute(self.__WB_MANIFEST);
-
-/**
- * Navigations go to the network first so a deploy is picked up immediately,
- * with the precached index.html as the offline/flaky-connection floor. The
- * timeout keeps a dead-but-not-refused connection from hanging the launch.
- */
-const shellFallback = async (): Promise<Response> => {
-  const key = getCacheKeyForURL("/index.html");
-  const cached = key ? await caches.match(key) : undefined;
-  if (cached) return cached;
-  // LAST RESORT — network failed AND the precache is gone (live incident
-  // 2026-08-28: a stranded older-generation worker whose CacheStorage had
-  // been cleared answered every navigation with Response.error(), i.e. a
-  // fully blank page, while /api/* typed into the URL bar worked fine). A
-  // dead end must be a READABLE page: say so, offer retry. 503 keeps any
-  // upstream cache from ever storing it.
-  return new Response(
-    "<!doctype html><meta charset='utf-8'><title>MVPEAV</title>" +
-    "<body style='font-family:system-ui,Arial;padding:24px'>" +
-    "<b>Can&rsquo;t load the app.</b><p>The network request failed and no " +
-    "cached copy exists on this device.</p>" +
-    "<button onclick='location.reload()' style='padding:10px 18px;font-size:15px'>Retry</button>",
-    { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } },
+self.addEventListener("activate", (e) => {
+  e.waitUntil(
+    (async () => {
+      // Belt and braces: destroy anything a previous caching generation left
+      // behind, so no stale shell can ever be served by accident and the
+      // browser's storage quota is handed back.
+      for (const k of await caches.keys()) await caches.delete(k);
+      await self.clients.claim();
+    })(),
   );
-};
+});
 
-registerRoute(
-  new NavigationRoute(
-    new NetworkFirst({
-      cacheName: "mvpeav-shell",
-      networkTimeoutSeconds: 4,
-      plugins: [
-        {
-          // Every route serves the same index.html, so key the whole SPA to
-          // one entry. Without this the cache grows an entry per visited URL
-          // (/cfb/game/<slug>… is unbounded) for zero benefit.
-          cacheKeyWillBeUsed: async () => `${self.location.origin}/index.html`,
-          handlerDidError: shellFallback,
-        },
-      ],
+type PushPayload = { title?: string; body?: string; tag?: string; url?: string };
+
+self.addEventListener("push", (e) => {
+  let p: PushPayload = {};
+  try {
+    p = (e.data?.json() as PushPayload) ?? {};
+  } catch {
+    /* a non-JSON push still shows something rather than nothing */
+  }
+  e.waitUntil(
+    self.registration.showNotification(p.title || "MVPEAV", {
+      body: p.body || "",
+      tag: p.tag || "cfb-fill",
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      data: { url: p.url || "/cfb/scoreboard" },
     }),
-    // A navigation to /api/* is a human pasting an endpoint into the URL bar;
-    // it must reach the server, never the shell.
-    { denylist: [/^\/api\//] },
-  ),
-);
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = String((e.notification.data as { url?: string } | undefined)?.url || "/cfb/scoreboard");
+  e.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const w of wins) {
+        // Any open tab of ours will do — focus it rather than spawning tabs.
+        if ("focus" in w) {
+          await w.focus();
+          return;
+        }
+      }
+      await self.clients.openWindow(url);
+    })(),
+  );
+});

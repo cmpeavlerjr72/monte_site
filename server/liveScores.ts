@@ -5,6 +5,7 @@ import fetch, { Response as FetchResponse } from "node-fetch";
 import AbortController from "abort-controller";
 import compression from "compression";
 import crypto from "crypto";
+import webpush from "web-push";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -3338,6 +3339,174 @@ app.get("*", (_req: Request, res: Response, next: NextFunction) => {
     if (err) next(err);
   });
 });
+
+// ============================================================================
+// WEB PUSH — owner fill alerts (2026-08-29, owner ask: "notifications as
+// resting stuff fills so that I don't miss anything").
+//
+// The client half is src/lib/push.ts + the My Book "Alerts" row; the worker
+// that displays these is PUSH-ONLY (src/sw.ts — no fetch handler, by rule).
+//
+// Configured entirely by env: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY (generate
+// once with `npx web-push generate-vapid-keys`), optional VAPID_SUBJECT.
+// Without them every endpoint answers 503 push_not_configured and the poller
+// never starts — staged exactly like CFB_ORDERS_LIVE.
+//
+// The subscription store is a FILE (CFB_PUSH_SUBS_PATH, default os.tmpdir()),
+// which on Render means A DEPLOY CAN WIPE IT — the same ephemeral-disk caveat
+// as the orders audit JSONL. Two mitigations: subscribed clients silently
+// re-POST their subscription on every owner page load, and the persistent-disk
+// action already owed for the audit log covers this file too.
+//
+// The poller reuses portalFills() (NCAAF-only, normalized) once a minute and
+// notifies on MAKER fills only (is_taker=false): taker fills are the owner's
+// own button press, they were watching. The watermark starts at boot so a
+// restart never replays history.
+// ============================================================================
+
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || "";
+const PUSH_ON = Boolean(VAPID_PUBLIC && VAPID_PRIVATE);
+if (PUSH_ON) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || "mailto:admin@mvpeav.com",
+    VAPID_PUBLIC, VAPID_PRIVATE,
+  );
+}
+
+type PushSub = { endpoint: string; keys: { p256dh: string; auth: string } };
+const PUSH_SUBS_PATH =
+  process.env.CFB_PUSH_SUBS_PATH || path.join(os.tmpdir(), "cfb_push_subs.json");
+const PUSH_SUBS_MAX = 20; // the owner's devices, not a mailing list
+
+let pushSubs: PushSub[] = [];
+try {
+  const raw = JSON.parse(fs.readFileSync(PUSH_SUBS_PATH, "utf8"));
+  if (Array.isArray(raw)) pushSubs = raw;
+} catch { /* first boot, or a wiped disk — clients re-sync on next visit */ }
+
+function pushSubsSave(): void {
+  try {
+    fs.writeFileSync(PUSH_SUBS_PATH, JSON.stringify(pushSubs));
+  } catch (err: any) {
+    console.warn("[push] subs save failed:", err?.message ?? err);
+  }
+}
+
+/** Send one payload to every device; prune subscriptions the push service
+ *  reports gone (404/410 = unsubscribed or expired). */
+async function pushSendAll(payload: Record<string, unknown>): Promise<{ sent: number; gone: number }> {
+  const body = JSON.stringify(payload);
+  const dead = new Set<string>();
+  let sent = 0;
+  await Promise.all(pushSubs.map(async (s) => {
+    try {
+      await webpush.sendNotification(s, body, { TTL: 3600 });
+      sent++;
+    } catch (err: any) {
+      const code = Number(err?.statusCode);
+      if (code === 404 || code === 410) dead.add(s.endpoint);
+      else console.warn("[push] send failed:", code || (err?.message ?? err));
+    }
+  }));
+  if (dead.size) {
+    pushSubs = pushSubs.filter((s) => !dead.has(s.endpoint));
+    pushSubsSave();
+  }
+  return { sent, gone: dead.size };
+}
+
+app.get("/api/push/pubkey", (req: Request, res: Response) => {
+  if (!portalGate(req, res)) return;
+  if (!PUSH_ON) { res.status(503).json({ error: "push_not_configured" }); return; }
+  res.json({ publicKey: VAPID_PUBLIC });
+});
+
+app.post("/api/push/subscribe", (req: Request, res: Response) => {
+  if (!portalGate(req, res)) return;
+  if (!PUSH_ON) { res.status(503).json({ error: "push_not_configured" }); return; }
+  const s = req.body?.subscription;
+  const endpoint = String(s?.endpoint || "");
+  const p256dh = String(s?.keys?.p256dh || "");
+  const auth = String(s?.keys?.auth || "");
+  if (!endpoint.startsWith("https://") || !p256dh || !auth) {
+    res.status(400).json({ error: "bad_subscription" });
+    return;
+  }
+  pushSubs = pushSubs.filter((x) => x.endpoint !== endpoint);
+  pushSubs.push({ endpoint, keys: { p256dh, auth } });
+  if (pushSubs.length > PUSH_SUBS_MAX) pushSubs = pushSubs.slice(-PUSH_SUBS_MAX);
+  pushSubsSave();
+  res.json({ ok: true, devices: pushSubs.length });
+});
+
+app.post("/api/push/test", asyncRoute(async (req: Request, res: Response) => {
+  if (!portalGate(req, res)) return;
+  if (!PUSH_ON) { res.status(503).json({ error: "push_not_configured" }); return; }
+  if (!pushSubs.length) { res.status(400).json({ error: "no_subscriptions" }); return; }
+  const r = await pushSendAll({
+    title: "MVPEAV push works",
+    body: "This device will hear about resting fills.",
+    tag: "cfb-push-test",
+  });
+  res.json({ ok: true, ...r });
+}));
+
+/** "KXNCAAFSPREAD-26AUG29UNCTCU-UNC20" -> "UNC20 spread · UNCTCU". */
+function pushTickerWords(t: string): string {
+  const m = t.match(/^KXNCAAF([A-Z0-9]+)-\d{2}[A-Z]{3}\d{2}([A-Z0-9]+)-(.+)$/);
+  if (!m) return t;
+  const fam = m[1] === "GAME" ? "ML" : m[1].toLowerCase();
+  return `${m[3]} ${fam} · ${m[2]}`;
+}
+
+const PUSH_FILL_POLL_MS = 60_000;
+let pushFillWatermark = Date.now(); // boot = now: never replay history
+let pushFillBusy = false;
+
+async function pushFillPoll(): Promise<void> {
+  if (pushFillBusy || !pushSubs.length) return;
+  if (!portalPrivateKey() || !PORTAL_KEY_ID) return; // no Kalshi creds, nothing to poll
+  pushFillBusy = true;
+  try {
+    const fills = await portalFills();
+    const fresh = fills.filter((f) =>
+      !f.is_taker && Date.parse(f.created_time) > pushFillWatermark);
+
+    // One notification per ticker, fills within the poll window summed — a
+    // ladder filling rung by rung should read as one event per market, not a
+    // buzz per contract.
+    const byTicker = new Map<string, { count: number; price: number | null; side: string }>();
+    for (const f of fresh) {
+      const cur = byTicker.get(f.ticker) ?? { count: 0, price: null, side: f.side };
+      cur.count += f.count ?? 0;
+      cur.price = f.side === "no" ? f.no_price : f.yes_price;
+      byTicker.set(f.ticker, cur);
+    }
+    for (const [ticker, g] of byTicker) {
+      const px = g.price === null ? "" : ` @ ${Math.round(g.price * 100)}¢`;
+      await pushSendAll({
+        title: "Resting order filled",
+        body: `${g.count} × ${pushTickerWords(ticker)} — ${g.side.toUpperCase()}${px}`,
+        tag: `cfb-fill-${ticker}`,
+        url: "/cfb/scoreboard",
+      });
+      console.log(`[push] fill notified: ${g.count} × ${ticker}${px}`);
+    }
+
+    // Advance on everything seen (taker fills included) so nothing renotifies;
+    // only after a successful fetch, so an API blip never skips a fill.
+    for (const f of fills) {
+      const ts = Date.parse(f.created_time);
+      if (Number.isFinite(ts) && ts > pushFillWatermark) pushFillWatermark = ts;
+    }
+  } catch (err: any) {
+    console.warn("[push] fill poll failed:", err?.message ?? err);
+  } finally {
+    pushFillBusy = false;
+  }
+}
+if (PUSH_ON) setInterval(pushFillPoll, PUSH_FILL_POLL_MS);
 
 // ----------------------------------------------------------------------------
 // Error middleware (must be last, must take 4 args)
