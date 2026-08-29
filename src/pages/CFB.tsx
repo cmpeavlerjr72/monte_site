@@ -14,7 +14,8 @@ import {
   ReferenceLine,
   Cell,
 } from "recharts";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 
 /* ---------- Discover CSVs (scores) ---------- */
 // Raw text first (preferred so we avoid fetch)
@@ -149,6 +150,9 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0 | 1) {
 
 /* ---------- Component ---------- */
 export default function CFB() {
+  /* Which theme the page is painting into, so team colours can be
+     contrast-gated before they hit a chart. One read per component. */
+  const isDark = useIsDark();
   // Discover files once; group by week
   const discovered = useMemo(buildFiles, []);
   const { weeks, weekToFiles } = useMemo(() => {
@@ -210,8 +214,8 @@ export default function CFB() {
   // Orientation-aware team names & colors
   const leftName  = selectedGame ? (teamOrder === 0 ? selectedGame.teamA : selectedGame.teamB) : "";
   const rightName = selectedGame ? (teamOrder === 0 ? selectedGame.teamB : selectedGame.teamA) : "";
-  const leftColor  = getTeamColors(leftName)?.primary  ?? "var(--brand)";
-  const rightColor = getTeamColors(rightName)?.primary ?? "var(--accent)";
+  const leftColor  = displayTeamColor(leftName, isDark)  ?? "var(--brand)";
+  const rightColor = displayTeamColor(rightName, isDark) ?? "var(--accent)";
 
   // Per-bin colors (spread/total/team totals)
   const binColors = useMemo(() => {

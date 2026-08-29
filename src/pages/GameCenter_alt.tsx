@@ -4,7 +4,8 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   Legend, CartesianGrid, ReferenceLine, Cell,
 } from "recharts";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 
 /* --------------------- CSV discovery (scores + players) --------------------- */
 // scores
@@ -276,6 +277,7 @@ const URL_PAIR = getSearchParam("pair") || "";
 
 /* --------------------- Page --------------------- */
 export default function GameCenter() {
+  const isDark = useIsDark();
   // Build week lists from either scores or players (union)
   const weeks = useMemo(() => {
     const s = new Set<string>(scoreFilesAll.map(f=>f.week));
@@ -507,8 +509,8 @@ export default function GameCenter() {
 
   const leftName  = selectedGame ? (teamOrder===0 ? selectedGame.teamA : selectedGame.teamB) : "";
   const rightName = selectedGame ? (teamOrder===0 ? selectedGame.teamB : selectedGame.teamA) : "";
-  const leftColor  = getTeamColors(leftName)?.primary  ?? "var(--brand)";
-  const rightColor = getTeamColors(rightName)?.primary ?? "var(--accent)";
+  const leftColor  = displayTeamColor(leftName, isDark)  ?? "var(--brand)";
+  const rightColor = displayTeamColor(rightName, isDark) ?? "var(--accent)";
 
   const binColors = useMemo(() => {
     if (!hist.length || !selectedGame) return [] as string[];
@@ -928,7 +930,8 @@ function PlayerChart({
 }: {
   team:string; player:string; role:Role; stat:string; values:number[]; line:string;
 }) {
-  const color = getTeamColors(team)?.primary ?? "var(--brand)";
+  const isDark = useIsDark();
+  const color = displayTeamColor(team, isDark) ?? "var(--brand)";
   const hist = useMemo<HistBin_2[]>(() => {
     if (!values.length) return [];
     return computeHistogram(values, { bins: 20 });

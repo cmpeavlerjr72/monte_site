@@ -1,7 +1,8 @@
 // src/pages/Scoreboard.tsx
 import { useEffect, useMemo, useState } from "react";
 import * as Papa from "papaparse";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   Tooltip, CartesianGrid, ReferenceLine, Cell,
@@ -953,8 +954,9 @@ function metricSeries(g: GameData, metric: Metric, teamOrder: 0|1) {
 }
 
 function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gdata: GameData; players: PlayerMap; useMean?: boolean }) {
-  const aColors = getTeamColors(card.teamA);
-  const bColors = getTeamColors(card.teamB);
+  const isDark = useIsDark();
+  const aColor = displayTeamColor(card.teamA, isDark);
+  const bColor = displayTeamColor(card.teamB, isDark);
   const aLogo = getTeamLogo(card.teamA);
   const bLogo = getTeamLogo(card.teamB);
 
@@ -999,9 +1001,9 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
 
   // pick the correct side colors under the current Orientation
   const leftColor  =
-    (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
+    (teamOrder === 0 ? (aColor ?? "var(--brand)") : (bColor ?? "var(--brand)"));
   const rightColor =
-    (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
+    (teamOrder === 0 ? (bColor ?? "var(--accent)") : (aColor ?? "var(--accent)"));
 
   // same coloring rule as GameCenter
   const binColors = useMemo(() => {
@@ -1045,6 +1047,7 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
   const [pStat, setPStat] = useState<string>("");
   useEffect(()=>{ setPStat(defaultStat); }, [defaultStat]);
 
+  const pColor = displayTeamColor(pTeam, isDark) ?? "var(--brand)";
   const pValues = players[pTeam]?.[pPlayer]?.[pRole]?.[pStat] || [];
   const qPlayer = useMemo(()=> quantiles(pValues), [pValues]);
   const pHist = useMemo(() => computeHistogram(pValues, { bins: 20 }), [pValues]);
@@ -1121,13 +1124,13 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
               {bLogo ? (
                 <img src={bLogo} alt={`${card.teamB} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
               ) : (
-                <div style={{ width: 24, height: 24, borderRadius: 6, background: bColors?.primary ?? "var(--accent)" }} />
+                <div style={{ width: 24, height: 24, borderRadius: 6, background: bColor ?? "var(--accent)" }} />
               )}
               <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamB}
               </div>
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: bColors?.primary ?? "var(--text)" }}>
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: bColor ?? "var(--text)" }}>
               {projB}
             </div>
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
@@ -1139,13 +1142,13 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
               {aLogo ? (
                 <img src={aLogo} alt={`${card.teamA} logo`} width={24} height={24} style={{ objectFit: "contain" }} loading="lazy" />
               ) : (
-                <div style={{ width: 24, height: 24, borderRadius: 6, background: aColors?.primary ?? "var(--brand)" }} />
+                <div style={{ width: 24, height: 24, borderRadius: 6, background: aColor ?? "var(--brand)" }} />
               )}
               <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamA}
               </div>
             </div>
-            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: aColors?.primary ?? "var(--text)" }}>
+            <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center", color: aColor ?? "var(--text)" }}>
               {projA}
             </div>
             <div style={{ fontWeight: 800, fontSize: 22, lineHeight: 1, textAlign: "center" }}>
@@ -1342,7 +1345,7 @@ function GameCard({ card, gdata, players ,useMean = false}: { card: CardGame; gd
                         label={{ value:`Line ${pProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }} />
                     )}
                     <Bar dataKey="count" name={`${pPlayer} • ${pretty(pStat)}`}>
-                      {pHist.map((_,i)=><Cell key={i} fill={getTeamColors(pTeam)?.primary ?? "var(--brand)"} />)}
+                      {pHist.map((_,i)=><Cell key={i} fill={pColor} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>

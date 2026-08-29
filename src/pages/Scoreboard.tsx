@@ -1,7 +1,7 @@
 // src/pages/Scoreboard.tsx
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as Papa from "papaparse";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   Tooltip, CartesianGrid, ReferenceLine, Cell,
@@ -12,7 +12,7 @@ import { useLiveScoreboard } from "../lib/useLiveScoreboard";
 import SupportButton from "../components/SupportButton";
 import ErrorBoundary from "../components/ErrorBoundary";
 import { Skeleton, SkeletonCard, SkeletonChart } from "../components/Skeleton";
-import { useThemeMode, useDensity, useDivisionFilter, type Density } from "../lib/usePrefs";
+import { useThemeMode, useDensity, useDivisionFilter, useIsDark, type Density } from "../lib/usePrefs";
 import MarketEdge from "../components/MarketEdge";
 import TopEdges from "../components/TopEdges";
 import { type EdgeInput, type GameEdges } from "../lib/edges";
@@ -3141,8 +3141,12 @@ export function GameCard({
   const hasSeedRows = Boolean(gdata?.rowsA?.length);
   const canShowScores = hasSeedRows || Boolean(jsonRow);
 
-  const aColors = getTeamColors(card.teamA);
-  const bColors = getTeamColors(card.teamB);
+  /* Team colours are theme-resolved: a navy primary that vanishes on the dark
+     card is lifted (or traded for the school's other colour) before it paints
+     anything. Read once here, passed down — never inside a map. */
+  const isDark = useIsDark();
+  const aColor = displayTeamColor(card.teamA, isDark);
+  const bColor = displayTeamColor(card.teamB, isDark);
   const aLogo = getTeamLogo(card.teamA);
   const bLogo = getTeamLogo(card.teamB);
 
@@ -3159,8 +3163,8 @@ export function GameCard({
     awayAbbrev: lv?.awayAbbrev,
     homeId: lv?.homeId,
     awayId: lv?.awayId,
-    homeColor: (espnHomeIsA ? aColors : bColors)?.primary,
-    awayColor: (espnHomeIsA ? bColors : aColors)?.primary,
+    homeColor: espnHomeIsA ? aColor : bColor,
+    awayColor: espnHomeIsA ? bColor : aColor,
     homeLogo: (espnHomeIsA ? aLogo : bLogo) || undefined,
     awayLogo: (espnHomeIsA ? bLogo : aLogo) || undefined,
   };
@@ -3189,7 +3193,7 @@ export function GameCard({
         border: `1px solid ${expanded ? "var(--brand)" : "var(--border)"}`,
         // Home team's primary as a left accent turns a uniform grid into
         // something scannable; falls back to the brand when unknown.
-        borderLeft: `3px solid ${expanded ? "var(--brand)" : (aColors?.primary ?? "var(--brand)")}`,
+        borderLeft: `3px solid ${expanded ? "var(--brand)" : (aColor ?? "var(--brand)")}`,
         boxShadow: expanded ? "0 0 0 1px var(--brand)" : "none",
         background: "var(--card)",
         display: "grid", gap: condensed ? 6 : 8,
@@ -3291,7 +3295,7 @@ export function GameCard({
               {bLogo ? (
                 <img src={bLogo} alt="" width={logoPx} height={logoPx} style={{ objectFit: "contain" }} loading="lazy" />
               ) : (
-                <div style={{ width: logoPx, height: logoPx, borderRadius: 6, background: bColors?.primary ?? "var(--accent)" }} />
+                <div style={{ width: logoPx, height: logoPx, borderRadius: 6, background: bColor ?? "var(--accent)" }} />
               )}
               <div style={{ fontWeight: 600, fontSize: nameSize, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamB}
@@ -3309,7 +3313,7 @@ export function GameCard({
               {aLogo ? (
                 <img src={aLogo} alt="" width={logoPx} height={logoPx} style={{ objectFit: "contain" }} loading="lazy" />
               ) : (
-                <div style={{ width: logoPx, height: logoPx, borderRadius: 6, background: aColors?.primary ?? "var(--brand)" }} />
+                <div style={{ width: logoPx, height: logoPx, borderRadius: 6, background: aColor ?? "var(--brand)" }} />
               )}
               <div style={{ fontWeight: 600, fontSize: nameSize, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {card.teamA}
@@ -3325,7 +3329,7 @@ export function GameCard({
         );
       })()}
 
-      <WinProbBar card={card} aColor={aColors?.primary} bColor={bColors?.primary} condensed={condensed} />
+      <WinProbBar card={card} aColor={aColor} bColor={bColor} condensed={condensed} />
 
       {/* Pick grading. Verified dataset finals (INV-44 truth) and live-graded
           finals (card.resultsProvisional) render the identical pill — a
@@ -3822,6 +3826,13 @@ function CardPanelHost({
 }) {
   const jsonRow = card.jsonRow;
 
+  /* One theme read for the whole panel host. `colorFor` is the exact shape
+     the panels already take, so this is a swap of the resolver in, not a new
+     prop path — and it is stable per theme, so a panel does not re-render on
+     an unrelated parent update. */
+  const isDark = useIsDark();
+  const colorFor = useCallback((t: string) => displayTeamColor(t, isDark), [isDark]);
+
   // Sim-conditional live overlay: one fetch, only while the live panel is
   // actually open (not on every other panel kind) and only when the card
   // has a jsonRow to key the dataset path off (FCS-without-row -> null args
@@ -3852,8 +3863,8 @@ function CardPanelHost({
     awayAbbrev: lv?.awayAbbrev,
     homeId: lv?.homeId,
     awayId: lv?.awayId,
-    homeColor: getTeamColors(espnHomeIsA ? card.teamA : card.teamB)?.primary,
-    awayColor: getTeamColors(espnHomeIsA ? card.teamB : card.teamA)?.primary,
+    homeColor: colorFor(espnHomeIsA ? card.teamA : card.teamB),
+    awayColor: colorFor(espnHomeIsA ? card.teamB : card.teamA),
     homeLogo: getTeamLogo(espnHomeIsA ? card.teamA : card.teamB) || undefined,
     awayLogo: getTeamLogo(espnHomeIsA ? card.teamB : card.teamA) || undefined,
   };
@@ -3910,7 +3921,7 @@ function CardPanelHost({
         <PlayerProps
           row={jsonRow} season={season}
           teamA={card.teamA} teamB={card.teamB}
-          colorFor={(t) => getTeamColors(t)?.primary}
+          colorFor={colorFor}
         />
       )}
       {kind === "box" && jsonRow && card.hasPlayers && (
@@ -3921,7 +3932,7 @@ function CardPanelHost({
           ptsB={useMean ? card.meanB : card.medB}
           useMean={useMean}
           logoFor={getTeamLogo}
-          colorFor={(t) => getTeamColors(t)?.primary}
+          colorFor={colorFor}
         />
       )}
       {/* Display only: every number comes precomputed out of team_stats.json
@@ -3931,7 +3942,7 @@ function CardPanelHost({
           slug={jsonRow.slug} ns={card.ns} weekId={weekId}
           teamA={card.teamA} teamB={card.teamB}
           kalshi={kalshi}
-          colorFor={(t) => getTeamColors(t)?.primary}
+          colorFor={colorFor}
           logoFor={(t) => getTeamLogo(t) || undefined}
           focus={focus?.kind === "teamstats" ? focus : null}
         />
@@ -4103,8 +4114,11 @@ function ScoresPanel({ card, gdata, season, focus = null }: {
 
   const panelData = gdata ?? compactData ?? undefined;
 
-  const aColors = getTeamColors(card.teamA);
-  const bColors = getTeamColors(card.teamB);
+  /* Theme-resolved, same as the card: the chart fills and the swatches below
+     must both survive a dark background. */
+  const isDark = useIsDark();
+  const aColor = displayTeamColor(card.teamA, isDark);
+  const bColor = displayTeamColor(card.teamB, isDark);
 
   const [metric, setMetric] = useState<Metric>("spread");
   const [teamOrder, setTeamOrder] = useState<0|1>(0);
@@ -4162,8 +4176,8 @@ function ScoresPanel({ card, gdata, season, focus = null }: {
 
   const leftTeam  = teamOrder === 0 ? card.teamA : card.teamB;
   const rightTeam = teamOrder === 0 ? card.teamB : card.teamA;
-  const leftColor  = (teamOrder === 0 ? (aColors?.primary ?? "var(--brand)") : (bColors?.primary ?? "var(--brand)"));
-  const rightColor = (teamOrder === 0 ? (bColors?.primary ?? "var(--accent)") : (aColors?.primary ?? "var(--accent)"));
+  const leftColor  = (teamOrder === 0 ? (aColor ?? "var(--brand)") : (bColor ?? "var(--brand)"));
+  const rightColor = (teamOrder === 0 ? (bColor ?? "var(--accent)") : (aColor ?? "var(--accent)"));
 
   /* ---- the two lines, in AXIS units ----
    * The book's spread is published home-perspective; the axis is written from
@@ -4451,6 +4465,7 @@ function ScoresPanel({ card, gdata, season, focus = null }: {
 function PlayersPanel({ card, week, season }: {
   card: CardGame; week: string; season: Season;
 }) {
+  const isDark = useIsDark();
   const [players, setPlayers] = useState<PlayerMap>({});
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState(false);
@@ -4490,6 +4505,10 @@ function PlayersPanel({ card, week, season }: {
   const defaultStat = useMemo(() => statsFor(pTeam, pPlayer, pRole)[4] || "", [pTeam, pPlayer, pRole, players]);
   const [pStat, setPStat] = useState<string>("");
   useEffect(()=>{ setPStat(defaultStat); }, [defaultStat]);
+
+  /* Resolved once per (team, theme) rather than inside the Cell map below —
+     the histogram is 20 bars and every one of them wanted the same colour. */
+  const pColor = displayTeamColor(pTeam, isDark) ?? "var(--brand)";
 
   const pValues = players[pTeam]?.[pPlayer]?.[pRole]?.[pStat] || [];
   const qPlayer = useMemo(()=> quantiles(pValues), [pValues]);
@@ -4569,7 +4588,7 @@ function PlayersPanel({ card, week, season }: {
                     label={{ value:`Line ${pProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }} />
                 )}
                 <Bar dataKey="count" name={`${pPlayer} \u2022 ${pretty(pStat)}`}>
-                  {pHist.map((_,i)=><Cell key={i} fill={getTeamColors(pTeam)?.primary ?? "var(--brand)"} />)}
+                  {pHist.map((_,i)=><Cell key={i} fill={pColor} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>

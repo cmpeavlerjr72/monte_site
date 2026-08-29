@@ -5,7 +5,7 @@
 // than merely returning null. Every access is wrapped; a failure degrades to
 // the default instead of taking the page down.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { DivisionFilter } from "./cfbData";
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -42,6 +42,73 @@ function applyTheme(mode: ThemeMode): void {
   else root.setAttribute("data-theme", mode);
 }
 
+/* ==========================================================================
+   The EFFECTIVE theme, as a subscribable store
+   --------------------------------------------------------------------------
+   Team colours are resolved in JS, not CSS (see src/utils/teamColors.ts), so
+   something has to tell a component which theme it is painting into. That
+   answer has two independent sources of truth and BOTH can change while the
+   page is open:
+
+     - an explicit choice, stamped as data-theme="light|dark" on <html>, which
+       wins outright; and
+     - the OS setting, which is what "system" (no attribute) follows — and
+       which flips on its own at sunset.
+
+   So this is a store, not a one-shot read: `useIsDark()` re-renders on either
+   event. Components read it ONCE at the top and pass the boolean down through
+   the colour closures; nothing reads the DOM inside a render loop.
+   ========================================================================== */
+
+/** The live answer. Explicit attribute wins; otherwise the OS. */
+export function resolveIsDark(): boolean {
+  if (typeof document === "undefined") return false;
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr === "dark") return true;
+  if (attr === "light") return false;
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+}
+
+/** Fires on an OS flip AND on our own data-theme stamp. */
+function subscribeTheme(onChange: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const cleanups: Array<() => void> = [];
+
+  if (typeof window.matchMedia === "function") {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    // addEventListener is not universal on MediaQueryList (older Safari);
+    // fall back rather than throw and take the page down.
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", onChange);
+      cleanups.push(() => mq.removeEventListener("change", onChange));
+    } else if (typeof (mq as any).addListener === "function") {
+      (mq as any).addListener(onChange);
+      cleanups.push(() => (mq as any).removeListener(onChange));
+    }
+  }
+
+  if (typeof MutationObserver === "function" && typeof document !== "undefined") {
+    const mo = new MutationObserver(onChange);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    cleanups.push(() => mo.disconnect());
+  }
+
+  return () => cleanups.forEach((fn) => fn());
+}
+
+/**
+ * Is the page dark RIGHT NOW? Feed this to `displayTeamColor(team, isDark)`.
+ * getSnapshot returns a boolean, so React's identity check is by value and
+ * this cannot loop.
+ */
+export function useIsDark(): boolean {
+  return useSyncExternalStore(subscribeTheme, resolveIsDark, () => false);
+}
+
 export function useThemeMode() {
   const [mode, setMode] = useState<ThemeMode>(() => {
     const v = typeof window === "undefined" ? null : readStored(THEME_KEY);
@@ -53,15 +120,11 @@ export function useThemeMode() {
     writeStored(THEME_KEY, mode);
   }, [mode]);
 
-  /** What the page is actually showing right now, resolving "system". */
-  const resolved: "light" | "dark" =
-    mode !== "system"
-      ? mode
-      : typeof window !== "undefined" &&
-        typeof window.matchMedia === "function" &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
+  /** What the page is actually showing right now, resolving "system".
+   *  Reads the store so an OS flip under "system" re-renders the consumer
+   *  instead of leaving a stale label behind. */
+  const isDark = useIsDark();
+  const resolved: "light" | "dark" = mode !== "system" ? mode : isDark ? "dark" : "light";
 
   // Cycle light -> dark -> system so a viewer can always get back to the OS.
   const cycle = useCallback(() => {

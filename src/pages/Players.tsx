@@ -13,7 +13,8 @@ import {
   ReferenceLine,
 } from "recharts";
 import { Cell } from "recharts";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 
 
 // Shared theming helpers for Recharts + UI
@@ -180,6 +181,9 @@ function summaryStats(values: number[]) {
 
 /* ------------------------------- Page ------------------------------ */
 export default function Players() {
+  /* Which theme the page is painting into, so team colours can be
+     contrast-gated before they hit a chart. One read per component. */
+  const isDark = useIsDark();
   // Discover files once, then group into weeks
   const discovered = useMemo(buildFiles, []);
   const { weeks, weekToFiles } = useMemo(() => {
@@ -407,7 +411,7 @@ export default function Players() {
   }, [players, search]);
 
   const selected = selectedKey ? players[selectedKey] ?? null : null;
-  const playerColor = (selected && getTeamColors(selected.team || ""))?.primary || "var(--brand)";
+  const playerColor = displayTeamColor(selected?.team || "", isDark) || "var(--brand)";
 
   const series = useMemo(() => {
     if (!selected || !selectedMetric) return [] as number[];

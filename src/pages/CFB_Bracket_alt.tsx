@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 
 type TeamKey =
   | "James Madison"
@@ -436,6 +437,7 @@ function MatchCard({
   compact?: CompactPayload;
   loading?: boolean;
 }) {
+  const isDark = useIsDark();
   const [openModal, setOpenModal] = useState<null | "scores" | "stats">(null);
   const [spreadLine, setSpreadLine] = useState<number>(-6.5); // default; you can set 0 or pull from metadata later
 
@@ -682,8 +684,8 @@ function MatchCard({
     >
     {proj && away && home ? (
         (() => {
-        const aCol = getTeamColors(away.name)?.primary ?? "rgba(0,0,0,0.25)";
-        const hCol = getTeamColors(home.name)?.primary ?? "rgba(0,0,0,0.25)";
+        const aCol = displayTeamColor(away.name, isDark) ?? "rgba(0,0,0,0.25)";
+        const hCol = displayTeamColor(home.name, isDark) ?? "rgba(0,0,0,0.25)";
 
         return (
             <div style={{ display: "grid", gap: 16 }}>

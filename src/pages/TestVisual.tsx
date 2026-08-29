@@ -30,7 +30,8 @@
 // shows the market's de-vigged P(over) and the sim's edge at that line.
 
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 import { getEspnTeamsMap, lookupEspnLogo, localizeLogoUrl } from "../utils/espnLogos";
 
 type BoxRow = [string, string, string];
@@ -600,8 +601,9 @@ export function GameCard({ g, views, showDelta, logos, labels, group,
   const [propsOpen, setPropsOpen] = useState(false);
   const multi = views.length > 1;
   const hasProps = views.some(v => v.g?.hprops?.length || v.g?.aprops?.length);
-  const hc = getTeamColors(g.home)?.primary;
-  const ac = getTeamColors(g.away)?.primary;
+  const isDark = useIsDark();
+  const hc = displayTeamColor(g.home, isDark);
+  const ac = displayTeamColor(g.away, isDark);
   const hLogo = localizeLogoUrl(lookupEspnLogo(logos as any, g.home)?.logo);
   const aLogo = localizeLogoUrl(lookupEspnLogo(logos as any, g.away)?.logo);
 

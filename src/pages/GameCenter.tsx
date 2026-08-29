@@ -5,7 +5,8 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, ReferenceLine, Cell,
 } from "recharts";
-import { getTeamColors } from "../utils/teamColors";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 import {
   getCatalog, playerFileForPair,
   type CfbCatalog, type FileItem,
@@ -246,6 +247,10 @@ function NumberSpinner({
    Page
 ============================================================================= */
 export default function GameCenter() {
+  /* Which theme the page is painting into, so team colours can be
+     contrast-gated before they hit a chart. One read per component. */
+  const isDark = useIsDark();
+
   /* -------- Dataset catalog -------- */
   const [catalog, setCatalog] = useState<CfbCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -426,7 +431,9 @@ export default function GameCenter() {
   const lineBinTeam = useMemo(() => (teamProb && histTeam.length ? findBinLabelForValue(histTeam, teamProb.line) : undefined), [teamProb, histTeam]);
 
   const teams = selectedGame ? [selectedGame.teamA, selectedGame.teamB] : ["—","—"];
-  const leftColor  = getTeamColors(teams[teamOrder===0?0:1])?.primary ?? "var(--brand)";
+  /* Contrast-gated: a navy primary that would vanish on the dark card is
+     lifted (or traded for the school’s other colour) before it paints. */
+  const leftColor  = displayTeamColor(teams[teamOrder===0?0:1], isDark) ?? "var(--brand)";
 
   /* -------- Derived for PLAYER charts -------- */
   const teamPlayersByRole = (team: string, role: Role) =>
@@ -441,6 +448,8 @@ export default function GameCenter() {
   const defaultStat = useMemo(() => statsFor(pTeam, pPlayer, pRole)[4] || statsFor(pTeam, pPlayer, pRole)[0] || "", [pTeam, pPlayer, pRole, players]);
   useEffect(()=>{ if (!pStat) setPStat(defaultStat); }, [defaultStat]);
 
+  /* Resolved once, not per histogram bar. */
+  const pColor = displayTeamColor(pTeam, isDark) ?? "var(--brand)";
   const pValues = players[pTeam]?.[pPlayer]?.[pRole]?.[pStat] || [];
   const histPlayer = useMemo(() => computeHistogram(pValues, { bins: 20 }), [pValues]);
 
@@ -668,7 +677,7 @@ export default function GameCenter() {
                       )}
                       <Bar dataKey="count" name={`${pPlayer} • ${prettyStat(pStat)}`}>
                         {histPlayer.map((_, i) => (
-                          <Cell key={i} fill={getTeamColors(pTeam)?.primary ?? "var(--brand)"} />
+                          <Cell key={i} fill={pColor} />
                         ))}
                       </Bar>
                     </BarChart>

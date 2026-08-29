@@ -41,13 +41,21 @@
 // ---------------------------------------------------------------------------
 // Color (validated, not eyeballed)
 // ---------------------------------------------------------------------------
-// School brand hexes FAIL validate_palette.js as marks (UNC #7bafd4 is 2.29:1
-// on the light surface, TCU #4d1979 is 1.44:1 on dark). So brand color fills
-// the density silhouette only; every stroke, every label and the axis wear
-// theme tokens. Status tokens (--pos/--neg) appear only on the edge chip,
-// always with a sign character and a "¢" unit, never as color alone — and
-// both are AA as text on both surfaces. The numeric table view remains one
-// toggle away as the relief the validator requires for a sub-3:1 fill.
+// RAW school hexes FAIL validate_palette.js as marks (UNC #7bafd4 was 2.35:1
+// on the light surface, TCU #4d1979 1.43:1 on dark, Virginia #232d4b 1.28:1).
+// `colorFor` no longer hands them over raw: it resolves through
+// `displayTeamColor` (src/utils/teamColors.ts), which clears 3:1 against the
+// theme's card while holding the school's hue — the three above arrive as
+// #589ac9 / #8d37d6 / #4d63a5, all 3.0+.
+//
+// The rest of the discipline is UNCHANGED and still load-bearing, because the
+// silhouette paints that colour at opacity 0.30 and 3:1 is measured at full
+// strength: brand colour fills the density silhouette only; every stroke,
+// every label and the axis wear theme tokens. Status tokens (--pos/--neg)
+// appear only on the edge chip, always with a sign character and a "¢" unit,
+// never as colour alone — and both are AA as text on both surfaces. The
+// numeric table view remains one toggle away as the relief the validator
+// requires for a fill that is translucent.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
