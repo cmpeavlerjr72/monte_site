@@ -49,7 +49,7 @@ import type { FeeParams } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
-  computeSettlementRecord, parseNcaafTicker, buildCodeToSlug, buildPortalYesP,
+  computeSettlementRecord, buildSlatePairs, parseNcaafTicker, buildCodeToSlug, buildPortalYesP,
   type PortalBet, type PortalTotals, type SeedPair,
 } from "../lib/kalshiPortal";
 import LegPicker from "../components/LegPicker";
@@ -2206,13 +2206,18 @@ function ScoreboardPage() {
     [portal.payload, kalshiBySlug, portalSeeds, statYesP, gameYesP]
   );
   /** The REALISED record on the games this board is showing — the owner's
-   *  settled Kalshi markets, joined by the SAME event code -> slug map the live
-   *  book uses (`buildCodeToSlug`), so a settlement counts here exactly when
-   *  its game is on screen. Settlements from other weeks are excluded, not
+   *  settled Kalshi markets. Joined code-first (the live book's
+   *  `buildCodeToSlug` map), then by the server-attached event TITLE against
+   *  these cards — a settled event leaves the status=open feed, so code-only
+   *  classified every finished game off-slate and hid the block (found live
+   *  2026-08-28). Settlements from other weeks are still excluded, not
    *  summed. */
+  // baseCards, not the sorted/filtered list: the record's scope is the SLATE
+  // (matching kalshiBySlug), and baseCards is declared above this memo.
+  const slatePairs = useMemo(() => buildSlatePairs(baseCards), [baseCards]);
   const portalRecord = useMemo(
-    () => computeSettlementRecord(portal.settlements, kalshiBySlug),
-    [portal.settlements, kalshiBySlug]
+    () => computeSettlementRecord(portal.settlements, kalshiBySlug, slatePairs),
+    [portal.settlements, kalshiBySlug, slatePairs]
   );
   /** ticker -> P(YES) of the RAW market: seeds for the game lines, published
    *  rungs for the per-team stat ladders. Literally the function the held

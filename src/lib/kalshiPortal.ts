@@ -15,6 +15,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { KalshiGame } from "./kalshi";
+// The ONE name join (same import path TopEdges uses; served to the client
+// by Vite exactly like any src module).
+import { pairKeyOf } from "../../server/cfbNames";
 // The bet-type taxonomy has ONE definition, in the suggestions engine. The
 // settled record classifies with the same function the type filter does, so a
 // series Kalshi adds later lands in the same bucket in both places (import
@@ -420,7 +423,49 @@ export type PortalSettlement = {
   cost: number;
   fees: number;
   settled_time: string;
+  /** Matchup title of the settled EVENT, server-attached — the live feed
+   *  can no longer supply it (it polls status=open, and a settled event has
+   *  left that list). Null when the server's fetch failed. */
+  event_title: string | null;
 };
+
+/** One displayed game, keyed for the title join. */
+export type SlatePair = { slug: string; kickoffMs: number | null };
+
+/** pairKey -> game, over the DISPLAYED cards. The settled-record fallback
+ *  join reads this when the live feed no longer carries the event. */
+export function buildSlatePairs(
+  cards: { key: string; teamA: string; teamB: string; kickoffMs?: number | null }[],
+): Map<string, SlatePair> {
+  const m = new Map<string, SlatePair>();
+  for (const c of cards) {
+    m.set(pairKeyOf(c.teamA, c.teamB), { slug: c.key, kickoffMs: c.kickoffMs ?? null });
+  }
+  return m;
+}
+
+/** "A vs B[: family]" / "A at B" -> the two names. " vs " splits FIRST:
+ *  "at" occurs INSIDE school names ("University at Albany") — the same rule
+ *  the FCS puller and the pre-kickoff canceller both learned live 2026-08-28. */
+export function matchupOfEventTitle(title: string | null | undefined): [string, string] | null {
+  const t = String(title || "").split(":", 1)[0].trim();
+  if (!t) return null;
+  let parts = t.split(" vs ").map((p) => p.trim());
+  if (parts.length === 1) parts = t.split(" at ").map((p) => p.trim());
+  return parts.length === 2 && parts[0] && parts[1] ? [parts[0], parts[1]] : null;
+}
+
+const CODE_MONTHS: Record<string, number> = {
+  JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+  JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+};
+
+/** "26AUG27..." -> epoch ms (UTC midnight) of the code's date, else null. */
+export function codeDateMs(code: string | null): number | null {
+  const m = String(code || "").match(/^(\d{2})([A-Z]{3})(\d{2})/);
+  if (!m || !(m[2] in CODE_MONTHS)) return null;
+  return Date.UTC(2000 + Number(m[1]), CODE_MONTHS[m[2]], Number(m[3]));
+}
 
 /**
  * Bet-type buckets for the settled record.
@@ -510,11 +555,17 @@ function addTo(line: RecordLine, s: PortalSettlement): void {
  *
  * Two rules the display depends on:
  *
- *  1. THE JOIN is the one everything else uses — the event code embedded in the
- *     ticker, through `buildCodeToSlug(kalshiBySlug)`. A settlement that joins
- *     no displayed game is another week's and is EXCLUDED from the record
- *     rather than quietly inflating it; the count of those is returned so the
- *     popover can say so.
+ *  1. THE JOIN is two-step. First the code join everything else uses —
+ *     the ticker's event code through `buildCodeToSlug(kalshiBySlug)`. But a
+ *     SETTLED event has left the live feed (it polls status=open — found live
+ *     2026-08-28: every Thursday settlement classified off-slate and the
+ *     block hid itself), so the fallback is the server-attached event TITLE
+ *     through `pairKeyOf` against the displayed cards, with a ±4-day guard
+ *     between the ticker's date code and the card's kickoff (CFB pairs meet
+ *     once; the guard is against a stale card list, not a rematch). A
+ *     settlement that joins neither way is another week's and is EXCLUDED
+ *     rather than quietly inflating the record; the count of those is
+ *     returned so the popover can say so.
  *  2. THE GRADE IS THE MONEY. Win/loss/push is the sign of revenue − cost, and
  *     nothing else. `market_result` is "yes" | "no" | "scalar", and a scalar
  *     settlement (a spread that graded at an intermediate value — seen live,
@@ -525,6 +576,7 @@ function addTo(line: RecordLine, s: PortalSettlement): void {
 export function computeSettlementRecord(
   settlements: PortalSettlement[] | null,
   kalshiBySlug: Map<string, KalshiGame>,
+  slatePairs?: Map<string, SlatePair>,
 ): SettlementRecord {
   const codeToSlug = buildCodeToSlug(kalshiBySlug);
   const slate = emptyLine("slate", "Slate");
@@ -536,7 +588,22 @@ export function computeSettlementRecord(
     // Fall back to the event ticker's own code: same code, different carrier,
     // and it costs nothing to try before dropping a real settled bet.
     const code = t?.code ?? portalGameCode(s.event_ticker);
-    const slug = code ? codeToSlug.get(code) : undefined;
+    let slug = code ? codeToSlug.get(code) : undefined;
+    if (!slug && s.event_title && slatePairs) {
+      // Step two: the settled event is gone from the live feed, so join by
+      // the server-attached matchup title against the displayed cards.
+      const m = matchupOfEventTitle(s.event_title);
+      const hit = m ? slatePairs.get(pairKeyOf(m[0], m[1])) : undefined;
+      if (hit) {
+        const cd = codeDateMs(code);
+        // ±4 days: the code date is the originally-scheduled LOCAL date, the
+        // card's kickoff is UTC, and games move a day (WEBUNCO did, today).
+        if (cd === null || hit.kickoffMs === null ||
+            Math.abs(cd - hit.kickoffMs) <= 4 * 86_400_000) {
+          slug = hit.slug;
+        }
+      }
+    }
     if (!slug) { offSlate++; continue; }
     addTo(slate, s);
     const key = betTypeOf(s.ticker);

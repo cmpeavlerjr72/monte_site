@@ -2102,7 +2102,32 @@ type PortalSettlement = {
   /** DOLLARS. Charged at FILL time, outside revenue and cost. */
   fees: number;
   settled_time: string;
+  /** The EVENT's matchup title ("A vs B[: family]"), fetched here because a
+   *  settled event has left the live feed (the feed pulls status=open only —
+   *  found live 2026-08-28 when every Thursday settlement classified as
+   *  off-slate and the record block hid itself). Null when the fetch fails;
+   *  the client then simply cannot title-join that row. */
+  event_title: string | null;
 };
+
+/** Settled events are immutable, so titles cache for the process lifetime. */
+const settledTitleCache = new Map<string, string | null>();
+async function settledEventTitle(eventTicker: string): Promise<string | null> {
+  if (!eventTicker) return null;
+  const hit = settledTitleCache.get(eventTicker);
+  if (hit !== undefined) return hit;
+  let title: string | null = null;
+  try {
+    const j = await kalshiJson(`/events/${encodeURIComponent(eventTicker)}`);
+    const t = j?.event?.title;
+    title = typeof t === "string" && t ? t : null;
+  } catch { /* fetch failure -> null; retried next cache miss cycle */ }
+  // A failed fetch is cached too: settlements refresh every 60s and hammering
+  // a dead endpoint per row would be the pointless kind of retry. The cache
+  // dies with the process, which is retry enough.
+  settledTitleCache.set(eventTicker, title);
+  return title;
+}
 
 /**
  * The owner's settled NCAAF markets, newest first.
@@ -2140,10 +2165,21 @@ async function portalSettlements(): Promise<PortalSettlement[]> {
               (portalNum(s.no_total_cost_dollars) ?? 0),
         fees: portalNum(s.fee_cost) ?? 0,
         settled_time: String(s.settled_time || ""),
+        event_title: null,   // filled below, once per unique event
       });
     }
     cursor = String(body?.cursor || "");
     if (!cursor) break;
+  }
+  // Title enrichment, one fetch per UNIQUE event (cached for the process
+  // lifetime — settled events never change). Serial on purpose: a slate's
+  // worth of unique events is small and this path is already behind a 60s
+  // cache, so pacing beats parallel hammering.
+  const uniq = [...new Set(out.map((s) => s.event_ticker).filter(Boolean))];
+  for (const et of uniq) {
+    const title = await settledEventTitle(et);
+    if (title === null) continue;
+    for (const s of out) if (s.event_ticker === et) s.event_title = title;
   }
   return out;
 }
