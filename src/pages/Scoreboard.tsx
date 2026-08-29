@@ -2264,15 +2264,14 @@ function ScoreboardPage() {
     // `nowMs`, not Date.now(): the kick tier has to move with the clock, or a
     // game that kicks off while the tab sits open never leaves the pregame
     // block (the same frozen-clock bug the suggestions gate had).
-    const sorted = sortCards(baseCards, sortBy, slateEdges, nowMs);
-    // Games the owner has orders or fills on pin to the top, keeping the
-    // chosen sort's order within each half (stable partition).
-    if (!portalBook.bySlug.size) return sorted;
-    return [
-      ...sorted.filter((c) => portalBook.bySlug.has(c.key)),
-      ...sorted.filter((c) => !portalBook.bySlug.has(c.key)),
-    ];
-  }, [baseCards, sortBy, slateEdges, portalBook, nowMs]);
+    // No portal partition here any more. This used to pin games with a portal
+    // entry to the top; the "My games" tray now LIFTS every one of those cards
+    // out of this list entirely (membership is `portalBook.bySlug` minus what
+    // the conference filter removed — see `myGames`), so the pin could only
+    // ever reorder cards that were about to be moved anyway. Two mechanisms
+    // for one intent, and the survivor is the one the reader can see.
+    return sortCards(baseCards, sortBy, slateEdges, nowMs);
+  }, [baseCards, sortBy, slateEdges, nowMs]);
 
 
   // Apply conference filter (game shows if either team is in selected conference)
@@ -2284,11 +2283,12 @@ function ScoreboardPage() {
   /**
    * THE "MY GAMES" MEMBERSHIP — which cards the owner already has skin in.
    *
-   * A game qualifies on EXPOSURE, which is two things and deliberately not
-   * three: a HELD position, or a RESTING order this app placed. Orders that are
-   * not ours (the maker pipeline's, or hand-placed) are visible on the card's
-   * book strip but are not actionable from this page, so they do not move a
-   * game out of the scan — same `app` gate the resting-order review uses.
+   * A game qualifies on EXPOSURE, full stop: a HELD position, or ANY resting
+   * order on the account. Not just the ones this app placed — the tray answers
+   * "which games do I have something live on", and the maker pipeline's rest
+   * and a hand-placed order are exactly as live as ours. Tagging is a routing
+   * detail (`app` still gates what the resting-order REVIEW offers to act on);
+   * it is not a fact about whether money is out there.
    *
    * The ticker -> card join is the one that already exists: `computePortalBets`
    * runs every entry's ticker through `buildCodeToSlug(kalshiBySlug)` (the event
@@ -2308,8 +2308,6 @@ function ScoreboardPage() {
     if (!ownerOn) return { keys, held, resting };
     const onBoard = new Set(filteredCards.map((c) => c.key));
     for (const b of portalBook.bets) {
-      const exposure = b.kind === "position" || (b.kind === "order" && b.app === true);
-      if (!exposure) continue;
       const hits = b.slugs.filter((s) => onBoard.has(s));
       if (!hits.length) continue;
       for (const s of hits) keys.add(s);
