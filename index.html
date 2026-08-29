@@ -35,6 +35,46 @@
       <noscript>This app needs JavaScript enabled.</noscript>
     </div>
 
+    <!-- BLANK-SCREEN REPORTER (added 2026-08-28, live incident: one phone
+         renders nothing while every desktop and emulated browser is fine).
+         Runs BEFORE the module bundle and is deliberately museum-grade
+         JavaScript — var, function(){}, string concat — because its whole
+         job is to survive on an engine the bundle might not. If the app has
+         not painted anything into #root within 7s, it writes the captured
+         error (a module parse error surfaces through window.onerror too),
+         the engine string, and a reload button onto the blank page. Removes
+         itself the moment the app mounts. -->
+    <script>
+      (function () {
+        var errs = [];
+        function note(msg) { if (errs.length < 5) errs.push(String(msg).slice(0, 500)); }
+        window.addEventListener("error", function (e) {
+          note((e.message || "resource error") +
+               (e.filename ? " @ " + e.filename + ":" + e.lineno : ""));
+        }, true);
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e && e.reason;
+          note("unhandled rejection: " + (r && (r.stack || r.message) || r));
+        });
+        setTimeout(function () {
+          var root = document.getElementById("root");
+          if (!root || root.children.length > 0 || (root.textContent || "").replace(/\s/g, "")) return;
+          var d = document.createElement("div");
+          d.style.cssText = "padding:16px;font:14px/1.5 system-ui,Arial;color:#111;background:#fff;";
+          d.innerHTML =
+            "<b>The app failed to start.</b><br>" +
+            (errs.length
+              ? "<pre style='white-space:pre-wrap;font-size:12px;background:#f6f6f6;padding:8px;border-radius:8px;'>" +
+                errs.join("\n\n").replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</pre>"
+              : "<i>No JavaScript error was captured — the bundle may not have loaded at all.</i><br>") +
+            "<small>" + navigator.userAgent + "</small><br><br>" +
+            "<button onclick='location.reload(true)' style='padding:10px 18px;font-size:15px;'>Reload</button>" +
+            " <button onclick=\"caches&&caches.keys().then(function(k){return Promise.all(k.map(function(n){return caches.delete(n)}))}).then(function(){location.reload(true)})\" style='padding:10px 18px;font-size:15px;'>Clear app cache &amp; reload</button>";
+          root.appendChild(d);
+        }, 7000);
+      })();
+    </script>
+
     <!-- Cloudflare Web Analytics -->
     <script
       defer
