@@ -15,6 +15,19 @@ export default defineConfig({
       srcDir: "src",
       filename: "sw.ts",
       registerType: "autoUpdate",
+      // KILL SWITCH (2026-08-28 night, deliberate): ships a sw.js whose only
+      // job is to UNREGISTER any existing worker and reload its clients. The
+      // owner's phone was stranded blank TWICE in one night by workers left
+      // broken across rapid deploys (registration alive, caches/HTTP state
+      // wrong; incognito — no worker — always fine, even logged in). The
+      // browser's sw.js update check bypasses a broken worker, so this cures
+      // every stranded device remotely on its next launch. The app keeps its
+      // manifest and installability and simply runs as an online site — this
+      // worker never cached data anyway, only the shell, and live prices were
+      // always no-store. Re-introduce a caching worker only with a redesign
+      // that has an answer for the stranding mode (and remove this comment's
+      // rule only alongside that design, reviewed).
+      selfDestroying: true,
       // The manifest is hand-authored at public/manifest.webmanifest and
       // linked from index.html, so the plugin must not emit a second one.
       manifest: false,
