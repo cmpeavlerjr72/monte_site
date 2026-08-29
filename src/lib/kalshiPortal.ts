@@ -245,7 +245,14 @@ export function buildCodeToSlug(kalshiBySlug: Map<string, KalshiGame>): Map<stri
 /** One displayed bet with its money metrics. EVs are $ vs the stake:
  *  p·count − risked. Kalshi p = live mid of the entry's own market, oriented
  *  to the held side; sim p multiplies leg probabilities (independence
- *  approximation on combos). Fees = paid so far (positions only). */
+ *  approximation on combos). Fees = paid so far (positions only).
+ *
+ *  THE EXPOSURE IDENTITY, which the strip displays and must never break:
+ *  a contract settles at $1, so `risked + toWin === count` exactly, for a held
+ *  position and a resting order alike. `risked` is count × the price this row
+ *  is counted at (avg fill price for a position, our own resting price for an
+ *  order) and `fees` sits OUTSIDE both — it is itemised on its own rather than
+ *  folded into either half, so the two numbers on screen always add up. */
 export type PortalBet = {
   key: string; kind: "position" | "order"; combo: boolean;
   label: string; side: string; count: number;

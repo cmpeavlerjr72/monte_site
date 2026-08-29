@@ -8,12 +8,18 @@
 // DISPLAY (2026-08-28, the bar test — the same redesign MarketEdge and the
 // Team Stats panel took). At rest a bet is ONE LINE:
 //
-//     ●  Texas −7.5              2-leg   $13   +$3.16
-//     ^  ^                        ^       ^      ^
-//     |  the bet in CHEER-side    |     stake   THE VERDICT: the sim's EV
-//     |  words (a held NO is      |             on this bet, in dollars
-//     |  flipped to its           legs of a
-//     held / resting mark         parlay, if any
+//     ●  Texas −7.5              2-leg   risk $13   +$3.16
+//     ^  ^                        ^      wins $17     ^
+//     |  the bet in CHEER-side    |         ^         |
+//     |  words (a held NO is      |         |    THE VERDICT: the sim's EV
+//     |  flipped to its           legs of   |    on this bet, in dollars
+//     held / resting mark         a parlay  |
+//                                           the EXPOSURE: what is staked and
+//                                           what it pays if it settles our
+//                                           way. Two halves of ONE identity —
+//                                           stake + wins = contracts × $1 —
+//                                           so they are formatted together
+//                                           and always add up on screen.
 //
 // and nothing else. What it replaced was three dense lines — a glyph + label +
 // ×count, then "risk $X → win $Y · fees $Z", then TWO EV chips each carrying a
@@ -24,7 +30,11 @@
 // EV with their probability and odds, and the fill state of a resting order.
 //
 // Rules carried over from MarketEdge and not to be undone:
-//   - ONE number at rest per element, and it is the decision number.
+//   - ONE number at rest per element, and it is the decision number. The
+//     exposure cell is the one element that carries two, because they are two
+//     halves of a single identity that has to be checkable at a glance
+//     (stake + wins = contracts × $1); each is word-labelled and on its own
+//     line, which is what keeps it from reading as a number-pair.
 //   - Rows are fixed-height buttons, so the popover is placed by index
 //     arithmetic instead of a measurement effect (no new render-loop surface),
 //     and so a long school name can never reflow the block.
@@ -60,6 +70,33 @@ function usdShort(v: number): string {
 function usdStake(v: number): string {
   const a = Math.abs(v);
   return `$${a >= 1 ? Math.round(a) : a.toFixed(2)}`;
+}
+
+const isWhole = (v: number) => Math.abs(v - Math.round(v)) < 0.005;
+
+/**
+ * THE EXPOSURE PAIR — what is staked, and what it wins.
+ *
+ * A Kalshi contract settles at $1, so the two numbers on a row are the two
+ * halves of one identity:
+ *
+ *     stake  +  wins  =  contracts × $1
+ *
+ * and they are therefore formatted TOGETHER, never each by its own rounding
+ * rule. Rounded apart, a $13.50 stake beside a $16.50 win prints "$14" and
+ * "$17" — a $31 payout on a $30 bet, which is a wrong number, not a rounded
+ * one. So: whole dollars only when BOTH are whole; cents on both otherwise.
+ * The addition then always works on screen.
+ *
+ * `risked` is whatever that row already counts as its outlay (fees are OUTSIDE
+ * it on both a position and an order — see `computePortalBets`), so `toWin`,
+ * which is `count − risked`, is consistent with it by construction. The fee is
+ * itemised separately in the popover rather than folded into either number.
+ */
+function exposure(risked: number, toWin: number): { risk: string; win: string } {
+  const cents = !isWhole(risked) || !isWhole(toWin);
+  const f = (v: number) => `$${cents ? v.toFixed(2) : String(Math.round(v))}`;
+  return { risk: f(risked), win: f(toWin) };
 }
 
 /** A signed verdict. Rounded to zero it is not a direction, so it loses its
@@ -109,12 +146,24 @@ export function betLines(b: PortalBet): string[] {
     );
   }
 
+  // ITEMISED, in the order the money moves: what it pays, what it cost, what
+  // the difference is. Every contract settles at $1, so the payout is just the
+  // count in dollars — saying it out loud is what makes the row's "wins $X"
+  // checkable rather than a number to be trusted.
   out.push(
     b.kind === "position"
-      ? `Risked ${usd(b.risked)} to win ${usd(b.toWin)}.`
-      : `Would risk ${usd(b.risked)} to win ${usd(b.toWin)} if it fills.`
+      ? `Settles at ${usd(b.count)} if it goes our way — ${usd(b.risked)} staked, ` +
+        `so it wins ${usd(b.toWin)}.`
+      : `Would settle at ${usd(b.count)} if it fills and goes our way — ` +
+        `${usd(b.risked)} staked, so it wins ${usd(b.toWin)}.`
   );
-  out.push(b.fees > 0 ? `Fees paid: ${usd(b.fees)}.` : "No fees paid on this one.");
+  out.push(
+    b.fees > 0
+      ? `Fees paid: ${usd(b.fees)} — outside both numbers above.`
+      : b.kind === "order"
+        ? "No fee yet: a resting order is charged nothing until it fills."
+        : "No fees paid on this one."
+  );
 
   out.push(
     b.kalshiP === null || b.kalshiEV === null
@@ -247,9 +296,19 @@ export default function MyBookStrip({ bets, token = "" }: {
   );
 }
 
-/** One bet at rest: mark, words, stake, verdict. Four elements, two numbers. */
+/**
+ * One bet at rest: mark, words, the exposure, the verdict.
+ *
+ * The exposure is ONE element carrying the two halves of one fact — staked,
+ * and what it wins if it settles our way — stacked so each line reads as a
+ * labelled number rather than as a number-pair to be parsed sideways, and so
+ * the money column keeps a fixed width and stays a column down the strip. The
+ * row height is unchanged (40px), which the popover's index arithmetic
+ * depends on.
+ */
 function BetRow({ bet, on, onToggle }: { bet: PortalBet; on: boolean; onToggle: () => void }) {
   const tone = toneOf(bet.simEV);
+  const { risk, win } = exposure(bet.risked, bet.toWin);
   return (
     <button
       type="button"
@@ -262,7 +321,10 @@ function BetRow({ bet, on, onToggle }: { bet: PortalBet; on: boolean; onToggle: 
       <Mark resting={bet.kind === "order"} />
       <span className="mybook__label">{bet.label}</span>
       {bet.legN > 1 && <span className="mybook__legs">{bet.legN}-leg</span>}
-      <span className="mybook__stake">{usdStake(bet.risked)}</span>
+      <span className="mybook__stake">
+        <span className="mybook__stake-risk">risk {risk}</span>
+        <span className="mybook__stake-win">wins {win}</span>
+      </span>
       <span className="mybook__ev" data-tone={tone}>
         {bet.simEV === null ? "—" : signedUsd(bet.simEV, true)}
       </span>

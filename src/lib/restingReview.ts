@@ -127,6 +127,20 @@ export type RestingRow = {
   count: number;
   /** What we are resting at, in OUR side's denomination. */
   restPrice: number;
+  /**
+   * THE EXPOSURE OF THE REST, on the same terms the row already states it:
+   * `count` contracts at `restPrice`. A contract settles at $1, so
+   *
+   *     restStake + restWin === count      (exactly, by construction)
+   *
+   * and `restFee` — the maker fee this series would charge WHEN IT FILLS, zero
+   * on the families that charge none — sits outside both, exactly as the My
+   * Book strip keeps fees outside its stake. Scope is the REMAINING order:
+   * anything already filled is a held position and is counted there.
+   */
+  restStake: number;
+  restWin: number;
+  restFee: number | null;
   /** What crossing costs right now, our side — null when nothing is offered. */
   ask: number | null;
   /** Where that book came from: the 45s slate feed, or the portal payload's
@@ -252,6 +266,13 @@ export function computeRestingReview({
     const takeOutlay = ask === null || takeFee === null
       ? null : round2(ask * count + takeFee);
 
+    // DISPLAY ONLY — nothing below reads these, and no verdict depends on them.
+    // `restWin` is derived from the ROUNDED stake so the two halves add up to
+    // `count` on screen to the cent, never to a cent either side of it.
+    const restStake = round2(restPrice * count);
+    const restWin = round2(count - restStake);
+    const restFee = orderFee(restPrice, count, true, fp);
+
     let verdict: RestingVerdict;
     let reason: string;
     if (simP === null) {
@@ -296,6 +317,7 @@ export function computeRestingReview({
       teamA: game.teamA, teamB: game.teamB,
       count,
       restPrice,
+      restStake, restWin, restFee,
       ask, bookFrom,
       simP, takeEdge, restEdge, takeFeePer, takeFee, takeOutlay,
       timing, verdict, reason,

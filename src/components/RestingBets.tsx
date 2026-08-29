@@ -40,6 +40,18 @@ import {
 import { timeToKickText, timingWords } from "../lib/suggestedBets";
 import type { RestingReview, RestingRow } from "../lib/restingReview";
 
+/* --------------------------------- money ---------------------------------- */
+/**
+ * Exact dollars. The rest of this block prints in CENTS because everything else
+ * here is a per-contract price or edge; the exposure is the one thing measured
+ * in the money actually at stake, so it gets the dollar register — the same one
+ * the My Book strip uses for the same two numbers.
+ */
+const usd = (v: number): string => `$${v.toFixed(2)}`;
+/** Whole dollars where there are no cents, so a round $20 payout is not "$20.00". */
+const usdTrim = (v: number): string =>
+  Math.abs(v - Math.round(v)) < 0.005 ? `$${Math.round(v)}` : usd(v);
+
 /* ------------------------------ the verdict ------------------------------- */
 
 /** The chip. ONE element carrying the whole verdict — the word, and the number
@@ -192,8 +204,14 @@ export default function RestingBets({
                   display: "flex", alignItems: "center", gap: 6,
                   minWidth: 0, flexWrap: "wrap", rowGap: 3,
                 }}>
+                  {/* The rest's own economics, then the clock. "wins $X" is
+                      what {count} @ {price} pays if it fills and settles our
+                      way — the same identity the My Book strip prints, on the
+                      same scope (the REMAINING order; anything already filled
+                      is a held position and is counted there). */}
                   <span style={{ fontSize: 10.5, color: "var(--muted)", minWidth: 0 }}>
-                    {r.count} resting @ {cents(r.restPrice)} · {timeToKickText(r.timing.msToKick)}
+                    {r.count} resting @ {cents(r.restPrice)} · wins {usdTrim(r.restWin)}
+                    {" · "}{timeToKickText(r.timing.msToKick)}
                   </span>
                   <span style={{ marginLeft: "auto", flex: "none" }}>
                     <VerdictChip row={r} />
@@ -247,6 +265,16 @@ export default function RestingBets({
                   <>
                     <div style={{ fontWeight: 700 }}>{r.reason}</div>
                     <div style={{ color: "var(--muted)" }}>{timingWords(r.timing)}</div>
+                    {/* ITEMISED, in the order the money moves: payout, stake,
+                        fee. The fee is named separately because it is outside
+                        the stake — folding it in would break the identity the
+                        row's "wins" number is read against. */}
+                    <div style={{ color: "var(--muted)" }}>
+                      Settles at {usd(r.count)} if it fills and goes our way —
+                      {" "}{usd(r.restStake)} staked, so it wins {usd(r.restWin)}.
+                      {" "}{r.restFee ? `Maker fee on the fill: ${usd(r.restFee)}.`
+                                      : "No maker fee on this series, and nothing is charged until it fills."}
+                    </div>
                     <div style={{ color: "var(--muted)" }}>
                       Resting {r.count} at {cents(r.restPrice)} ·
                       {" "}{r.ask === null ? "nothing offered to cross" : `crossing costs ${cents(r.ask)}`}

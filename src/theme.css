@@ -813,12 +813,35 @@ input:focus, select:focus, textarea:focus {
 /* FIXED widths, not min-widths: what makes the stakes and the verdicts line up
    as columns down the whole strip is that neither can be pushed by the other's
    content (the same lesson the Suggested-bets rows learned). */
+/* THE EXPOSURE CELL — what is staked, and what it wins if it settles our way.
+   Two lines inside ONE fixed column, not two numbers side by side: on a 390px
+   card an inline "$13.44 · wins $16.56" is 130px of nowrap money that crushes
+   the bet's own words down to an ellipsis, and the bet is the thing being read.
+   Stacked, each line carries its own word, the money still lines up as a
+   column, and the row keeps its 40px height (the popover is positioned by
+   index arithmetic off that height). */
 .mybook__stake {
-  flex: 0 0 42px;
+  flex: 0 0 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
   text-align: right;
-  font-size: 12px;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+.mybook__stake-risk {
+  font-size: 11px;
   font-weight: 700;
   color: var(--text);
+}
+.mybook__stake-win {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--mybook-dim);
 }
 /* THE verdict. --pos/--neg here mean the sign of an EV and nothing else. */
 .mybook__ev {
