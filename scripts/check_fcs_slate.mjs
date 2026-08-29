@@ -419,10 +419,19 @@ console.log("\n7. Assets — FCS logos and colours");
     `exactly the 4 known colourless schools (${noColor.join(", ") || "none"})`
   );
   const page = read("src/pages/Scoreboard.tsx");
+  // The colour now arrives through the theme-aware resolver
+  // (`displayTeamColor`, src/utils/teamColors.ts), which returns undefined for
+  // a school the CSV gives no hex — so the `?? var(--token)` fallback is still
+  // the thing standing between these four and an undefined fill.
   check(
-    /aColors\?\.primary \?\? "var\(--brand\)"/.test(page) &&
-    /bColors\?\.primary \?\? "var\(--accent\)"/.test(page),
+    /\baColor \?\? "var\(--brand\)"/.test(page) &&
+    /\bbColor \?\? "var\(--accent\)"/.test(page),
     "a colourless team falls back to a theme token, never to a literal or undefined"
+  );
+  check(
+    /displayTeamColor\(card\.teamA, isDark\)/.test(page) &&
+    /displayTeamColor\(card\.teamB, isDark\)/.test(page),
+    "the card's team colours are theme-resolved, not raw CSV primaries"
   );
 }
 

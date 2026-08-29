@@ -110,6 +110,31 @@ source still obeys the two rules that make the loop impossible: the scan effect 
 on exactly one primitive `signature`, and `edgeInputs` is derived from the unsorted card
 list rather than from `cards`.
 
+## Check: no team is invisible in either theme
+
+```bash
+node scripts/check_team_colors.mjs            # no network
+node scripts/check_team_colors.mjs --verbose  # list every school that changes
+```
+
+Run this after touching `src/utils/teamColors.ts`, after editing
+`src/assets/team_info.csv`, or after changing `--card` in `src/theme.css`
+(the resolver hardcodes both card backgrounds and this check compares against
+the same two values, so a drift there is silent).
+
+School colours were picked for helmets, not for a `#161b22` card: a navy
+primary paints a bar whose end the reader cannot find. `displayTeamColor(team,
+isDark)` is the gate — primary first, then the school's own alternate, then a
+lightness-only lift of whichever is closer — and this check bundles the shipped
+resolver with esbuild (a small plugin supplies Vite's `?raw` CSV import) and
+runs it over EVERY school in BOTH themes, asserting three things: the returned
+colour clears 3:1 against that theme's card, the resolver is pure, and the
+colour is still traceable to the school (its primary, its alternate, or one of
+those moved in lightness with hue and saturation held). It also fails if LIGHT
+mode ever rewrites more than 15% of primaries, which is the tripwire for a
+policy that has stopped being primary-first. The point is the next CSV drop: a
+rebrand or a new FCS member can otherwise land an invisible team silently.
+
 ## Check: the game-line pricer agrees with the suggestions pipeline
 
 ```bash
