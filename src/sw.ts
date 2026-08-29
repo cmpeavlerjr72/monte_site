@@ -53,7 +53,21 @@ precacheAndRoute(self.__WB_MANIFEST);
 const shellFallback = async (): Promise<Response> => {
   const key = getCacheKeyForURL("/index.html");
   const cached = key ? await caches.match(key) : undefined;
-  return cached ?? Response.error();
+  if (cached) return cached;
+  // LAST RESORT — network failed AND the precache is gone (live incident
+  // 2026-08-28: a stranded older-generation worker whose CacheStorage had
+  // been cleared answered every navigation with Response.error(), i.e. a
+  // fully blank page, while /api/* typed into the URL bar worked fine). A
+  // dead end must be a READABLE page: say so, offer retry. 503 keeps any
+  // upstream cache from ever storing it.
+  return new Response(
+    "<!doctype html><meta charset='utf-8'><title>MVPEAV</title>" +
+    "<body style='font-family:system-ui,Arial;padding:24px'>" +
+    "<b>Can&rsquo;t load the app.</b><p>The network request failed and no " +
+    "cached copy exists on this device.</p>" +
+    "<button onclick='location.reload()' style='padding:10px 18px;font-size:15px'>Retry</button>",
+    { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } },
+  );
 };
 
 registerRoute(
