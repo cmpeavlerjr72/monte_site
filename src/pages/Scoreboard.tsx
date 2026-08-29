@@ -56,7 +56,9 @@ import LegPicker from "../components/LegPicker";
 import ParlaySlip from "../components/ParlaySlip";
 import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
 import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
-import { parseSituation, type LiveSituation } from "../lib/espnGame";
+import LiveProgressStrip from "../components/LiveProgress";
+import { parseSituation, useGameTeamStats, type LiveSituation } from "../lib/espnGame";
+import { progressBetsOf } from "../lib/liveProgress";
 import { useLiveGrid } from "../lib/liveGrid";
 import {
   useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML,
@@ -3282,6 +3284,20 @@ export function GameCard({
     awayLogo: (espnHomeIsA ? bLogo : aLogo) || undefined,
   };
 
+  /* LIVE PROGRESS on the owner's per-team stat bets (rec yds, rush yds, team
+     points). The gate is deliberately narrow and cheap: a game that is UNDER
+     WAY (or just finished, where "did it get there" is the whole question)
+     AND at least one bet on it whose ticker maps to a verified ESPN box-score
+     path. `progressBetsOf` is pure ticker arithmetic — no fetch, no data — so
+     the decision is known before any network, which is what lets the strip
+     mount at full height and fill in rather than shifting the card.
+     `useGameTeamStats` shares the Live panel's own summary poller (same URL,
+     same 20s cadence), so a card tracking bets and an open gamecast on that
+     game cost ONE fetch between them. */
+  const progressBets = useMemo(() => progressBetsOf(book), [book]);
+  const trackable = progressBets.length > 0 && (liveNow || lv?.state === "final");
+  const liveStats = useGameTeamStats(trackable ? lv?.id : undefined, liveNow);
+
   const tabBtn = (kind: PanelKind, label: React.ReactNode, accent = false) => (
     <button
       className="ui-btn"
@@ -3482,6 +3498,14 @@ export function GameCard({
         />
       ) : (
         <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />
+      )}
+
+      {/* Where the money already on this game stands, right now — above the
+          book strip, because "is it getting there" is the live question and
+          "what is it" is the reference. Mounted off the ticker test alone, so
+          the first reading landing never moves the card. */}
+      {trackable && (
+        <LiveProgressStrip bets={progressBets} espnHomeIsA={espnHomeIsA} stats={liveStats} />
       )}
 
       {book && book.length > 0 && <MyBookStrip bets={book} token={bookToken} />}

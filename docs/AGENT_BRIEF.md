@@ -483,6 +483,57 @@ dataset's own file. Verified 2026-08-28 against the maker pipeline's wk0 plan
 (`plan_2026_wk00_20260828T094424-wk0.json`) at the book that plan recorded:
 **52/52 game-line rows agree on sim_p, mode, price and net edge**.
 
+### Live progress on held stat bets (`src/lib/liveProgress.ts` + `LiveProgress.tsx`)
+
+Owner ask 2026-08-29: "we have the reception yards bets but we don't have any
+way to actually track the yards as they accumulate." A card whose book holds a
+trackable per-team stat market on a game that is UNDER WAY (or just final) now
+carries a `LiveProgressStrip` directly above `MyBookStrip` — one 40px row per
+market: the bet in Kalshi's words, the live reading with a bar toward the
+strike, and a verdict chip. Same geometry and the same index-positioned
+`.mybook__pop` as the book strip, so the two read as one column of money.
+
+Four rules, each a way to lose money if it is wrong (all guarded by
+`node scripts/check_live_progress.mjs`, which fails on a one-step drift):
+
+- **THE VALUE IS A PLAYER SUM, never the team totals row.** Kalshi's team
+  receiving yards settles as the sum of every player's receiving yards
+  (= GROSS passing yards; in college a sack is charged to RUSHING). It is read
+  off `boxscore.players[].statistics["receiving"].athletes[]`, and rushing the
+  same way. The team row is not read because it has GLITCHED LIVE (Maine 236 vs
+  a true 199) — measured 2026-08-29, ESPN's college `netPassingYards` row in
+  fact EQUALS the receiving player-sum even with sacks taken (UNC@TCU live: a
+  sack moved UNC's rushing 16 → 7 and left rec/net at 64; UNH allowed 4 sacks
+  for row 235 = sum 235). The NFL "net of sacks" intuition does not transfer;
+  agreement is still not the same as being checkable.
+- **The strike clears at the TICKER'S OWN number.** `…-TCU225` is "TCU: 225+
+  receiving yards", `floor_strike` 224.5, `strike_type` greater — so YES
+  settles at 225, not 226. Same convention as `rungKeyForStrike(n) = n − 0.5`.
+- **Only VERIFIED families ship**: `rec_yards`, `rush_yards`, `points`. TD / FG
+  / TO / receptions / rush att / total yards / sacks / INTs resolve to null and
+  simply show no line. Never a guess on a money screen.
+- **The team mapping is structural at both hops** — the ticker says which of
+  OUR teams (event code is away+home), the card's `espnHomeIsA` says which of
+  ESPN's. No name join anywhere.
+
+Colour on this block means THE BET'S CURRENT STANDING and nothing else
+(CLEARED / BUSTED / HIT / MISSED, always direct-labelled); a bet still in
+flight ("111 to go", "243 spare") is deliberately UNTONED, and the bar is never
+toned at all — it draws the stat, not the bet. The block mounts off the TICKER
+TEST alone (`progressBetsOf`, pure, fetch-free), so the rows exist at full
+height before any reading lands and the card never shifts. That same test gates
+the poll: no trackable bet, no fetch.
+
+`useGameTeamStats` (espnGame.ts) shares `useGameSummary`'s poller — the summary
+fetch loop is now REFCOUNTED per `url|pollMs|snapKey`, so a card tracking bets
+and an open Live panel on that game cost ONE fetch between them, and a late
+subscriber gets the cached payload with no fetch at all.
+
+NOT a surface: the RestingBets rows. `restingReview.ts` drops every order whose
+game is no longer pregame (`postKick`), so a resting order on a live game never
+produces a row there — it appears on the card's book strip instead, and is
+already covered.
+
 ## My Book console (owner-only) — where owner features go
 
 `src/components/MyBookPanel.tsx`. ONE block holding every "mine" feature as
@@ -737,6 +788,9 @@ needs a fresh server/dist) · `node scripts/check_fcs_slate.mjs` (FCS wiring,
 namespaces, empty states, logo assets) ·
 `node scripts/check_suggest_timing.mjs` (the pregame gate + the maker/taker
 timing bands, whenever suggestedBets.ts or the `suggestGames` memo moves) ·
+`node scripts/check_live_progress.mjs` (the live settlement rules — player sum,
+strike boundary, team mapping, family whitelist — whenever liveProgress.ts or
+STAT_FOR_SERIES moves) ·
 SSR words-screenshot for UI changes · no hardcoded colors · report ≤300 words
 + gate table unless findings warrant more.
 

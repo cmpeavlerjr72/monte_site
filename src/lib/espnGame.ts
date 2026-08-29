@@ -20,6 +20,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { dataUrl, SEASONS } from "./cfbData";
+import { parseLiveTeamStats, type LiveTeamStats } from "./liveProgress";
 
 const SITE_API =
   "https://site.api.espn.com/apis/site/v2/sports/football/college-football";
@@ -306,6 +307,81 @@ export function gamecastSnapshot(eventId: string): Promise<any | null> {
   return p;
 }
 
+/* ------------------- ONE fetch loop per (url, cadence) --------------------
+ *
+ * The per-event summary is ~130KB and more than one surface now wants it: the
+ * Live panel's drive log, and (2026-08-29) every card tracking a held stat
+ * position's progress. A hook-local loop each would mean two identical polls
+ * of the same document on the same game, so the loop is REFCOUNTED here and
+ * the hooks are subscribers. A late subscriber is handed the cached payload
+ * immediately, so opening a panel over a card that is already polling paints
+ * with no fetch at all.
+ *
+ * The entry is dropped when its last subscriber leaves — the cache is a
+ * live-poll detail, not a store. Nothing here is keyed on an object identity
+ * (rule 4): the key is `url|pollMs|snapKey`, all primitives. */
+type JsonPoller = {
+  subs: Set<(d: any) => void>;
+  data: any | null;
+  timer?: ReturnType<typeof setTimeout>;
+  stopped: boolean;
+  snapshotApplied: boolean;
+};
+const jsonPollers = new Map<string, JsonPoller>();
+
+function subscribeEspnJson(
+  url: string,
+  pollMs: number | null,
+  snapKey: string | null,
+  cb: (d: any) => void,
+): () => void {
+  const key = `${url}|${pollMs ?? 0}|${snapKey ?? ""}`;
+  const existing = jsonPollers.get(key);
+  const entry: JsonPoller =
+    existing ?? { subs: new Set(), data: null, stopped: false, snapshotApplied: false };
+  if (!existing) jsonPollers.set(key, entry);
+  entry.subs.add(cb);
+  if (entry.data !== null) cb(entry.data);
+
+  if (!existing) {
+    const emit = (d: any) => {
+      if (entry.stopped) return;
+      entry.data = d;
+      for (const s of entry.subs) s(d);
+    };
+    const trySnapshot = async () => {
+      if (!snapKey || entry.snapshotApplied) return;
+      const [eid, field] = snapKey.split(":");
+      const part = (await gamecastSnapshot(eid))?.[field];
+      if (part && !entry.stopped) {
+        entry.snapshotApplied = true;
+        emit(part);
+      }
+    };
+    const pull = async () => {
+      try {
+        const r = await fetch(url, { cache: "no-cache" });
+        if (r.ok) emit(await r.json());
+        else await trySnapshot();
+      } catch {
+        await trySnapshot();
+        /* transient network error — keep the last good payload */
+      }
+      if (!entry.stopped && pollMs) entry.timer = setTimeout(pull, pollMs);
+    };
+    pull();
+  }
+
+  return () => {
+    entry.subs.delete(cb);
+    if (entry.subs.size === 0) {
+      entry.stopped = true;
+      if (entry.timer) clearTimeout(entry.timer);
+      jsonPollers.delete(key);
+    }
+  };
+}
+
 /** Poll a JSON URL while mounted; pollMs=null fetches exactly once.
  *  `snapKey` ("<eventId>:summary" | "<eventId>:probabilities") names the
  *  branch of the published gamecast snapshot to fall back to when ESPN is
@@ -317,38 +393,7 @@ function useEspnJson(url: string | null, pollMs: number | null, snapKey?: string
       setData(null);
       return;
     }
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let snapshotApplied = false;
-    async function trySnapshot() {
-      if (!snapKey || snapshotApplied) return;
-      const [eid, field] = snapKey.split(":");
-      const part = (await gamecastSnapshot(eid))?.[field];
-      if (part && !cancelled) {
-        snapshotApplied = true;
-        setData(part);
-      }
-    }
-    async function pull() {
-      try {
-        const r = await fetch(url as string, { cache: "no-cache" });
-        if (r.ok) {
-          const j = await r.json();
-          if (!cancelled) setData(j);
-        } else {
-          await trySnapshot();
-        }
-      } catch {
-        await trySnapshot();
-        /* transient network error — keep the last good payload */
-      }
-      if (!cancelled && pollMs) timer = setTimeout(pull, pollMs);
-    }
-    pull();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
+    return subscribeEspnJson(url, pollMs ?? null, snapKey ?? null, setData);
   }, [url, pollMs, snapKey]);
   return data;
 }
@@ -357,6 +402,23 @@ export function useGameSummary(eventId?: string, live?: boolean): GameSummaryLit
   const url = eventId ? `${SITE_API}/summary?event=${eventId}` : null;
   const raw = useEspnJson(url, live ? 20_000 : null, eventId ? `${eventId}:summary` : null);
   return useMemo(() => (raw ? parseSummaryLite(raw) : null), [raw]);
+}
+
+/**
+ * LIVE TEAM STAT READINGS off the same per-event summary — the numbers a held
+ * per-team stat market settles on (see lib/liveProgress.ts for the settlement
+ * rules and why the value is a player sum).
+ *
+ * It shares `useGameSummary`'s poller exactly: same URL, same cadence, same
+ * snapshot fallback, so a card tracking a bet and an open Live panel on that
+ * game cost ONE fetch between them. Pass `eventId` undefined to fetch nothing
+ * — that is how a caller gates the poll on "the owner actually holds something
+ * trackable on a game that is under way".
+ */
+export function useGameTeamStats(eventId?: string, live?: boolean): LiveTeamStats | null {
+  const url = eventId ? `${SITE_API}/summary?event=${eventId}` : null;
+  const raw = useEspnJson(url, live ? 20_000 : null, eventId ? `${eventId}:summary` : null);
+  return useMemo(() => (raw ? parseLiveTeamStats(raw) : null), [raw]);
 }
 
 export function useGameProbabilities(eventId?: string, live?: boolean): ProbPoint[] | null {

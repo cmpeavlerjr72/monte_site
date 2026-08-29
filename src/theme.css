@@ -724,7 +724,7 @@ input:focus, select:focus, textarea:focus {
    in the tap popover (see src/components/MyBook.tsx). Row height is FIXED
    (40px, also the tap target) because the popover is positioned by index
    arithmetic. */
-.mybook, .mybook-bar, .mybook-record {
+.mybook, .mybook-bar, .mybook-record, .liveprog {
   /* --muted alone is only ~4.3:1 on this block's brand-tinted surface and on
      --fill, which fails AA for the 9px caps and the "—" verdict. One derived
      step toward --text clears it in BOTH themes (light darkens, dark lightens)
@@ -871,6 +871,142 @@ input:focus, select:focus, textarea:focus {
   color: color-mix(in oklab, var(--neg) 82%, var(--text));
   background: color-mix(in oklab, var(--neg) 12%, var(--card));
 }
+
+/* ------------------------------------------------------------------------
+   LIVE PROGRESS — where a held per-team stat bet stands right now
+   (src/components/LiveProgress.tsx). It sits directly above the book strip
+   and deliberately shares its geometry (16px head, 40px rows, the same
+   index-positioned .mybook__pop) so the two read as one column of money:
+   what the bets are, and where they stand.
+   ------------------------------------------------------------------------ */
+.liveprog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin-top: 5px;
+  padding: 0 4px 3px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in oklab, var(--brand) 35%, var(--border));
+  background: color-mix(in oklab, var(--brand) 8%, var(--card));
+  font-variant-numeric: tabular-nums;
+}
+.liveprog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 16px;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--mybook-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.liveprog__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 40px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.liveprog__row[data-on] {
+  border-color: var(--brand);
+  background: color-mix(in oklab, var(--brand) 7%, var(--card));
+}
+.liveprog__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+/* THE METER — one fixed column carrying where the stat stands (the number)
+   and how far that is (the bar). FIXED width, like the book strip's stake
+   cell, so the bars line up as a column down the block and a long school
+   name can never squeeze one narrower than its neighbour. */
+.liveprog__meter {
+  flex: 0 0 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+/* Typography deliberately matched to the book strip's STAKE, not to its EV:
+   the reading is the reference number and the chip is the verdict, so the
+   chip has to be the louder of the two. At 12px/800 the count out-shouted its
+   own verdict and the pair read as an inline number-pair — the exact thing the
+   house grammar bans. */
+.liveprog__value {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+}
+/* NEVER TONED: the bar draws the stat, not the bet. A NO bet fills toward its
+   own strike exactly as a YES does, and the chip is what says which direction
+   is good. */
+.liveprog__track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--fill);
+  overflow: hidden;
+}
+.liveprog__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand-text);
+  transition: width 240ms ease-out;
+}
+/* THE VERDICT. --pos/--neg here mean the bet's current standing and nothing
+   else — the same one-meaning-per-block rule the EV chip below follows. A bet
+   still in flight ("38 to go") is deliberately UNTONED: that is a fact, not a
+   verdict. Ink is one derived step toward --text for the same AA reason as
+   .mybook__ev, and every state is spelled out in words so the chip is never
+   colour-alone. */
+.liveprog__chip {
+  flex: 0 0 64px;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--mybook-dim);
+  background: var(--fill);
+}
+.liveprog__chip[data-tone="pos"] {
+  color: color-mix(in oklab, var(--pos) 82%, var(--text));
+  background: color-mix(in oklab, var(--pos) 12%, var(--card));
+}
+.liveprog__chip[data-tone="neg"] {
+  color: color-mix(in oklab, var(--neg) 82%, var(--text));
+  background: color-mix(in oklab, var(--neg) 12%, var(--card));
+}
+/* The strip is the book strip's twin: when they stack they read as one block
+   of money rather than two unrelated bordered boxes, so the pair sits tighter
+   than the card's other blocks (the grid gap alone, with no extra margin). */
+.liveprog + .mybook { margin-top: 0; }
 
 /* A row that carries a per-order control. The ✕ is a SIBLING of the row
    button, never a child (a button inside a button is invalid and untappable on
