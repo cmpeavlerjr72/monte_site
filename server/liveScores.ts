@@ -3323,23 +3323,6 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
   }
 }));
 
-// Unknown /api routes must answer JSON. Without this the SPA catch-all below
-// serves index.html for a typo'd or removed endpoint, and the client blows up
-// on `JSON.parse("<!doctype html>")` — which looks like a page crash, not a
-// 404.
-app.use("/api", (req: Request, res: Response) => {
-  res.status(404).json({ error: "unknown_api_route", path: req.originalUrl });
-});
-
-app.use(express.static(staticDir));
-
-app.get("*", (_req: Request, res: Response, next: NextFunction) => {
-  res.sendFile(path.join(staticDir, "index.html"), (err) => {
-    // Missing/unbuilt dist: report it instead of leaving the request hanging.
-    if (err) next(err);
-  });
-});
-
 // ============================================================================
 // WEB PUSH — owner fill alerts (2026-08-29, owner ask: "notifications as
 // resting stuff fills so that I don't miss anything").
@@ -3362,6 +3345,10 @@ app.get("*", (_req: Request, res: Response, next: NextFunction) => {
 // notifies on MAKER fills only (is_taker=false): taker fills are the owner's
 // own button press, they were watching. The watermark starts at boot so a
 // restart never replays history.
+//
+// ORDERING: this section must stay ABOVE the `app.use("/api", …)` unknown-
+// route catch-all — Express matches in registration order, and these routes
+// shipped BELOW it on 2026-08-29 and 404'd in production until moved.
 // ============================================================================
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "";
@@ -3507,6 +3494,24 @@ async function pushFillPoll(): Promise<void> {
   }
 }
 if (PUSH_ON) setInterval(pushFillPoll, PUSH_FILL_POLL_MS);
+
+// Unknown /api routes must answer JSON. Without this the SPA catch-all below
+// serves index.html for a typo'd or removed endpoint, and the client blows up
+// on `JSON.parse("<!doctype html>")` — which looks like a page crash, not a
+// 404.
+app.use("/api", (req: Request, res: Response) => {
+  res.status(404).json({ error: "unknown_api_route", path: req.originalUrl });
+});
+
+app.use(express.static(staticDir));
+
+app.get("*", (_req: Request, res: Response, next: NextFunction) => {
+  res.sendFile(path.join(staticDir, "index.html"), (err) => {
+    // Missing/unbuilt dist: report it instead of leaving the request hanging.
+    if (err) next(err);
+  });
+});
+
 
 // ----------------------------------------------------------------------------
 // Error middleware (must be last, must take 4 args)

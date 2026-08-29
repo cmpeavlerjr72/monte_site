@@ -32,7 +32,15 @@ export async function getPushState(): Promise<PushState> {
   if (!ready) return "unsupported";
   if (Notification.permission === "denied") return "denied";
   try {
-    const reg = await ready;
+    // `serviceWorker.ready` NEVER rejects — with no registration (a failed
+    // register(), dev mode) it pends forever and would leave the Alerts row
+    // blank for good. Timing out to "off" shows the Enable button instead;
+    // enabling then surfaces any real registration problem as an error.
+    const reg = await Promise.race([
+      ready,
+      new Promise<null>((ok) => setTimeout(() => ok(null), 3000)),
+    ]);
+    if (!reg) return "off";
     const sub = await reg.pushManager.getSubscription();
     return sub ? "enabled" : "off";
   } catch {
@@ -80,7 +88,11 @@ export async function enablePushAlerts(token: string): Promise<void> {
   const perm = await Notification.requestPermission();
   if (perm !== "granted") throw new Error("Notification permission was not granted.");
 
-  const reg = await ready;
+  const reg = await Promise.race([
+    ready,
+    new Promise<null>((ok) => setTimeout(() => ok(null), 8000)),
+  ]);
+  if (!reg) throw new Error("The service worker is not registered yet — reload the page and retry.");
   const sub =
     (await reg.pushManager.getSubscription()) ??
     (await reg.pushManager.subscribe({
