@@ -2283,7 +2283,7 @@ function ScoreboardPage() {
     return () => window.clearInterval(t);
   }, []);
 
-  const cards = useMemo(() => {
+  const desiredCards = useMemo(() => {
     // `nowMs`, not Date.now(): the kick tier has to move with the clock, or a
     // game that kicks off while the tab sits open never leaves the pregame
     // block (the same frozen-clock bug the suggestions gate had).
@@ -2295,6 +2295,83 @@ function ScoreboardPage() {
     // for one intent, and the survivor is the one the reader can see.
     return sortCards(baseCards, sortBy, slateEdges, nowMs);
   }, [baseCards, sortBy, slateEdges, nowMs]);
+
+  /* DEFERRED RE-SORT (CLS, 2026-08-29). The sort above says where cards
+   * BELONG; this block decides when the grid is allowed to MOVE them.
+   *
+   * Cloudflare RUM had 60% of visits scoring CLS "poor", and the largest
+   * single contributor is this grid re-ordering itself while someone is
+   * reading it: every 30s clock tick or feed refresh that flips one game's
+   * kick tier (pregame → live → final) used to jump whole rows of cards under
+   * the reader — and, on the owner console, under a finger headed for a money
+   * button. Layout-shift scoring EXEMPTS moves within 500ms of user input and
+   * cannot see moves made while the tab is hidden, so the rule is:
+   *
+   *   adopt the new order immediately when (a) the card SET changed — cards
+   *   appearing/disappearing is population, there is no stable layout to
+   *   preserve; (b) the user changed the sort — that IS input; or (c) the
+   *   tab is hidden. Otherwise keep rendering the ORDER we already show
+   *   (with every card's live data still updating in place) and adopt the
+   *   pending order the moment the tab next goes hidden.
+   *
+   * Freshness is untouched — scores, badges and edges update in the card
+   * where it sits. Only the card's POSITION waits for a moment nobody is
+   * watching. Signatures are primitive strings and the effects key on them
+   * (rule 4). */
+  const desiredOrderSig = useMemo(
+    () => desiredCards.map((c) => c.key).join("|"),
+    [desiredCards]
+  );
+  const desiredSetSig = useMemo(
+    () => desiredCards.map((c) => c.key).sort().join("|"),
+    [desiredCards]
+  );
+  const [appliedOrder, setAppliedOrder] = useState<string | null>(null);
+  const appliedMetaRef = useRef<{ setSig: string; sortBy: SortBy } | null>(null);
+  const pendingOrderRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const meta = appliedMetaRef.current;
+    const adoptNow =
+      appliedOrder === null ||
+      meta === null ||
+      meta.setSig !== desiredSetSig ||
+      meta.sortBy !== sortBy ||
+      document.hidden;
+    if (adoptNow) {
+      appliedMetaRef.current = { setSig: desiredSetSig, sortBy };
+      pendingOrderRef.current = null;
+      setAppliedOrder((cur) => (cur === desiredOrderSig ? cur : desiredOrderSig));
+    } else {
+      pendingOrderRef.current = desiredOrderSig === appliedOrder ? null : desiredOrderSig;
+    }
+  }, [desiredOrderSig, desiredSetSig, sortBy, appliedOrder]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (!document.hidden || pendingOrderRef.current === null) return;
+      const next = pendingOrderRef.current;
+      pendingOrderRef.current = null;
+      setAppliedOrder(next);
+    };
+    document.addEventListener("visibilitychange", flush);
+    return () => document.removeEventListener("visibilitychange", flush);
+  }, []);
+
+  const cards = useMemo(() => {
+    if (appliedOrder === null) return desiredCards;
+    const byKey = new Map(desiredCards.map((c) => [c.key, c]));
+    const out: CardGame[] = [];
+    for (const k of appliedOrder.split("|")) {
+      const c = byKey.get(k);
+      if (c) { out.push(c); byKey.delete(k); }
+    }
+    // Never drop a card the order string has not caught up with: anything
+    // unlisted appends in desired order until the set-change adoption above
+    // lands (same render, in practice).
+    for (const c of desiredCards) if (byKey.has(c.key)) out.push(c);
+    return out;
+  }, [appliedOrder, desiredCards]);
 
 
   // Apply conference filter (game shows if either team is in selected conference)
@@ -2987,11 +3064,24 @@ function ScoreboardPage() {
 
       {/* Slate tally: running ATS/Total/ML betting record for the displayed
           (filtered) slate, with PnL + an Open/Close frame toggle when
-          lines.json is published for this week. Only when at least one
-          visible card has a graded result. */}
-      {slateTally.anyGraded && (
+          lines.json is published for this week.
+
+          When nothing is graded YET, the bar's slot is still rendered (same
+          class, so the box is the same height) with a muted one-liner. On a
+          live game day the record joins seconds-to-minutes after the cards,
+          and mounting the bar then used to push the whole grid down — the
+          top-of-page half of the CLS "poor" bucket (Cloudflare RUM,
+          2026-08-29). Reserving the slot turns that into an in-place fill.
+          Past weeks grade in the same render as the cards, so the
+          placeholder never paints there. */}
+      {slateTally.anyGraded ? (
         <SlateTallyBar tally={slateTally} cards={filteredCards} weekLines={weekLines} weekLinesFcs={weekLinesFcs} condensed={condensed} />
-      )}
+      ) : filteredCards.length > 0 ? (
+        <div className="slate-tally-bar" style={condensed ? { fontSize: 11, padding: "5px 10px" } : undefined}>
+          <b>Slate record</b>
+          <span className="slate-tally-bar__dim">appears as games go final</span>
+        </div>
+      ) : null}
 
       {/* THE "MY GAMES" TRAY — the games the owner already has money on, taken
           out of the scan below.
