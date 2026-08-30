@@ -65,6 +65,13 @@ export const KALSHI_TEAM_ALIASES: Record<string, string> = {
   // original target here was "texasandm", which no school produces — the alias
   // was dead. Corrected, so Kalshi's un-ampersanded "Texas AM" now matches.
   texasam: "texasaandm",
+  // Live 2026-08-30, wk1 slate (user caught both as cards with no Kalshi
+  // info): Kalshi writes "UMass" where CFBD's slate says "Massachusetts",
+  // and "Louisiana-Monroe" where the slate says "UL Monroe". Same two
+  // misses existed in the sim repo's kalshi_team_edges TEAM_ALIAS (fixed
+  // there the same day, commit f566d2d).
+  umass: "massachusetts",
+  louisianamonroe: "ulmonroe",
 
   // --- FCS 2026: our slate's spelling is on the RIGHT ---
   // "St. Thomas (MN)" carries a state qualifier Kalshi drops. Stripping
