@@ -429,6 +429,9 @@ function LadderRows({
                     fontVariantNumeric: "tabular-nums",
                     color: edgeColor,
                   }}>
+                    {g.bestEdge >= TARGET_EDGE && (
+                      <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
+                    )}
                     {signed(g.bestEdge)}
                   </span>
                 </span>
@@ -824,6 +827,9 @@ export function PlaceStrip({
             ? "var(--muted)"
             : group.bestEdge > 0 ? "var(--pos)" : "var(--neg)",
         }}>
+          {!group.tail && group.bestEdge >= TARGET_EDGE && (
+            <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
+          )}
           {signed(group.bestEdge)}
         </span>
         <button
@@ -864,6 +870,13 @@ export function PlaceStrip({
 // here so the pre-press note names the same number the server will use.
 const capOrderNow = () => Math.min(500, Math.max(1, Math.round(readUnit())));
 const MAX_ORDERS = 8;
+
+/** TARGET star: same bar as the edge board's `target` flag — the fee-adj
+ *  EV >= 0.10 bucket where the wk0-2026 settlement grade showed realized ROI
+ *  matching modeled EV. A cue, never a filter (owner rule 2026-08-30). */
+const TARGET_EDGE = 0.10;
+const TARGET_TITLE =
+  "TARGET: net edge ≥ 10¢ after fees — the wk0-graded bucket where realized ROI matched the model";
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
