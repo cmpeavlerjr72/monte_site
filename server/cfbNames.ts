@@ -72,6 +72,15 @@ export const KALSHI_TEAM_ALIASES: Record<string, string> = {
   // there the same day, commit f566d2d).
   umass: "massachusetts",
   louisianamonroe: "ulmonroe",
+  // Live 2026-08-30, FCS wk1 (user caught two cards without bet buttons):
+  // Kalshi's hyphenated "Tennessee-Martin" for our "UT Martin", and
+  // mascot-suffixed titles on exactly these events ("Chicago State
+  // Cougars", "West Florida Argonauts") — Kalshi appends mascots on SOME
+  // FCS titles only. The FCS snapshot puller grew a generic trailing-word
+  // fallback the same night; here the observed forms are aliased exactly.
+  tennesseemartin: "utmartin",
+  chicagostatecougars: "chicagostate",
+  westfloridaargonauts: "westflorida",
 
   // --- FCS 2026: our slate's spelling is on the RIGHT ---
   // "St. Thomas (MN)" carries a state qualifier Kalshi drops. Stripping
