@@ -600,6 +600,7 @@ function RungWheel({ rungs, onPlace }: {
   const spinTo = (i: number) =>
     ref.current?.scrollTo({ left: i * WHEEL_ITEM_W, behavior: "smooth" });
 
+  const mag = spreadSingleSigned(rungs);
   const r = rungs[Math.min(sel, rungs.length - 1)];
   return (
     <div style={{ display: "grid", gap: 4 }}>
@@ -633,7 +634,7 @@ function RungWheel({ rungs, onPlace }: {
               transition: "font-size 120ms, opacity 120ms",
             }}
           >
-            <span>{wheelFace(x)}</span>
+            <span>{wheelFace(x, mag)}</span>
             {/* The edge hint under every value: where the money is while
                 rolling. Muted for tails — the wheel never colours an edge
                 the model does not stand behind. */}
@@ -696,14 +697,30 @@ function browseLadders(rows: Suggestion[]): Map<string, Suggestion[]> {
     const arr = m.get(key);
     if (arr) arr.push(r); else m.set(key, [r]);
   }
-  for (const arr of m.values()) arr.sort((a, b) => a.strike - b.strike);
+  for (const arr of m.values()) {
+    // A single-signed spread ladder (one team favored at every listed rung —
+    // the normal case) rolls by LINE SIZE, shallow left to deep right, to
+    // match its magnitude-only faces. Mixed-sign (near-pickem) ladders keep
+    // the signed home-line axis.
+    const oneSign = arr[0]?.series === "KXNCAAFSPREAD" &&
+      (arr.every((x) => x.strike < 0) || arr.every((x) => x.strike > 0));
+    arr.sort(oneSign
+      ? (a, b) => Math.abs(a.strike) - Math.abs(b.strike)
+      : (a, b) => a.strike - b.strike);
+  }
   return m;
 }
 
 /** One short header per browsed group. */
 function ladderHeadline(rungs: Suggestion[]): string {
   const r = rungs[0];
-  if (r.series === "KXNCAAFSPREAD") return "spread · home line";
+  if (r.series === "KXNCAAFSPREAD") {
+    // Owner feedback 2026-08-30 (Akron @ WF): a signed home-axis face over a
+    // kept-side label ("−24.5" over "Akron +24.5") reads as a contradiction.
+    // On a single-signed ladder the faces are LINE SIZES and the label under
+    // the wheel carries team + sign — say so in the header.
+    return spreadSingleSigned(rungs) ? "spread · line size" : "spread · home line";
+  }
   if (r.series === "KXNCAAFTOTAL") return "total";
   if (r.series === "KXNCAAFGAME") return "winner";
   return `${r.team} ${r.statText}`.replace(/\s+/g, " ").trim() || r.label;
@@ -712,10 +729,19 @@ function ladderHeadline(rungs: Suggestion[]): string {
 /** U+2212 minus, matching the game-line builder's spreadText. */
 const signedLine = (L: number) => `${L > 0 ? "+" : "−"}${Math.abs(L)}`;
 
+/** One team favored at every listed rung — the normal ladder. */
+const spreadSingleSigned = (rungs: Suggestion[]): boolean =>
+  rungs[0]?.series === "KXNCAAFSPREAD" &&
+  (rungs.every((x) => x.strike < 0) || rungs.every((x) => x.strike > 0));
+
 /** The compact face a wheel shows for one rung: bare numbers on the shared
- *  axis for game lines, the rung's own short text everywhere else. */
-function wheelFace(x: Suggestion): string {
-  if (x.series === "KXNCAAFSPREAD") return signedLine(x.strike);
+ *  axis for game lines, the rung's own short text everywhere else. On a
+ *  single-signed spread ladder the face is the LINE SIZE alone — the readout
+ *  label owns team and sign, so face and label can never disagree. */
+function wheelFace(x: Suggestion, mag: boolean): string {
+  if (x.series === "KXNCAAFSPREAD") {
+    return mag ? String(Math.abs(x.strike)) : signedLine(x.strike);
+  }
   if (x.series === "KXNCAAFTOTAL") return String(x.strike);
   return x.rungText ?? x.label;
 }
