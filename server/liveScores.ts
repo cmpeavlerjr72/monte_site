@@ -2361,8 +2361,10 @@ app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req: Request, res: R
 //   1. Auth: portalGate (timing-safe password, 5 misses = 60s lockout).
 //   2. NCAAF tickers only — the app cannot reach any other market.
 //   3. Mode-derived post_only/TIF; NEVER a market order. Strict allowlist.
-//   4. Per-order cost cap $40 (price x count + fee).
-//   5. Per-request cost cap $80, at most 8 orders.
+//   4. Per-order cost cap = the owner's unit size, sent as `unit_size` on
+//      each request (fallback $40 when absent), HARD-CLAMPED server-side to
+//      $500 — the client picks the bar inside the rail, never past it.
+//   5. Per-request cost cap = 2x the per-order cap, at most 8 orders.
 //   6. Live book re-checked per ticker immediately before signing:
 //        rest -> reject if the price would CROSS the standing ask
 //        take -> reject if the standing ask is WORSE than the confirmed price
@@ -2390,8 +2392,19 @@ const ORDERS_LIVE = process.env.CFB_ORDERS_LIVE === "1";
 /** client_order_id prefix — the attribution tag. */
 const ORDERS_TAG = "cfbapp-";
 const ORDERS_MAX_ORDERS = 8;
-const ORDERS_CAP_ORDER = 40;
-const ORDERS_CAP_REQUEST = 80;
+/** Fallback per-order cost cap when the request names no unit_size. */
+const ORDERS_CAP_ORDER_DEFAULT = 40;
+/** Absolute per-order ceiling — mirrors the client unit slider's UNIT_MAX
+ *  (ownerPrefs.ts). Owner ask 2026-08-30: the per-order cap TRACKS the unit
+ *  size set in the app ("if I raise my unit to $50 it allows up to that"),
+ *  so `unit_size` rides each order request. This ceiling and the 2x slip
+ *  multiple are what the client still cannot relax. */
+const ORDERS_CAP_ORDER_MAX = 500;
+function ordersCapOrder(unit: unknown): number {
+  const u = Number(unit);
+  if (!Number.isFinite(u) || u <= 0) return ORDERS_CAP_ORDER_DEFAULT;
+  return Math.min(ORDERS_CAP_ORDER_MAX, Math.max(1, Math.round(u)));
+}
 const ORDERS_IDEM_TTL_MS = 24 * 60 * 60 * 1000;
 const ORDERS_IDEM_MAX = 500;
 /** NCAAF families only. This is what stops a malformed or hostile body from
@@ -2618,11 +2631,15 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
   const forbidden = ordersForbidden(body, "request");
   if (forbidden) { bad(400, { error: "forbidden_field", detail: forbidden }); return; }
   for (const k of Object.keys(body)) {
-    if (k !== "idempotency_key" && k !== "orders") {
+    if (k !== "idempotency_key" && k !== "orders" && k !== "unit_size") {
       bad(400, { error: "unexpected_field", detail: `request: "${k}"` });
       return;
     }
   }
+  // Unit-size-linked caps (see ordersCapOrder). Computed once per request so
+  // every order in the slip and the slip total use the same bar.
+  const capOrder = ordersCapOrder(body.unit_size);
+  const capRequest = capOrder * 2;
 
   const key = String(body.idempotency_key ?? "");
   if (!ORDERS_KEY_RE.test(key)) {
@@ -2688,10 +2705,10 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
       }
       const fee = ordersFee(price, count, mode);
       const cost = Math.round((price * count + fee) * 100) / 100;
-      if (cost > ORDERS_CAP_ORDER + 1e-9) {
+      if (cost > capOrder + 1e-9) {
         bad(400, {
           error: "cap_order", detail: `orders[${i}] costs $${cost.toFixed(2)}`,
-          cap: ORDERS_CAP_ORDER,
+          cap: capOrder,
         });
         return;
       }
@@ -2706,8 +2723,8 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
     }
 
     const total = Math.round(wire.reduce((s, w) => s + w.cost, 0) * 100) / 100;
-    if (total > ORDERS_CAP_REQUEST + 1e-9) {
-      bad(400, { error: "cap_request", total, cap: ORDERS_CAP_REQUEST }); return;
+    if (total > capRequest + 1e-9) {
+      bad(400, { error: "cap_request", total, cap: capRequest }); return;
     }
     const spent = ordersSpent24h(); // reported in totals; no cap enforced
 
@@ -3078,7 +3095,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
 
   const forbidden = ordersForbidden(body, "request");
   if (forbidden) { bad(400, { error: "forbidden_field", detail: forbidden }); return; }
-  const ALLOWED = ["idempotency_key", "order_id", "ticker", "side", "count_fp", "limit_price"];
+  const ALLOWED = ["idempotency_key", "order_id", "ticker", "side", "count_fp", "limit_price", "unit_size"];
   for (const k of Object.keys(body)) {
     if (!ALLOWED.includes(k)) {
       bad(400, { error: "unexpected_field", detail: `request: "${k}"` });
@@ -3172,12 +3189,13 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
     // --- 4. caps: this take counts, like any other placement --------------
     const fee = ordersFee(price, count, "take");
     const cost = Math.round((price * count + fee) * 100) / 100;
-    if (cost > ORDERS_CAP_ORDER + 1e-9) {
-      bad(400, { error: "cap_order", detail: `costs $${cost.toFixed(2)}`, cap: ORDERS_CAP_ORDER });
+    const capOrder = ordersCapOrder(body.unit_size);
+    if (cost > capOrder + 1e-9) {
+      bad(400, { error: "cap_order", detail: `costs $${cost.toFixed(2)}`, cap: capOrder });
       return;
     }
-    if (cost > ORDERS_CAP_REQUEST + 1e-9) {
-      bad(400, { error: "cap_request", total: cost, cap: ORDERS_CAP_REQUEST }); return;
+    if (cost > capOrder * 2 + 1e-9) {
+      bad(400, { error: "cap_request", total: cost, cap: capOrder * 2 }); return;
     }
     const spent = ordersSpent24h(); // reported in totals; no cap enforced
 
