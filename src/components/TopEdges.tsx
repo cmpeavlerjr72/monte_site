@@ -407,6 +407,13 @@ function TeamMktRow({ r, teamA, teamB, rank, onPick, onAddLeg }: {
         {/* Compact bet-style label; Kalshi's full sentence stays reachable on
             hover. Flagged rows never reach this component (site rule). */}
         <span className="edge-row__t1 edge-row__t1--wrap" title={r.title}>
+          {r.target ? (
+            <span
+              className="edge-row__target-star"
+              title="TARGET: fee-adj EV ≥ 0.10 — the bucket where wk0 realized ROI matched modeled EV"
+              aria-label="target bet"
+            >★ </span>
+          ) : null}
           {shortTeamMarketTitle(r, teamA, teamB)}
         </span>
         <span className="edge-row__t2">

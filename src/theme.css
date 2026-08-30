@@ -670,6 +670,13 @@ input:focus, select:focus, textarea:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* TARGET cue (fee-adj EV >= 0.10, wk0-graded bucket) — a marker, never a
+   filter: unstarred rows list exactly as before. */
+.edge-row__target-star {
+  color: #f0b429;
+  flex: none;
+}
 .edge-row__t2 {
   display: block;
   font-size: 9.5px;

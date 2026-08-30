@@ -719,6 +719,14 @@ export type TeamMarketRow = {
   ev_fee: number;
   /** "THIN" (binding at 10k sims on these wide books) / "TAIL" / "NOISE". */
   flags: string[];
+  /**
+   * Toolkit-computed TARGET cue: clean (no flags) AND fee-adj EV >= 0.10 —
+   * the bucket where the wk0-2026 settlement grade showed realized ROI
+   * matching modeled EV (below it, every bucket lost at the taker touch).
+   * A display cue only, never a filter (owner rule 2026-08-30). Absent on
+   * exports published before 2026-08-30.
+   */
+  target?: boolean;
   close_time?: string;
 };
 
@@ -764,6 +772,7 @@ function parseTeamMarketRow(raw: any): TeamMarketRow | null {
     se: num(raw?.se),
     n_sims: num(raw?.n_sims),
     flags: Array.isArray(raw?.flags) ? raw.flags.map((f: any) => String(f)) : [],
+    target: raw?.target === true,
     close_time: raw?.close_time != null ? String(raw.close_time) : undefined,
   };
 }
