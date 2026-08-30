@@ -633,7 +633,7 @@ function RungWheel({ rungs, onPlace }: {
               transition: "font-size 120ms, opacity 120ms",
             }}
           >
-            <span>{x.rungText ?? x.label}</span>
+            <span>{wheelFace(x)}</span>
             {/* The edge hint under every value: where the money is while
                 rolling. Muted for tails — the wheel never colours an edge
                 the model does not stand behind. */}
@@ -653,6 +653,9 @@ function RungWheel({ rungs, onPlace }: {
           justifyContent: "center", flexWrap: "wrap",
           color: r.tail ? "var(--muted)" : "var(--text)",
         }}>
+          {/* WHOSE bet the centred face is — a merged spread wheel shows the
+              home axis, but the kept side can be either team. */}
+          <span style={{ fontWeight: 800 }}>{r.label}</span>
           <ModeChip mode={r.mode} price={r.price} />
           <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
           {r.tail && <TailBadge inline />}
@@ -678,21 +681,74 @@ function RungWheel({ rungs, onPlace }: {
   );
 }
 
-/** Browse rows for one game, grouped by ladder in the lib's ladder-then-
- *  strike order (already sorted upstream — Map preserves it). */
+/** Browse rows for one game grouped for DISPLAY. Spread rungs arrive as one
+ *  lib ladder PER KALSHI-NAMED TEAM (two wheels for one spread — the clutter
+ *  the owner flagged 2026-08-30), so the game-line families are merged into
+ *  a single group each, sorted on the server's signed HOME line — `strike`
+ *  carries that line on both sides of a spread market, so the merged sort is
+ *  well-defined. Stat ladders keep their per-team identity. */
 function browseLadders(rows: Suggestion[]): Map<string, Suggestion[]> {
   const m = new Map<string, Suggestion[]>();
   for (const r of rows) {
-    const arr = m.get(r.ladder);
-    if (arr) arr.push(r); else m.set(r.ladder, [r]);
+    const key = r.series === "KXNCAAFSPREAD" || r.series === "KXNCAAFTOTAL"
+      ? `${r.slug}|${r.series}|merged`
+      : r.ladder;
+    const arr = m.get(key);
+    if (arr) arr.push(r); else m.set(key, [r]);
   }
+  for (const arr of m.values()) arr.sort((a, b) => a.strike - b.strike);
   return m;
 }
 
-/** "AUB spread" / "total" — one header per browsed ladder, from its rungs. */
+/** One short header per browsed group. */
 function ladderHeadline(rungs: Suggestion[]): string {
   const r = rungs[0];
+  if (r.series === "KXNCAAFSPREAD") return "spread · home line";
+  if (r.series === "KXNCAAFTOTAL") return "total";
+  if (r.series === "KXNCAAFGAME") return "winner";
   return `${r.team} ${r.statText}`.replace(/\s+/g, " ").trim() || r.label;
+}
+
+/** U+2212 minus, matching the game-line builder's spreadText. */
+const signedLine = (L: number) => `${L > 0 ? "+" : "−"}${Math.abs(L)}`;
+
+/** The compact face a wheel shows for one rung: bare numbers on the shared
+ *  axis for game lines, the rung's own short text everywhere else. */
+function wheelFace(x: Suggestion): string {
+  if (x.series === "KXNCAAFSPREAD") return signedLine(x.strike);
+  if (x.series === "KXNCAAFTOTAL") return String(x.strike);
+  return x.rungText ?? x.label;
+}
+
+/** One rung as a single flat line — the ≤2-rung rendering (a winner market,
+ *  a two-rung stat ladder). A wheel with one or two faces is not a wheel. */
+function CompactRung({ r, onPlace }: { r: Suggestion; onPlace: (r: Suggestion) => void }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
+      color: r.tail ? "var(--muted)" : "var(--text)",
+    }}>
+      <span style={{ fontWeight: 700 }}>{r.label}</span>
+      <ModeChip mode={r.mode} price={r.price} />
+      <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
+      {r.tail && <TailBadge inline />}
+      <span style={{
+        marginLeft: "auto", fontWeight: 800, fontVariantNumeric: "tabular-nums",
+        color: r.tail ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
+      }}>
+        {!r.tail && r.edge >= TARGET_EDGE && (
+          <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
+        )}
+        {signed(r.edge)}
+      </span>
+      <button
+        type="button" className="ui-btn" onClick={() => onPlace(r)}
+        style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
+      >
+        Place ${r.outlay.toFixed(0)}
+      </button>
+    </div>
+  );
 }
 
 export default function GameBetsPanel({
@@ -876,20 +932,26 @@ export default function GameBetsPanel({
           >
             {showBrowse ? "Hide" : "Browse"} all rungs ({browse.length})
           </button>
-          {showBrowse && [...browseLadders(browse)].map(([lad, rungs]) => (
-            <div key={lad} style={{ display: "grid", gap: 2 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
-                {ladderHeadline(rungs)}
+          {showBrowse && [...browseLadders(browse)].map(([lad, rungs], gi) => {
+            const place = (r: Suggestion) => setSlip({
+              group: groupLadders([r], unit)[0],
+              idem: newIdempotencyKey(),
+            });
+            return (
+              <div key={lad} style={{
+                display: "grid", gap: 3,
+                paddingTop: gi === 0 ? 0 : 6,
+                borderTop: gi === 0 ? "none" : "1px solid var(--line, rgba(128,128,128,.25))",
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  {ladderHeadline(rungs)}
+                </div>
+                {rungs.length <= 2
+                  ? rungs.map((r) => <CompactRung key={r.key} r={r} onPlace={place} />)
+                  : <RungWheel rungs={rungs} onPlace={place} />}
               </div>
-              <RungWheel
-                rungs={rungs}
-                onPlace={(r) => setSlip({
-                  group: groupLadders([r], unit)[0],
-                  idem: newIdempotencyKey(),
-                })}
-              />
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
