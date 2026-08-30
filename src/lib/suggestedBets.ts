@@ -507,6 +507,9 @@ export type Candidate = {
  */
 type Priced = Candidate & {
   mode: "REST" | "TAKE"; price: number; edgePer: number; timing: Timing;
+  /** Dollar budget REMAINING for this market when the account already holds
+   *  part of the unit there (unit − held cost). Absent = the full share. */
+  budget?: number;
 };
 
 /** What one compute produces. `rows` is the list; `tailRows` is the opt-in
@@ -565,10 +568,12 @@ function selectLadders(
       });
     }
     const picked = ranked.slice(0, cap);
-    // The unit is a LADDER budget, still split across the ladder's rungs.
+    // The unit is a LADDER budget, still split across the ladder's rungs —
+    // and a rung with a held-headroom budget never sizes past it.
     const share = unit / Math.max(picked.length, 1);
     for (const p of picked) {
-      rows.push(sizeSuggestion(p, feeParams, share, tail));
+      rows.push(sizeSuggestion(p, feeParams,
+        Math.min(share, p.budget ?? Infinity), tail));
     }
   }
   rows.sort((a, b) => b.edge - a.edge);
@@ -613,7 +618,7 @@ function sizeSuggestion(
 export function buildSuggestions(
   candidates: Candidate[],
   feeParams: Record<string, FeeParams>,
-  heldTickers: Set<string>,
+  heldCost: Map<string, number>,
   /** Dollars of risk per ladder — the user's unit size. */
   unit: number = LADDER_RISK,
   /** The instant every row is priced against. Passed in rather than read here
@@ -626,11 +631,22 @@ export function buildSuggestions(
   const priced: Priced[] = [];
 
   for (const c of candidates) {
-    // The account already has exposure here: the pipeline treats a held or
-    // resting rung as consuming its ladder slot, so the card must not
-    // re-suggest it.
-    if (c.ticker && heldTickers.has(c.ticker)) {
-      suppressed.push({ label: c.label, reason: "already held or resting", ticker: c.ticker });
+    // Exposure only retires a market once it has consumed the UNIT (owner
+    // rule 2026-08-30). Below that, the rung stays and its sizing budget is
+    // the headroom; at or past it, the old suppression, with the dollars in
+    // the reason so the reader sees the budget at work.
+    const h = c.ticker ? (heldCost.get(c.ticker) ?? 0) : 0;
+    const headroom = unit - h;
+    // "Full" = cannot afford one more contract at the quoted ask (or the
+    // cost basis is unknowable — Infinity from the ledger).
+    if (h > 0 && headroom < Math.max(0.05, c.ask ?? 0.05)) {
+      suppressed.push({
+        label: c.label,
+        reason: Number.isFinite(h)
+          ? `already committed $${h.toFixed(2)} of the $${unit} unit`
+          : "already held or resting",
+        ticker: c.ticker,
+      });
       continue;
     }
     const timing = timingFor(c.kickoffMs, now);
@@ -639,7 +655,8 @@ export function buildSuggestions(
       suppressed.push({ label: c.label, reason: r.reason, ticker: c.ticker });
       continue;
     }
-    priced.push({ ...c, ...r, timing });
+    priced.push({ ...c, ...r, timing,
+                  budget: h > 0 ? headroom : undefined });
   }
 
   // ONE CONTRACT PER MARKET — the pipeline's shape, and a correctness rule.
@@ -714,7 +731,8 @@ export function buildSuggestions(
   // the core/tails split above is per-list, and a browse row must carry its
   // OWN flag so the table can mute exactly the untrusted rungs.
   const browse = bestPerMarket([...core, ...tails])
-    .map((p) => sizeSuggestion(p, feeParams, unit, isTail(p.simP, p.ask ?? 1)))
+    .map((p) => sizeSuggestion(p, feeParams,
+      Math.min(unit, p.budget ?? Infinity), isTail(p.simP, p.ask ?? 1)))
     .sort((a, b) => (a.ladder < b.ladder ? -1 : a.ladder > b.ladder ? 1
       : a.strike - b.strike));
 
@@ -731,6 +749,43 @@ export function heldTickerSet(
   for (const p of positions ?? []) if (p.count) s.add(p.ticker);
   for (const o of orders ?? []) s.add(o.ticker);
   return s;
+}
+
+/**
+ * Dollars already COMMITTED per ticker: held positions at cost
+ * (count × avg price) plus resting orders (price × remaining). Owner rule
+ * 2026-08-30 (the GT −6.5 partial fill, $4.86 held of a $50 unit): exposure
+ * only retires a market once it has consumed the unit — until then the rung
+ * stays, sized to the HEADROOM. A row whose cost cannot be known (missing
+ * avg price / remaining) contributes Infinity, which reproduces the old
+ * any-exposure-suppresses behaviour as the conservative fallback.
+ */
+export function heldCostByTicker(
+  positions: {
+    ticker: string; count: number; avg_price?: number | null;
+  }[] | undefined,
+  orders: {
+    ticker: string; side?: string; yes_price?: number | null;
+    no_price?: number | null; remaining?: number | null;
+  }[] | undefined,
+): Map<string, number> {
+  const m = new Map<string, number>();
+  const add = (t: string, v: number) => m.set(t, (m.get(t) ?? 0) + v);
+  for (const p of positions ?? []) {
+    if (!p.count) continue;
+    add(p.ticker,
+      p.avg_price !== null && p.avg_price !== undefined
+        ? Math.abs(p.count) * p.avg_price
+        : Infinity);
+  }
+  for (const o of orders ?? []) {
+    const n = o.remaining;
+    if (n === null || n === undefined) { add(o.ticker, Infinity); continue; }
+    if (!n) continue;
+    const px = o.side === "no" ? o.no_price : o.yes_price;
+    add(o.ticker, px === null || px === undefined ? Infinity : n * px);
+  }
+  return m;
 }
 
 /** Stat-quote candidates for one game, using the panel's own published rungs. */
