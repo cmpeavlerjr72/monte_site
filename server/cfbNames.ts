@@ -73,12 +73,12 @@ export const KALSHI_TEAM_ALIASES: Record<string, string> = {
   umass: "massachusetts",
   louisianamonroe: "ulmonroe",
   // Live 2026-08-30, FCS wk1 (user caught two cards without bet buttons):
-  // Kalshi's hyphenated "Tennessee-Martin" for our "UT Martin", and
   // mascot-suffixed titles on exactly these events ("Chicago State
   // Cougars", "West Florida Argonauts") — Kalshi appends mascots on SOME
-  // FCS titles only. The FCS snapshot puller grew a generic trailing-word
-  // fallback the same night; here the observed forms are aliased exactly.
-  tennesseemartin: "utmartin",
+  // FCS titles only, and one unmatched TEAM sinks the whole event's join
+  // ("Tennessee-Martin" on the same title was already aliased below). The
+  // FCS snapshot puller grew a generic trailing-word fallback the same
+  // night; here the observed forms are aliased exactly.
   chicagostatecougars: "chicagostate",
   westfloridaargonauts: "westflorida",
 
