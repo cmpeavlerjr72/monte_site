@@ -98,7 +98,7 @@
 // server/liveScores.ts. No position bookkeeping either: after a live placement
 // the portfolio strip picks it up on its own next poll.
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   groupLadders, orderFee, timingWords,
   MIN_MAKER_EDGE, TAKE_THRESHOLD, TAKE_THRESHOLD_LATE, TAKE_THRESHOLD_NEAR,
@@ -554,6 +554,130 @@ function LadderRows({
  * happens here: the ladders, the sizing, the fee itemisation and the confirm
  * slip. The index above only ranks.
  */
+/* ------------------------------ rung wheel -------------------------------- */
+/** Fixed wheel-item width. The container pads `calc(50% - ITEM_W/2)` on both
+ *  ends, so item i sits dead-centre exactly at scrollLeft = i * ITEM_W —
+ *  which is what makes the scroll→selection arithmetic a one-liner. */
+const WHEEL_ITEM_W = 58;
+
+/**
+ * The roller wheel (owner ask 2026-08-30): strikes roll left/right with
+ * scroll-snap; the CENTERED strike is the selection, and the readout under
+ * the wheel shows that rung's mode@price, sim value and net edge, with the
+ * Place button. Opens centred on the best non-tail edge, so the wheel's
+ * resting position is already the most interesting strike.
+ */
+function RungWheel({ rungs, onPlace }: {
+  rungs: Suggestion[];
+  onPlace: (r: Suggestion) => void;
+}) {
+  const bestIdx = useMemo(() => {
+    let bi = 0, be = -Infinity;
+    rungs.forEach((r, i) => {
+      if (!r.tail && r.edge > be) { be = r.edge; bi = i; }
+    });
+    return be === -Infinity ? Math.floor(rungs.length / 2) : bi;
+  }, [rungs]);
+  const [sel, setSel] = useState(bestIdx);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Centre the best rung on mount (instant, not smooth — it is the wheel's
+  // resting position, not an animation).
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollLeft = bestIdx * WHEEL_ITEM_W;
+    setSel(bestIdx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bestIdx, rungs.length]);
+
+  const onScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    const i = Math.min(rungs.length - 1,
+      Math.max(0, Math.round(el.scrollLeft / WHEEL_ITEM_W)));
+    if (i !== sel) setSel(i);
+  };
+  const spinTo = (i: number) =>
+    ref.current?.scrollTo({ left: i * WHEEL_ITEM_W, behavior: "smooth" });
+
+  const r = rungs[Math.min(sel, rungs.length - 1)];
+  return (
+    <div style={{ display: "grid", gap: 4 }}>
+      <div
+        ref={ref}
+        className="rung-wheel"
+        onScroll={onScroll}
+        role="listbox"
+        aria-label="strike values"
+        style={{
+          display: "flex", overflowX: "auto",
+          scrollSnapType: "x mandatory",
+          padding: `2px calc(50% - ${WHEEL_ITEM_W / 2}px)`,
+        }}
+      >
+        {rungs.map((x, i) => (
+          <button
+            key={x.key} type="button" role="option" aria-selected={i === sel}
+            onClick={() => spinTo(i)}
+            style={{
+              flex: "none", width: WHEEL_ITEM_W, scrollSnapAlign: "center",
+              background: "none", border: "none", cursor: "pointer",
+              padding: "2px 0", display: "grid", gap: 2, justifyItems: "center",
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: i === sel ? 800 : 600,
+              fontSize: i === sel ? 13 : 11.5,
+              color: i === sel
+                ? "var(--text)"
+                : x.tail ? "var(--muted)" : "var(--muted)",
+              opacity: i === sel ? 1 : 0.75,
+              transition: "font-size 120ms, opacity 120ms",
+            }}
+          >
+            <span>{x.rungText ?? x.label}</span>
+            {/* The edge hint under every value: where the money is while
+                rolling. Muted for tails — the wheel never colours an edge
+                the model does not stand behind. */}
+            <span aria-hidden="true" style={{
+              width: 18, height: 3, borderRadius: 2,
+              background: x.tail
+                ? "var(--muted)"
+                : x.edge > 0 ? "var(--pos)" : "var(--neg)",
+              opacity: x.tail ? 0.5 : Math.min(1, 0.35 + Math.abs(x.edge) * 3),
+            }} />
+          </button>
+        ))}
+      </div>
+      {r && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
+          justifyContent: "center", flexWrap: "wrap",
+          color: r.tail ? "var(--muted)" : "var(--text)",
+        }}>
+          <ModeChip mode={r.mode} price={r.price} />
+          <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
+          {r.tail && <TailBadge inline />}
+          <span style={{
+            fontWeight: 800, fontVariantNumeric: "tabular-nums",
+            color: r.tail ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
+          }}>
+            {!r.tail && r.edge >= TARGET_EDGE && (
+              <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
+            )}
+            {signed(r.edge)}
+          </span>
+          <button
+            type="button" className="ui-btn"
+            onClick={() => onPlace(r)}
+            style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
+          >
+            Place ${r.outlay.toFixed(0)}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Browse rows for one game, grouped by ladder in the lib's ladder-then-
  *  strike order (already sorted upstream — Map preserves it). */
 function browseLadders(rows: Suggestion[]): Map<string, Suggestion[]> {
@@ -757,39 +881,13 @@ export default function GameBetsPanel({
               <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
                 {ladderHeadline(rungs)}
               </div>
-              {rungs.map((r) => (
-                <div key={r.key} style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  fontSize: 11.5, padding: "1px 0",
-                  color: r.tail ? "var(--muted)" : "var(--text)",
-                }}>
-                  <span style={{ minWidth: 66, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                    {r.rungText ?? r.label}
-                  </span>
-                  <ModeChip mode={r.mode} price={r.price} />
-                  <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
-                  {r.tail && <TailBadge inline />}
-                  <span style={{
-                    marginLeft: "auto", fontWeight: 800, fontVariantNumeric: "tabular-nums",
-                    color: r.tail ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
-                  }}>
-                    {!r.tail && r.edge >= TARGET_EDGE && (
-                      <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
-                    )}
-                    {signed(r.edge)}
-                  </span>
-                  <button
-                    type="button" className="ui-btn"
-                    onClick={() => setSlip({
-                      group: groupLadders([r], unit)[0],
-                      idem: newIdempotencyKey(),
-                    })}
-                    style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
-                  >
-                    Place ${r.outlay.toFixed(0)}
-                  </button>
-                </div>
-              ))}
+              <RungWheel
+                rungs={rungs}
+                onPlace={(r) => setSlip({
+                  group: groupLadders([r], unit)[0],
+                  idem: newIdempotencyKey(),
+                })}
+              />
             </div>
           ))}
         </div>

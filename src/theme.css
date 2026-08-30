@@ -677,6 +677,17 @@ input:focus, select:focus, textarea:focus {
   color: #f0b429;
   flex: none;
 }
+
+/* The rung roller wheel (Bets panel browse): scrollbar hidden — the wheel IS
+   the scroll affordance — and the ends fade so it reads as a dial, not a
+   clipped list. */
+.rung-wheel {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+}
+.rung-wheel::-webkit-scrollbar { display: none; }
 .edge-row__t2 {
   display: block;
   font-size: 9.5px;
