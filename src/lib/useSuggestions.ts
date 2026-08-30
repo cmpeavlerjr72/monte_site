@@ -29,7 +29,7 @@ import {
   buildSuggestions, gameCandidates, groupLadders, heldTickerSet,
   statCandidates, pregameVerdict,
   type Candidate, type FeeParams, type LadderGroup, type PregameVerdict,
-  type Suppressed,
+  type Suggestion, type Suppressed,
 } from "./suggestedBets";
 // One mapping, three consumers: this compute, the portal's held-position
 // pricing, and the panel's "see projection" jump (see teamStatMarkets.ts).
@@ -104,6 +104,9 @@ export type Suggestions = {
   /** Distinct MARKETS held out by the tail band (slate-wide footer number). */
   tailMarkets: number;
   suppressed: Suppressed[];
+  /** Card key -> every priced rung, uncapped (the full-ladder browse). Not
+   *  filtered, not gated on a game having picked rows. */
+  browseBySlug: Map<string, Suggestion[]>;
   computedAt: Date;
   pregameCount: number;
   blindCount: number;
@@ -139,7 +142,7 @@ export function useSuggestions({
   modeFilter, typeFilter, showTails, sort,
 }: SuggestionsInput): Suggestions {
   const {
-    rows, tailRows, tailMarkets, suppressed, computedAt, pregameCount,
+    rows, tailRows, tailMarkets, suppressed, browse, computedAt, pregameCount,
     blindCount, verdicts,
   } = useMemo(() => {
     const held = heldTickerSet(portal?.positions, portal?.orders);
@@ -216,6 +219,17 @@ export function useSuggestions({
   // Selection and sizing already happened above; none of this touches either,
   // so a filter can never change what a surviving row would cost.
   const allGroups = useMemo(() => groupLadders(rows, unit), [rows, unit]);
+  /** Card key -> every priced rung (browse). Independent of the filters and
+   *  of whether a game produced any PICKED row — a game with zero selections
+   *  still browses. */
+  const browseBySlug = useMemo(() => {
+    const m = new Map<string, Suggestion[]>();
+    for (const r of browse) {
+      const arr = m.get(r.slug);
+      if (arr) arr.push(r); else m.set(r.slug, [r]);
+    }
+    return m;
+  }, [browse]);
   // The tail band's held-out markets, grouped the same way but kept in their
   // OWN list: they are appended under a game's real suggestions when the
   // toggle is on, and never sorted among them.
@@ -297,6 +311,7 @@ export function useSuggestions({
 
   return {
     ...grouped,
+    browseBySlug,
     pregameBySlug: verdicts,
     tailMarkets,
     suppressed,

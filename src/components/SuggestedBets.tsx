@@ -100,7 +100,7 @@
 
 import { useState } from "react";
 import {
-  orderFee, timingWords,
+  groupLadders, orderFee, timingWords,
   MIN_MAKER_EDGE, TAKE_THRESHOLD, TAKE_THRESHOLD_LATE, TAKE_THRESHOLD_NEAR,
   TAIL_HI, TAIL_LO,
   type FeeParams, type LadderGroup, type Suggestion,
@@ -554,13 +554,34 @@ function LadderRows({
  * happens here: the ladders, the sizing, the fee itemisation and the confirm
  * slip. The index above only ranks.
  */
+/** Browse rows for one game, grouped by ladder in the lib's ladder-then-
+ *  strike order (already sorted upstream — Map preserves it). */
+function browseLadders(rows: Suggestion[]): Map<string, Suggestion[]> {
+  const m = new Map<string, Suggestion[]>();
+  for (const r of rows) {
+    const arr = m.get(r.ladder);
+    if (arr) arr.push(r); else m.set(r.ladder, [r]);
+  }
+  return m;
+}
+
+/** "AUB spread" / "total" — one header per browsed ladder, from its rungs. */
+function ladderHeadline(rungs: Suggestion[]): string {
+  const r = rungs[0];
+  return `${r.team} ${r.statText}`.replace(/\s+/g, " ").trim() || r.label;
+}
+
 export default function GameBetsPanel({
-  section, verdict, hiddenByFilter, tailCount, unit, token, feeParams,
+  section, browse, verdict, hiddenByFilter, tailCount, unit, token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
   showTails, onShowTails, onProject,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
+  /** EVERY priced rung on this game (full-ladder browse), uncapped by the
+   *  picker — owner ask 2026-08-30: scroll the whole spread/total ladder and
+   *  see the edge at each strike, not just the picked rungs. */
+  browse: Suggestion[];
   /** Why this game is (or is not) suggestible — the empty state's reason. */
   verdict: PregameVerdict | undefined;
   /** Ladders this game HAS that the current filters are hiding. */
@@ -587,6 +608,9 @@ export default function GameBetsPanel({
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
    *  Confirm replays server-side instead of placing twice. */
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
+  /** The full-ladder browse, collapsed by default — the picked rows stay the
+   *  headline; this is the walk-the-ladder view behind one press. */
+  const [showBrowse, setShowBrowse] = useState(false);
 
   const groups = section?.groups ?? [];
   const tailGroups = section?.tailGroups ?? [];
@@ -709,6 +733,65 @@ export default function GameBetsPanel({
           >
             {showTails ? "Hide tails" : "Show tails"}
           </button>
+        </div>
+      )}
+
+      {/* FULL-LADDER BROWSE (owner ask 2026-08-30, the Auburn −7.5 case).
+          Every priced rung on this game — uncapped by the picker, tails
+          muted — so the reader can walk the whole spread/total ladder and
+          take the strike THEY want. Placement goes through the exact same
+          ConfirmSlip as a picked row: one rung, sized at the full unit. */}
+      {browse.length > 0 && (
+        <div style={{ display: "grid", gap: 5 }}>
+          <button
+            type="button" className="ui-btn"
+            data-on={showBrowse ? "true" : "false"}
+            aria-pressed={showBrowse}
+            onClick={() => setShowBrowse(!showBrowse)}
+            style={{ padding: "2px 9px", fontSize: 10.5, fontWeight: 700, justifySelf: "start" }}
+          >
+            {showBrowse ? "Hide" : "Browse"} all rungs ({browse.length})
+          </button>
+          {showBrowse && [...browseLadders(browse)].map(([lad, rungs]) => (
+            <div key={lad} style={{ display: "grid", gap: 2 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                {ladderHeadline(rungs)}
+              </div>
+              {rungs.map((r) => (
+                <div key={r.key} style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  fontSize: 11.5, padding: "1px 0",
+                  color: r.tail ? "var(--muted)" : "var(--text)",
+                }}>
+                  <span style={{ minWidth: 66, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {r.rungText ?? r.label}
+                  </span>
+                  <ModeChip mode={r.mode} price={r.price} />
+                  <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
+                  {r.tail && <TailBadge inline />}
+                  <span style={{
+                    marginLeft: "auto", fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                    color: r.tail ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
+                  }}>
+                    {!r.tail && r.edge >= TARGET_EDGE && (
+                      <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
+                    )}
+                    {signed(r.edge)}
+                  </span>
+                  <button
+                    type="button" className="ui-btn"
+                    onClick={() => setSlip({
+                      group: groupLadders([r], unit)[0],
+                      idem: newIdempotencyKey(),
+                    })}
+                    style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
+                  >
+                    Place ${r.outlay.toFixed(0)}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       )}
 

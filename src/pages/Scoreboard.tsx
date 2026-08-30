@@ -45,7 +45,7 @@ import {
   type BetTypeFilter, type ModeFilter, type SuggestSort,
 } from "../lib/ownerPrefs";
 import { buildGameYesP, buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
-import type { FeeParams } from "../lib/suggestedBets";
+import type { FeeParams, Suggestion } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
@@ -827,6 +827,9 @@ export type PanelKind =
 /** Stable empty slate for the suggestions hook: a non-owner must never run
  *  the slate-wide compute, and a fresh `[]` each render would defeat its memo. */
 const NO_SUGGEST_GAMES: SuggestGame[] = [];
+/** Stable empty for the browse prop — a fresh [] per render would re-render
+ *  the panel for nothing. */
+const NO_BROWSE_ROWS: Suggestion[] = [];
 
 /** Stable empty card list, for the same memo reason: the "My games" tray is
  *  empty on almost every render and a fresh `[]` would re-render the grid. */
@@ -2849,6 +2852,7 @@ function ScoreboardPage() {
                 betsPanel={openPanel.kind === "bets" && ownerOn ? (
                   <GameBetsPanel
                     section={suggestions.bySlug.get(openCard.key)}
+                    browse={suggestions.browseBySlug.get(openCard.key) ?? NO_BROWSE_ROWS}
                     verdict={suggestions.pregameBySlug.get(openCard.key)}
                     hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}
                     tailCount={suggestions.tailCountBySlug.get(openCard.key) ?? 0}

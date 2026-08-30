@@ -519,6 +519,12 @@ export type BuildResult = {
   /** Distinct MARKETS held out by the tail band. The footer's number. */
   tailMarkets: number;
   suppressed: Suppressed[];
+  /** FULL-LADDER BROWSE (owner ask 2026-08-30, the Auburn −7.5 case): every
+   *  priced market's better side, UNCAPPED by the ladder picker and including
+   *  tail rungs (flagged) — the selection above PICKS, this list SHOWS. Each
+   *  rung is sized at the full unit (a browse placement is one deliberate
+   *  rung, not a ladder split). Sorted ladder-then-strike. */
+  browse: Suggestion[];
 };
 
 /**
@@ -562,34 +568,46 @@ function selectLadders(
     // The unit is a LADDER budget, still split across the ladder's rungs.
     const share = unit / Math.max(picked.length, 1);
     for (const p of picked) {
-      const fp = feeParams[p.series];
-      const maker = p.mode === "REST";
-      // Sizing spends the FEE too: cost = price*count + fee <= share. Solve
-      // by trying the fee-free count first and stepping down while the real
-      // (rounded-up) fee pushes total outlay over budget.
-      let count = Math.max(1, Math.floor(share / Math.max(p.price, 1e-9)));
-      let fee = orderFee(p.price, count, maker, fp);
-      while (count > 1 && p.price * count + fee > share + 1e-9) {
-        count -= 1;
-        fee = orderFee(p.price, count, maker, fp);
-      }
-      rows.push({
-        key: `${p.ticker}|${p.mode}`,
-        ticker: p.ticker, slug: p.slug, ladder, label: p.label,
-        team: p.team, statText: p.statText, strike: p.strike,
-        rungText: p.rungText,
-        mode: p.mode, side: p.side ?? "yes", series: p.series,
-        simP: p.simP, price: p.price,
-        fee, edge: p.edgePer, count,
-        outlay: round2(p.price * count + fee),
-        feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
-        tail,
-        timing: p.timing,
-      });
+      rows.push(sizeSuggestion(p, feeParams, share, tail));
     }
   }
   rows.sort((a, b) => b.edge - a.edge);
   return rows;
+}
+
+/** Size ONE priced rung to a dollar budget and emit the full Suggestion.
+ *  Extracted from `selectLadders` (2026-08-30) so the browse list below sizes
+ *  a rung with the identical arithmetic the picked rows use. */
+function sizeSuggestion(
+  p: Priced,
+  feeParams: Record<string, FeeParams>,
+  share: number,
+  tail: boolean,
+): Suggestion {
+  const fp = feeParams[p.series];
+  const maker = p.mode === "REST";
+  // Sizing spends the FEE too: cost = price*count + fee <= share. Solve
+  // by trying the fee-free count first and stepping down while the real
+  // (rounded-up) fee pushes total outlay over budget.
+  let count = Math.max(1, Math.floor(share / Math.max(p.price, 1e-9)));
+  let fee = orderFee(p.price, count, maker, fp);
+  while (count > 1 && p.price * count + fee > share + 1e-9) {
+    count -= 1;
+    fee = orderFee(p.price, count, maker, fp);
+  }
+  return {
+    key: `${p.ticker}|${p.mode}`,
+    ticker: p.ticker, slug: p.slug, ladder: p.ladder, label: p.label,
+    team: p.team, statText: p.statText, strike: p.strike,
+    rungText: p.rungText,
+    mode: p.mode, side: p.side ?? "yes", series: p.series,
+    simP: p.simP, price: p.price,
+    fee, edge: p.edgePer, count,
+    outlay: round2(p.price * count + fee),
+    feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
+    tail,
+    timing: p.timing,
+  };
 }
 
 export function buildSuggestions(
@@ -691,7 +709,17 @@ export function buildSuggestions(
     seen.add(s.ticker);
     return true;
   });
-  return { rows, tailRows, tailMarkets: tailTickers.size, suppressed: perMarket };
+
+  // Full-ladder browse (see BuildResult). isTail is re-derived per rung —
+  // the core/tails split above is per-list, and a browse row must carry its
+  // OWN flag so the table can mute exactly the untrusted rungs.
+  const browse = bestPerMarket([...core, ...tails])
+    .map((p) => sizeSuggestion(p, feeParams, unit, isTail(p.simP, p.ask ?? 1)))
+    .sort((a, b) => (a.ladder < b.ladder ? -1 : a.ladder > b.ladder ? 1
+      : a.strike - b.strike));
+
+  return { rows, tailRows, tailMarkets: tailTickers.size,
+           suppressed: perMarket, browse };
 }
 
 /** Tickers the owner already has exposure to (positions + resting orders). */
