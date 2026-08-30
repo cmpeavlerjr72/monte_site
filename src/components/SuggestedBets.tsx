@@ -117,6 +117,7 @@ import { STAT_FOR_SERIES } from "../lib/teamStatMarkets";
 // truth for the index counts, the card badges and these rows. This panel only
 // reports a press.
 import type { BetTypeFilter, ModeFilter } from "../lib/ownerPrefs";
+import { readUnit } from "../lib/ownerPrefs";
 import DryRunBadge from "./DryRunBadge";
 import type { SuggestSection } from "../lib/useSuggestions";
 
@@ -857,8 +858,11 @@ export function PlaceStrip({
  * the contracts field is now editable, the slip says which edit the exchange
  * will refuse BEFORE the press instead of after it.
  */
-const CAP_ORDER = 40;
-const CAP_REQUEST = 80;
+// Unit-size-linked since 2026-08-30 (owner ask): the server caps each order
+// at the unit size the request declares (clamped 1..500 server-side, $40
+// fallback when absent) and each slip at 2x that. Mirror the same formula
+// here so the pre-press note names the same number the server will use.
+const capOrderNow = () => Math.min(500, Math.max(1, Math.round(readUnit())));
 const MAX_ORDERS = 8;
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -930,6 +934,8 @@ function ConfirmSlip({
   const anyTake = picked.some((l) => l.r.mode === "TAKE");
   const anyRest = picked.some((l) => l.r.mode === "REST");
   const badCount = picked.some((l) => !l.ok);
+  const CAP_ORDER = capOrderNow();
+  const CAP_REQUEST = CAP_ORDER * 2;
   const overRequest = outlay > CAP_REQUEST + 1e-9;
   const tooMany = picked.length > MAX_ORDERS;
   const canSend = picked.length > 0 && !badCount;
