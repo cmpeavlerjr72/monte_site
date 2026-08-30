@@ -1445,6 +1445,25 @@ function ConfirmSlip({
                     {p.tif_downgraded && (
                       <div>Exchange rejected immediate-or-cancel — placed good-till-cancelled, so any unfilled remainder is RESTING at {cents(p.price_dollars)}. "Cancel my app orders" pulls it.</div>
                     )}
+                    {/* PARTIAL TAKE — loud, not a status footnote. Seen live
+                        2026-08-30 (GT −6.5): 96 asked, 9.72 filled — the whole
+                        book at that price — and the muted status line was all
+                        the slip said. An IOC remainder is GONE, and the reader
+                        must know that without decoding exchange words. */}
+                    {p.mode === "take" && p.state?.filled !== null &&
+                      p.state?.filled !== undefined &&
+                      p.state.filled < p.count - 1e-9 && !p.state.remaining && (
+                      <div style={{
+                        color: "#f0b429", fontWeight: 800, fontSize: 12,
+                        lineHeight: 1.45, marginTop: 2,
+                      }}>
+                        Partial fill: {p.state.filled} of {p.count} — that was
+                        everything resting at {cents(p.price_dollars)}. The rest
+                        was cancelled (immediate-or-cancel), nothing is resting.
+                        The book has likely moved — reopen the rung to take more
+                        at the new price.
+                      </div>
+                    )}
                     {p.state && (
                       <div>
                         status {p.state.status}
