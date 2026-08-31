@@ -3130,6 +3130,7 @@ function ScoreboardPage() {
           note={portalNote}
           connected={portal.status === "ok"}
           ordersLive={portal.payload?.orders_live === true}
+          accountLabel={portal.payload?.account_label}
           unit={unit}
           onUnit={(v) => { setUnit(v); writeUnit(v); }}
           totals={portalBook.totals}

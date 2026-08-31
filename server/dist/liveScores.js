@@ -5,6 +5,7 @@ import fetch from "node-fetch";
 import AbortController from "abort-controller";
 import compression from "compression";
 import crypto from "crypto";
+import webpush from "web-push";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -1095,8 +1096,13 @@ isMirrored = () => false) {
     // Collapse duplicate strikes (defensive: one rung per line).
     return out.filter((r, i) => i === 0 || r.line !== out[i - 1].line);
 }
+/** The account whose key signs PUBLIC market-data calls (rate bucket only —
+ *  the data is account-independent). Declared before kalshiJson and assigned
+ *  when the portal's account registry builds, further down; until then the
+ *  calls simply go unsigned, exactly like a box with no creds at all. */
+let marketSignerAcct = null;
 async function kalshiJson(path, signal) {
-    // Signed whenever the portal's creds exist: authenticated requests draw on
+    // Signed whenever portal creds exist: authenticated requests draw on
     // the API key's rate bucket instead of the shared egress IP's anonymous
     // one. Production incident 2026-08-26: once the portal added signed calls
     // from the same IP, these anonymous market-data calls started 429ing and
@@ -1106,15 +1112,16 @@ async function kalshiJson(path, signal) {
         const headers = {
             accept: "application/json", "user-agent": "monte-site",
         };
-        const key = portalPrivateKey();
-        if (key && PORTAL_KEY_ID) {
+        const acct = marketSignerAcct;
+        const key = acct ? portalPrivateKey(acct) : null;
+        if (key && acct && acct.keyId) {
             const ts = String(Date.now());
             const sig = crypto.sign("sha256", Buffer.from(ts + "GET" + "/trade-api/v2" + path.split("?", 1)[0]), {
                 key,
                 padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
                 saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
             });
-            headers["KALSHI-ACCESS-KEY"] = PORTAL_KEY_ID;
+            headers["KALSHI-ACCESS-KEY"] = acct.keyId;
             headers["KALSHI-ACCESS-SIGNATURE"] = sig.toString("base64");
             headers["KALSHI-ACCESS-TIMESTAMP"] = ts;
         }
@@ -1446,35 +1453,74 @@ app.get("/api/kalshi/cfb", asyncRoute(async (req, res) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const staticDir = path.resolve(__dirname, "../../dist");
-// ============================================================================
-// My-Kalshi portfolio portal (owner-only, token-gated)
-//
-// Read-only resting orders + fills on the NCAAF market families for the
-// OWNER's Kalshi account, so the scoreboard can pin and badge the games the
-// owner has money on. This deliberately amends the older "no credentials
-// anywhere in this repo" stance (user decision 2026-08-26): credentials are
-// still never in CODE — they arrive only through deployment env vars —
-//   KALSHI_API_KEY_ID       the API key id
-//   KALSHI_PRIVATE_KEY_PATH path to the PEM — THE production pattern
-//                           (owner-proven): upload the key as a host
-//                           Secret File and point here, e.g.
-//                           KALSHI_PRIVATE_KEY_PATH=/etc/secrets/kalshi.pem.
-//                           Inline PEMs in env vars mangle newlines.
-//   KALSHI_PRIVATE_KEY      inline PEM fallback ("\n"-escaped)
-//   CFB_PORTAL_PASSWORD     the owner-chosen login password
-// and every one of them missing means the route answers 503, never a stack
-// trace and never an open portal. The token check is timing-safe. This route
-// family is where order entry would eventually live, so the auth gate exists
-// BEFORE any mutating endpoint ever does.
-// ============================================================================
-// The owner's login secret is a PASSWORD OF THEIR CHOOSING (user 2026-08-26:
-// a random token is unusable at login time), set as CFB_PORTAL_PASSWORD.
-// The old CFB_PORTFOLIO_TOKEN name still works as an alias. A human-chosen
-// password is guessable in a way a token is not, so failures rate-limit:
-// 5 consecutive misses lock the route for 60s (single-operator portal — a
+// Login secrets are PASSWORDS OF THE TRADER'S CHOOSING (user 2026-08-26: a
+// random token is unusable at login time). A human-chosen password is
+// guessable in a way a token is not, so failures rate-limit: 5 consecutive
+// misses lock the whole route family for 60s (a handful of humans — a
 // legitimate user never hits that; a script does immediately).
-const PORTAL_SECRET = process.env.CFB_PORTAL_PASSWORD || process.env.CFB_PORTFOLIO_TOKEN || "";
-const PORTAL_KEY_ID = process.env.KALSHI_API_KEY_ID || "";
+function portalBuildAccounts() {
+    const out = [];
+    const baseLive = process.env.CFB_ORDERS_LIVE === "1";
+    const basePw = process.env.CFB_PORTAL_PASSWORD || process.env.CFB_PORTFOLIO_TOKEN || "";
+    if (basePw) {
+        out.push({
+            id: "mp", label: "MVPeav", password: basePw,
+            keyId: process.env.KALSHI_API_KEY_ID || "",
+            pemInline: process.env.KALSHI_PRIVATE_KEY || "",
+            pemPath: process.env.KALSHI_PRIVATE_KEY_PATH || "",
+            ordersLive: baseLive,
+        });
+    }
+    // Suffixed accounts, discovered from their password var — adding one is
+    // env-only, no code edit, same contract as the RFQ account registry.
+    for (const k of Object.keys(process.env).sort()) {
+        const m = k.match(/^CFB_PORTAL_PASSWORD_([A-Z0-9]+)$/);
+        const pw = m ? process.env[k] || "" : "";
+        if (!m || !pw)
+            continue;
+        const sfx = `_${m[1]}`;
+        const live = process.env[`CFB_ORDERS_LIVE${sfx}`];
+        const acct = {
+            id: m[1].toLowerCase(), label: m[1], password: pw,
+            keyId: process.env[`KALSHI_API_KEY_ID${sfx}`] || "",
+            pemInline: process.env[`KALSHI_PRIVATE_KEY${sfx}`] || "",
+            pemPath: process.env[`KALSHI_PRIVATE_KEY_PATH${sfx}`] || "",
+            ordersLive: live === undefined ? baseLive : live === "1",
+        };
+        // A shared password cannot select an account. Refuse to REGISTER the
+        // later one (boot-visible, loud) rather than silently serving whichever
+        // matched first at login time.
+        if (out.some((a) => a.password === acct.password)) {
+            console.error(`[portal] account ${acct.label} DROPPED: its password duplicates an ` +
+                "earlier account's — every portal password must be unique");
+            continue;
+        }
+        out.push(acct);
+    }
+    return out;
+}
+const PORTAL_ACCOUNTS = portalBuildAccounts();
+if (PORTAL_ACCOUNTS.length) {
+    console.log("[portal] accounts registered:", PORTAL_ACCOUNTS.map((a) => `${a.id}${a.ordersLive ? " (orders LIVE)" : " (staged)"}`).join(", "));
+}
+// Public market-data calls sign with the FIRST account that has creds (see
+// kalshiJson) — one rate bucket, account-independent data. Falls back to a
+// creds-only pseudo-account when Kalshi env creds exist WITHOUT a portal
+// password (the pre-portal deployment shape): market-data signing predates
+// the portal and must not stop working because no login is configured. The
+// pseudo-account is NOT in PORTAL_ACCOUNTS — an empty password must never be
+// loggable-into (an empty x-cfb-token would timing-safe-match it).
+marketSignerAcct =
+    PORTAL_ACCOUNTS.find((a) => a.keyId && (a.pemInline || a.pemPath)) ??
+        (process.env.KALSHI_API_KEY_ID
+            ? {
+                id: "mp", label: "MVPeav", password: "",
+                keyId: process.env.KALSHI_API_KEY_ID,
+                pemInline: process.env.KALSHI_PRIVATE_KEY || "",
+                pemPath: process.env.KALSHI_PRIVATE_KEY_PATH || "",
+                ordersLive: false,
+            }
+            : null);
 const PORTAL_MAX_FAILS = 5;
 const PORTAL_LOCK_MS = 60_000;
 let portalFails = 0;
@@ -1486,12 +1532,14 @@ const PORTAL_NCAAF = /^KXNCAAF/;
 const PORTAL_MVE = /^KXMVE/;
 const portalKeep = (t) => PORTAL_NCAAF.test(t) || PORTAL_MVE.test(t);
 /** ticker -> {legs, title}. Permanent: a combo's legs never change. A fetch
- *  error stays UNcached so the next poll retries. */
+ *  error stays UNcached so the next poll retries. The cache is GLOBAL across
+ *  accounts — a market's legs are facts about the market, not the holder;
+ *  only the fetch is signed, with whichever account asked first. */
 const portalMveCache = new Map();
-async function portalMveInfo(ticker) {
+async function portalMveInfo(acct, ticker) {
     if (portalMveCache.has(ticker))
         return portalMveCache.get(ticker) ?? null;
-    const body = await portalGet(`/markets/${encodeURIComponent(ticker)}`);
+    const body = await portalGet(acct, `/markets/${encodeURIComponent(ticker)}`);
     const m = body?.market || body || {};
     const legs = (m.mve_selected_legs || [])
         .map((l) => ({
@@ -1507,7 +1555,7 @@ async function portalMveInfo(ticker) {
 }
 /** Pass combo rows through leg resolution; drop combos with no NCAAF leg.
  *  A resolution FAILURE also drops the row for this poll (retried next). */
-async function portalResolveMve(rows) {
+async function portalResolveMve(acct, rows) {
     const out = [];
     for (const r of rows) {
         if (!PORTAL_MVE.test(r.ticker)) {
@@ -1515,7 +1563,7 @@ async function portalResolveMve(rows) {
             continue;
         }
         try {
-            const info = await portalMveInfo(r.ticker);
+            const info = await portalMveInfo(acct, r.ticker);
             if (info && info.legs.some((l) => PORTAL_NCAAF.test(l.market_ticker))) {
                 out.push({ ...r, legs: info.legs, title: info.title });
             }
@@ -1526,30 +1574,28 @@ async function portalResolveMve(rows) {
     }
     return out;
 }
-/** Lazy, cached; null = tried and unavailable (missing/bad env). */
-let portalKeyCache;
-function portalPrivateKey() {
-    if (portalKeyCache !== undefined)
-        return portalKeyCache;
+/** Lazy per-account key load; null = tried and unavailable (missing/bad env). */
+function portalPrivateKey(acct) {
+    if (acct.key !== undefined)
+        return acct.key;
     try {
-        const inline = process.env.KALSHI_PRIVATE_KEY || "";
-        const p = process.env.KALSHI_PRIVATE_KEY_PATH || "";
-        const pem = inline.includes("BEGIN")
-            ? inline.replace(/\\n/g, "\n")
-            : p ? fs.readFileSync(p, "utf8") : "";
-        portalKeyCache = pem ? crypto.createPrivateKey(pem) : null;
+        const pem = acct.pemInline.includes("BEGIN")
+            ? acct.pemInline.replace(/\\n/g, "\n")
+            : acct.pemPath ? fs.readFileSync(acct.pemPath, "utf8") : "";
+        acct.key = pem ? crypto.createPrivateKey(pem) : null;
     }
     catch (err) {
-        console.error("[portal] private key load failed:", err?.message ?? err);
-        portalKeyCache = null;
+        console.error(`[portal] private key load failed (${acct.id}):`, err?.message ?? err);
+        acct.key = null;
     }
-    return portalKeyCache;
+    return acct.key;
 }
 /** Signed GET against Kalshi's portfolio API (RSA-PSS-SHA256, query
- *  stripped from the signed path — same scheme as the RFQ dashboard). */
-async function portalGet(apiPath) {
-    const key = portalPrivateKey();
-    if (!key || !PORTAL_KEY_ID)
+ *  stripped from the signed path — same scheme as the RFQ dashboard),
+ *  as the given account. */
+async function portalGet(acct, apiPath) {
+    const key = portalPrivateKey(acct);
+    if (!key || !acct.keyId)
         throw new Error("portal_credentials_missing");
     for (let attempt = 0;; attempt++) {
         const ts = String(Date.now());
@@ -1561,7 +1607,7 @@ async function portalGet(apiPath) {
         });
         const r = await fetchWithTimeout(`${KALSHI_BASE}${apiPath}`, {
             headers: {
-                "KALSHI-ACCESS-KEY": PORTAL_KEY_ID,
+                "KALSHI-ACCESS-KEY": acct.keyId,
                 "KALSHI-ACCESS-SIGNATURE": sig.toString("base64"),
                 "KALSHI-ACCESS-TIMESTAMP": ts,
                 accept: "application/json",
@@ -1584,12 +1630,12 @@ const portalNum = (v) => {
     const n = parseFloat(String(v));
     return Number.isFinite(n) ? n : null;
 };
-async function portalOrders() {
+async function portalOrders(acct) {
     const out = [];
     let cursor = "";
     // Cursor ALWAYS drained (kalshi-rfq's 2026-07-22 page-1-only incident).
     for (let page = 0; page < 10; page++) {
-        const body = await portalGet("/portfolio/orders?status=resting&limit=200" +
+        const body = await portalGet(acct, "/portfolio/orders?status=resting&limit=200" +
             (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
         for (const o of body?.orders || []) {
             const t = String(o.ticker || "");
@@ -1612,13 +1658,13 @@ async function portalOrders() {
         if (!cursor)
             break;
     }
-    return portalResolveMve(out);
+    return portalResolveMve(acct, out);
 }
-async function portalFills() {
+async function portalFills(acct) {
     const out = [];
     let cursor = "";
     for (let page = 0; page < 3; page++) {
-        const body = await portalGet("/portfolio/fills?limit=200" +
+        const body = await portalGet(acct, "/portfolio/fills?limit=200" +
             (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
         for (const f of body?.fills || []) {
             const t = String(f.ticker || f.market_ticker || "");
@@ -1642,11 +1688,11 @@ async function portalFills() {
     }
     return out;
 }
-async function portalPositions() {
+async function portalPositions(acct) {
     const out = [];
     let cursor = "";
     for (let page = 0; page < 5; page++) {
-        const body = await portalGet("/portfolio/positions?limit=200" +
+        const body = await portalGet(acct, "/portfolio/positions?limit=200" +
             (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
         for (const p of body?.market_positions || body?.positions || []) {
             const t = String(p.ticker || "");
@@ -1669,7 +1715,7 @@ async function portalPositions() {
         if (!cursor)
             break;
     }
-    return portalResolveMve(out);
+    return portalResolveMve(acct, out);
 }
 /** Settled events are immutable, so titles cache for the process lifetime. */
 const settledTitleCache = new Map();
@@ -1704,11 +1750,11 @@ async function settledEventTitle(eventTicker) {
  * reached back ~2 months and every NCAAF row sat in the first 13. A slate
  * record only ever needs the recent end.
  */
-async function portalSettlements() {
+async function portalSettlements(acct) {
     const out = [];
     let cursor = "";
     for (let page = 0; page < 2; page++) {
-        const body = await portalGet("/portfolio/settlements?limit=200" +
+        const body = await portalGet(acct, "/portfolio/settlements?limit=200" +
             (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
         for (const s of body?.settlements || []) {
             const t = String(s.ticker || "");
@@ -1752,12 +1798,14 @@ async function portalSettlements() {
     }
     return out;
 }
-let portalCache = null;
+/** Per-account payload caches — one account's poll must never serve another
+ *  account's book. Keyed by account id. */
+const portalCaches = new Map();
 /** Settled money changes only when a market settles, so this cache is longer
  *  than the book's 20s: the client rides the SAME 30s portal poll and a
  *  freshly settled game shows up within a poll or two. */
 const PORTAL_SETTLE_TTL_MS = 60_000;
-let portalSettleCache = null;
+const portalSettleCaches = new Map();
 /**
  * THE auth gate for the whole portal family — reads AND writes.
  *
@@ -1767,26 +1815,39 @@ let portalSettleCache = null;
  * this family calls it first, before parsing a body and before touching a
  * credential.
  *
- * Returns true when the caller is the owner. When it returns false it has
- * ALREADY written the response — the caller must simply return.
+ * Returns THE ACCOUNT the presented password names — the password IS the
+ * account selector (see the registry above), and everything downstream of the
+ * gate acts as that account and no other. Returns null when the caller is not
+ * authorised, and has then ALREADY written the response — the caller must
+ * simply return.
+ *
+ * The comparison runs against EVERY registered password with no early exit,
+ * so a miss takes the same time whichever passwords exist. The failure
+ * lockout is shared across accounts: one counter, one lock — a brute-force
+ * script gets no second lane.
  */
 function portalGate(req, res) {
     // Personal financial data: never cacheable by intermediaries.
     res.set("Cache-Control", "no-store");
-    if (!PORTAL_SECRET) {
+    if (!PORTAL_ACCOUNTS.length) {
         res.status(503).json({ error: "portal_not_configured" });
-        return false;
+        return null;
     }
     if (Date.now() < portalLockUntil) {
         res.status(429).json({
             error: "locked",
             retry_in_s: Math.ceil((portalLockUntil - Date.now()) / 1000),
         });
-        return false;
+        return null;
     }
     const got = Buffer.from(String(req.header("x-cfb-token") || ""), "utf8");
-    const want = Buffer.from(PORTAL_SECRET, "utf8");
-    if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) {
+    let hit = null;
+    for (const a of PORTAL_ACCOUNTS) {
+        const want = Buffer.from(a.password, "utf8");
+        if (got.length === want.length && crypto.timingSafeEqual(got, want))
+            hit = a;
+    }
+    if (!hit) {
         portalFails++;
         if (portalFails >= PORTAL_MAX_FAILS) {
             portalLockUntil = Date.now() + PORTAL_LOCK_MS;
@@ -1794,20 +1855,22 @@ function portalGate(req, res) {
             console.warn("[portal] too many failed logins — locked 60s");
         }
         res.status(401).json({ error: "bad_password" });
-        return false;
+        return null;
     }
     portalFails = 0;
-    return true;
+    return hit;
 }
 app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
-    if (!portalGate(req, res))
+    const acct = portalGate(req, res);
+    if (!acct)
         return;
-    if (portalCache && Date.now() - portalCache.at < PORTAL_TTL_MS) {
-        res.json(portalCache.payload);
+    const cached = portalCaches.get(acct.id);
+    if (cached && Date.now() - cached.at < PORTAL_TTL_MS) {
+        res.json(cached.payload);
         return;
     }
     const [orders, fills, positions] = await Promise.all([
-        portalOrders(), portalFills(), portalPositions(),
+        portalOrders(acct), portalFills(acct), portalPositions(acct),
     ]);
     // Live book per entry ticker, so the client can price EV off Kalshi NOW
     // (refreshes with every payload build, i.e. every page load past the TTL).
@@ -1815,7 +1878,7 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
     const books = new Map();
     await Promise.all(tickers.map(async (t) => {
         try {
-            const body = await portalGet(`/markets/${encodeURIComponent(t)}`);
+            const body = await portalGet(acct, `/markets/${encodeURIComponent(t)}`);
             const m = body?.market || {};
             books.set(t, {
                 bid: portalNum(m.yes_bid_dollars),
@@ -1833,9 +1896,10 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
     }
     const payload = {
         fetched_at: new Date().toISOString(), orders, fills, positions,
-        orders_live: ORDERS_LIVE,
+        orders_live: acct.ordersLive,
+        account_id: acct.id, account_label: acct.label,
     };
-    portalCache = { at: Date.now(), payload };
+    portalCaches.set(acct.id, { at: Date.now(), payload });
     res.json(payload);
 }));
 /**
@@ -1847,23 +1911,26 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req, res) => {
  * no new timer either.
  */
 app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req, res) => {
-    if (!portalGate(req, res))
+    const acct = portalGate(req, res);
+    if (!acct)
         return;
-    if (portalSettleCache && Date.now() - portalSettleCache.at < PORTAL_SETTLE_TTL_MS) {
-        res.json(portalSettleCache.payload);
+    const cached = portalSettleCaches.get(acct.id);
+    if (cached && Date.now() - cached.at < PORTAL_SETTLE_TTL_MS) {
+        res.json(cached.payload);
         return;
     }
-    const settlements = await portalSettlements();
+    const settlements = await portalSettlements(acct);
     // ATTRIBUTION. The account is shared with the maker pipeline, so tag the
-    // markets this app actually placed on. Read here, on the settlements cache
-    // MISS, so the disk is touched at most once per PORTAL_SETTLE_TTL_MS and the
-    // tags refresh on exactly the same tick as the money they annotate.
-    const mine = appPlacedTickers();
+    // markets this app actually placed on — per ACCOUNT, or one trader's click
+    // would tag another trader's settled row. Read here, on the settlements
+    // cache MISS, so the disk is touched at most once per PORTAL_SETTLE_TTL_MS
+    // and the tags refresh on exactly the same tick as the money they annotate.
+    const mine = appPlacedTickers(acct);
     if (mine)
         for (const s of settlements)
             s.app = mine.has(s.ticker);
     const payload = { fetched_at: new Date().toISOString(), settlements };
-    portalSettleCache = { at: Date.now(), payload };
+    portalSettleCaches.set(acct.id, { at: Date.now(), payload });
     res.json(payload);
 }));
 // ============================================================================
@@ -1919,36 +1986,52 @@ app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req, res) => {
 //   1. Auth: portalGate (timing-safe password, 5 misses = 60s lockout).
 //   2. NCAAF tickers only — the app cannot reach any other market.
 //   3. Mode-derived post_only/TIF; NEVER a market order. Strict allowlist.
-//   4. Per-order cost cap $40 (price x count + fee).
-//   5. Per-request cost cap $80, at most 8 orders.
-//   6. Rolling 24h cost cap $400.
-//   7. Live book re-checked per ticker immediately before signing:
+//   4. Per-order cost cap = the owner's unit size, sent as `unit_size` on
+//      each request (fallback $40 when absent), HARD-CLAMPED server-side to
+//      $500 — the client picks the bar inside the rail, never past it.
+//   5. Per-request cost cap = 2x the per-order cap, at most 8 orders.
+//   6. Live book re-checked per ticker immediately before signing:
 //        rest -> reject if the price would CROSS the standing ask
 //        take -> reject if the standing ask is WORSE than the confirmed price
 //      Either rejection returns the fresh book so the client can say
 //      "book moved: ask now 0.52" and the human can reconfirm.
-//   8. Idempotency: a replayed key returns the ORIGINAL result, never a
+//   7. Idempotency: a replayed key returns the ORIGINAL result, never a
 //      second placement. A key already in flight gets 409.
-//   9. client_order_id = "cfbapp-<key>-<i>" so these orders are attributable
+//   8. client_order_id = "cfbapp-<key>-<i>" so these orders are attributable
 //      and the maker pipeline's status tools can skip them.
-//  10. Every request and response appended to a JSONL audit log AND written to
+//   9. Every request and response appended to a JSONL audit log AND written to
 //      the console (Render's disk is ephemeral; the log stream is not).
-//  11. DRY-RUN STAGED: without CFB_ORDERS_LIVE=1 everything above runs and
+//  10. DRY-RUN STAGED: without CFB_ORDERS_LIVE=1 everything above runs and
 //      nothing is submitted. Going live is one env var in Render, no deploy.
 //
-// The 24h ledger is IN-MEMORY. A Render restart (deploy, idle spin-down, OOM)
-// resets it to zero. That is stated plainly rather than hidden: it is a
-// throttle against a runaway loop within one process lifetime, not an
-// accounting system. The exchange-side balance is the real limit.
+// The rolling 24h cost cap ($400) was REMOVED 2026-08-29 at the owner's
+// direction — they hit it live on game day. The in-memory spend ledger stays
+// for the spent_24h line in responses and the audit trail, but nothing is
+// enforced on it: the per-order/per-slip caps and the exchange-side balance
+// are the limits. (The ledger was always process-lifetime only — a Render
+// restart resets it — so it was a runaway-loop throttle, not accounting.)
 // ============================================================================
-/** The one switch. NEVER set this from code, a script, or a test. */
-const ORDERS_LIVE = process.env.CFB_ORDERS_LIVE === "1";
+// The live/staged switch is PER ACCOUNT (acct.ordersLive, from
+// CFB_ORDERS_LIVE / CFB_ORDERS_LIVE_<SUFFIX> — see the account registry).
+// NEVER set those from code, a script, or a test. A new trader's account can
+// stay staged while an established one trades.
 /** client_order_id prefix — the attribution tag. */
 const ORDERS_TAG = "cfbapp-";
 const ORDERS_MAX_ORDERS = 8;
-const ORDERS_CAP_ORDER = 40;
-const ORDERS_CAP_REQUEST = 80;
-const ORDERS_CAP_24H = 400;
+/** Fallback per-order cost cap when the request names no unit_size. */
+const ORDERS_CAP_ORDER_DEFAULT = 40;
+/** Absolute per-order ceiling — mirrors the client unit slider's UNIT_MAX
+ *  (ownerPrefs.ts). Owner ask 2026-08-30: the per-order cap TRACKS the unit
+ *  size set in the app ("if I raise my unit to $50 it allows up to that"),
+ *  so `unit_size` rides each order request. This ceiling and the 2x slip
+ *  multiple are what the client still cannot relax. */
+const ORDERS_CAP_ORDER_MAX = 500;
+function ordersCapOrder(unit) {
+    const u = Number(unit);
+    if (!Number.isFinite(u) || u <= 0)
+        return ORDERS_CAP_ORDER_DEFAULT;
+    return Math.min(ORDERS_CAP_ORDER_MAX, Math.max(1, Math.round(u)));
+}
 const ORDERS_IDEM_TTL_MS = 24 * 60 * 60 * 1000;
 const ORDERS_IDEM_MAX = 500;
 /** NCAAF families only. This is what stops a malformed or hostile body from
@@ -1957,8 +2040,10 @@ const ORDERS_TICKER_RE = /^KXNCAAF[A-Z0-9]{1,20}(-[A-Z0-9]{1,32}){1,3}$/;
 const ORDERS_KEY_RE = /^[A-Za-z0-9_-]{8,64}$/;
 /** Disk is ephemeral on Render — the console line is the durable copy. */
 const ORDERS_AUDIT_PATH = process.env.CFB_ORDERS_AUDIT_PATH || path.join(os.tmpdir(), "cfb_orders_audit.jsonl");
-function ordersAudit(rec) {
-    const line = JSON.stringify({ at: new Date().toISOString(), ...rec });
+/** Every audit line carries the ACCOUNT it happened on — attribution
+ *  (`appPlacedTickers`) and any later reconciliation read it back. */
+function ordersAudit(acct, rec) {
+    const line = JSON.stringify({ at: new Date().toISOString(), account: acct.id, ...rec });
     console.log("[orders]", line);
     try {
         fs.appendFileSync(ORDERS_AUDIT_PATH, line + "\n");
@@ -1968,9 +2053,10 @@ function ordersAudit(rec) {
     }
 }
 /** Audit re-read at most this often. The settlements cache is the same 60s,
- *  so in practice the disk is touched once per settlements refresh. */
+ *  so in practice the disk is touched once per settlements refresh. Keyed by
+ *  account id — attribution is per account. */
 const ORDERS_AUDIT_TTL_MS = 60_000;
-let appTickerCache = null;
+const appTickerCaches = new Map();
 /**
  * Markets THIS APP has successfully placed an order on — the attribution
  * source for the settled record.
@@ -1996,9 +2082,10 @@ let appTickerCache = null;
  * every settled bet on the account "auto" in that state would be a confident
  * lie. The caller leaves `app` undefined and the UI shows no tags at all.
  */
-function appPlacedTickers() {
-    if (appTickerCache && Date.now() - appTickerCache.at < ORDERS_AUDIT_TTL_MS) {
-        return appTickerCache.tickers;
+function appPlacedTickers(acct) {
+    const cached = appTickerCaches.get(acct.id);
+    if (cached && Date.now() - cached.at < ORDERS_AUDIT_TTL_MS) {
+        return cached.tickers;
     }
     let tickers = null;
     try {
@@ -2015,6 +2102,11 @@ function appPlacedTickers() {
             } // torn tail line
             if (rec?.event !== "placed")
                 continue;
+            // Account filter: lines from before multi-account carry no account
+            // field and were all the base account's — counting them as "mp" keeps
+            // the owner's existing attribution instead of dropping it.
+            if (String(rec.account || "mp") !== acct.id)
+                continue;
             const t = String(rec.ticker || "");
             if (t)
                 set.add(t);
@@ -2024,7 +2116,7 @@ function appPlacedTickers() {
     catch {
         tickers = null; // no log on this box / this process life — see above
     }
-    appTickerCache = { at: Date.now(), tickers };
+    appTickerCaches.set(acct.id, { at: Date.now(), tickers });
     return tickers;
 }
 /** Fee as the exchange charges it: rounded UP to the cent, per order.
@@ -2038,15 +2130,20 @@ function ordersFee(price, count, mode) {
     return Math.ceil(raw * 100) / 100;
 }
 const ordersSpend = [];
-/** Dollars committed in the last 24h of THIS process's life (see caveat above). */
-function ordersSpent24h() {
+/** Dollars committed in the last 24h of THIS process's life (see caveat
+ *  above), for ONE account — the spent_24h line a trader sees is their own. */
+function ordersSpent24h(acct) {
     const cut = Date.now() - ORDERS_IDEM_TTL_MS;
     while (ordersSpend.length && ordersSpend[0].at < cut)
         ordersSpend.shift();
-    return ordersSpend.reduce((s, e) => s + e.cost, 0);
+    return ordersSpend.reduce((s, e) => e.account === acct.id ? s + e.cost : s, 0);
 }
+// Idempotency keys are CLIENT-generated, so the maps are keyed by
+// "<account>:<key>" — one trader's replayed key must never return (or block
+// on) another trader's result. See ordersIdemScope.
 const ordersIdem = new Map();
 const ordersInflight = new Set();
+const ordersIdemScope = (acct, key) => `${acct.id}:${key}`;
 function ordersIdemGet(key) {
     const cut = Date.now() - ORDERS_IDEM_TTL_MS;
     for (const [k, v] of ordersIdem)
@@ -2066,9 +2163,9 @@ function ordersIdemPut(key, result) {
 /** Signed request WITH a body. Writes are NEVER retried on a network error or
  *  a 5xx: the order may already have landed, and a blind retry is how you get
  *  two (kalshi_client_min.py::_req carries the same rule). */
-async function portalSend(method, apiPath, body) {
-    const key = portalPrivateKey();
-    if (!key || !PORTAL_KEY_ID)
+async function portalSend(acct, method, apiPath, body) {
+    const key = portalPrivateKey(acct);
+    if (!key || !acct.keyId)
         throw new Error("portal_credentials_missing");
     const ts = String(Date.now());
     // Same scheme as portalGet: the signed path EXCLUDES the query string.
@@ -2081,7 +2178,7 @@ async function portalSend(method, apiPath, body) {
     const r = await fetchWithTimeout(`${KALSHI_BASE}${apiPath}`, {
         method,
         headers: {
-            "KALSHI-ACCESS-KEY": PORTAL_KEY_ID,
+            "KALSHI-ACCESS-KEY": acct.keyId,
             "KALSHI-ACCESS-SIGNATURE": sig.toString("base64"),
             "KALSHI-ACCESS-TIMESTAMP": ts,
             accept: "application/json",
@@ -2148,11 +2245,12 @@ function ordersForbidden(obj, where) {
     return null;
 }
 app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
-    if (!portalGate(req, res))
+    const acct = portalGate(req, res);
+    if (!acct)
         return;
     const body = (req.body ?? {});
     const bad = (status, payload) => {
-        ordersAudit({ event: "reject", status, ...payload });
+        ordersAudit(acct, { event: "reject", status, ...payload });
         res.status(status).json(payload);
     };
     const forbidden = ordersForbidden(body, "request");
@@ -2161,28 +2259,34 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
         return;
     }
     for (const k of Object.keys(body)) {
-        if (k !== "idempotency_key" && k !== "orders") {
+        if (k !== "idempotency_key" && k !== "orders" && k !== "unit_size") {
             bad(400, { error: "unexpected_field", detail: `request: "${k}"` });
             return;
         }
     }
+    // Unit-size-linked caps (see ordersCapOrder). Computed once per request so
+    // every order in the slip and the slip total use the same bar.
+    const capOrder = ordersCapOrder(body.unit_size);
+    const capRequest = capOrder * 2;
     const key = String(body.idempotency_key ?? "");
     if (!ORDERS_KEY_RE.test(key)) {
         bad(400, { error: "bad_idempotency_key", detail: "8-64 chars of [A-Za-z0-9_-]" });
         return;
     }
     // Idempotency BEFORE anything else that costs money or a network call.
-    const replay = ordersIdemGet(key);
+    // Scoped to the account: keys are client-generated.
+    const ikey = ordersIdemScope(acct, key);
+    const replay = ordersIdemGet(ikey);
     if (replay) {
-        ordersAudit({ event: "replay", key, status: replay.status });
+        ordersAudit(acct, { event: "replay", key, status: replay.status });
         res.status(replay.status).json({ ...replay.body, replayed: true });
         return;
     }
-    if (ordersInflight.has(key)) {
+    if (ordersInflight.has(ikey)) {
         res.status(409).json({ error: "in_flight", idempotency_key: key });
         return;
     }
-    ordersInflight.add(key);
+    ordersInflight.add(ikey);
     try {
         const raw = body.orders;
         if (!Array.isArray(raw) || raw.length === 0) {
@@ -2236,10 +2340,10 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
             }
             const fee = ordersFee(price, count, mode);
             const cost = Math.round((price * count + fee) * 100) / 100;
-            if (cost > ORDERS_CAP_ORDER + 1e-9) {
+            if (cost > capOrder + 1e-9) {
                 bad(400, {
                     error: "cap_order", detail: `orders[${i}] costs $${cost.toFixed(2)}`,
-                    cap: ORDERS_CAP_ORDER,
+                    cap: capOrder,
                 });
                 return;
             }
@@ -2253,19 +2357,11 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
             });
         }
         const total = Math.round(wire.reduce((s, w) => s + w.cost, 0) * 100) / 100;
-        if (total > ORDERS_CAP_REQUEST + 1e-9) {
-            bad(400, { error: "cap_request", total, cap: ORDERS_CAP_REQUEST });
+        if (total > capRequest + 1e-9) {
+            bad(400, { error: "cap_request", total, cap: capRequest });
             return;
         }
-        const spent = ordersSpent24h();
-        if (spent + total > ORDERS_CAP_24H + 1e-9) {
-            bad(400, {
-                error: "cap_24h", total, spent_24h: Math.round(spent * 100) / 100,
-                cap: ORDERS_CAP_24H,
-                note: "in-memory ledger; a server restart resets it",
-            });
-            return;
-        }
+        const spent = ordersSpent24h(acct); // reported in totals; no cap enforced
         // --- live book re-check, immediately before signing anything ---------
         const tickers = [...new Set(wire.map((w) => w.ticker))];
         const books = new Map();
@@ -2310,11 +2406,11 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
         }
         if (rejected.length) {
             const payload = {
-                error: "book_moved", dry_run: !ORDERS_LIVE, checked_at: checkedAt,
+                error: "book_moved", dry_run: !acct.ordersLive, checked_at: checkedAt,
                 rejected, placed: [], would_place: [],
             };
-            ordersAudit({ event: "book_reject", key, rejected });
-            ordersIdemPut(key, { status: 409, body: payload });
+            ordersAudit(acct, { event: "book_reject", key, rejected });
+            ordersIdemPut(ikey, { status: 409, body: payload });
             res.status(409).json(payload);
             return;
         }
@@ -2324,27 +2420,24 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
             post_only: w.mode === "rest",
             time_in_force: w.mode === "rest" ? "good_till_canceled" : "immediate_or_cancel",
         }));
-        ordersAudit({
-            event: "request", key, live: ORDERS_LIVE, total,
+        ordersAudit(acct, {
+            event: "request", key, live: acct.ordersLive, total,
             orders: wouldPlace, spent_24h: Math.round(spent * 100) / 100,
         });
         // --- DRY RUN: everything above ran; only the submit is skipped --------
-        if (!ORDERS_LIVE) {
+        if (!acct.ordersLive) {
             const payload = {
                 dry_run: true, idempotency_key: key, checked_at: checkedAt,
                 placed: [], would_place: wouldPlace,
-                totals: {
-                    cost: total, spent_24h: Math.round(spent * 100) / 100,
-                    remaining_24h: Math.round((ORDERS_CAP_24H - spent) * 100) / 100,
-                },
-                note: "CFB_ORDERS_LIVE is not set — nothing was submitted to Kalshi.",
+                totals: { cost: total, spent_24h: Math.round(spent * 100) / 100 },
+                note: "order entry is not live for this account — nothing was submitted to Kalshi.",
             };
-            ordersAudit({ event: "dry_run", key, total });
-            ordersIdemPut(key, { status: 200, body: payload });
+            ordersAudit(acct, { event: "dry_run", key, total });
+            ordersIdemPut(ikey, { status: 200, body: payload });
             res.status(200).json(payload);
             return;
         }
-        if (!portalPrivateKey() || !PORTAL_KEY_ID) {
+        if (!portalPrivateKey(acct) || !acct.keyId) {
             bad(503, { error: "kalshi_credentials_missing" });
             return;
         }
@@ -2352,25 +2445,24 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
         const placed = [];
         const errors = [];
         for (const w of wire) {
-            const r = await ordersSubmitOne(w, key);
+            const r = await ordersSubmitOne(acct, w, key);
             (r.ok ? placed : errors).push(r.echo);
         }
-        const after = ordersSpent24h();
+        const after = ordersSpent24h(acct);
         const payload = {
             dry_run: false, idempotency_key: key, checked_at: checkedAt,
             placed, errors, would_place: [],
             totals: {
                 cost: Math.round(placed.reduce((s, p) => s + p.cost, 0) * 100) / 100,
                 spent_24h: Math.round(after * 100) / 100,
-                remaining_24h: Math.round((ORDERS_CAP_24H - after) * 100) / 100,
             },
         };
         const status = placed.length ? 200 : 502;
-        ordersIdemPut(key, { status, body: payload });
+        ordersIdemPut(ikey, { status, body: payload });
         res.status(status).json(payload);
     }
     finally {
-        ordersInflight.delete(key);
+        ordersInflight.delete(ikey);
     }
 }));
 /** The subset of a wire order that is safe and useful to echo back.
@@ -2399,7 +2491,7 @@ function pickWire(w) {
  * Never retried on a network error or a 5xx (see portalSend): the order may
  * already have landed.
  */
-async function ordersSubmitOne(w, key) {
+async function ordersSubmitOne(acct, w, key) {
     const wireBody = {
         ticker: w.ticker,
         client_order_id: w.client_order_id,
@@ -2411,7 +2503,7 @@ async function ordersSubmitOne(w, key) {
         self_trade_prevention_type: w.mode === "rest" ? "maker" : "taker_at_cross",
         post_only: w.mode === "rest",
     };
-    let resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
+    let resp = await portalSend(acct, "POST", "/portfolio/events/orders", wireBody);
     let tifDowngraded = false;
     // A 400 is a validation rejection: nothing was created, so retrying is
     // not a double-placement risk. Only retried when the TIF is the thing
@@ -2420,17 +2512,17 @@ async function ordersSubmitOne(w, key) {
         /time_in_force|immediate/i.test(JSON.stringify(resp.json))) {
         wireBody.time_in_force = "good_till_canceled";
         tifDowngraded = true;
-        ordersAudit({ event: "tif_downgrade", key, ticker: w.ticker });
-        resp = await portalSend("POST", "/portfolio/events/orders", wireBody);
+        ordersAudit(acct, { event: "tif_downgrade", key, ticker: w.ticker });
+        resp = await portalSend(acct, "POST", "/portfolio/events/orders", wireBody);
     }
     const orderId = String(resp.json?.order_id || resp.json?.order?.order_id || "");
     if ((resp.status === 200 || resp.status === 201) && orderId) {
-        ordersSpend.push({ at: Date.now(), cost: w.cost });
+        ordersSpend.push({ at: Date.now(), cost: w.cost, account: acct.id });
         // Read back: this endpoint has silently ignored a field before, so
         // what the exchange DID is reported, not what we asked for.
         let state = null;
         try {
-            const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
+            const back = await portalGet(acct, `/portfolio/orders/${encodeURIComponent(orderId)}`);
             const ord = back?.order || back || {};
             state = {
                 status: String(ord.status || ""),
@@ -2439,13 +2531,13 @@ async function ordersSubmitOne(w, key) {
             };
         }
         catch { /* the placement stands; we just cannot describe it yet */ }
-        ordersAudit({ event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state });
+        ordersAudit(acct, { event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state });
         return {
             ok: true,
             echo: { ...pickWire(w), order_id: orderId, tif_downgraded: tifDowngraded, state },
         };
     }
-    ordersAudit({
+    ordersAudit(acct, {
         event: "place_failed", key, ticker: w.ticker, status: resp.status,
         resp: JSON.stringify(resp.json).slice(0, 300),
     });
@@ -2460,9 +2552,9 @@ async function ordersSubmitOne(w, key) {
 }
 /** One resting order's live state, straight from the exchange. Null when the
  *  read failed — "we could not tell", which is never reported as a status. */
-async function ordersReadState(orderId) {
+async function ordersReadState(acct, orderId) {
     try {
-        const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
+        const back = await portalGet(acct, `/portfolio/orders/${encodeURIComponent(orderId)}`);
         const ord = back?.order || back || {};
         return {
             status: String(ord.status || ""),
@@ -2477,11 +2569,11 @@ async function ordersReadState(orderId) {
 /** This app's resting orders — the ONLY ones the cancel/convert routes may
  *  touch. Cursor always drained (kalshi-rfq's 2026-07-22 page-1-only incident:
  *  a partial list made a reconciler re-place 833 orders instead of 167). */
-async function ordersRestingApp() {
+async function ordersRestingApp(acct) {
     const out = [];
     let cursor = "";
     for (let page = 0; page < 10; page++) {
-        const body = await portalGet("/portfolio/orders?status=resting&limit=200" +
+        const body = await portalGet(acct, "/portfolio/orders?status=resting&limit=200" +
             (cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""));
         for (const o of body?.orders || []) {
             const coid = String(o.client_order_id || "");
@@ -2506,7 +2598,8 @@ async function ordersRestingApp() {
 // kill switch. It can still only reach orders tagged `cfbapp-` — the maker
 // pipeline's own resting book is untouchable from here.
 app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
-    if (!portalGate(req, res))
+    const acct = portalGate(req, res);
+    if (!acct)
         return;
     const body = (req.body ?? {});
     const all = body.all === true;
@@ -2515,13 +2608,13 @@ app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
         res.status(400).json({ error: "bad_request", detail: 'send {order_id} OR {all:true}' });
         return;
     }
-    if (!portalPrivateKey() || !PORTAL_KEY_ID) {
+    if (!portalPrivateKey(acct) || !acct.keyId) {
         res.status(503).json({ error: "kalshi_credentials_missing" });
         return;
     }
     let mine;
     try {
-        mine = await ordersRestingApp();
+        mine = await ordersRestingApp(acct);
     }
     catch (err) {
         res.status(502).json({ error: "resting_read_failed", detail: String(err?.message ?? err).slice(0, 200) });
@@ -2535,10 +2628,10 @@ app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
         // the first would read as a bug in the app rather than as what happened to
         // the order. So the order is read back: if it carries our tag we report its
         // REAL state, and a fill is never dressed up as a successful cancel.
-        const state = await ordersReadState(orderId);
-        const ours = state !== null && (await ordersOwnedByApp(orderId));
+        const state = await ordersReadState(acct, orderId);
+        const ours = state !== null && (await ordersOwnedByApp(acct, orderId));
         if (ours) {
-            ordersAudit({ event: "cancel_refused", order_id: orderId, reason: "not_resting", state });
+            ordersAudit(acct, { event: "cancel_refused", order_id: orderId, reason: "not_resting", state });
             res.status(409).json({
                 error: "not_resting",
                 detail: `that order is no longer resting (${state?.status || "unknown"})` +
@@ -2547,7 +2640,7 @@ app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
             });
             return;
         }
-        ordersAudit({ event: "cancel_refused", order_id: orderId, reason: "not_app_order" });
+        ordersAudit(acct, { event: "cancel_refused", order_id: orderId, reason: "not_app_order" });
         res.status(404).json({
             error: "not_app_order",
             detail: "that order is not a resting cfbapp- order; this route cannot cancel it",
@@ -2557,7 +2650,7 @@ app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
     const cancelled = [];
     const failed = [];
     for (const t of targets) {
-        const r = await portalSend("DELETE", `/portfolio/events/orders/${encodeURIComponent(t.order_id)}`);
+        const r = await portalSend(acct, "DELETE", `/portfolio/events/orders/${encodeURIComponent(t.order_id)}`);
         if (r.status >= 200 && r.status < 300)
             cancelled.push(t);
         else
@@ -2567,16 +2660,18 @@ app.post("/api/portfolio/cfb/orders/cancel", asyncRoute(async (req, res) => {
     // that filled between the scan and the delete comes back as filled, not as a
     // cancel that never happened.
     if (!all && cancelled.length === 1) {
-        cancelled[0].state = await ordersReadState(cancelled[0].order_id);
+        cancelled[0].state = await ordersReadState(acct, cancelled[0].order_id);
     }
-    ordersAudit({ event: "cancel", all, scanned: mine.length, cancelled: cancelled.length, failed: failed.length });
+    ordersAudit(acct, { event: "cancel", all, scanned: mine.length, cancelled: cancelled.length, failed: failed.length });
     res.json({ scanned: mine.length, cancelled, failed });
 }));
 /** Does this order carry OUR tag? The authorisation test for a single-order
- *  route when the order is no longer in the resting list. */
-async function ordersOwnedByApp(orderId) {
+ *  route when the order is no longer in the resting list. Reads as the
+ *  session's own account, so one trader's order id proves nothing here about
+ *  another's. */
+async function ordersOwnedByApp(acct, orderId) {
     try {
-        const back = await portalGet(`/portfolio/orders/${encodeURIComponent(orderId)}`);
+        const back = await portalGet(acct, `/portfolio/orders/${encodeURIComponent(orderId)}`);
         const ord = back?.order || back || {};
         return String(ord.client_order_id || "").startsWith(ORDERS_TAG);
     }
@@ -2621,11 +2716,12 @@ async function ordersOwnedByApp(orderId) {
 // owner strictly worse off, which is the opposite of staging.
 // ============================================================================
 app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
-    if (!portalGate(req, res))
+    const acct = portalGate(req, res);
+    if (!acct)
         return;
     const body = (req.body ?? {});
     const bad = (status, payload) => {
-        ordersAudit({ event: "convert_reject", status, ...payload });
+        ordersAudit(acct, { event: "convert_reject", status, ...payload });
         res.status(status).json(payload);
     };
     const forbidden = ordersForbidden(body, "request");
@@ -2633,7 +2729,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
         bad(400, { error: "forbidden_field", detail: forbidden });
         return;
     }
-    const ALLOWED = ["idempotency_key", "order_id", "ticker", "side", "count_fp", "limit_price"];
+    const ALLOWED = ["idempotency_key", "order_id", "ticker", "side", "count_fp", "limit_price", "unit_size"];
     for (const k of Object.keys(body)) {
         if (!ALLOWED.includes(k)) {
             bad(400, { error: "unexpected_field", detail: `request: "${k}"` });
@@ -2645,17 +2741,18 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
         bad(400, { error: "bad_idempotency_key", detail: "8-64 chars of [A-Za-z0-9_-]" });
         return;
     }
-    const replay = ordersIdemGet(key);
+    const ikey = ordersIdemScope(acct, key);
+    const replay = ordersIdemGet(ikey);
     if (replay) {
-        ordersAudit({ event: "replay", key, status: replay.status, route: "convert" });
+        ordersAudit(acct, { event: "replay", key, status: replay.status, route: "convert" });
         res.status(replay.status).json({ ...replay.body, replayed: true });
         return;
     }
-    if (ordersInflight.has(key)) {
+    if (ordersInflight.has(ikey)) {
         res.status(409).json({ error: "in_flight", idempotency_key: key });
         return;
     }
-    ordersInflight.add(key);
+    ordersInflight.add(ikey);
     try {
         const orderId = String(body.order_id ?? "").trim();
         if (!orderId || orderId.length > 64) {
@@ -2687,7 +2784,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
         // --- 3. it must be OURS, and still resting ---------------------------
         let mine;
         try {
-            mine = await ordersRestingApp();
+            mine = await ordersRestingApp(acct);
         }
         catch (err) {
             bad(502, { error: "resting_read_failed", detail: String(err?.message ?? err).slice(0, 200) });
@@ -2695,8 +2792,8 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
         }
         const rest = mine.find((o) => o.order_id === orderId);
         if (!rest) {
-            const state = await ordersReadState(orderId);
-            const ours = state !== null && (await ordersOwnedByApp(orderId));
+            const state = await ordersReadState(acct, orderId);
+            const ours = state !== null && (await ordersOwnedByApp(acct, orderId));
             bad(ours ? 409 : 404, ours
                 ? {
                     error: "not_resting", state,
@@ -2731,22 +2828,16 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
         // --- 4. caps: this take counts, like any other placement --------------
         const fee = ordersFee(price, count, "take");
         const cost = Math.round((price * count + fee) * 100) / 100;
-        if (cost > ORDERS_CAP_ORDER + 1e-9) {
-            bad(400, { error: "cap_order", detail: `costs $${cost.toFixed(2)}`, cap: ORDERS_CAP_ORDER });
+        const capOrder = ordersCapOrder(body.unit_size);
+        if (cost > capOrder + 1e-9) {
+            bad(400, { error: "cap_order", detail: `costs $${cost.toFixed(2)}`, cap: capOrder });
             return;
         }
-        if (cost > ORDERS_CAP_REQUEST + 1e-9) {
-            bad(400, { error: "cap_request", total: cost, cap: ORDERS_CAP_REQUEST });
+        if (cost > capOrder * 2 + 1e-9) {
+            bad(400, { error: "cap_request", total: cost, cap: capOrder * 2 });
             return;
         }
-        const spent = ordersSpent24h();
-        if (spent + cost > ORDERS_CAP_24H + 1e-9) {
-            bad(400, {
-                error: "cap_24h", total: cost, spent_24h: Math.round(spent * 100) / 100,
-                cap: ORDERS_CAP_24H, note: "in-memory ledger; a server restart resets it",
-            });
-            return;
-        }
+        const spent = ordersSpent24h(acct); // reported in totals; no cap enforced
         const w = {
             ticker, side, mode: "take", price_dollars: price, count, fee, cost,
             client_order_id: `${ORDERS_TAG}${key}-cv`,
@@ -2767,14 +2858,14 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
         if (ask === null || ask > price + 1e-9) {
             const payload = {
                 error: ask === null ? "no_offer" : "book_moved",
-                dry_run: !ORDERS_LIVE, checked_at: checkedAt,
+                dry_run: !acct.ordersLive, checked_at: checkedAt,
                 detail: ask === null
                     ? "nothing offered on that side right now — the rest was left alone"
                     : `book moved: ask now ${ask.toFixed(2)} — the rest was left alone`,
                 book: bk, cancel: null, placed: [],
             };
-            ordersAudit({ event: "convert_book_reject", key, order_id: orderId, ask, limit: price });
-            ordersIdemPut(key, { status: 409, body: payload });
+            ordersAudit(acct, { event: "convert_book_reject", key, order_id: orderId, ask, limit: price });
+            ordersIdemPut(ikey, { status: 409, body: payload });
             res.status(409).json(payload);
             return;
         }
@@ -2782,35 +2873,32 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
             ...pickWire(w), book: bk,
             post_only: false, time_in_force: "immediate_or_cancel",
         };
-        ordersAudit({
-            event: "convert_request", key, live: ORDERS_LIVE, order_id: orderId,
+        ordersAudit(acct, {
+            event: "convert_request", key, live: acct.ordersLive, order_id: orderId,
             ticker, side, count, price, ask, cost, spent_24h: Math.round(spent * 100) / 100,
         });
         // --- DRY RUN: nothing is cancelled and nothing is placed --------------
-        if (!ORDERS_LIVE) {
+        if (!acct.ordersLive) {
             const payload = {
                 dry_run: true, idempotency_key: key, checked_at: checkedAt,
                 would_cancel: { order_id: orderId, ticker, remaining: rest.remaining },
                 would_place: [wouldPlace], placed: [], cancel: null,
-                totals: {
-                    cost, spent_24h: Math.round(spent * 100) / 100,
-                    remaining_24h: Math.round((ORDERS_CAP_24H - spent) * 100) / 100,
-                },
-                note: "CFB_ORDERS_LIVE is not set — the resting order was NOT cancelled " +
-                    "and nothing was submitted to Kalshi.",
+                totals: { cost, spent_24h: Math.round(spent * 100) / 100 },
+                note: "order entry is not live for this account — the resting order was NOT " +
+                    "cancelled and nothing was submitted to Kalshi.",
             };
-            ordersAudit({ event: "convert_dry_run", key, order_id: orderId });
-            ordersIdemPut(key, { status: 200, body: payload });
+            ordersAudit(acct, { event: "convert_dry_run", key, order_id: orderId });
+            ordersIdemPut(ikey, { status: 200, body: payload });
             res.status(200).json(payload);
             return;
         }
-        if (!portalPrivateKey() || !PORTAL_KEY_ID) {
+        if (!portalPrivateKey(acct) || !acct.keyId) {
             bad(503, { error: "kalshi_credentials_missing" });
             return;
         }
         // --- 6. cancel the rest, and CONFIRM it -------------------------------
-        const del = await portalSend("DELETE", `/portfolio/events/orders/${encodeURIComponent(orderId)}`);
-        const afterCancel = await ordersReadState(orderId);
+        const del = await portalSend(acct, "DELETE", `/portfolio/events/orders/${encodeURIComponent(orderId)}`);
+        const afterCancel = await ordersReadState(acct, orderId);
         const cancelOk = del.status >= 200 && del.status < 300 &&
             (afterCancel === null || afterCancel.status === "" ||
                 !/resting|open/i.test(afterCancel.status));
@@ -2824,12 +2912,12 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
                 cancel: { ok: false, order_id: orderId, http_status: del.status, state: afterCancel },
                 placed: [], errors: [],
             };
-            ordersAudit({ event: "convert_cancel_failed", key, order_id: orderId, status: del.status, state: afterCancel });
-            ordersIdemPut(key, { status: 409, body: payload });
+            ordersAudit(acct, { event: "convert_cancel_failed", key, order_id: orderId, status: del.status, state: afterCancel });
+            ordersIdemPut(ikey, { status: 409, body: payload });
             res.status(409).json(payload);
             return;
         }
-        ordersAudit({ event: "convert_cancelled", key, order_id: orderId, state: afterCancel });
+        ordersAudit(acct, { event: "convert_cancelled", key, order_id: orderId, state: afterCancel });
         // What was actually left unfilled at the moment of the cancel. Smaller than
         // the client's number when the rest partly filled in between.
         const leftover = afterCancel && afterCancel.remaining !== null &&
@@ -2846,7 +2934,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
                     "nothing left to take. Your fills show as a held position.",
                 cancel: cancelEcho, placed: [], errors: [],
             };
-            ordersIdemPut(key, { status: 409, body: payload });
+            ordersIdemPut(ikey, { status: 409, body: payload });
             res.status(409).json(payload);
             return;
         }
@@ -2855,11 +2943,11 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
             w.count = takeCount;
             w.fee = ordersFee(price, takeCount, "take");
             w.cost = Math.round((price * takeCount + w.fee) * 100) / 100;
-            ordersAudit({ event: "convert_shrunk", key, order_id: orderId, from: count, to: takeCount });
+            ordersAudit(acct, { event: "convert_shrunk", key, order_id: orderId, from: count, to: takeCount });
         }
         // --- 7. the take, down the ONE placement path -------------------------
-        const sub = await ordersSubmitOne(w, key);
-        const after = ordersSpent24h();
+        const sub = await ordersSubmitOne(acct, w, key);
+        const after = ordersSpent24h(acct);
         if (!sub.ok) {
             const payload = {
                 dry_run: false, idempotency_key: key, checked_at: checkedAt,
@@ -2868,27 +2956,291 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req, res) => {
                     "You have no order on this market right now.",
                 cancel: cancelEcho, placed: [], errors: [sub.echo],
             };
-            ordersAudit({ event: "convert_take_failed", key, order_id: orderId, echo: sub.echo });
-            ordersIdemPut(key, { status: 409, body: payload });
+            ordersAudit(acct, { event: "convert_take_failed", key, order_id: orderId, echo: sub.echo });
+            ordersIdemPut(ikey, { status: 409, body: payload });
             res.status(409).json(payload);
             return;
         }
         const payload = {
             dry_run: false, idempotency_key: key, checked_at: checkedAt,
             cancel: cancelEcho, placed: [sub.echo], errors: [],
-            totals: {
-                cost: w.cost, spent_24h: Math.round(after * 100) / 100,
-                remaining_24h: Math.round((ORDERS_CAP_24H - after) * 100) / 100,
-            },
+            totals: { cost: w.cost, spent_24h: Math.round(after * 100) / 100 },
         };
-        ordersAudit({ event: "convert_done", key, order_id: orderId, placed: sub.echo?.order_id });
-        ordersIdemPut(key, { status: 200, body: payload });
+        ordersAudit(acct, { event: "convert_done", key, order_id: orderId, placed: sub.echo?.order_id });
+        ordersIdemPut(ikey, { status: 200, body: payload });
         res.status(200).json(payload);
     }
     finally {
-        ordersInflight.delete(key);
+        ordersInflight.delete(ikey);
     }
 }));
+// ============================================================================
+// WEB PUSH — owner fill + settlement alerts (2026-08-29, owner asks:
+// "notifications as resting stuff fills" / "notifications for bets settling").
+//
+// The client half is src/lib/push.ts + the My Book "Alerts" row; the worker
+// that displays these is PUSH-ONLY (src/sw.ts — no fetch handler, by rule).
+//
+// Configured entirely by env: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY (generate
+// once with `npx web-push generate-vapid-keys`), optional VAPID_SUBJECT.
+// Without them every endpoint answers 503 push_not_configured and the poller
+// never starts — staged exactly like CFB_ORDERS_LIVE.
+//
+// The subscription store is a FILE (CFB_PUSH_SUBS_PATH, default os.tmpdir()),
+// which on Render means A DEPLOY CAN WIPE IT — the same ephemeral-disk caveat
+// as the orders audit JSONL. Two mitigations: subscribed clients silently
+// re-POST their subscription on every owner page load, and the persistent-disk
+// action already owed for the audit log covers this file too.
+//
+// The poller reuses portalFills() (NCAAF-only, normalized) once a minute and
+// notifies on MAKER fills only (is_taker=false): taker fills are the owner's
+// own button press, they were watching. The watermark starts at boot so a
+// restart never replays history.
+//
+// ORDERING: this section must stay ABOVE the `app.use("/api", …)` unknown-
+// route catch-all — Express matches in registration order, and these routes
+// shipped BELOW it on 2026-08-29 and 404'd in production until moved.
+// ============================================================================
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || "";
+const PUSH_ON = Boolean(VAPID_PUBLIC && VAPID_PRIVATE);
+if (PUSH_ON) {
+    webpush.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:admin@mvpeav.com", VAPID_PUBLIC, VAPID_PRIVATE);
+}
+const PUSH_SUBS_PATH = process.env.CFB_PUSH_SUBS_PATH || path.join(os.tmpdir(), "cfb_push_subs.json");
+const PUSH_SUBS_MAX = 20; // a handful of traders' devices, not a mailing list
+let pushSubs = [];
+try {
+    const raw = JSON.parse(fs.readFileSync(PUSH_SUBS_PATH, "utf8"));
+    // Rows stored before multi-account carry no account field and were all the
+    // base account's devices.
+    if (Array.isArray(raw)) {
+        pushSubs = raw.map((s) => ({ ...s, account: String(s?.account || "mp") }));
+    }
+}
+catch { /* first boot, or a wiped disk — clients re-sync on next visit */ }
+function pushSubsSave() {
+    try {
+        fs.writeFileSync(PUSH_SUBS_PATH, JSON.stringify(pushSubs));
+    }
+    catch (err) {
+        console.warn("[push] subs save failed:", err?.message ?? err);
+    }
+}
+/** Send one payload to every device OF ONE ACCOUNT; prune subscriptions the
+ *  push service reports gone (404/410 = unsubscribed or expired). Failures
+ *  come back WITH the push service's own words — a 403 VAPID mismatch looked
+ *  exactly like success until the test endpoint learned to say so (live
+ *  lesson 2026-08-29). */
+async function pushSendAll(accountId, payload) {
+    const body = JSON.stringify(payload);
+    const dead = new Set();
+    const failures = [];
+    let sent = 0;
+    await Promise.all(pushSubs.filter((s) => s.account === accountId).map(async (s) => {
+        try {
+            await webpush.sendNotification(s, body, { TTL: 3600 });
+            sent++;
+        }
+        catch (err) {
+            const code = Number(err?.statusCode) || 0;
+            if (code === 404 || code === 410) {
+                dead.add(s.endpoint);
+                return;
+            }
+            const detail = String(err?.body || err?.message || err).slice(0, 300);
+            failures.push({ code, detail });
+            console.warn("[push] send failed:", code, detail);
+        }
+    }));
+    if (dead.size) {
+        pushSubs = pushSubs.filter((s) => !dead.has(s.endpoint));
+        pushSubsSave();
+    }
+    return { sent, gone: dead.size, failures };
+}
+app.get("/api/push/pubkey", (req, res) => {
+    if (!portalGate(req, res))
+        return;
+    if (!PUSH_ON) {
+        res.status(503).json({ error: "push_not_configured" });
+        return;
+    }
+    res.json({ publicKey: VAPID_PUBLIC });
+});
+app.post("/api/push/subscribe", (req, res) => {
+    const acct = portalGate(req, res);
+    if (!acct)
+        return;
+    if (!PUSH_ON) {
+        res.status(503).json({ error: "push_not_configured" });
+        return;
+    }
+    const s = req.body?.subscription;
+    const endpoint = String(s?.endpoint || "");
+    const p256dh = String(s?.keys?.p256dh || "");
+    const auth = String(s?.keys?.auth || "");
+    if (!endpoint.startsWith("https://") || !p256dh || !auth) {
+        res.status(400).json({ error: "bad_subscription" });
+        return;
+    }
+    // Replace-by-endpoint: a device that re-subscribes after logging into a
+    // different account MOVES to it — its alerts follow its current login.
+    pushSubs = pushSubs.filter((x) => x.endpoint !== endpoint);
+    pushSubs.push({ endpoint, keys: { p256dh, auth }, account: acct.id });
+    if (pushSubs.length > PUSH_SUBS_MAX)
+        pushSubs = pushSubs.slice(-PUSH_SUBS_MAX);
+    pushSubsSave();
+    res.json({ ok: true, devices: pushSubs.filter((x) => x.account === acct.id).length });
+});
+app.post("/api/push/test", asyncRoute(async (req, res) => {
+    const acct = portalGate(req, res);
+    if (!acct)
+        return;
+    if (!PUSH_ON) {
+        res.status(503).json({ error: "push_not_configured" });
+        return;
+    }
+    const devices = pushSubs.filter((x) => x.account === acct.id).length;
+    if (!devices) {
+        res.status(400).json({ error: "no_subscriptions" });
+        return;
+    }
+    const r = await pushSendAll(acct.id, {
+        title: "MVPEAV push works",
+        body: `This device will hear about resting fills (${acct.label}).`,
+        tag: "cfb-push-test",
+    });
+    // pubkey_prefix lets the client spot a pasted-key mismatch without ever
+    // shipping the whole key back around.
+    res.json({ ok: r.sent > 0, ...r, devices,
+        pubkey_prefix: VAPID_PUBLIC.slice(0, 12) });
+}));
+/** "KXNCAAFSPREAD-26AUG29UNCTCU-UNC20" -> "UNC20 spread · UNCTCU". */
+function pushTickerWords(t) {
+    const m = t.match(/^KXNCAAF([A-Z0-9]+)-\d{2}[A-Z]{3}\d{2}([A-Z0-9]+)-(.+)$/);
+    if (!m)
+        return t;
+    const fam = m[1] === "GAME" ? "ML" : m[1].toLowerCase();
+    return `${m[3]} ${fam} · ${m[2]}`;
+}
+const PUSH_FILL_POLL_MS = 60_000;
+/** Per-account watermarks, initialised at boot (= now: never replay history).
+ *  An account added by env later simply starts at its first tick. */
+const pushWatermarks = new Map();
+function pushWatermarkOf(accountId) {
+    let w = pushWatermarks.get(accountId);
+    if (!w) {
+        w = { fill: Date.now(), settle: Date.now() };
+        pushWatermarks.set(accountId, w);
+    }
+    return w;
+}
+let pushFillBusy = false;
+/** One 60s tick watches BOTH halves of a bet's life — maker fills (the order
+ *  became a position) and settlements (the position became money, owner ask
+ *  2026-08-29) — FOR EACH account that has a subscribed device. Alerts go
+ *  only to that account's devices. Same watermark discipline throughout:
+ *  start at boot, advance only after a successful fetch, so restarts never
+ *  replay and blips never skip. */
+async function pushFillPoll() {
+    if (pushFillBusy || !pushSubs.length)
+        return;
+    pushFillBusy = true;
+    try {
+        for (const acct of PORTAL_ACCOUNTS) {
+            if (!pushSubs.some((s) => s.account === acct.id))
+                continue; // nobody listening
+            if (!portalPrivateKey(acct) || !acct.keyId)
+                continue; // no Kalshi creds
+            await pushPollAccount(acct);
+        }
+    }
+    finally {
+        pushFillBusy = false;
+    }
+}
+async function pushPollAccount(acct) {
+    const mark = pushWatermarkOf(acct.id);
+    try {
+        const fills = await portalFills(acct);
+        const fresh = fills.filter((f) => !f.is_taker && Date.parse(f.created_time) > mark.fill);
+        // One notification per ticker, fills within the poll window summed — a
+        // ladder filling rung by rung should read as one event per market, not a
+        // buzz per contract.
+        const byTicker = new Map();
+        for (const f of fresh) {
+            const cur = byTicker.get(f.ticker) ?? { count: 0, price: null, side: f.side };
+            cur.count += f.count ?? 0;
+            cur.price = f.side === "no" ? f.no_price : f.yes_price;
+            byTicker.set(f.ticker, cur);
+        }
+        for (const [ticker, g] of byTicker) {
+            const px = g.price === null ? "" : ` @ ${Math.round(g.price * 100)}¢`;
+            await pushSendAll(acct.id, {
+                title: "Resting order filled",
+                body: `${g.count} × ${pushTickerWords(ticker)} — ${g.side.toUpperCase()}${px}`,
+                tag: `cfb-fill-${ticker}`,
+                url: "/cfb/scoreboard",
+            });
+            console.log(`[push] fill notified (${acct.id}): ${g.count} × ${ticker}${px}`);
+        }
+        // Advance on everything seen (taker fills included) so nothing renotifies;
+        // only after a successful fetch, so an API blip never skips a fill.
+        for (const f of fills) {
+            const ts = Date.parse(f.created_time);
+            if (Number.isFinite(ts) && ts > mark.fill)
+                mark.fill = ts;
+        }
+    }
+    catch (err) {
+        console.warn(`[push] fill poll failed (${acct.id}):`, err?.message ?? err);
+    }
+    // ---- settlements: one notification per poll batch. A game settling drops
+    // a whole slate of markets inside a minute; per-market buzzes would be a
+    // drumroll, so the batch is summed with the first few itemized. Dollars are
+    // PRE-FEE, matching the Kalshi-record block (reconciles with Kalshi's app).
+    try {
+        const settlements = await portalSettlements(acct);
+        const fresh = settlements.filter((s) => Date.parse(s.settled_time) > mark.settle);
+        if (fresh.length) {
+            const rows = fresh.map((s) => {
+                const net = s.revenue - s.cost;
+                return {
+                    net,
+                    line: `${net > 0 ? "W" : net < 0 ? "L" : "–"} ${pushTickerWords(s.ticker)} ` +
+                        `${net >= 0 ? "+" : "−"}$${Math.abs(net).toFixed(2)}`,
+                    title: s.event_title,
+                };
+            });
+            const wins = rows.filter((r) => r.net > 0).length;
+            const losses = rows.filter((r) => r.net < 0).length;
+            const total = rows.reduce((a, r) => a + r.net, 0);
+            const money = `${total >= 0 ? "+" : "−"}$${Math.abs(total).toFixed(2)}`;
+            const title = rows.length === 1
+                ? `Bet settled: ${wins ? "WON" : losses ? "LOST" : "flat"} ${money}`
+                : `${rows.length} bets settled: ${wins}W–${losses}L, net ${money}`;
+            const body = rows.length === 1
+                ? `${rows[0].line.slice(2)}${rows[0].title ? ` · ${rows[0].title}` : ""}`
+                : rows.slice(0, 4).map((r) => r.line).join("\n") +
+                    (rows.length > 4 ? `\n…and ${rows.length - 4} more` : "");
+            await pushSendAll(acct.id, {
+                title, body, tag: `cfb-settle-${Date.now()}`, url: "/cfb/scoreboard",
+            });
+            console.log(`[push] settlements notified (${acct.id}): ${rows.length} (${money})`);
+        }
+        for (const s of settlements) {
+            const ts = Date.parse(s.settled_time);
+            if (Number.isFinite(ts) && ts > mark.settle)
+                mark.settle = ts;
+        }
+    }
+    catch (err) {
+        console.warn(`[push] settlement poll failed (${acct.id}):`, err?.message ?? err);
+    }
+}
+if (PUSH_ON)
+    setInterval(pushFillPoll, PUSH_FILL_POLL_MS);
 // Unknown /api routes must answer JSON. Without this the SPA catch-all below
 // serves index.html for a typo'd or removed endpoint, and the client blows up
 // on `JSON.parse("<!doctype html>")` — which looks like a page crash, not a

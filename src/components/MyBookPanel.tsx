@@ -119,7 +119,7 @@ function Row({ label, children, top = false }: {
 }
 
 export default function MyBookPanel({
-  token, onToken, note, connected, ordersLive, unit, onUnit,
+  token, onToken, note, connected, ordersLive, accountLabel, unit, onUnit,
   totals, unmatched, record, slugTeams, children,
 }: {
   token: string;
@@ -129,8 +129,13 @@ export default function MyBookPanel({
   note: string;
   /** Portal session is live (status === "ok"). */
   connected: boolean;
-  /** Server's CFB_ORDERS_LIVE. False => placements are staged, not sent. */
+  /** Server's CFB_ORDERS_LIVE for THIS account. False => placements are
+   *  staged, not sent. */
   ordersLive: boolean;
+  /** Which Kalshi account the password logged into (multi-account server).
+   *  Undefined until the first payload, or on a pre-multi-account server —
+   *  the row then just says "Connected" with no name. */
+  accountLabel?: string;
   unit: number;
   onUnit: (v: number) => void;
   totals: PortalTotals;
@@ -184,7 +189,7 @@ export default function MyBookPanel({
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>{note}</span>
         {token && !ordersLive && (
           <span style={{ marginLeft: "auto" }}>
-            <DryRunBadge title="Order entry is staged (CFB_ORDERS_LIVE unset): the server validates, caps, re-checks the book and logs — and submits nothing." />
+            <DryRunBadge title="Order entry is staged for this account: the server validates, caps, re-checks the book and logs — and submits nothing." />
           </span>
         )}
       </div>
@@ -193,7 +198,12 @@ export default function MyBookPanel({
         {token ? (
           <>
             <span style={{ fontSize: 12, color: connected ? "var(--pos)" : "var(--muted)" }}>
-              {connected ? "Connected" : "Connecting…"}
+              {/* The password IS the account (multi-account server), so the
+                  connected line names WHOSE book this is — a trader must never
+                  have to infer whose money is on screen. */}
+              {connected
+                ? accountLabel ? `Connected — ${accountLabel}` : "Connected"
+                : "Connecting…"}
             </span>
             <button type="button" className="ui-btn" onClick={() => onToken("")}
                     style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 11 }}>

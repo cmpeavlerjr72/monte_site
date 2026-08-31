@@ -63,6 +63,22 @@ export const KALSHI_TEAM_ALIASES = {
     // original target here was "texasandm", which no school produces — the alias
     // was dead. Corrected, so Kalshi's un-ampersanded "Texas AM" now matches.
     texasam: "texasaandm",
+    // Live 2026-08-30, wk1 slate (user caught both as cards with no Kalshi
+    // info): Kalshi writes "UMass" where CFBD's slate says "Massachusetts",
+    // and "Louisiana-Monroe" where the slate says "UL Monroe". Same two
+    // misses existed in the sim repo's kalshi_team_edges TEAM_ALIAS (fixed
+    // there the same day, commit f566d2d).
+    umass: "massachusetts",
+    louisianamonroe: "ulmonroe",
+    // Live 2026-08-30, FCS wk1 (user caught two cards without bet buttons):
+    // mascot-suffixed titles on exactly these events ("Chicago State
+    // Cougars", "West Florida Argonauts") — Kalshi appends mascots on SOME
+    // FCS titles only, and one unmatched TEAM sinks the whole event's join
+    // ("Tennessee-Martin" on the same title was already aliased below). The
+    // FCS snapshot puller grew a generic trailing-word fallback the same
+    // night; here the observed forms are aliased exactly.
+    chicagostatecougars: "chicagostate",
+    westfloridaargonauts: "westflorida",
     // --- FCS 2026: our slate's spelling is on the RIGHT ---
     // "St. Thomas (MN)" carries a state qualifier Kalshi drops. Stripping
     // parentheticals generically is not an option (it would merge Miami (OH)

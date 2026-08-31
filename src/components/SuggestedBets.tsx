@@ -1281,7 +1281,7 @@ function ConfirmSlip({
           <span style={{ fontSize: 14, fontWeight: 900, color: "var(--brand-text)" }}>
             {resp ? "Result" : picked.length > 1 ? "Place these bets" : "Place this bet"}
           </span>
-          {dry && <DryRunBadge title="CFB_ORDERS_LIVE is not set — nothing is submitted to Kalshi." />}
+          {dry && <DryRunBadge title="Order entry is staged for this account — nothing is submitted to Kalshi." />}
         </div>
 
         {dry && !resp && (

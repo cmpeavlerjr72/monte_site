@@ -509,7 +509,7 @@ function ConvertSlip({
           <span style={{ fontSize: 14, fontWeight: 900, color: "var(--brand-text)" }}>
             {resp ? "Result" : "Convert this rest to a take"}
           </span>
-          {dry && <DryRunBadge title="CFB_ORDERS_LIVE is not set — nothing is cancelled and nothing is submitted." />}
+          {dry && <DryRunBadge title="Order entry is staged for this account — nothing is cancelled and nothing is submitted." />}
         </div>
 
         {!resp && (

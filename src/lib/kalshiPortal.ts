@@ -86,12 +86,18 @@ export type PortalPosition = {
 export type PortalPayload = {
   fetched_at: string; orders: PortalOrder[]; fills: PortalFill[];
   positions: PortalPosition[];
-  /** Order-entry staging state (server's CFB_ORDERS_LIVE). FALSE means the
-   *  order routes validate, cap, re-check the book and log — and submit
-   *  nothing. The confirm popup wears its DRY RUN badge off this, so the
-   *  staging is visible BEFORE the press, not only in the response. Optional
-   *  because a server that predates order entry simply omits it. */
+  /** Order-entry staging state (server's CFB_ORDERS_LIVE, per account).
+   *  FALSE means the order routes validate, cap, re-check the book and log —
+   *  and submit nothing. The confirm popup wears its DRY RUN badge off this,
+   *  so the staging is visible BEFORE the press, not only in the response.
+   *  Optional because a server that predates order entry simply omits it. */
   orders_live?: boolean;
+  /** Which Kalshi account this book is — the portal password picked it
+   *  (multi-account server, 2026-08-31). The label renders in the My Book
+   *  header so a trader always knows whose money is on screen. Absent on a
+   *  server that predates multi-account. */
+  account_id?: string;
+  account_label?: string;
 };
 
 /** "KXNCAAFSPREAD-26AUG27CARKUTM-UTM4" -> "26AUG27CARKUTM" (else null). */

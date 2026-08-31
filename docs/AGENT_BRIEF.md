@@ -600,18 +600,32 @@ family (TD/FG/TO), an unpublished namespace, a strike off the grid —
 returns null and renders "—". NEVER interpolate; that is the exporter's
 rule too.
 
-## My-Kalshi portal (owner-only)
+## My-Kalshi portal (multi-account, password = account)
 
-`/api/portfolio/cfb` (server) — password-gated (`x-cfb-token` header vs
-`CFB_PORTAL_PASSWORD` env — owner-chosen password, `CFB_PORTFOLIO_TOKEN`
-alias kept; timing-safe; 5 consecutive misses = 60s lockout (429) because
-a human password is guessable where a token was not; 503 when
-unconfigured), signed
-Kalshi portfolio reads via env creds (`KALSHI_API_KEY_ID` +
-`KALSHI_PRIVATE_KEY_PATH` — production pattern is a host Secret File,
-`KALSHI_PRIVATE_KEY_PATH=/etc/secrets/kalshi.pem`; inline
-`KALSHI_PRIVATE_KEY` is a fallback that mangles newlines on some hosts).
-Returns NCAAF
+`/api/portfolio/cfb` (server) — password-gated (`x-cfb-token` header;
+timing-safe; 5 consecutive misses = 60s lockout (429) because a human
+password is guessable where a token was not; 503 when no accounts are
+configured). MULTI-ACCOUNT since 2026-08-31: `portalGate()` returns the
+`PortalAccount` whose password matched, and the LOGIN PASSWORD IS THE
+ACCOUNT SELECTOR — a session sees and trades only its own account. The
+registry mirrors kalshi-rfq `config/accounts.json` env suffixes: base
+account = `CFB_PORTAL_PASSWORD` (owner, `CFB_PORTFOLIO_TOKEN` alias
+kept) + `KALSHI_API_KEY_ID` + `KALSHI_PRIVATE_KEY_PATH`; each extra
+account is discovered from `CFB_PORTAL_PASSWORD_<SFX>` +
+`KALSHI_API_KEY_ID_<SFX>` + `KALSHI_PRIVATE_KEY_PATH_<SFX>` (e.g.
+`_ROTH`); `CFB_ORDERS_LIVE_<SFX>` overrides the base `CFB_ORDERS_LIVE`
+so a new trader can stay dry-run staged while the owner trades. Adding
+an account is env-only — no code edit. Duplicate passwords are refused
+at boot (later account dropped, loudly). Everything downstream is
+account-scoped: payload caches, order audit lines (`account` field;
+pre-multi-account lines count as `mp`), settled-record attribution,
+idempotency keys, the 24h spend line, and push subscriptions (a device
+hears about the account it was logged into when it subscribed; fills
+and settlements poll per account). Production pattern for keys is a
+host Secret File (`KALSHI_PRIVATE_KEY_PATH=/etc/secrets/kalshi.pem`;
+inline `KALSHI_PRIVATE_KEY` is a fallback that mangles newlines on some
+hosts). The payload carries `account_id`/`account_label`, shown in the
+My Book Account row. Returns NCAAF
 resting orders, fills, and positions (positions = ground truth for held
 contracts; fills CANNOT be signed-summed — a NO buy logs as a YES-book
 "sell"). This API tier speaks fp/dollar STRINGS (count_fp,
