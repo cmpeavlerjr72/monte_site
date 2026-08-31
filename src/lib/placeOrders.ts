@@ -45,7 +45,19 @@ export type PlaceEcho = {
   time_in_force?: string;
   order_id?: string;
   tif_downgraded?: boolean;
-  state?: { status: string; filled: number | null; remaining: number | null } | null;
+  state?: {
+    status: string; filled: number | null; remaining: number | null;
+    /** What the fills actually cost / were charged, from the exchange's own
+     *  ledger fields — an IOC take can fill BETTER than its limit, so
+     *  price × filled would overstate the money. Absent on older servers. */
+    fill_cost?: number; fill_fees?: number;
+  } | null;
+  /** PARTIAL TAKE only: the fresh ask on this order's OWN side after the IOC
+   *  came back, and how many contracts sit there — what "continue at the next
+   *  price" would pay. Absent when the take filled whole, the remainder
+   *  rested (tif_downgraded), or the re-read failed. */
+  next_ask?: number | null;
+  next_ask_size?: number | null;
   reason?: string;
   message?: string;
   http_status?: number;

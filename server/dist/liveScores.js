@@ -2200,7 +2200,8 @@ async function portalSend(acct, method, apiPath, body) {
  *
  *  A Kalshi book holds only BIDS, in two lists. A NO bid at q IS a YES ask at
  *  1 − q, so yes_ask = 1 − best no bid (verified against banked snapshots in
- *  cfb-props-sim's kalshi_client_min.py::book_from_orderbook). An EMPTY side
+ *  cfb-props-sim's kalshi_client_min.py::book_from_orderbook) — and the SIZE
+ *  at that ask is the size of that best NO bid. An EMPTY side
  *  is null, never a fabricated 0.00/1.00: "nobody is bidding" and "somebody
  *  bids zero" are different facts. `orderbook_fp` quotes dollar strings, the
  *  older `orderbook` quotes integer cents; both are normalised here. */
@@ -2214,7 +2215,10 @@ async function ordersBook(ticker) {
             if (!Number.isFinite(px))
                 continue;
             const d = px > 1 ? px / 100 : px; // cents vs dollars
-            out = out === null ? d : Math.max(out, d);
+            if (out === null || d > out.px) {
+                const sz = Number(Array.isArray(lv) ? lv[1] : NaN);
+                out = { px: d, size: Number.isFinite(sz) ? sz : null };
+            }
         }
         return out;
     };
@@ -2222,10 +2226,12 @@ async function ordersBook(ticker) {
     const yesBid = best(ob.yes_dollars ?? ob.yes);
     const noBid = best(ob.no_dollars ?? ob.no);
     return {
-        yes_bid: yesBid,
-        yes_ask: noBid === null ? null : r4(1 - noBid),
-        no_bid: noBid,
-        no_ask: yesBid === null ? null : r4(1 - yesBid),
+        yes_bid: yesBid?.px ?? null,
+        yes_ask: noBid === null ? null : r4(1 - noBid.px),
+        no_bid: noBid?.px ?? null,
+        no_ask: yesBid === null ? null : r4(1 - yesBid.px),
+        yes_bid_size: yesBid?.size ?? null,
+        yes_ask_size: noBid?.size ?? null,
     };
 }
 /** Reject a body that tries to dictate execution mechanics instead of intent.
@@ -2528,13 +2534,40 @@ async function ordersSubmitOne(acct, w, key) {
                 status: String(ord.status || ""),
                 filled: portalNum(ord.fill_count_fp ?? ord.fill_count),
                 remaining: portalNum(ord.remaining_count_fp ?? ord.remaining_count),
+                // What the fills actually COST, from the exchange's own ledger fields
+                // — an IOC take fills at the standing asks, which can be BETTER than
+                // the confirmed limit, so price × filled would overstate it.
+                fill_cost: (portalNum(ord.taker_fill_cost_dollars) ?? 0) +
+                    (portalNum(ord.maker_fill_cost_dollars) ?? 0),
+                fill_fees: (portalNum(ord.taker_fees_dollars) ?? 0) +
+                    (portalNum(ord.maker_fees_dollars) ?? 0),
             };
         }
         catch { /* the placement stands; we just cannot describe it yet */ }
-        ordersAudit(acct, { event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state });
+        // PARTIAL TAKE: the IOC remainder is gone, and the reader's next question
+        // is "what would taking the rest cost NOW?" (owner ask 2026-08-31). Fetch
+        // the fresh book and hand back the ask ON THE ORDER'S OWN SIDE plus its
+        // size, so the slip can offer "continue at the next price" with real
+        // numbers instead of sending the reader off to re-find the rung. Only for
+        // takes with nothing left resting — a downgraded-TIF remainder RESTS, and
+        // that story is the tif_downgraded line's, not this one's.
+        let nextAsk = null;
+        if (w.mode === "take" && state && state.filled !== null &&
+            state.filled < w.count - 1e-9 && !(state.remaining && state.remaining > 0)) {
+            try {
+                const bk = await ordersBook(w.ticker);
+                nextAsk = w.side === "yes"
+                    ? { next_ask: bk.yes_ask, next_ask_size: bk.yes_ask_size }
+                    // A NO taker lifts the NO ask (= 1 − yes_bid); its size is the
+                    // best YES bid's size.
+                    : { next_ask: bk.no_ask, next_ask_size: bk.yes_bid_size };
+            }
+            catch { /* offer simply not made this time */ }
+        }
+        ordersAudit(acct, { event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state, ...(nextAsk ?? {}) });
         return {
             ok: true,
-            echo: { ...pickWire(w), order_id: orderId, tif_downgraded: tifDowngraded, state },
+            echo: { ...pickWire(w), order_id: orderId, tif_downgraded: tifDowngraded, state, ...(nextAsk ?? {}) },
         };
     }
     ordersAudit(acct, {

@@ -108,7 +108,7 @@ import {
 import type { PregameVerdict } from "../lib/suggestedBets";
 import {
   newIdempotencyKey, placeErrorText, placeOrders,
-  type PlaceOrder, type PlaceResponse,
+  type PlaceEcho, type PlaceOrder, type PlaceResponse,
 } from "../lib/placeOrders";
 // One mapping, three consumers: this panel's "see projection" jump, the
 // suggestions compute and the portal's held-position pricing (teamStatMarkets).
@@ -1192,6 +1192,40 @@ function ConfirmSlip({
   const [busy, setBusy] = useState(false);
   const [resp, setResp] = useState<{ status: number; body: PlaceResponse } | null>(null);
 
+  /**
+   * CONTINUE AT THE NEXT PRICE (owner ask 2026-08-31). A partial take's echo
+   * carries the fresh ask on its own side (`next_ask`); this fires ONE new
+   * IOC take for the unfilled remainder at that price, down the exact route
+   * the original went — book re-check, caps, audit and all. The new response
+   * replaces this one, so a second partial fill re-offers at the price after
+   * that, recursively, until the reader stops or the book runs out.
+   *
+   * One idempotency key per OFFER, minted when the result lands (useMemo on
+   * `resp`): a double-tap replays server-side instead of placing twice; a new
+   * result mints new keys because a new price is a new decision.
+   */
+  const chaseIdems = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of resp?.body?.placed ?? []) {
+      if (p.order_id) m.set(p.order_id, newIdempotencyKey());
+    }
+    return m;
+  }, [resp]);
+  const chase = async (p: PlaceEcho, count: number, price: number) => {
+    setBusy(true);
+    try {
+      setResp(await placeOrders(
+        token,
+        chaseIdems.get(p.order_id ?? "") ?? newIdempotencyKey(),
+        [{ ticker: p.ticker, side: p.side, mode: "take", price_dollars: price, count_fp: count }],
+      ));
+    } catch {
+      setResp({ status: 0, body: { error: "network", detail: "Request failed — nothing was sent." } });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const rungs = group.rungs;
   const multi = rungs.length > 1;
   const [edits, setEdits] = useState<Record<string, RungEdit>>(() =>
@@ -1428,9 +1462,11 @@ function ConfirmSlip({
             {anyTake && (
               <div>
                 TAKE is a LIMIT order at the confirmed price — it fills there or
-                better, never worse, and anything unfilled is cancelled. If the
-                exchange ignores immediate-or-cancel, the remainder rests and the
-                result will say so. Taker rows pay the full fee.
+                better, never worse, and anything unfilled is cancelled. A
+                partial fill reports what actually filled and offers to keep
+                taking at the next available price. If the exchange ignores
+                immediate-or-cancel, the remainder rests and the result will
+                say so. Taker rows pay the full fee.
               </div>
             )}
             {anyRest && (
@@ -1478,21 +1514,67 @@ function ConfirmSlip({
                         2026-08-30 (GT −6.5): 96 asked, 9.72 filled — the whole
                         book at that price — and the muted status line was all
                         the slip said. An IOC remainder is GONE, and the reader
-                        must know that without decoding exchange words. */}
+                        must know that without decoding exchange words. Since
+                        2026-08-31 (owner ask) the note carries the money that
+                        actually filled, the fresh ask on this side, and a
+                        one-press "keep taking" continuation — see `chase`. */}
                     {p.mode === "take" && p.state?.filled !== null &&
                       p.state?.filled !== undefined &&
-                      p.state.filled < p.count - 1e-9 && !p.state.remaining && (
-                      <div style={{
-                        color: "#f0b429", fontWeight: 800, fontSize: 12,
-                        lineHeight: 1.45, marginTop: 2,
-                      }}>
-                        Partial fill: {p.state.filled} of {p.count} — that was
-                        everything resting at {cents(p.price_dollars)}. The rest
-                        was cancelled (immediate-or-cancel), nothing is resting.
-                        The book has likely moved — reopen the rung to take more
-                        at the new price.
-                      </div>
-                    )}
+                      p.state.filled < p.count - 1e-9 && !p.state.remaining && (() => {
+                      const filled = p.state!.filled!;
+                      const spent = p.state!.fill_cost;
+                      const spentFee = p.state!.fill_fees;
+                      const remain = Math.floor(p.count - filled + 1e-9);
+                      const nx = p.next_ask ?? null;
+                      const nxSize = p.next_ask_size ?? null;
+                      const series = p.ticker.split("-")[0];
+                      const nxFee = nx !== null && remain >= 1
+                        ? orderFee(nx, remain, false, feeParams[series]) : 0;
+                      const nxCost = nx !== null ? round2(nx * remain + nxFee) : 0;
+                      return (
+                        <div style={{ display: "grid", gap: 4, marginTop: 2 }}>
+                          <div style={{
+                            color: "#f0b429", fontWeight: 800, fontSize: 12,
+                            lineHeight: 1.45,
+                          }}>
+                            Partial fill: {filled} of {p.count} contracts
+                            {spent !== undefined && spent > 0 && (
+                              <> — ${spent.toFixed(2)} filled
+                                {spentFee !== undefined && spentFee > 0 && ` + $${spentFee.toFixed(2)} fee`}</>
+                            )}.
+                            That was everything at {cents(p.price_dollars)}; the
+                            rest was cancelled (immediate-or-cancel), nothing is
+                            resting.
+                          </div>
+                          {nx !== null && remain >= 1 ? (
+                            <div style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              flexWrap: "wrap", fontSize: 11.5, color: "var(--text)",
+                            }}>
+                              <span>
+                                Next price: <strong>{cents(nx)}</strong>
+                                {nxSize !== null && ` (${Math.floor(nxSize)} there)`}
+                                {" "}— {remain} more would cost ${nxCost.toFixed(2)}.
+                              </span>
+                              <button
+                                type="button" className="ui-btn" data-on="true"
+                                disabled={busy}
+                                onClick={() => chase(p, remain, nx)}
+                                style={{ padding: "4px 12px", fontSize: 11.5, fontWeight: 800 }}
+                              >
+                                {busy ? "Sending…" : `Take ${remain} more @ ${cents(nx)}`}
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                              {remain < 1
+                                ? "Less than one whole contract unfilled — nothing left to take."
+                                : "No offer on this side right now — nothing to continue into."}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {p.state && (
                       <div>
                         status {p.state.status}
