@@ -2775,9 +2775,20 @@ function ScoreboardPage() {
       const isOpen = openPanel?.key === c.key;
       // OWNER ONLY, and only what the current filters actually leave on
       // this game — the badge reads the same compute the panel renders.
+      // `nTail` reads tailCountBySlug, NOT the section's tailGroups: the
+      // section only carries tails while the reveal is ON, and a tail-only
+      // game must still get its button (the panel's tail line is where the
+      // reveal lives). `nCand` is the quote×rung count before every gate —
+      // it keeps the button on a game whose every market was held out (wide
+      // book, penny quote), so the panel can SAY why instead of the button
+      // silently vanishing (live case 2026-08-31, 21 winner-only games).
       const sec = suggestions.bySlug.get(c.key);
       const bets = ownerOn
-        ? { n: sec?.groups.length ?? 0, nTail: sec?.tailGroups.length ?? 0 }
+        ? {
+            n: sec?.groups.length ?? 0,
+            nTail: suggestions.tailCountBySlug.get(c.key) ?? 0,
+            nCand: suggestions.candCountBySlug.get(c.key) ?? 0,
+          }
         : undefined;
 
       return (
@@ -3444,7 +3455,7 @@ export function GameCard({
    * filters (`n`), and how many revealed tail ladders (`nTail`). Undefined for
    * everyone else, which is what keeps the Bets tab off a viewer's card.
    */
-  bets?: { n: number; nTail: number };
+  bets?: { n: number; nTail: number; nCand: number };
 }) {
   const jsonRow = card.jsonRow;
   const csvCard = !jsonRow;
@@ -3822,21 +3833,30 @@ export function GameCard({
             player panels: team_stats.json is built from the player sweep, so
             the FCS (game-level-only) namespace has none and gets no button. */}
         {jsonRow && card.hasPlayers && tabBtn("teamstats", "Team Stats")}
-        {/* OWNER ONLY, and only when this game actually has something to
-            place. `openKind === "bets"` keeps the button alive while its own
-            panel is open, so a feed update that drops the last row cannot
+        {/* OWNER ONLY. The button shows whenever the game produced ANY
+            candidate (a Kalshi quote paired with a published rung) — picked
+            or not — because the panel can always explain what happened to
+            them (tail band, wide book, no edge after fee). Hiding the button
+            on a suppressed-only game turned the engine's refusal into a
+            mystery (2026-08-31: 21 winner-only games, Kalshi visible, no
+            button). The PILL stays honest: a count only for real picks,
+            "tail" when the tail band is all there is, bare otherwise.
+            `openKind === "bets"` keeps the button alive while its own panel
+            is open, so a feed update that drops the last candidate cannot
             yank the tab out from under an open panel. */}
-        {bets && (bets.n + bets.nTail > 0 || openKind === "bets") && tabBtn(
+        {bets && (bets.nCand > 0 || bets.n + bets.nTail > 0 || openKind === "bets") && tabBtn(
           "bets",
           <>
             Bets
-            <span style={{
-              marginLeft: 5, padding: "0 5px", borderRadius: 999,
-              fontSize: 10, fontWeight: 900, verticalAlign: "middle",
-              background: "var(--brand)", color: "var(--brand-contrast)",
-            }}>
-              {bets.n > 0 ? bets.n : "tail"}
-            </span>
+            {(bets.n > 0 || bets.nTail > 0) && (
+              <span style={{
+                marginLeft: 5, padding: "0 5px", borderRadius: 999,
+                fontSize: 10, fontWeight: 900, verticalAlign: "middle",
+                background: "var(--brand)", color: "var(--brand-contrast)",
+              }}>
+                {bets.n > 0 ? bets.n : "tail"}
+              </span>
+            )}
           </>,
           true,
         )}

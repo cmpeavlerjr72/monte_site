@@ -888,8 +888,11 @@ export default function GameBetsPanel({
           ) : (
             <span>
               Nothing on this game clears the thresholds right now — no listed
-              market, no published rung at those strikes, or no edge left after
-              the fee.
+              market, no published rung at those strikes, a book too wide or
+              one-sided to price against, or no edge left after the fee.
+              Early in the week many games list only the winner market with a
+              near-empty book; ladders and real quotes usually arrive in the
+              last days before kickoff.
             </span>
           )}
         </div>

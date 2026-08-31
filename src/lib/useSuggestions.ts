@@ -107,6 +107,17 @@ export type Suggestions = {
   /** Card key -> every priced rung, uncapped (the full-ladder browse). Not
    *  filtered, not gated on a game having picked rows. */
   browseBySlug: Map<string, Suggestion[]>;
+  /**
+   * Card key -> how many CANDIDATES the game produced — a Kalshi quote paired
+   * with a published rung, counted BEFORE selection, the tail band, and the
+   * book-quality suppressions. This is the card's "there is something to talk
+   * about" signal: the Bets tab shows off it, so a game whose every market is
+   * tail-band or held out (a 65¢-wide winner book, a penny quote) still opens
+   * a panel that SAYS so, instead of hiding the button and turning the
+   * engine's refusal into a mystery (live case 2026-08-31: 21 winner-only
+   * early-week games, Kalshi lines visible, no Bets button anywhere).
+   */
+  candCountBySlug: Map<string, number>;
   computedAt: Date;
   pregameCount: number;
   blindCount: number;
@@ -143,7 +154,7 @@ export function useSuggestions({
 }: SuggestionsInput): Suggestions {
   const {
     rows, tailRows, tailMarkets, suppressed, browse, computedAt, pregameCount,
-    blindCount, verdicts,
+    blindCount, verdicts, candCounts,
   } = useMemo(() => {
     const held = heldCostByTicker(portal?.positions, portal?.orders);
     const candidates: Candidate[] = [];
@@ -152,7 +163,9 @@ export function useSuggestions({
     // mistake for "no edges here".
     let nPregame = 0, nBlind = 0;
     const verdictBySlug = new Map<string, PregameVerdict>();
+    const candBySlug = new Map<string, number>();
     for (const g of games) {
+      const candBefore = candidates.length;
       // PREGAME ONLY — the rule, its precedence and its reasoning all live in
       // `pregameVerdict`. It runs against the page's ticking clock, so this
       // whole memo re-evaluates every 30s and a game LEAVES the list when it
@@ -196,6 +209,9 @@ export function useSuggestions({
         candidates.push(...gameCandidates(
           kg, g.key, g.teamA, g.teamB, published.game, g.kickoffMs));
       }
+      // Quote×rung pairs this game produced, before any gate (see the
+      // BuildResult doc above). A game that `continue`d out has no entry -> 0.
+      candBySlug.set(g.key, candidates.length - candBefore);
     }
     // ONE clock for the gate above and the timing bands inside: two Date.now()
     // reads a few ms apart can land on opposite sides of a band edge.
@@ -203,6 +219,7 @@ export function useSuggestions({
     return {
       ...built, computedAt: new Date(),
       pregameCount: nPregame, blindCount: nBlind, verdicts: verdictBySlug,
+      candCounts: candBySlug,
     };
     // `nonce` is the manual refresh: it re-runs the compute against whatever
     // feed the page currently holds, and never triggers a fetch of its own.
@@ -312,6 +329,7 @@ export function useSuggestions({
   return {
     ...grouped,
     browseBySlug,
+    candCountBySlug: candCounts,
     pregameBySlug: verdicts,
     tailMarkets,
     suppressed,
