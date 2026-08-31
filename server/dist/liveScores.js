@@ -1479,13 +1479,13 @@ function portalBuildAccounts() {
         if (!m || !pw)
             continue;
         const sfx = `_${m[1]}`;
-        const live = process.env[`CFB_ORDERS_LIVE${sfx}`];
         const acct = {
             id: m[1].toLowerCase(), label: m[1], password: pw,
             keyId: process.env[`KALSHI_API_KEY_ID${sfx}`] || "",
             pemInline: process.env[`KALSHI_PRIVATE_KEY${sfx}`] || "",
             pemPath: process.env[`KALSHI_PRIVATE_KEY_PATH${sfx}`] || "",
-            ordersLive: live === undefined ? baseLive : live === "1",
+            // Staged until ITS OWN flag flips — never inherited (see header).
+            ordersLive: process.env[`CFB_ORDERS_LIVE${sfx}`] === "1",
         };
         // A shared password cannot select an account. Refuse to REGISTER the
         // later one (boot-visible, loud) rather than silently serving whichever

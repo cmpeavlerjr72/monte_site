@@ -1818,9 +1818,12 @@ const staticDir = path.resolve(__dirname, "../../dist");
 //
 //   every additional account (suffix _X, discovered from its password var):
 //     CFB_PORTAL_PASSWORD_X, KALSHI_API_KEY_ID_X, KALSHI_PRIVATE_KEY_PATH_X
-//     (or KALSHI_PRIVATE_KEY_X inline), CFB_ORDERS_LIVE_X — the live flag
-//     DEFAULTS TO THE BASE FLAG when unset, and can stage one account while
-//     another trades (a new trader's first day is exactly what dry-run is for).
+//     (or KALSHI_PRIVATE_KEY_X inline), CFB_ORDERS_LIVE_X — an added account
+//     is STAGED (dry-run) until ITS OWN flag says "1". Deliberately NOT
+//     inherited from the base flag: the base is live in production, and a
+//     freshly added trader going live as a side effect of four env vars
+//     landing is exactly the accident staging exists to prevent. Going live
+//     is its own, separate, deliberate env change.
 //     e.g. ROTH: CFB_PORTAL_PASSWORD_ROTH + KALSHI_API_KEY_ID_ROTH +
 //     KALSHI_PRIVATE_KEY_PATH_ROTH=/etc/secrets/kalshi_roth.pem.
 //
@@ -1871,13 +1874,13 @@ function portalBuildAccounts(): PortalAccount[] {
     const pw = m ? process.env[k] || "" : "";
     if (!m || !pw) continue;
     const sfx = `_${m[1]}`;
-    const live = process.env[`CFB_ORDERS_LIVE${sfx}`];
     const acct: PortalAccount = {
       id: m[1].toLowerCase(), label: m[1], password: pw,
       keyId: process.env[`KALSHI_API_KEY_ID${sfx}`] || "",
       pemInline: process.env[`KALSHI_PRIVATE_KEY${sfx}`] || "",
       pemPath: process.env[`KALSHI_PRIVATE_KEY_PATH${sfx}`] || "",
-      ordersLive: live === undefined ? baseLive : live === "1",
+      // Staged until ITS OWN flag flips — never inherited (see header).
+      ordersLive: process.env[`CFB_ORDERS_LIVE${sfx}`] === "1",
     };
     // A shared password cannot select an account. Refuse to REGISTER the
     // later one (boot-visible, loud) rather than silently serving whichever
