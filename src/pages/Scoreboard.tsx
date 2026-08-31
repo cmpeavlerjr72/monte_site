@@ -3163,6 +3163,7 @@ function ScoreboardPage() {
               onSort={onBetSort}
               onRefresh={() => setSuggestNonce((n) => n + 1)}
               ordersLive={portal.payload?.orders_live === true}
+              feeParams={kalshiFees}
               showTails={betTails}
               onShowTails={onBetTails}
               onClearFilters={clearBetFilters}
