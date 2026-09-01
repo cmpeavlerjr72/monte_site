@@ -19,10 +19,16 @@ import DryRunBadge from "./DryRunBadge";
 import { cancelAppOrders, placeErrorText, type PlaceResponse } from "../lib/placeOrders";
 import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
 import { KalshiRecordBlock, MyBookBar } from "./MyBook";
-import { cheerLabel, useFriendBooks } from "../lib/kalshiPortal";
-import type {
-  BetGameNames, FriendBook, PortalTotals, SettlementRecord,
+import {
+  cheerLabelWithGame, portalGameCode, useFriendBooks,
 } from "../lib/kalshiPortal";
+import type {
+  BetGameNames, FriendBook, PortalFill, PortalPosition, PortalTotals,
+  SettlementRecord,
+} from "../lib/kalshiPortal";
+import {
+  newIdempotencyKey, placeOrders, type PlaceOrder,
+} from "../lib/placeOrders";
 import {
   enablePushAlerts, getPushState, resyncPushSubscription, sendTestPush,
   type PushState,
@@ -106,27 +112,118 @@ function FillAlertsRow({ token }: { token: string }) {
  * fills underneath carry the time, because the feed's job is "what did they
  * just take", not accounting.
  */
-function FriendBookBlock({ book }: { book: FriendBook }) {
+/** The price at which the SESSION's account could take the same side right
+ *  now, off the live book the server stamped on the friend's position.
+ *  null = not available (no offer, or a 1¢/99¢ shell). */
+function joinPriceOf(p: PortalPosition): number | null {
+  const px = p.side === "no"
+    ? (p.mkt_yes_bid == null ? null : 1 - p.mkt_yes_bid)
+    : (p.mkt_yes_ask ?? null);
+  return px != null && px > 0.01 && px < 0.99 ? Math.round(px * 100) / 100 : null;
+}
+
+/**
+ * Two-tap join: "Join @ 54¢" arms into "Confirm 46× ≈ $25" and only the
+ * second tap places — a TAKE on the session's OWN account, sized by the
+ * owner's unit. The friend's account is never touched; this is the same
+ * self-directed order entry as everywhere else, staged (dry-run) until this
+ * session's account is live.
+ */
+function FriendJoin({ token, ticker, side, price, unit }: {
+  token: string; ticker: string; side: "yes" | "no"; price: number;
+  unit: number;
+}) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const count = Math.max(1, Math.floor(unit / price));
+  const cost = count * price;
+
+  const place = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const order: PlaceOrder = {
+        ticker, side, mode: "take", price_dollars: price, count_fp: count,
+      };
+      const r = await placeOrders(token, newIdempotencyKey(), [order]);
+      const b = r.body as PlaceResponse;
+      if (r.status >= 400) setMsg(placeErrorText(b));
+      else setMsg(b.dry_run ? "dry run — nothing sent" : "joined ✓");
+    } catch (e: unknown) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false); setArmed(false);
+    }
+  };
+
+  if (msg) {
+    return <span style={{ fontSize: 10, color: "var(--muted)" }}>{msg}</span>;
+  }
+  return (
+    <button
+      disabled={busy}
+      onClick={() => (armed ? place() : setArmed(true))}
+      onBlur={() => setArmed(false)}
+      style={{
+        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+        border: "1px solid var(--border)", cursor: "pointer",
+        background: "transparent",
+        color: armed ? "var(--mode-take)" : "var(--muted)",
+      }}>
+      {armed ? `confirm ${count}× ≈ $${cost.toFixed(0)}` : `join @ ${Math.round(price * 100)}¢`}
+    </button>
+  );
+}
+
+type FriendGame = {
+  code: string; names?: BetGameNames;
+  positions: PortalPosition[]; fills: PortalFill[]; last: number;
+};
+
+/** A friend's book grouped BY GAME (owner ask 2026-09-01): each game gets its
+ *  real matchup name, the held bets one line each with a live JOIN price, and
+ *  that game's recent fills as a muted timeline underneath. */
+function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug }: {
+  book: FriendBook; token: string; unit: number;
+  slugTeams: Map<string, BetGameNames>; codeToSlug: Map<string, string>;
+}) {
   const net = (s: { revenue: number; cost: number; fees: number }) =>
     s.revenue - s.cost - s.fees; // fee-inclusive, standing rule
   const settledNet = book.settlements.reduce((a, s) => a + net(s), 0);
   const wins = book.settlements.filter((s) => net(s) > 0).length;
   const losses = book.settlements.filter((s) => net(s) < 0).length;
-  const fills = [...book.fills]
-    .sort((a, b) => Date.parse(b.created_time) - Date.parse(a.created_time))
-    .slice(0, 6);
   const money = (n: number) => `${n < 0 ? "−" : "+"}$${Math.abs(n).toFixed(2)}`;
-  const px = (f: { side: string; yes_price: number | null; no_price: number | null }) => {
-    const p = f.side === "no" ? f.no_price : f.yes_price;
-    return p === null ? "" : ` @ ${Math.round(p * 100)}¢`;
-  };
   const when = (iso: string) => {
     const t = new Date(iso);
     return Number.isNaN(t.getTime()) ? "" :
       t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   };
+
+  const games = new Map<string, FriendGame>();
+  const gameOf = (ticker: string, at: number): FriendGame | null => {
+    const code = portalGameCode(ticker);
+    if (!code) return null;
+    let g = games.get(code);
+    if (!g) {
+      const slug = codeToSlug.get(code);
+      g = { code, names: slug ? slugTeams.get(slug) : undefined,
+            positions: [], fills: [], last: 0 };
+      games.set(code, g);
+    }
+    if (at > g.last) g.last = at;
+    return g;
+  };
+  for (const p of book.positions) gameOf(p.ticker, 0)?.positions.push(p);
+  const recentFills = [...book.fills]
+    .sort((a, b) => Date.parse(b.created_time) - Date.parse(a.created_time))
+    .slice(0, 12);
+  for (const f of recentFills) {
+    gameOf(f.ticker, Date.parse(f.created_time) || 0)?.fills.push(f);
+  }
+  const ordered = [...games.values()].sort((a, b) => b.last - a.last);
+
   return (
-    <div style={{ minWidth: 0 }}>
+    <div style={{ minWidth: 0, flex: 1 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, fontWeight: 800 }}>{book.account_label}</span>
         {wins + losses > 0 && (
@@ -137,39 +234,69 @@ function FriendBookBlock({ book }: { book: FriendBook }) {
             </b>
           </span>
         )}
-        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-          {book.positions.length ? `holding ${book.positions.length}` : "nothing held"}
-        </span>
+        {!ordered.length && (
+          <span style={{ fontSize: 10.5, color: "var(--muted)" }}>nothing held</span>
+        )}
       </div>
-      {book.positions.map((p) => (
-        <div key={`${p.ticker}|${p.side}`} style={{ fontSize: 11, padding: "2px 0" }}>
-          {p.count} × {cheerLabel(p.ticker, p.side)}
-          {p.avg_price !== null && (
-            <span style={{ color: "var(--muted)" }}> @ {Math.round(p.avg_price * 100)}¢</span>
-          )}
-        </div>
-      ))}
-      {fills.length > 0 && (
-        <div style={{ marginTop: 2 }}>
-          {fills.map((f, i) => (
+      {ordered.map((g) => (
+        <div key={g.code} style={{ marginTop: 6 }}>
+          <div style={{
+            fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+            textTransform: "uppercase", color: "var(--muted)",
+          }}>
+            {g.names ? `${g.names.teamB} @ ${g.names.teamA}` : g.code}
+          </div>
+          {g.positions.map((p) => {
+            const join = joinPriceOf(p);
+            return (
+              <div key={`${p.ticker}|${p.side}`} style={{
+                display: "flex", alignItems: "center", gap: 8,
+                flexWrap: "wrap", fontSize: 11, padding: "2px 0",
+              }}>
+                <span style={{ minWidth: 0 }}>
+                  {p.count} × {cheerLabelWithGame(p.ticker, p.side, g.names)}
+                  {p.avg_price !== null && (
+                    <span style={{ color: "var(--muted)" }}>
+                      {" "}@ {Math.round(p.avg_price * 100)}¢
+                    </span>
+                  )}
+                </span>
+                {join !== null ? (
+                  <FriendJoin token={token} ticker={p.ticker}
+                              side={p.side === "no" ? "no" : "yes"}
+                              price={join} unit={unit} />
+                ) : (
+                  <span style={{ fontSize: 10, color: "var(--muted)" }}>no offer now</span>
+                )}
+              </div>
+            );
+          })}
+          {g.fills.map((f, i) => (
             <div key={`${f.ticker}|${f.created_time}|${i}`}
-                 style={{ fontSize: 10.5, color: "var(--muted)", padding: "1px 0" }}>
-              {when(f.created_time)} · {f.count ?? "?"} × {cheerLabel(f.ticker, f.side)}{px(f)}
+                 style={{ fontSize: 10, color: "var(--muted)", padding: "1px 0" }}>
+              {when(f.created_time)} · filled {f.count ?? "?"} × {cheerLabelWithGame(f.ticker, f.side, g.names)}
             </div>
           ))}
         </div>
-      )}
+      ))}
     </div>
   );
 }
 
-function FriendFeedRow({ token }: { token: string }) {
+function FriendFeedRow({ token, unit, slugTeams, codeToSlug }: {
+  token: string; unit: number;
+  slugTeams: Map<string, BetGameNames>; codeToSlug: Map<string, string>;
+}) {
   const friends = useFriendBooks(token);
   if (!friends.length) return null;
   return (
     <Row label="Friends" top>
-      <div style={{ display: "grid", gap: 8, minWidth: 0, flex: 1 }}>
-        {friends.map((f) => <FriendBookBlock key={f.account_id} book={f} />)}
+      <div style={{ display: "grid", gap: 10, minWidth: 0, flex: 1 }}>
+        {friends.map((f) => (
+          <FriendBookBlock key={f.account_id} book={f} token={token}
+                           unit={unit} slugTeams={slugTeams}
+                           codeToSlug={codeToSlug} />
+        ))}
       </div>
     </Row>
   );
@@ -201,7 +328,7 @@ function Row({ label, children, top = false }: {
 
 export default function MyBookPanel({
   token, onToken, note, connected, ordersLive, accountLabel, unit, onUnit,
-  totals, unmatched, record, slugTeams, children,
+  totals, unmatched, record, slugTeams, codeToSlug, children,
 }: {
   token: string;
   /** "" disconnects. Persisting is the caller's job (writePortalToken). */
@@ -228,6 +355,8 @@ export default function MyBookPanel({
   /** slug -> the card's real team names, passed straight through to
    *  `KalshiRecordBlock` — see that component's doc for what it is used for. */
   slugTeams: Map<string, BetGameNames>;
+  /** ticker game-code -> slug, for naming the Friend Feed's game groups. */
+  codeToSlug: Map<string, string>;
   /** The Suggested bets card — rendered inside the console it belongs to. */
   children?: React.ReactNode;
 }) {
@@ -370,7 +499,10 @@ export default function MyBookPanel({
 
       {/* The friend pair's books, when the server declares one — renders
           nothing at all otherwise (no empty "Friends" shell). */}
-      {token && <FriendFeedRow token={token} />}
+      {token && (
+        <FriendFeedRow token={token} unit={unit}
+                       slugTeams={slugTeams} codeToSlug={codeToSlug} />
+      )}
 
       {children && (
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 1 }}>

@@ -2376,6 +2376,10 @@ function ScoreboardPage() {
     () => new Map(baseCards.map((c) => [c.key, { teamA: c.teamA, teamB: c.teamB }])),
     [baseCards]
   );
+  /** ticker game-code -> slug, at panel scope: the Friend Feed groups a
+   *  friend's bets by game and names them with the card's real teams. Same
+   *  builder the record and seed joins use, just hoisted out of their memos. */
+  const codeToSlug = useMemo(() => buildCodeToSlug(kalshiBySlug), [kalshiBySlug]);
   /** ticker -> P(YES) of the RAW market: seeds for the game lines, published
    *  rungs for the per-team stat ladders. Literally the function the held
    *  positions above are priced with (`buildPortalYesP`), handed to the
@@ -3148,6 +3152,7 @@ function ScoreboardPage() {
           unmatched={portalBook.unmatched}
           record={portalRecord}
           slugTeams={slugTeams}
+          codeToSlug={codeToSlug}
         >
           {/* The RANKED INDEX: which game, not which bet. It recomputes
               whenever the 45s Kalshi poll delivers, so it is live without a
