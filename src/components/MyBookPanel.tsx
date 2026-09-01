@@ -29,6 +29,7 @@ import type {
 import {
   newIdempotencyKey, placeOrders, type PlaceOrder,
 } from "../lib/placeOrders";
+import { getTeamLogo } from "../utils/teamLogo";
 import {
   enablePushAlerts, getPushState, resyncPushSubscription, sendTestPush,
   type PushState,
@@ -238,12 +239,27 @@ function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug }: {
           <span style={{ fontSize: 10.5, color: "var(--muted)" }}>nothing held</span>
         )}
       </div>
-      {ordered.map((g) => (
-        <div key={g.code} style={{ marginTop: 6 }}>
+      {ordered.map((g) => {
+        const away = g.names && getTeamLogo(g.names.teamB);
+        const home = g.names && getTeamLogo(g.names.teamA);
+        return (
+        <div key={g.code} style={{
+          marginTop: 6, padding: "6px 9px", borderRadius: 8,
+          border: "1px solid var(--border)",
+        }}>
           <div style={{
-            fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+            display: "flex", alignItems: "center", gap: 6,
+            fontSize: 10.5, fontWeight: 800, letterSpacing: 0.3,
             textTransform: "uppercase", color: "var(--muted)",
+            paddingBottom: 4, marginBottom: 2,
+            borderBottom: "1px solid var(--border)",
           }}>
+            {(away || home) && (
+              <span aria-hidden="true" style={{ display: "inline-flex", gap: 2 }}>
+                {away && <img src={away} alt="" width={16} height={16} loading="lazy" />}
+                {home && <img src={home} alt="" width={16} height={16} loading="lazy" />}
+              </span>
+            )}
             {g.names ? `${g.names.teamB} @ ${g.names.teamA}` : g.code}
           </div>
           {g.positions.map((p) => {
@@ -278,7 +294,8 @@ function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug }: {
             </div>
           ))}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
