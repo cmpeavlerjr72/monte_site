@@ -852,3 +852,56 @@ export function usePortalBook(token: string): PortalState {
 
   return state;
 }
+
+/* ------------------------------ friend feed ------------------------------ */
+
+/** One paired friend's book, verbatim from the server's own payload builders
+ *  — full stakes and P&L by owner decision (2026-09-01). Read-only: there is
+ *  no order surface for an account the session's password did not select. */
+export type FriendBook = {
+  account_id: string; account_label: string; read_only: true;
+  orders: PortalOrder[]; fills: PortalFill[]; positions: PortalPosition[];
+  settlements: PortalSettlement[];
+};
+
+const FRIEND_POLL_MS = 60_000;
+
+/**
+ * Poll the friend feed while a token is present. Slower than the own-book
+ * poll (a friend's bets are news, not a live console), and a failing feed
+ * keeps the last good list — the friend row going stale must never look
+ * like the portal going down. Deps: the token primitive only.
+ */
+export function useFriendBooks(token: string): FriendBook[] {
+  const [friends, setFriends] = useState<FriendBook[]>([]);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!token) { setFriends([]); return; }
+    let alive = true;
+    const ac = new AbortController();
+    const pull = async () => {
+      try {
+        const r = await fetch("/api/portfolio/cfb/friends", {
+          headers: { "x-cfb-token": token },
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        if (!alive || !r.ok) return;
+        const body = await r.json();
+        if (alive && Array.isArray(body?.friends)) {
+          setFriends(body.friends as FriendBook[]);
+        }
+      } catch { /* keep whatever list we already had */ }
+    };
+    pull();
+    timer.current = setInterval(pull, FRIEND_POLL_MS);
+    return () => {
+      alive = false;
+      ac.abort();
+      if (timer.current) clearInterval(timer.current);
+    };
+  }, [token]);
+
+  return friends;
+}

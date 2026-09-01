@@ -640,6 +640,22 @@ writes alike. It was extracted from the read route when order entry landed
 so a mutating endpoint could not drift away from it. The auth gate must
 ALWAYS predate any mutating endpoint.
 
+### Friend feed (2026-09-01) — the ONE sanctioned isolation crossing
+
+`GET /api/portfolio/cfb/friends` (behind the same `portalGate`) returns the
+paired accounts' books READ-ONLY — orders, fills, positions, settlements,
+full stakes and P&L (owner decision). Pairs are env-declared and symmetric:
+`CFB_FRIENDS="mp:roth,…"`; UNSET defaults to `mp:roth` when both accounts
+are registered, `CFB_FRIENDS=""` disables. It reuses `portalPayloadFor` /
+`portalSettlementsFor` (the same cached builders the account's own reads
+use) and registers NO write surface — order entry stays gated to the
+session's own account. Push: paired accounts also hear each other's fills
+(taker fills INCLUDED — "your friend just took a bet" is the feature;
+own-account alerts stay maker-only). Client: `useFriendBooks` (60s poll,
+fail-soft) + the My Book "Friends" row (renders nothing when no pairs).
+Any wider cross-account read needs its own review — this feature is the
+exception, not the precedent.
+
 ### The held-book display (`src/components/MyBook.tsx`) — bar-test rules
 
 `MyBookStrip` (the block on a game card) and `MyBookBar` (the console's "Book"

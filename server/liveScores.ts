@@ -1900,6 +1900,42 @@ if (PORTAL_ACCOUNTS.length) {
   console.log("[portal] accounts registered:",
     PORTAL_ACCOUNTS.map((a) => `${a.id}${a.ordersLive ? " (orders LIVE)" : " (staged)"}`).join(", "));
 }
+
+// FRIEND PAIRS — mutual read-only visibility ("see what your friend takes",
+// owner ask 2026-09-01, full stakes + P&L by owner decision). CFB_FRIENDS
+// lists id:id pairs ("mp:roth,mp:tp"); UNSET defaults to mp:roth when both
+// are registered (the pair the feature shipped for) — set CFB_FRIENDS=""
+// to run with none. Pairs are symmetric. Read-only BY CONSTRUCTION: the
+// friend route reuses the same cached payload builders the account's own
+// reads use and registers no write surface — order entry stays gated to the
+// session's own account, untouched. This is the ONE sanctioned crossing of
+// the portal's account-isolation line; anything wider needs its own review.
+const PORTAL_FRIENDS = new Map<string, string[]>();
+{
+  const raw = process.env.CFB_FRIENDS ?? "mp:roth";
+  const have = new Set(PORTAL_ACCOUNTS.map((a) => a.id));
+  for (const pair of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    const [a, b] = pair.split(":").map((s) => (s || "").trim().toLowerCase());
+    if (!a || !b || a === b || !have.has(a) || !have.has(b)) {
+      // The default pair staying dark (e.g. ROTH not configured yet) is
+      // normal staging, not a config error — only warn on an EXPLICIT env.
+      if (process.env.CFB_FRIENDS !== undefined) {
+        console.warn(`[portal] friend pair "${pair}" DROPPED (malformed or unknown account id)`);
+      }
+      continue;
+    }
+    if (!(PORTAL_FRIENDS.get(a) ?? []).includes(b)) {
+      PORTAL_FRIENDS.set(a, [...(PORTAL_FRIENDS.get(a) ?? []), b]);
+    }
+    if (!(PORTAL_FRIENDS.get(b) ?? []).includes(a)) {
+      PORTAL_FRIENDS.set(b, [...(PORTAL_FRIENDS.get(b) ?? []), a]);
+    }
+  }
+  if (PORTAL_FRIENDS.size) {
+    console.log("[portal] friend pairs:",
+      [...PORTAL_FRIENDS.entries()].map(([k, v]) => `${k}<->${v.join("+")}`).join(", "));
+  }
+}
 // Public market-data calls sign with the FIRST account that has creds (see
 // kalshiJson) — one rate bucket, account-independent data. Falls back to a
 // creds-only pseudo-account when Kalshi env creds exist WITHOUT a portal
@@ -2372,14 +2408,12 @@ function portalGate(req: Request, res: Response): PortalAccount | null {
   return hit;
 }
 
-app.get("/api/portfolio/cfb", asyncRoute(async (req: Request, res: Response) => {
-  const acct = portalGate(req, res);
-  if (!acct) return;
+/** The one book-payload builder — the account's own read and the friend
+ *  feed both come through here, so the cache, the live-book decoration and
+ *  the field shapes can never diverge between the two views. */
+async function portalPayloadFor(acct: PortalAccount): Promise<PortalPayload> {
   const cached = portalCaches.get(acct.id);
-  if (cached && Date.now() - cached.at < PORTAL_TTL_MS) {
-    res.json(cached.payload);
-    return;
-  }
+  if (cached && Date.now() - cached.at < PORTAL_TTL_MS) return cached.payload;
   const [orders, fills, positions] = await Promise.all([
     portalOrders(acct), portalFills(acct), portalPositions(acct),
   ]);
@@ -2407,7 +2441,13 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req: Request, res: Response) => 
     account_id: acct.id, account_label: acct.label,
   };
   portalCaches.set(acct.id, { at: Date.now(), payload });
-  res.json(payload);
+  return payload;
+}
+
+app.get("/api/portfolio/cfb", asyncRoute(async (req: Request, res: Response) => {
+  const acct = portalGate(req, res);
+  if (!acct) return;
+  res.json(await portalPayloadFor(acct));
 }));
 
 /**
@@ -2418,13 +2458,12 @@ app.get("/api/portfolio/cfb", asyncRoute(async (req: Request, res: Response) => 
  * The client rides its existing 30s portal poll to refresh this, so it opens
  * no new timer either.
  */
-app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req: Request, res: Response) => {
-  const acct = portalGate(req, res);
-  if (!acct) return;
+async function portalSettlementsFor(acct: PortalAccount): Promise<{
+  fetched_at: string; settlements: PortalSettlement[];
+}> {
   const cached = portalSettleCaches.get(acct.id);
   if (cached && Date.now() - cached.at < PORTAL_SETTLE_TTL_MS) {
-    res.json(cached.payload);
-    return;
+    return cached.payload;
   }
   const settlements = await portalSettlements(acct);
   // ATTRIBUTION. The account is shared with the maker pipeline, so tag the
@@ -2436,7 +2475,49 @@ app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req: Request, res: R
   if (mine) for (const s of settlements) s.app = mine.has(s.ticker);
   const payload = { fetched_at: new Date().toISOString(), settlements };
   portalSettleCaches.set(acct.id, { at: Date.now(), payload });
-  res.json(payload);
+  return payload;
+}
+
+app.get("/api/portfolio/cfb/settlements", asyncRoute(async (req: Request, res: Response) => {
+  const acct = portalGate(req, res);
+  if (!acct) return;
+  res.json(await portalSettlementsFor(acct));
+}));
+
+/**
+ * FRIEND FEED — the other half of a declared friend pair, read-only
+ * ("see what your friend takes", owner ask 2026-09-01).
+ *
+ * Behind the SAME portalGate as every portal read; the session's account
+ * selects which friends it may see via PORTAL_FRIENDS (env-declared,
+ * symmetric). Reuses portalPayloadFor / portalSettlementsFor so a friend
+ * sees exactly what the friend's own console shows — full stakes and P&L
+ * (owner decision) — and rides the same per-account caches, so a pair of
+ * friends polling costs Kalshi nothing extra. No write surface: order
+ * entry remains gated to the session's own account.
+ */
+app.get("/api/portfolio/cfb/friends", asyncRoute(async (req: Request, res: Response) => {
+  const acct = portalGate(req, res);
+  if (!acct) return;
+  const friends: Array<Record<string, unknown>> = [];
+  for (const id of PORTAL_FRIENDS.get(acct.id) ?? []) {
+    const f = PORTAL_ACCOUNTS.find((a) => a.id === id);
+    if (!f) continue;
+    try {
+      const [payload, settled] = await Promise.all([
+        portalPayloadFor(f), portalSettlementsFor(f),
+      ]);
+      friends.push({
+        account_id: f.id, account_label: f.label, read_only: true,
+        orders: payload.orders, fills: payload.fills,
+        positions: payload.positions, settlements: settled.settlements,
+      });
+    } catch (err: any) {
+      // One friend's Kalshi hiccup must not blank the caller's own console.
+      console.warn(`[portal] friend book ${id} failed:`, err?.message ?? err);
+    }
+  }
+  res.json({ fetched_at: new Date().toISOString(), friends });
 }));
 
 // ============================================================================
@@ -3701,7 +3782,12 @@ async function pushFillPoll(): Promise<void> {
   pushFillBusy = true;
   try {
     for (const acct of PORTAL_ACCOUNTS) {
-      if (!pushSubs.some((s) => s.account === acct.id)) continue; // nobody listening
+      // Listeners = this account's own devices OR a paired friend's devices
+      // (friends hear about each other's fills — the Friend Feed's push half).
+      const listening = pushSubs.some((s) => s.account === acct.id) ||
+        (PORTAL_FRIENDS.get(acct.id) ?? []).some(
+          (fid) => pushSubs.some((s) => s.account === fid));
+      if (!listening) continue; // nobody listening
       if (!portalPrivateKey(acct) || !acct.keyId) continue; // no Kalshi creds
       await pushPollAccount(acct);
     }
@@ -3736,6 +3822,35 @@ async function pushPollAccount(acct: PortalAccount): Promise<void> {
         url: "/cfb/scoreboard",
       });
       console.log(`[push] fill notified (${acct.id}): ${g.count} × ${ticker}${px}`);
+    }
+
+    // FRIEND fills: paired accounts hear about EVERY fresh fill, taker
+    // included — a taker fill IS "your friend just took a bet", the exact
+    // event the Friend Feed exists for (owner ask 2026-09-01). Same window
+    // as above (watermark advances below, after both notification passes).
+    const friendIds = (PORTAL_FRIENDS.get(acct.id) ?? [])
+      .filter((fid) => pushSubs.some((s) => s.account === fid));
+    if (friendIds.length) {
+      const allFresh = fills.filter((f) => Date.parse(f.created_time) > mark.fill);
+      const byTickerAll = new Map<string, { count: number; price: number | null; side: string }>();
+      for (const f of allFresh) {
+        const cur = byTickerAll.get(f.ticker) ?? { count: 0, price: null, side: f.side };
+        cur.count += f.count ?? 0;
+        cur.price = f.side === "no" ? f.no_price : f.yes_price;
+        byTickerAll.set(f.ticker, cur);
+      }
+      for (const [ticker, g] of byTickerAll) {
+        const px = g.price === null ? "" : ` @ ${Math.round(g.price * 100)}¢`;
+        for (const fid of friendIds) {
+          await pushSendAll(fid, {
+            title: `${acct.label} placed a bet`,
+            body: `${g.count} × ${pushTickerWords(ticker)} — ${g.side.toUpperCase()}${px}`,
+            tag: `cfb-friend-fill-${acct.id}-${ticker}`,
+            url: "/cfb/scoreboard",
+          });
+        }
+        console.log(`[push] friend fill notified (${acct.id} -> ${friendIds.join("+")}): ${g.count} × ${ticker}${px}`);
+      }
     }
 
     // Advance on everything seen (taker fills included) so nothing renotifies;
