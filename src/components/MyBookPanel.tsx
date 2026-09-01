@@ -123,6 +123,20 @@ function joinPriceOf(p: PortalPosition): number | null {
   return px != null && px > 0.01 && px < 0.99 ? Math.round(px * 100) / 100 : null;
 }
 
+/** Fee-inclusive edge of joining at `price`, against the sim's own fair for
+ *  this market (the SAME pricing the owner's held book uses). null = the
+ *  family is unpriceable, so value cannot be certified. A join is only
+ *  OFFERED when this is positive — a bet that has since been bid past fair
+ *  gets its price shown, not a button (owner ask 2026-09-01). */
+function joinEdgeOf(price: number, ticker: string, side: string,
+                    yesP: (t: string) => number | null): number | null {
+  const p = yesP(ticker);
+  if (p === null) return null;
+  const fair = side === "no" ? 1 - p : p;
+  const fee = Math.ceil(7 * price * (1 - price)) / 100;
+  return Math.round((fair - price - fee) * 1000) / 1000;
+}
+
 /**
  * Two-tap join: "Join @ 54¢" arms into "Confirm 46× ≈ $25" and only the
  * second tap places — a TAKE on the session's OWN account, sized by the
@@ -162,15 +176,14 @@ function FriendJoin({ token, ticker, side, price, unit }: {
   }
   return (
     <button
+      type="button"
+      className="ui-btn"
+      data-on="true"
+      data-tone={armed ? "accent" : undefined}
       disabled={busy}
       onClick={() => (armed ? place() : setArmed(true))}
       onBlur={() => setArmed(false)}
-      style={{
-        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
-        border: "1px solid var(--border)", cursor: "pointer",
-        background: "transparent",
-        color: armed ? "var(--mode-take)" : "var(--muted)",
-      }}>
+      style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px" }}>
       {armed ? `confirm ${count}× ≈ $${cost.toFixed(0)}` : `join @ ${Math.round(price * 100)}¢`}
     </button>
   );
@@ -184,9 +197,10 @@ type FriendGame = {
 /** A friend's book grouped BY GAME (owner ask 2026-09-01): each game gets its
  *  real matchup name, the held bets one line each with a live JOIN price, and
  *  that game's recent fills as a muted timeline underneath. */
-function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug }: {
+function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug, yesP }: {
   book: FriendBook; token: string; unit: number;
   slugTeams: Map<string, BetGameNames>; codeToSlug: Map<string, string>;
+  yesP: (t: string) => number | null;
 }) {
   const net = (s: { revenue: number; cost: number; fees: number }) =>
     s.revenue - s.cost - s.fees; // fee-inclusive, standing rule
@@ -264,6 +278,8 @@ function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug }: {
           </div>
           {g.positions.map((p) => {
             const join = joinPriceOf(p);
+            const edge = join !== null
+              ? joinEdgeOf(join, p.ticker, p.side, yesP) : null;
             return (
               <div key={`${p.ticker}|${p.side}`} style={{
                 display: "flex", alignItems: "center", gap: 8,
@@ -277,12 +293,21 @@ function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug }: {
                     </span>
                   )}
                 </span>
-                {join !== null ? (
+                {join === null ? (
+                  <span style={{ fontSize: 10, color: "var(--muted)" }}>no offer now</span>
+                ) : edge !== null && edge > 0 ? (
                   <FriendJoin token={token} ticker={p.ticker}
                               side={p.side === "no" ? "no" : "yes"}
                               price={join} unit={unit} />
                 ) : (
-                  <span style={{ fontSize: 10, color: "var(--muted)" }}>no offer now</span>
+                  <span style={{ fontSize: 10, color: "var(--muted)" }}
+                        title={edge === null
+                          ? "The sim cannot price this family, so value can't be certified."
+                          : "Priced past sim fair now — joining would be -EV."}>
+                    {edge === null
+                      ? `@ ${Math.round(join * 100)}¢ — unpriced`
+                      : `overpriced now @ ${Math.round(join * 100)}¢`}
+                  </span>
                 )}
               </div>
             );
@@ -300,19 +325,51 @@ function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug }: {
   );
 }
 
-function FriendFeedRow({ token, unit, slugTeams, codeToSlug }: {
+function FriendFeedRow({ token, unit, slugTeams, codeToSlug, yesP }: {
   token: string; unit: number;
   slugTeams: Map<string, BetGameNames>; codeToSlug: Map<string, string>;
+  yesP: (t: string) => number | null;
 }) {
   const friends = useFriendBooks(token);
+  // Collapsed TRAY by default (owner ask 2026-09-01: "so they aren't
+  // required to look at it") — the summary line still carries the news.
+  // Choice persists per device, storage guarded the usePrefs way.
+  const [open, setOpen] = useState<boolean>(() => {
+    try { return window.localStorage.getItem("cfb.friendsOpen") === "1"; }
+    catch { return false; }
+  });
   if (!friends.length) return null;
+  const toggle = () => setOpen((o) => {
+    try { window.localStorage.setItem("cfb.friendsOpen", o ? "0" : "1"); }
+    catch { /* preference simply will not persist */ }
+    return !o;
+  });
+  const summary = friends.map((f) => {
+    const net = f.settlements.reduce((a, s) => a + s.revenue - s.cost - s.fees, 0);
+    const money = `${net < 0 ? "−" : "+"}$${Math.abs(net).toFixed(0)}`;
+    return `${f.account_label} · holding ${f.positions.length}` +
+      (f.settlements.length ? ` · ${money}` : "");
+  }).join("  |  ");
   return (
-    <Row label="Friends" top>
+    <Row label="Friends" top={open}>
       <div style={{ display: "grid", gap: 10, minWidth: 0, flex: 1 }}>
-        {friends.map((f) => (
+        <button
+          type="button" className="ui-btn" onClick={toggle}
+          aria-expanded={open}
+          style={{
+            display: "flex", alignItems: "center", gap: 7,
+            fontSize: 10.5, fontWeight: 700, padding: "3px 9px",
+            justifyContent: "flex-start", textAlign: "left",
+          }}>
+          <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {summary}
+          </span>
+        </button>
+        {open && friends.map((f) => (
           <FriendBookBlock key={f.account_id} book={f} token={token}
                            unit={unit} slugTeams={slugTeams}
-                           codeToSlug={codeToSlug} />
+                           codeToSlug={codeToSlug} yesP={yesP} />
         ))}
       </div>
     </Row>
@@ -345,7 +402,7 @@ function Row({ label, children, top = false }: {
 
 export default function MyBookPanel({
   token, onToken, note, connected, ordersLive, accountLabel, unit, onUnit,
-  totals, unmatched, record, slugTeams, codeToSlug, children,
+  totals, unmatched, record, slugTeams, codeToSlug, portalYesP, children,
 }: {
   token: string;
   /** "" disconnects. Persisting is the caller's job (writePortalToken). */
@@ -374,6 +431,10 @@ export default function MyBookPanel({
   slugTeams: Map<string, BetGameNames>;
   /** ticker game-code -> slug, for naming the Friend Feed's game groups. */
   codeToSlug: Map<string, string>;
+  /** ticker -> sim P(YES) — the same pricer the held book uses. The Friend
+   *  Feed's Join gate: a friend's bet is only joinable while the CURRENT
+   *  price is still +EV against this fair, fees included. */
+  portalYesP: (t: string) => number | null;
   /** The Suggested bets card — rendered inside the console it belongs to. */
   children?: React.ReactNode;
 }) {
@@ -518,7 +579,8 @@ export default function MyBookPanel({
           nothing at all otherwise (no empty "Friends" shell). */}
       {token && (
         <FriendFeedRow token={token} unit={unit}
-                       slugTeams={slugTeams} codeToSlug={codeToSlug} />
+                       slugTeams={slugTeams} codeToSlug={codeToSlug}
+                       yesP={portalYesP} />
       )}
 
       {children && (

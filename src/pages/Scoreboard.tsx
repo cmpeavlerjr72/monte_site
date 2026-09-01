@@ -3153,6 +3153,7 @@ function ScoreboardPage() {
           record={portalRecord}
           slugTeams={slugTeams}
           codeToSlug={codeToSlug}
+          portalYesP={portalYesP}
         >
           {/* The RANKED INDEX: which game, not which bet. It recomputes
               whenever the 45s Kalshi poll delivers, so it is live without a
