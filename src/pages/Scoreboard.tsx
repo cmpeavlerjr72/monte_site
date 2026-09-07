@@ -40,8 +40,8 @@ import MyBookPanel from "../components/MyBookPanel";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { useRestingReview } from "../lib/restingReview";
 import {
-  readModeFilter, readMyGamesOpen, readShowTails, readSuggestSort, readTypeFilter, readUnit,
-  writeModeFilter, writeMyGamesOpen, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
+  readEdgeRules, readModeFilter, readMyGamesOpen, readShowTails, readSuggestSort, readTypeFilter, readUnit,
+  writeEdgeRules, writeModeFilter, writeMyGamesOpen, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
   type BetTypeFilter, type ModeFilter, type SuggestSort,
 } from "../lib/ownerPrefs";
 import { buildGameYesP, buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
@@ -553,6 +553,11 @@ type CardGame = {
   /** Book numbers (home-perspective spread, game total) for line pre-fill. */
   oddsSpread?: number;
   oddsTotal?: number;
+  /** The consensus OPEN spread ALONE (home perspective, negative = home
+   *  favoured) — never the `spread_open ?? spread_current` fallback above.
+   *  The week-2 decision rules are conditioned on the OPEN, which is also the
+   *  site's standing grading benchmark. See src/lib/edgeRules.ts. */
+  openSpread?: number;
   /** The sim's own margin/total. NOT medA-medB / medA+medB: the median of a
    *  sum is not the sum of the medians (43 vs 41 on TCU/UNC). */
   simMedMargin?: number;
@@ -1249,6 +1254,8 @@ function buildJsonCards(
       nsims: summary.nsims,
       oddsSpread: Number.isFinite(spread) ? (spread as number) : undefined,
       oddsTotal: Number.isFinite(totalLine) ? (totalLine as number) : undefined,
+      openSpread: typeof o?.spread_open === "number" && Number.isFinite(o.spread_open)
+        ? o.spread_open : undefined,
       simMedMargin: Number.isFinite(margin) ? (margin as number) : undefined,
       simMedTotal: Number.isFinite(total) ? (total as number) : undefined,
       simMeanMargin: summary.mean_margin,
@@ -1838,10 +1845,15 @@ function ScoreboardPage() {
   const [betMode, setBetMode] = useState<ModeFilter>(() => readModeFilter());
   const [betType, setBetType] = useState<BetTypeFilter>(() => readTypeFilter());
   const [betTails, setBetTails] = useState<boolean>(() => readShowTails());
+  /** Week-2 decision rules (src/lib/edgeRules.ts). DEFAULT ON; the switch in
+   *  the Bets panel is the kill switch. Labels only — it can never hide a
+   *  row or change a price. */
+  const [edgeRules, setEdgeRules] = useState<boolean>(() => readEdgeRules());
   const [betSort, setBetSort] = useState<SuggestSort>(() => readSuggestSort());
   const onBetMode = useCallback((v: ModeFilter) => { setBetMode(v); writeModeFilter(v); }, []);
   const onBetType = useCallback((v: BetTypeFilter) => { setBetType(v); writeTypeFilter(v); }, []);
   const onBetTails = useCallback((v: boolean) => { setBetTails(v); writeShowTails(v); }, []);
+  const onEdgeRules = useCallback((v: boolean) => { setEdgeRules(v); writeEdgeRules(v); }, []);
   const onBetSort = useCallback((v: SuggestSort) => { setBetSort(v); writeSuggestSort(v); }, []);
   /** The "My games" tray: expanded or one header line. Persisted per browser. */
   const [myGamesOpen, setMyGamesOpen] = useState<boolean>(() => readMyGamesOpen());
@@ -2243,6 +2255,9 @@ function ScoreboardPage() {
       slug: c.key, teamA: c.teamA, teamB: c.teamB, row: c.jsonRow!,
       season: c.ns, division: c.division,
       bookSpread: c.oddsSpread, bookTotal: c.oddsTotal,
+      // The OPEN alone, for the week-2 regime labels (never the display line
+      // above, which falls back to the current spread).
+      openSpread: c.openSpread,
       simMargin: useMean ? c.simMeanMargin : c.simMedMargin,
       simTotal: useMean ? c.simMeanTotal : c.simMedTotal,
       pHome: c.pHome, kickoffMs: c.kickoffMs,
@@ -2644,6 +2659,10 @@ function ScoreboardPage() {
       teamA: c.teamA,
       teamB: c.teamB,
       kickoffMs: typeof c.kickoffMs === "number" ? c.kickoffMs : undefined,
+      // The week-2 regime: the OPEN spread (never the current) and the
+      // division, which decides whether the rules reach this board at all.
+      openSpread: c.openSpread,
+      division: c.division,
       liveState: c.live?.state,
       started:
         Boolean(c.liveInProgress) ||
@@ -2679,6 +2698,7 @@ function ScoreboardPage() {
     typeFilter: betType,
     showTails: betTails,
     sort: betSort,
+    edgeRules,
   });
 
   /**
@@ -2879,6 +2899,8 @@ function ScoreboardPage() {
                     modeFilter={betMode} onModeFilter={onBetMode}
                     typeFilter={betType} onTypeFilter={onBetType}
                     showTails={betTails} onShowTails={onBetTails}
+                    regime={suggestions.regimeBySlug.get(openCard.key)}
+                    edgeRules={edgeRules} onEdgeRules={onEdgeRules}
                     onProject={(t: ProjectionTarget) => focusPanel(
                       openCard.key,
                       t.kind === "scores" ? "scores" : "teamstats",

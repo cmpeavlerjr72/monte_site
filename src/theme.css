@@ -26,6 +26,14 @@
   --card: #ffffff;
   --border: #e2e8f0;
 
+  /* The TARGET star (★) on a suggested-bet row. Its own token, because it is
+     neither an edge sign (--pos/--neg) nor an execution mode (--mode-*) nor
+     the brand accent — it marks "this row cleared the week-2 bar", and the
+     four channels must stay disjoint. Same amber in both themes: it always
+     sits beside a coloured edge number that carries the reading, and it is
+     the mark the owner already recognises (unchanged since 2026-08-30). */
+  --target-star: #f0b429;
+
   /* Semantic result colours — themed so win/loss read on either background. */
   --pos: #15803d;
   --neg: #dc2626;
@@ -107,6 +115,7 @@
     --mode-rest-ink: #10151b;
     --mode-take: #fbbf24;
     --mode-take-ink: #10151b;
+    --target-star: #f0b429;
     --brand-text: #6cb0f5;
     --header-bg: #10161f;
     --header-fg: #e6edf3;
@@ -134,6 +143,7 @@
   --mode-rest-ink: #10151b;
   --mode-take: #fbbf24;
   --mode-take-ink: #10151b;
+  --target-star: #f0b429;
     --brand-text: #6cb0f5;
   --header-bg: #10161f;
   --header-fg: #e6edf3;
@@ -673,8 +683,18 @@ input:focus, select:focus, textarea:focus {
 
 /* TARGET cue (fee-adj EV >= 0.10, wk0-graded bucket) — a marker, never a
    filter: unstarred rows list exactly as before. */
+/* The week-2 rule tag on a Bets-panel row ("NOT A TARGET · dog in mismatch").
+   DENSITY IS WHAT GIVES at narrow widths — the same rule the Team Stats chart
+   follows. Under 430px the REASON drops and the VERDICT stays, because the
+   verdict is the thing the row is saying; the tap popover always carries the
+   full sentence, on every width. Never the other way round: a truncated
+   "dog in mis…" spends the space and says less than nothing. */
+@media (max-width: 430px) {
+  .rule-tag__why { display: none; }
+}
+
 .edge-row__target-star {
-  color: #f0b429;
+  color: var(--target-star);
   flex: none;
 }
 

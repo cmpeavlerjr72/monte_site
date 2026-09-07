@@ -120,6 +120,13 @@ import type { BetTypeFilter, ModeFilter } from "../lib/ownerPrefs";
 import { readUnit } from "../lib/ownerPrefs";
 import DryRunBadge from "./DryRunBadge";
 import type { SuggestSection } from "../lib/useSuggestions";
+// The week-2 decision rules — LABELS ONLY (src/lib/edgeRules.ts). The panel
+// reads the verdict off the row; it never re-derives one.
+import {
+  ABSTAIN_WORDS, CELL_TAG, abstainTag, regimeWords, starWords,
+  STAR_ASK_HI, STAR_ASK_LO,
+  type AbstainReason, type CellName, type GameRegime,
+} from "../lib/edgeRules";
 
 export const cents = (v: number) => `${Math.round(v * 100)}¢`;
 export const signed = (v: number) =>
@@ -167,6 +174,63 @@ export function TailBadge({ inline = false }: { inline?: boolean }) {
       }}
     >
       TAIL
+    </span>
+  );
+}
+
+/* ------------------------ week-2 decision-rule marks ---------------------- */
+/**
+ * Two marks, one channel each, both DIRECT-LABELLED in words.
+ *
+ * The ★ is the site's existing TARGET cue and keeps its own amber; what
+ * changed on 2026-09-07 is what EARNS it — a named regime cell, a price inside
+ * the owner's 15–90¢ band and only then the ≥10¢ net edge (src/lib/
+ * edgeRules.ts). The cell's name rides beside it so the star says WHY, in
+ * words, at rest.
+ *
+ * The abstention mark is deliberately colourless — `--muted` ink, like the
+ * TAIL badge — because "not a target" is neither a bet direction nor an
+ * execution mode, and green or red on it would collide with the one thing
+ * --pos/--neg mean on this surface. It NEVER hides the row: the row still
+ * prices, still sizes, and its Place button still works. Owner rule
+ * 2026-08-30: stars and abstentions are labels, never a filter.
+ */
+export function TargetStar({ cell }: { cell: CellName | null | undefined }) {
+  return (
+    <span style={{ color: "var(--target-star)" }} title={starWords(cell)}>★ </span>
+  );
+}
+
+/** The cell a starred row stands in, e.g. "spread 3-14". Words, not numbers. */
+export function CellTag({ cell }: { cell: CellName | null | undefined }) {
+  if (!cell) return null;
+  return (
+    <span
+      title={starWords(cell)}
+      style={{
+        fontSize: 9, fontWeight: 800, letterSpacing: 0.3, whiteSpace: "nowrap",
+        padding: "0 4px", borderRadius: 4, color: "var(--muted)",
+        border: "1px solid var(--border)", flex: "none",
+      }}
+    >
+      {CELL_TAG[cell]}
+    </span>
+  );
+}
+
+/** "NOT A TARGET · dog in mismatch" — the verdict, then the reason in words. */
+export function AbstainTag({ reason }: { reason: AbstainReason | null | undefined }) {
+  if (!reason) return null;
+  return (
+    <span
+      title={ABSTAIN_WORDS[reason]}
+      style={{
+        fontSize: 9, fontWeight: 900, letterSpacing: 0.3, whiteSpace: "nowrap",
+        padding: "0 4px", borderRadius: 4, color: "var(--muted)",
+        border: "1px dotted var(--border)", flex: "none",
+      }}
+    >
+      NOT A TARGET<span className="rule-tag__why"> · {abstainTag(reason)}</span>
     </span>
   );
 }
@@ -349,7 +413,11 @@ function LadderRows({
   const [sel, setSel] = useState<string | null>(null);
 
   return (
-    <div style={{ display: "grid", gap: 5 }}>
+    // minWidth: 0 — see the panel root. A ladder row's min-content (headline,
+    // chips, rule tag, edge, the fixed 62px Place button) is wider than a
+    // 375px card, and without this the grid track sizes to that and pushes
+    // Place off the screen.
+    <div style={{ display: "grid", gap: 5, minWidth: 0 }}>
       {[...groups, ...tailGroups].map((g, gi) => {
         // A tail ladder and its in-band twin share a `ladder` string (same
         // game, same family, same team) — they are two halves of one ladder
@@ -367,7 +435,15 @@ function LadderRows({
         // A TAIL row keeps its number but LOSES its colour: green on an edge
         // we do not stand behind would be the panel lying in its loudest
         // channel. The badge and the muted ink say so instead.
-        const edgeColor = g.tail
+        // An ABSTAINED ladder loses the colour too, for the same reason and
+        // a different fact: the number is honest, the DECISION is the thing
+        // the week-1 settlement says not to stand behind. The tag names which
+        // of the two it is; the row keeps its Place button either way.
+        const muted = g.tail || g.abstainAll;
+        // The headline NUMBER is the best rung's; so is its colour. An
+        // abstained headline rung loses the verdict colour even when a
+        // ladder-mate is clean, because that number is the abstained one.
+        const edgeColor = g.tail || g.abstain
           ? "var(--muted)"
           : g.bestEdge > 0 ? "var(--pos)" : "var(--neg)";
         const firstTail = g.tail && gi === groups.length;
@@ -386,21 +462,27 @@ function LadderRows({
                 </span>
               </div>
             )}
-            <div style={{ display: "flex", alignItems: "stretch", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "stretch", gap: 4, minWidth: 0 }}>
               <button
                 type="button"
                 onClick={() => setSel(on ? null : gid)}
                 style={{
                   flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
-                  display: "grid", gap: 3,
+                  // gridTemplateColumns pins the ONE column to the button's own
+                  // width: a grid's implicit column is min-content wide, which
+                  // for line 2 is the un-shrinkable chip + tag + edge run.
+                  display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 3,
                   padding: "7px 8px", borderRadius: 7,
                   // A tail row is DASHED and sits on the section fill rather
                   // than the card: at a glance it reads as a provisional row,
                   // the same dotted convention the approximate-strike marks use.
+                  // Dashed = TAIL (a number we do not stand behind); the
+                  // abstention keeps a solid outline and mutes the INK, so the
+                  // two states stay tellable apart at a glance.
                   border: `1px ${g.tail ? "dashed" : "solid"} ${on ? "var(--brand)" : "var(--border)"}`,
-                  borderLeft: `4px solid ${g.tail ? "var(--border)" : modeHue(bestMode)}`,
-                  background: g.tail ? "var(--fill)" : "var(--card)",
-                  color: g.tail ? "var(--muted)" : "var(--text)",
+                  borderLeft: `4px solid ${muted ? "var(--border)" : modeHue(bestMode)}`,
+                  background: muted ? "var(--fill)" : "var(--card)",
+                  color: muted ? "var(--muted)" : "var(--text)",
                   font: "inherit", fontSize: 12,
                 }}
               >
@@ -412,7 +494,12 @@ function LadderRows({
                   {g.tail && <TailBadge inline />}
                   {single ? head.label : g.headline}
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{
+                  display: "flex", alignItems: "center", gap: 6, minWidth: 0,
+                  // The row is TWO FIXED LINES and line 2 must never wrap into
+                  // a third; the sizing text is the one thing here that gives.
+                  flexWrap: "nowrap",
+                }}>
                   {single
                     ? <ModeChip mode={head.mode} price={head.price} />
                     : modes.map((m) => <ModeChip key={m} mode={m} />)}
@@ -424,14 +511,15 @@ function LadderRows({
                       ? `${head.count} @ ${cents(head.price)} · $${head.outlay.toFixed(2)}`
                       : `${g.rungs.length} rungs · $${g.each} each`}
                   </span>
+                  {/* The rules' verdict, in words, before the number. */}
+                  <AbstainTag reason={g.abstain} />
+                  {g.star && <CellTag cell={g.cell} />}
                   <span style={{
                     marginLeft: "auto", flex: "none", fontWeight: 800,
                     fontVariantNumeric: "tabular-nums",
                     color: edgeColor,
                   }}>
-                    {g.bestEdge >= TARGET_EDGE && (
-                      <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
-                    )}
+                    {g.star && <TargetStar cell={g.cell} />}
                     {signed(g.bestEdge)}
                   </span>
                 </span>
@@ -491,6 +579,18 @@ function LadderRows({
                     without a verdict colour.
                   </div>
                 )}
+                {/* WHY this row is muted, in the same words the report uses.
+                    Still placeable — the owner decides. */}
+                {g.abstain && (
+                  <div style={{ color: "var(--muted)", marginBottom: 4 }}>
+                    {ABSTAIN_WORDS[g.abstain]}
+                  </div>
+                )}
+                {g.star && (
+                  <div style={{ color: "var(--muted)", marginBottom: 4 }}>
+                    {starWords(g.cell)}
+                  </div>
+                )}
                 {/* TIME CONTEXT, in words. The mode chip already says REST or
                     TAKE; this says why that bar was the bar. */}
                 <div style={{ color: "var(--muted)", marginBottom: 4 }}>
@@ -524,10 +624,16 @@ function LadderRows({
                         <span style={{ color: "var(--muted)" }}>
                           {rr.count} ct · fee {rr.fee.toFixed(2)}
                         </span>
+                        {/* A ladder whose rungs DISAGREE keeps its headline
+                            uncoloured and says so here, per rung. */}
+                        {rr.abstain !== g.abstain && <AbstainTag reason={rr.abstain} />}
                         <span style={{
                           marginLeft: "auto", fontWeight: 700,
-                          color: rr.edge > 0 ? "var(--pos)" : "var(--neg)",
+                          color: rr.abstain
+                            ? "var(--muted)"
+                            : rr.edge > 0 ? "var(--pos)" : "var(--neg)",
                         }}>
+                          {rr.star && <TargetStar cell={rr.cell} />}
                           {signed(rr.edge)}
                         </span>
                       </div>
@@ -572,11 +678,20 @@ function RungWheel({ rungs, onPlace }: {
   onPlace: (r: Suggestion) => void;
 }) {
   const bestIdx = useMemo(() => {
-    let bi = 0, be = -Infinity;
-    rungs.forEach((r, i) => {
-      if (!r.tail && r.edge > be) { be = r.edge; bi = i; }
-    });
-    return be === -Infinity ? Math.floor(rungs.length / 2) : bi;
+    // The wheel's resting position is the best rung we would actually stand
+    // behind: not a tail, and not one the week-2 rules abstain on. If every
+    // rung is one of those the old rule applies — best non-tail, else middle —
+    // because a wheel that refuses to open on anything is worse than a wheel
+    // that opens on a labelled row.
+    const pick = (ok: (r: Suggestion) => boolean) => {
+      let bi = -1, be = -Infinity;
+      rungs.forEach((r, i) => { if (ok(r) && r.edge > be) { be = r.edge; bi = i; } });
+      return bi;
+    };
+    const clean = pick((r) => !r.tail && !r.abstain);
+    if (clean >= 0) return clean;
+    const nonTail = pick((r) => !r.tail);
+    return nonTail >= 0 ? nonTail : Math.floor(rungs.length / 2);
   }, [rungs]);
   const [sel, setSel] = useState(bestIdx);
   const ref = useRef<HTMLDivElement>(null);
@@ -640,10 +755,11 @@ function RungWheel({ rungs, onPlace }: {
                 the model does not stand behind. */}
             <span aria-hidden="true" style={{
               width: 18, height: 3, borderRadius: 2,
-              background: x.tail
+              background: x.tail || x.abstain
                 ? "var(--muted)"
                 : x.edge > 0 ? "var(--pos)" : "var(--neg)",
-              opacity: x.tail ? 0.5 : Math.min(1, 0.35 + Math.abs(x.edge) * 3),
+              opacity: x.tail || x.abstain
+                ? 0.5 : Math.min(1, 0.35 + Math.abs(x.edge) * 3),
             }} />
           </button>
         ))}
@@ -652,7 +768,7 @@ function RungWheel({ rungs, onPlace }: {
         <div style={{
           display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
           justifyContent: "center", flexWrap: "wrap",
-          color: r.tail ? "var(--muted)" : "var(--text)",
+          color: r.tail || r.abstain ? "var(--muted)" : "var(--text)",
         }}>
           {/* WHOSE bet the centred face is — a merged spread wheel shows the
               home axis, but the kept side can be either team. */}
@@ -660,13 +776,14 @@ function RungWheel({ rungs, onPlace }: {
           <ModeChip mode={r.mode} price={r.price} />
           <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
           {r.tail && <TailBadge inline />}
+          <AbstainTag reason={r.abstain} />
+          {r.star && <CellTag cell={r.cell} />}
           <span style={{
             fontWeight: 800, fontVariantNumeric: "tabular-nums",
-            color: r.tail ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
+            color: r.tail || r.abstain
+              ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
           }}>
-            {!r.tail && r.edge >= TARGET_EDGE && (
-              <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
-            )}
+            {r.star && <TargetStar cell={r.cell} />}
             {signed(r.edge)}
           </span>
           <button
@@ -752,19 +869,20 @@ function CompactRung({ r, onPlace }: { r: Suggestion; onPlace: (r: Suggestion) =
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
-      color: r.tail ? "var(--muted)" : "var(--text)",
+      color: r.tail || r.abstain ? "var(--muted)" : "var(--text)",
     }}>
       <span style={{ fontWeight: 700 }}>{r.label}</span>
       <ModeChip mode={r.mode} price={r.price} />
       <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
       {r.tail && <TailBadge inline />}
+      <AbstainTag reason={r.abstain} />
+      {r.star && <CellTag cell={r.cell} />}
       <span style={{
         marginLeft: "auto", fontWeight: 800, fontVariantNumeric: "tabular-nums",
-        color: r.tail ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
+        color: r.tail || r.abstain
+          ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
       }}>
-        {!r.tail && r.edge >= TARGET_EDGE && (
-          <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
-        )}
+        {r.star && <TargetStar cell={r.cell} />}
         {signed(r.edge)}
       </span>
       <button
@@ -780,7 +898,7 @@ function CompactRung({ r, onPlace }: { r: Suggestion; onPlace: (r: Suggestion) =
 export default function GameBetsPanel({
   section, browse, verdict, hiddenByFilter, tailCount, unit, token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
-  showTails, onShowTails, onProject,
+  showTails, onShowTails, regime, edgeRules, onEdgeRules, onProject,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
@@ -808,6 +926,13 @@ export default function GameBetsPanel({
   onTypeFilter: (v: BetTypeFilter) => void;
   showTails: boolean;
   onShowTails: (v: boolean) => void;
+  /** The week-2 regime these rows were labelled against — this game's open
+   *  spread and conference class. Stated in words so a muted row is never a
+   *  mystery. */
+  regime: GameRegime | undefined;
+  /** Week-2 decision rules on/off — the kill switch (ownerPrefs). */
+  edgeRules: boolean;
+  onEdgeRules: (v: boolean) => void;
   /** Switch this card's open panel to the chart this bet came from. */
   onProject: (t: ProjectionTarget) => void;
 }) {
@@ -824,7 +949,14 @@ export default function GameBetsPanel({
   const clearFilters = () => { onModeFilter("all"); onTypeFilter("all"); };
 
   return (
-    <div style={{ display: "grid", gap: 7 }}>
+    // `minWidth: 0` — a grid item's automatic minimum size is min-content, and
+    // this panel's own children (a ladder headline naming two teams and two
+    // lines, plus the rule tag beside the edge) have a min-content wider than a
+    // 375px card. Without it the track sizes to that instead of to the card and
+    // the Place column is pushed outside — the same trap the card header hit in
+    // 2026-08-29. Every child already knows how to give: the headline wraps,
+    // the sizing text ellipses, the chip rows wrap.
+    <div style={{ display: "grid", gap: 7, minWidth: 0 }}>
       <FilterChips
         modeFilter={modeFilter} onModeFilter={onModeFilter}
         typeFilter={typeFilter} onTypeFilter={onTypeFilter}
@@ -860,6 +992,39 @@ export default function GameBetsPanel({
         {" "}{(TAKE_THRESHOLD_NEAR * 100).toFixed(1)}¢ 3–24h,
         {" "}{Math.round(TAKE_THRESHOLD_LATE * 100)}¢ under 3h ·
         {" "}edges NET of fee, re-checked against the live book at placement
+      </div>
+
+      {/* THE REGIME, and the switch that applies it.
+          One line of words: which regime this game is in, and what the star
+          now means. The rules only ever LABEL — an abstained row below is
+          muted and tagged, and its Place button still works. */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+        fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5,
+      }}>
+        <button
+          type="button" className="ui-btn"
+          data-on={edgeRules ? "true" : "false"}
+          aria-pressed={edgeRules}
+          onClick={() => onEdgeRules(!edgeRules)}
+          title={edgeRules
+            ? "Week-2 decision rules ON: mismatch and moneyline rows are "
+              + "labelled 'not a target', and ★ needs a named regime cell "
+              + `at a price inside ${Math.round(STAR_ASK_LO * 100)}–${Math.round(STAR_ASK_HI * 100)}¢. `
+              + "Labels only — no row is hidden and no price changes."
+            : "Week-2 decision rules OFF: ★ is the old bar (net edge "
+              + "≥ 10¢) and nothing is labelled 'not a target'."}
+          style={{ padding: "1px 8px", fontSize: 10, fontWeight: 800 }}
+        >
+          Week-2 rules {edgeRules ? "on" : "off"}
+        </button>
+        {edgeRules && regime && <span>{regimeWords(regime)}</span>}
+        {edgeRules && (
+          <span>
+            ★ = a named regime cell at {Math.round(STAR_ASK_LO * 100)}–
+            {Math.round(STAR_ASK_HI * 100)}¢, then the 10¢ edge
+          </span>
+        )}
       </div>
 
       {nothing ? (
@@ -1091,17 +1256,17 @@ export function PlaceStrip({
         {!ordersLive && (
           <DryRunBadge title="Order entry is staged: the server validates and logs, and submits nothing." />
         )}
-        {/* THE ONE NUMBER: net edge in cents, colourless on a tail row. */}
+        <AbstainTag reason={group.abstain} />
+        {/* THE ONE NUMBER: net edge in cents, colourless on a tail or
+            abstained row. */}
         <span style={{
           marginLeft: "auto", fontWeight: 800, fontSize: 12.5,
           fontVariantNumeric: "tabular-nums",
-          color: group.tail
+          color: group.tail || group.abstain
             ? "var(--muted)"
             : group.bestEdge > 0 ? "var(--pos)" : "var(--neg)",
         }}>
-          {!group.tail && group.bestEdge >= TARGET_EDGE && (
-            <span style={{ color: "#f0b429" }} title={TARGET_TITLE}>★ </span>
-          )}
+          {group.star && <TargetStar cell={group.cell} />}
           {signed(group.bestEdge)}
         </span>
         <button
@@ -1143,12 +1308,13 @@ export function PlaceStrip({
 const capOrderNow = () => Math.min(500, Math.max(1, Math.round(readUnit())));
 const MAX_ORDERS = 8;
 
-/** TARGET star: same bar as the edge board's `target` flag — the fee-adj
- *  EV >= 0.10 bucket where the wk0-2026 settlement grade showed realized ROI
- *  matching modeled EV. A cue, never a filter (owner rule 2026-08-30). */
-const TARGET_EDGE = 0.10;
-const TARGET_TITLE =
-  "TARGET: net edge ≥ 10¢ after fees — the wk0-graded bucket where realized ROI matched the model";
+// THE TARGET STAR MOVED (2026-09-07). It used to be a local `bestEdge >= 0.10`
+// test in each of the four places a row is drawn here. Week 1 killed that bar
+// as a standalone claim — the EV >= 0.10 slice, week 0's profitable cut,
+// realized -13.8% on a modelled +46.9% — so the verdict now comes off the ROW
+// (`Suggestion.star` / `LadderGroup.star`), computed once in suggestedBets.ts
+// by `starFor` in src/lib/edgeRules.ts. Four copies of a money rule were three
+// too many; nothing in this file re-derives it any more.
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -1534,7 +1700,13 @@ function ConfirmSlip({
                       return (
                         <div style={{ display: "grid", gap: 4, marginTop: 2 }}>
                           <div style={{
-                            color: "#f0b429", fontWeight: 800, fontSize: 12,
+                            // ATTENTION, not a target: `--accent` is the
+                            // site's caution channel (the DRY RUN badge wears
+                            // it). This used to be the star's own amber as a
+                            // literal, which put a partial fill in the "this
+                            // row cleared the bar" channel — different meaning,
+                            // same colour.
+                            color: "var(--accent)", fontWeight: 800, fontSize: 12,
                             lineHeight: 1.45,
                           }}>
                             Partial fill: {filled} of {p.count} contracts

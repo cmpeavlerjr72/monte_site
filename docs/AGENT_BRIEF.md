@@ -830,6 +830,100 @@ the page is controlled on second load, `/api` appears in no cache, the
 shell renders with the data hosts blackholed, and a rebuild flips the
 precached bundle hash on the controlled client.
 
+## Week-2 decision rules — LABELS on every priced row (`src/lib/edgeRules.ts`)
+
+Shipped 2026-09-07, DEFAULT ON. The site prices the full-game winner / spread /
+total ladders itself (`gameCandidates`), so cfb-props-sim's
+`kalshi_team_edges.py` — which owns these rules — does not cover them. This
+module is the port. **THE PYTHON IS THE SOURCE**, exactly as for the TAIL band
+and the timing bands: `WEEK-2 DECISION RULES` / `apply_wk2_rules` / `_is_target`
+in that script. If the two disagree, the script is right and this file is the
+bug.
+
+**They are LABELS, never a filter** (owner rule 2026-08-30). An abstained row
+still ranks, still prices, still sizes, and its Place button still works. It
+renders muted, tagged `NOT A TARGET · <reason>`, and says why in words on tap.
+`scripts/check_edge_rules.mjs` asserts statically that neither
+`isTradeableTeamMarket` nor `selectLadders` ever reads a label.
+
+The evidence is one week: `docs/tests/wk1_kalshi_board_scorecard_2026-09-07.md`.
+The whole tradeable board at 3–5d modelled +24.3% and realized −9.2%; the
+EV ≥ 0.10 slice — week 0's profitable cut — realized −13.8%. Bigger modelled
+edge did not mean better return. The REGIME did separate: by the sportsbook's
+OPEN spread band, 3–7 +5% (n=320), 7–14 +16% (n=279), 14–24 −8%, 24+ −27%.
+
+- **R1 mismatch** (|open spread| ≥ 14 OR a bodybag — P4/independent host v
+  non-P4 visitor): the DOG side of every spread rung abstains
+  (`mismatch:dog-side`), and so does the FAVOURITE's team-total UNDER
+  (`mismatch:fav-tt-under`). The under leg is inert on this site today —
+  `statCandidates` emits YES/over contracts only, so no team-total under is
+  reachable — and is implemented anyway, because the day one is added the
+  label must already be right.
+- **R2 family**: every moneyline row abstains (`family:game`, −22% on Kalshi
+  and right on only 12% of its ≥10pp disagreements), and 1H spread
+  (`family:1hspread`). **No half-market row is ever starred** — the owner does
+  not bet 1H/2H (`HALF_SERIES`), and that holds on published team_markets rows
+  too.
+- **R3 cells** — a star now needs a NAMED regime cell, written into the row so
+  the UI shows it: `teamtotal`, `spread:3-14`, `spread:fav-mismatch`,
+  `total:competitive`. The old ≥10¢ net edge is kept as the LAST condition, not
+  as the claim.
+- **R4 price band**: no star outside 15–90¢ on the price the row would pay or
+  post (week 1's EV ≥ 0.20 tail bucket went 6-660).
+
+THE TWO REGIME INPUTS, and where they come from — both already on the page, so
+this costs **no new fetch**:
+
+- **OPEN SPREAD** = `summary.json` → `odds.spread_open`, home perspective,
+  and NOTHING ELSE. `CardGame.openSpread` is that field alone; the card's
+  display line `oddsSpread` keeps its `spread_open ?? spread_current` fallback
+  and must never be reused here — the rules were measured on the open, which is
+  also the site's standing grading benchmark. (`weeks/weekNN/lines.json` is the
+  richer consensus file but publishes AFTER a slate and 404s for a live week.)
+  Verified against the Python's own worked example: Ohio State −50.5 v Ball
+  State, Rutgers −30.5 v Massachusetts.
+- **GAME CLASS** = `src/lib/fbsConferences.ts`, GENERATED from
+  `src/assets/team_info.csv` by `node scripts/gen_fbs_conferences.mjs` and
+  keyed by `cfbNameKey` — the site's one name normalizer, which is what makes
+  CFBD's "UMass" and our slate's "Massachusetts" the same lookup for free.
+  138 rows, ~4KB; the CSV itself is 185KB and does not belong in the scoreboard
+  chunk. Regenerate after editing the CSV or the check fails.
+
+**FCS is the one deliberate divergence from the Python.** That namespace has
+NEITHER input (`provider_count: 0`, null `spread_open`, no FBS conference), so
+the Python's "unknown regime, no cell, no star" would silently blank every FCS
+star — a filter by accident on a division the grade never measured. `regimeFor`
+returns `axis: "unavailable"` there and the star falls back to R4 + the edge.
+On a MEASURED board (FBS) a missing input is still not a free pass: no open
+spread, no cell, no star.
+
+**Kill switch**: the "Week-2 rules" switch in the Bets panel (persisted per
+browser, `cfb.edgeRules` in ownerPrefs, DEFAULT ON). Off restores the
+pre-2026-09-07 star exactly — non-tail, net edge ≥ 10¢ — and emits no
+abstentions. From a console: `localStorage.setItem("cfb.edgeRules","0")`.
+
+Surfaces: the per-game Bets panel rows, its rung wheel and browse rungs
+(`Suggestion.star/abstain/cell`, folded to `LadderGroup.abstain` = the BEST
+rung's — the headline label must describe the headline number — plus
+`abstainAll` for the muting), the projection place strip, and Top Edges. In Top
+Edges the game-lines table shows the abstention but draws NO star: its `edge` is
+sim − market, GROSS of fee, and the ★ is a claim about a net edge. Team-market
+rows there prefer the PUBLISHER's own `abstain`/`cell` whenever
+`team_markets.json` carries `rules: "wk2"`, and are labelled client-side only
+when it does not.
+
+Harness: hidden route **`/test-bets`** (`?rules=off` for the kill switch,
+`?games=`, `?week=`, `?skew=`). It runs the REAL compute over the REAL published
+week against a DECLARED FIXTURE BOOK on a clock pinned 3 days before kickoff,
+because a settled slate has no Kalshi quotes left to replay — read it for the
+LABELS, never for the cents.
+
+MOBILE: the row's rule tag is `flex: none` and the panel's grid chain carries
+`minWidth: 0` (`.rule-tag__why` drops the REASON under 430px and keeps the
+VERDICT; the popover always carries the full sentence). Before that the panel's
+implicit grid track sized to min-content and pushed the Place column outside the
+card at 375px — the same trap the card header hit in 2026-08-29.
+
 ## Gates for every change
 
 `npx tsc` (app AND server if touched) · `npm run build` ·
@@ -842,6 +936,10 @@ timing bands, whenever suggestedBets.ts or the `suggestGames` memo moves) ·
 `node scripts/check_live_progress.mjs` (the live settlement rules — player sum,
 strike boundary, team mapping, family whitelist — whenever liveProgress.ts or
 STAT_FOR_SERIES moves) ·
+`node scripts/check_edge_rules.mjs` (the week-2 decision rules: the R1–R4 truth
+table on the real week-1 numbers, the conference map's sync with team_info.csv,
+and the static proof that a label never filters a row — whenever edgeRules.ts,
+fbsConferences.ts, team_info.csv or the label wiring moves) ·
 SSR words-screenshot for UI changes · no hardcoded colors · report ≤300 words
 + gate table unless findings warrant more.
 

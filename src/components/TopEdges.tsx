@@ -35,6 +35,13 @@ import { Skeleton } from "./Skeleton";
 // second normalizer here would be exactly the collision bug it exists to
 // prevent — this import keeps it a single source of truth instead.
 import { cfbNameKey } from "../../server/cfbNames";
+// The week-2 decision rules — LABELS ONLY (src/lib/edgeRules.ts). Nothing
+// here filters: a labelled row keeps its rank, its numbers and its "+".
+import {
+  ABSTAIN_WORDS, CELL_TAG, abstainTag, labelFor, starWords, starFor,
+  UNKNOWN_REGIME,
+  type AbstainReason, type CellName, type GameRegime,
+} from "../lib/edgeRules";
 
 type Props = {
   scan: SlateScan | null;
@@ -205,14 +212,75 @@ function Column({
   );
 }
 
+/* --------------------- week-2 decision-rule marks -------------------------- */
+/**
+ * "NOT A TARGET · <reason>" and the star's cell name, in the same words and
+ * the same colourless channel the Bets panel uses (see SuggestedBets.tsx).
+ * A labelled row is still ranked, still priced, still addable to a parlay —
+ * owner rule 2026-08-30: stars and abstentions are labels, never a filter.
+ */
+function RuleMark({ abstain, cell, starred }: {
+  abstain: AbstainReason | null;
+  cell: CellName | null;
+  starred: boolean;
+}) {
+  if (abstain) {
+    return (
+      <span className="edge-flag" style={{ marginLeft: 5 }}
+            title={ABSTAIN_WORDS[abstain]}>
+        NO · {abstainTag(abstain)}
+      </span>
+    );
+  }
+  if (starred && cell) {
+    return (
+      <span className="edge-flag" style={{ marginLeft: 5 }} title={starWords(cell)}>
+        {CELL_TAG[cell]}
+      </span>
+    );
+  }
+  return null;
+}
+
+/**
+ * The team a published team-market row's YES event NAMES, off Kalshi's own
+ * sentence. Only the team-total wording is parsed, because that is the ONLY
+ * family in team_markets.json an R1 rule can bite: full-game SPREAD is not
+ * published there (the site prices it itself), and every half family is
+ * abstained or star-suppressed by series alone.
+ *
+ * Names come from Kalshi's title verbatim and are compared through
+ * `cfbNameKey` downstream — never retyped (hard-won rule 1).
+ */
+function teamTotalTeam(title: string): string | undefined {
+  // ONE regex for this wording — the same constant the parlay LegSpec maps
+  // off, declared above. A second copy is a second thing to drift.
+  return TEAM_TOTAL_TITLE_RE.exec(title.trim())?.[1];
+}
+
 /* ------------------------------- game rows -------------------------------- */
-function GameRow({ e, rank, onPick, onAddLeg }: {
-  e: EdgeEntry; rank: number; onPick: (slug: string) => void;
+function GameRow({ e, rank, regime, onPick, onAddLeg }: {
+  e: EdgeEntry; rank: number; regime: GameRegime; onPick: (slug: string) => void;
   onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
   // A total is a bet on the game (both logos); win/spread take one side.
   const teams = e.row.sideTeam ? [e.row.sideTeam] : [e.teamB, e.teamA];
   const spec = legSpecForGameRow(e.row, e.teamA, e.teamB);
+  // WEEK-2 LABEL. `sideTeam` is already the team this row's bet BACKS
+  // (marketEdge.ts picks the side the sim leans and mirrors the price), which
+  // is exactly what R1's dog-side test needs.
+  //
+  // NO STAR IS DRAWN IN THIS TABLE, and that is deliberate: `e.edge` here is
+  // sim − market, GROSS of the fee. The ★ is a claim about a fee-adjusted
+  // net edge, so awarding one off a gross number would be a new and weaker
+  // claim wearing the same mark. The Bets panel, which prices net, owns it.
+  const rule = labelFor({
+    series: e.row.key === "win" ? "KXNCAAFGAME"
+      : e.row.key === "spread" ? "KXNCAAFSPREAD" : "KXNCAAFTOTAL",
+    side: "yes",
+    backsTeam: e.row.sideTeam,
+    homeTeam: e.teamA,
+  }, regime);
   return (
     // A row body click scrolls to the card; the "+" is a separate control, so
     // this is a div (a <button> cannot nest a <button>), not the original
@@ -228,7 +296,10 @@ function GameRow({ e, rank, onPick, onAddLeg }: {
       <span className="edge-row__rank">{rank}</span>
       <Logos teams={teams} />
       <span className="edge-row__main">
-        <span className="edge-row__t1">{e.row.market}</span>
+        <span className="edge-row__t1">
+          {e.row.market}
+          <RuleMark abstain={rule.abstain} cell={rule.cell} starred={false} />
+        </span>
         <span className="edge-row__t2">
           <DivisionTag division={e.division} />
           {shortTeam(e.teamB)} @ {shortTeam(e.teamA)}
@@ -384,14 +455,48 @@ function orderedSeries(present: Iterable<string>): string[] {
   return [...known, ...unknown];
 }
 
-function TeamMktRow({ r, teamA, teamB, rank, onPick, onAddLeg }: {
+function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, onPick, onAddLeg }: {
   r: TeamMarketRow; teamA: string; teamB: string; rank: number;
+  /** This game's week-2 regime, for the rows the publisher did not label. */
+  regime: GameRegime;
+  /** Which rule set the PUBLISHER ran ("wk2" or null). */
+  publisherRules: string | null;
   onPick: (slug: string) => void;
   onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
   const spec = legSpecForTeamMarketRow(r, teamA, teamB);
   const p = sideProb(r);
   const { bid, ask } = sidePriceCents(r);
+  // WEEK-2 LABEL.
+  //
+  // THE PUBLISHER WINS WHERE IT SPOKE. When team_markets.json was written
+  // with `--rules wk2` every row already carries `abstain` and `cell`,
+  // computed in cfb-props-sim off the lines parquet and the CFBD conference
+  // columns — a strictly better regime source than anything reachable here.
+  // The site only labels these rows itself when that column does not exist,
+  // which is the state of every export before 2026-09-07.
+  const published = publisherRules === "wk2";
+  const rule = published
+    ? {
+        abstain: (r.abstain || null) as AbstainReason | null,
+        cell: (r.cell || null) as CellName | null,
+      }
+    : labelFor({
+        series: r.series,
+        side: r.side === "NO" ? "no" : "yes",
+        // Only the team-total wording names a team here; every other
+        // published family is decided by series alone.
+        backsTeam: teamTotalTeam(r.title),
+        homeTeam: teamA,
+      }, regime);
+  // R3+R4 on top of the publisher's own `target`. `ask` is in cents; the
+  // rules band is in dollars. Flagged rows never reach this component, so
+  // `tail` is already false by construction (site rule, edges.ts).
+  const starred = r.target === true && starFor(
+    { cell: rule.cell, abstain: rule.abstain, tail: false,
+      price: ask / 100, edge: r.ev_fee, series: r.series },
+    regime.axis,
+  );
   return (
     <div
       className="edge-row" role="button" tabIndex={0}
@@ -407,14 +512,15 @@ function TeamMktRow({ r, teamA, teamB, rank, onPick, onAddLeg }: {
         {/* Compact bet-style label; Kalshi's full sentence stays reachable on
             hover. Flagged rows never reach this component (site rule). */}
         <span className="edge-row__t1 edge-row__t1--wrap" title={r.title}>
-          {r.target ? (
+          {starred ? (
             <span
               className="edge-row__target-star"
-              title="TARGET: fee-adj EV ≥ 0.10 — the bucket where wk0 realized ROI matched modeled EV"
+              title={starWords(rule.cell)}
               aria-label="target bet"
             >★ </span>
           ) : null}
           {shortTeamMarketTitle(r, teamA, teamB)}
+          <RuleMark abstain={rule.abstain} cell={rule.cell} starred={starred} />
         </span>
         <span className="edge-row__t2">
           <span className="division-badge">{r.side}</span>
@@ -549,7 +655,11 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
           loading={loading} footer={gamesFooter}>
           {games.length
             ? games.map((e, i) => (
-                <GameRow key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1} onPick={onPick} onAddLeg={onAddLeg} />
+                <GameRow
+                  key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1}
+                  regime={scan?.regimeBySlug.get(e.slug) ?? UNKNOWN_REGIME}
+                  onPick={onPick} onAddLeg={onAddLeg}
+                />
               ))
             : <div className="edge-col__empty">No game-line edges could be priced.</div>}
         </Column>
@@ -579,6 +689,8 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
                 <TeamMktRow
                   key={`${r.slug}:${r.market_ticker}`}
                   r={r} teamA={teamA} teamB={teamB} rank={i + 1}
+                  regime={scan?.regimeBySlug.get(r.slug) ?? UNKNOWN_REGIME}
+                  publisherRules={scan?.teamMarketsRules ?? null}
                   onPick={onPick} onAddLeg={onAddLeg}
                 />
               ))

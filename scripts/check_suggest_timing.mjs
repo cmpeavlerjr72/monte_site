@@ -168,7 +168,12 @@ const cand = (simP, ask, kickH) => ({
   kickoffMs: NOW + kickH * H,
 });
 const modeOf = (simP, ask, kickH) => {
-  const r = buildSuggestions([cand(simP, ask, kickH)], fee, new Set(), 30, NOW);
+  // A MAP of ticker -> dollars already committed. It was a Set of held
+  // tickers until 2026-08-30 (commit 6b99d1b, headroom sizing); this fixture
+  // was not updated with it and the gate has been throwing
+  // "heldCost.get is not a function" ever since — i.e. every timing check
+  // below this line has been silently unrun. Empty map = no exposure.
+  const r = buildSuggestions([cand(simP, ask, kickH)], fee, new Map(), 30, NOW);
   return r.rows[0]?.mode ?? `DROPPED(${r.suppressed[0]?.reason ?? "?"})`;
 };
 
@@ -222,7 +227,11 @@ check(/liveState: c\.live\?\.state/.test(board),
   "…and forwards ESPN's RAW state, so 'no join' is distinguishable from 'pre'");
 check(/pregameVerdict\(g, nowMs\)/.test(computeSrc),
   "the compute gates every game through pregameVerdict against that clock");
-check(/}, \[games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs\]\)/.test(computeSrc),
+// Trailing deps may be ADDED (the week-2 rules switch was, 2026-09-07) and the
+// list may wrap, but nowMs must still be in there, after the feeds — dropping
+// it is the freeze bug this whole gate exists for.
+check(/}, \[games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs[,\s\]]/
+  .test(computeSrc),
   "…and nowMs is a DEPENDENCY of the compute, so a kicked game drops off on its own");
 check(/buildSuggestions\(candidates, feeParams, held, unit, nowMs\)/.test(computeSrc),
   "one clock drives both the gate and the bands (no second Date.now())");

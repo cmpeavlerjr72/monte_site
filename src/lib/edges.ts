@@ -19,6 +19,7 @@ import { propEdge, type PropEdge } from "./propEdge";
 import { buildMarketRows, makeSeedCounts, rowEdge, type MarketRow } from "./marketEdge";
 import type { KalshiGame } from "./kalshi";
 import { DatasetUnavailable, type Division, type Season } from "./cfbData";
+import { regimeFor, type GameRegime } from "./edgeRules";
 
 /** What the scan needs from a card, without importing the page's types. */
 export type EdgeInput = {
@@ -40,6 +41,14 @@ export type EdgeInput = {
   division?: Division;
   bookSpread?: number;
   bookTotal?: number;
+  /**
+   * The consensus OPEN spread ALONE (home perspective, negative = home
+   * favoured). Distinct from `bookSpread`, which is the card's
+   * `spread_open ?? spread_current` display line — the week-2 decision rules
+   * are conditioned on the OPEN and must never fall back to the current.
+   * See src/lib/edgeRules.ts.
+   */
+  openSpread?: number;
   simMargin?: number;
   simTotal?: number;
   pHome?: number;
@@ -64,6 +73,17 @@ export type SlateScan = {
   teamMarketsUpdated: string | null;
   teamMarketsTag: string | null;
   teamMarketsWithheld: number;
+  /** Which decision-rule set the PUBLISHER ran ("wk2" or null) — see
+   *  cfbJson's TeamMarkets.rules. Null means the site labels these rows
+   *  itself rather than reading a column that was never computed. */
+  teamMarketsRules: string | null;
+  /**
+   * Slug -> the WEEK-2 REGIME of that game (open spread, conference class,
+   * mismatch). Computed here, once per scan, because both ranked tables in
+   * Top Edges need it and neither has the card that carries the inputs.
+   * See src/lib/edgeRules.ts.
+   */
+  regimeBySlug: Map<string, GameRegime>;
 };
 
 export type GameEdges = {
@@ -152,6 +172,7 @@ export async function ensureSlateEdges(
   }
 
   const props: PropEdge[] = [];
+  const regimes = new Map<string, GameRegime>();
 
   await Promise.all(
     inputs.map(async (g) => {
@@ -191,6 +212,12 @@ export async function ensureSlateEdges(
         slug: g.slug, teamA: g.teamA, teamB: g.teamB,
         division: g.division, rows, bestSigned,
       });
+      // The week-2 regime for this game. A pure label input — nothing above
+      // or below reads it, and no row is added, removed or repriced by it.
+      regimes.set(g.slug, regimeFor({
+        openSpread: g.openSpread, homeTeam: g.teamA, awayTeam: g.teamB,
+        division: g.division,
+      }));
 
       // Props for this game, if the week's file quoted any. players_dist is
       // only fetched for games that actually have prop rows.
@@ -228,6 +255,8 @@ export async function ensureSlateEdges(
     teamMarketsUpdated: teamMarketsResult?.updated ?? null,
     teamMarketsTag: teamMarketsResult?.tag ?? null,
     teamMarketsWithheld: teamMarketsResult?.withheldCount ?? 0,
+    teamMarketsRules: teamMarketsResult?.rules ?? null,
+    regimeBySlug: regimes,
   };
 }
 

@@ -46,6 +46,7 @@ import CBBComingSoon from "./pages/CBBComingSoon";
 // Hidden pages (no nav entry — direct URL only)
 import TestVisual from "./pages/TestVisual";
 import TestGamecast from "./pages/TestGamecast";
+import TestBets from "./pages/TestBets";
 
 
 export default function App() {
@@ -110,6 +111,9 @@ export default function App() {
           <Route path="/test-visual" element={<TestVisual />} />
           {/* Hidden: live-gamecast component harness vs any ESPN event */}
           <Route path="/test-gamecast" element={<TestGamecast />} />
+          {/* Hidden: Bets-panel harness — the week-2 decision rules on a real
+              published week against a DECLARED fixture book */}
+          <Route path="/test-bets" element={<TestBets />} />
 
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />

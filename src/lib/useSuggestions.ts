@@ -36,6 +36,14 @@ import {
 import { SERIES_FOR_STAT } from "./teamStatMarkets";
 import type { BetTypeFilter, ModeFilter, SuggestSort } from "./ownerPrefs";
 import type { Season } from "./cfbData";
+// The week-2 regime labels. Applied to candidates HERE, between building them
+// and pricing them, because only this layer knows the game (its open spread,
+// its conference class) — `statCandidates`/`gameCandidates` see one market at
+// a time and `buildSuggestions` sees a flat list. Nothing below changes a
+// price, an edge or which rows exist.
+import {
+  labelFor, regimeFor, UNKNOWN_REGIME, type GameRegime,
+} from "./edgeRules";
 
 /** Bet-slip wording, not column headings. */
 const SHORT: Record<string, string> = {
@@ -67,6 +75,18 @@ export type SuggestGame = {
   /** Kickoff, epoch ms — the "Soonest" sort key, the pregame gate's clock leg,
    *  and the row's maker/taker timing band. Undefined sorts last. */
   kickoffMs?: number;
+  /**
+   * The consensus OPEN spread, home perspective (negative = home favoured) —
+   * `summary.json` → `odds.spread_open` and NOTHING ELSE. The week-2 rules are
+   * conditioned on the open (the site's standing benchmark: bets go in
+   * Mon/Tue/Wed), so the card's `spread_open ?? spread_current` fallback is
+   * deliberately not reused here. Absent = no regime, which on the FBS board
+   * means no row can earn a star. See src/lib/edgeRules.ts.
+   */
+  openSpread?: number;
+  /** Which dataset this game came from. Decides whether the rules reach it at
+   *  all: the FCS board has no book line and no conference table. */
+  division?: string;
 };
 
 /** One game's suggestions: what the index ranks and what a panel renders. */
@@ -107,6 +127,10 @@ export type Suggestions = {
   /** Card key -> every priced rung, uncapped (the full-ladder browse). Not
    *  filtered, not gated on a game having picked rows. */
   browseBySlug: Map<string, Suggestion[]>;
+  /** Card key -> the week-2 regime its labels were computed against, so a
+   *  panel can STATE the open spread and the class it used instead of leaving
+   *  the reader to guess why a row is muted. */
+  regimeBySlug: Map<string, GameRegime>;
   /**
    * Card key -> how many CANDIDATES the game produced — a Kalshi quote paired
    * with a published rung, counted BEFORE selection, the tail band, and the
@@ -146,15 +170,19 @@ export type SuggestionsInput = {
   typeFilter: BetTypeFilter;
   showTails: boolean;
   sort: SuggestSort;
+  /** Week-2 decision rules on (default) or off (the kill switch — see
+   *  ownerPrefs `readEdgeRules`). Off restores the pre-2026-09-07 star and
+   *  emits no abstentions. */
+  edgeRules: boolean;
 };
 
 export function useSuggestions({
   games, kalshiBySlug, feeParams, portal, docs, unit, nowMs, nonce,
-  modeFilter, typeFilter, showTails, sort,
+  modeFilter, typeFilter, showTails, sort, edgeRules,
 }: SuggestionsInput): Suggestions {
   const {
     rows, tailRows, tailMarkets, suppressed, browse, computedAt, pregameCount,
-    blindCount, verdicts, candCounts,
+    blindCount, verdicts, candCounts, regimes,
   } = useMemo(() => {
     const held = heldCostByTicker(portal?.positions, portal?.orders);
     const candidates: Candidate[] = [];
@@ -164,6 +192,7 @@ export function useSuggestions({
     let nPregame = 0, nBlind = 0;
     const verdictBySlug = new Map<string, PregameVerdict>();
     const candBySlug = new Map<string, number>();
+    const regimeBySlug = new Map<string, GameRegime>();
     for (const g of games) {
       const candBefore = candidates.length;
       // PREGAME ONLY — the rule, its precedence and its reasoning all live in
@@ -209,6 +238,35 @@ export function useSuggestions({
         candidates.push(...gameCandidates(
           kg, g.key, g.teamA, g.teamB, published.game, g.kickoffMs));
       }
+      // ---- WEEK-2 REGIME LABELS -------------------------------------------
+      // One regime per game, applied to every candidate this game just
+      // produced. Labels only: `abstain` / `cell` ride along and are read
+      // after pricing by `starFor`. Nothing here can change a price, an edge,
+      // or whether a candidate survives.
+      const regime = edgeRules
+        ? regimeFor({
+            openSpread: g.openSpread, homeTeam: g.teamA, awayTeam: g.teamB,
+            division: g.division,
+          })
+        : UNKNOWN_REGIME;
+      regimeBySlug.set(g.key, regime);
+      const mode = !edgeRules ? "off" as const : regime.axis;
+      for (let i = candBefore; i < candidates.length; i++) {
+        const c = candidates[i];
+        const lab = edgeRules
+          ? labelFor({
+              series: c.series, side: c.side ?? "yes",
+              // The team a rung BACKS. `gameCandidates` names it directly;
+              // a stat rung is always about its own team. A total names none.
+              backsTeam: c.team || undefined,
+              homeTeam: g.teamA,
+            }, regime)
+          : { abstain: null, abstainReasons: [], cell: null };
+        c.abstain = lab.abstain;
+        c.abstainReasons = lab.abstainReasons;
+        c.cell = lab.cell;
+        c.ruleMode = mode;
+      }
       // Quote×rung pairs this game produced, before any gate (see the
       // BuildResult doc above). A game that `continue`d out has no entry -> 0.
       candBySlug.set(g.key, candidates.length - candBefore);
@@ -219,13 +277,14 @@ export function useSuggestions({
     return {
       ...built, computedAt: new Date(),
       pregameCount: nPregame, blindCount: nBlind, verdicts: verdictBySlug,
-      candCounts: candBySlug,
+      candCounts: candBySlug, regimes: regimeBySlug,
     };
     // `nonce` is the manual refresh: it re-runs the compute against whatever
     // feed the page currently holds, and never triggers a fetch of its own.
     // `nowMs` ticks every 30s upstream, which is what makes a kicked-off game
     // fall out of this list on its own.
-  }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs]);
+  }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs,
+      edgeRules]);
 
   // Card key -> game, so a same-game run of ladder rows can carry a header
   // and the "Soonest" sort can find a kickoff.
@@ -329,6 +388,7 @@ export function useSuggestions({
   return {
     ...grouped,
     browseBySlug,
+    regimeBySlug: regimes,
     candCountBySlug: candCounts,
     pregameBySlug: verdicts,
     tailMarkets,

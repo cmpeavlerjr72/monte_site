@@ -34,6 +34,13 @@
 
 import type { KalshiGame, KalshiStatQuote } from "./kalshi";
 import type { TeamStatsGameLines } from "./cfbJson";
+// The week-2 decision rules are a LABELLING layer bolted on top of the
+// selection above, never inside it: `starFor` is the only thing this module
+// calls, it runs AFTER a row is priced and sized, and it cannot change a
+// price, an edge, a count or whether a row exists. See src/lib/edgeRules.ts.
+import {
+  starFor, type AbstainReason, type CellName, type RuleMode,
+} from "./edgeRules";
 
 /* ------------------------- pipeline constants ---------------------------- */
 /** `--take-threshold`: cross the ask only at this edge after taker fee.
@@ -414,6 +421,19 @@ export type Suggestion = {
   /** Where this game sat in the timing ladder when the row was priced — the
    *  bar this row had to clear, and the popover's sentence. */
   timing: Timing;
+  /* --- week-2 decision rules (src/lib/edgeRules.ts). LABELS ONLY: nothing
+   *     below changes `price`, `edge`, `count` or whether the row exists. --- */
+  /** R1/R2 primary abstention reason, or null. A row that carries one still
+   *  renders and still places — it renders MUTED and says why. */
+  abstain: AbstainReason | null;
+  /** Every abstention that fired, for the popover. */
+  abstainReasons: AbstainReason[];
+  /** R3 cell this row stands in, or null. Drives the star and its tag. */
+  cell: CellName | null;
+  /** R3+R4 verdict: does this row earn the ★ TARGET label. */
+  star: boolean;
+  /** How hard the rules bit on this row (board reached, or kill switch off). */
+  ruleMode: RuleMode;
 };
 
 export type Suppressed = {
@@ -498,6 +518,13 @@ export type Candidate = {
   /** This game's kickoff, epoch ms. Sets the row's timing band; absent means
    *  the `far` band (the strictest take bar) — see `timingFor`. */
   kickoffMs?: number;
+  /* --- week-2 rule labels, attached by the caller (`labelCandidates` in
+   *     useSuggestions.ts) because only the caller knows the game's regime.
+   *     Absent = unlabelled, which falls back to the pre-rules star. --- */
+  abstain?: AbstainReason | null;
+  abstainReasons?: AbstainReason[];
+  cell?: CellName | null;
+  ruleMode?: RuleMode;
 };
 
 /**
@@ -600,6 +627,12 @@ function sizeSuggestion(
     count -= 1;
     fee = orderFee(p.price, count, maker, fp);
   }
+  // R3+R4 runs LAST, on the finished row, because it reads the price this row
+  // would actually pay or post and the net edge after that row's own fee.
+  // It decides a LABEL and nothing else.
+  const ruleMode: RuleMode = p.ruleMode ?? "off";
+  const cell = p.cell ?? null;
+  const abstain = p.abstain ?? null;
   return {
     key: `${p.ticker}|${p.mode}`,
     ticker: p.ticker, slug: p.slug, ladder: p.ladder, label: p.label,
@@ -612,6 +645,11 @@ function sizeSuggestion(
     feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
     tail,
     timing: p.timing,
+    abstain, abstainReasons: p.abstainReasons ?? [], cell, ruleMode,
+    star: starFor(
+      { cell, abstain, tail, price: p.price, edge: p.edgePer, series: p.series },
+      ruleMode,
+    ),
   };
 }
 
@@ -1037,6 +1075,28 @@ export type LadderGroup = {
   /** A ladder is one GAME, so every rung shares one timing band. The popover's
    *  time-context sentence comes from here. */
   timing: Timing;
+  /* --- week-2 rule labels, folded to the ladder (src/lib/edgeRules.ts) --- */
+  /**
+   * The BEST rung's abstention — the rung whose edge is the headline number.
+   *
+   * The headline label and the headline number must describe the SAME
+   * contract. A spread ladder is keyed per named team but still spans strikes
+   * on both sides of the number (a home −41.5 rung and an away +36.5 rung both
+   * belong to the home team's ladder), so a ladder can genuinely mix an
+   * abstained rung with a clean one — and when the abstained one is the rung
+   * carrying the headline edge, saying nothing would be the row's loudest
+   * number standing unqualified.
+   */
+  abstain: AbstainReason | null;
+  /** EVERY rung abstains. Drives the MUTING, which `abstain` alone must not:
+   *  greying a ladder whose other rung is a perfectly good bet would be the
+   *  row lying about half of itself. */
+  abstainAll: boolean;
+  /** The BEST rung's cell — the rung whose edge is the headline number. */
+  cell: CellName | null;
+  /** The BEST rung's ★ verdict. The headline star and the headline edge are
+   *  the same rung, always. */
+  star: boolean;
 };
 
 export function groupLadders(
@@ -1074,6 +1134,10 @@ export function groupLadders(
       each: round2(unit / group.length),
       tail: rungs.every((r) => r.tail),
       timing: best.timing,
+      abstain: best.abstain,
+      abstainAll: rungs.every((r) => r.abstain !== null),
+      cell: best.cell,
+      star: best.star,
     });
   }
   groups.sort((a, b) => b.bestEdge - a.bestEdge);

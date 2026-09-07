@@ -75,6 +75,26 @@ const TAILS_KEY = "cfb.suggestedBets.showTails";
 export const readShowTails = (): boolean => read(TAILS_KEY) === "1";
 export const writeShowTails = (v: boolean): void => write(TAILS_KEY, v ? "1" : "0");
 
+/* --------------------------- week-2 decision rules ------------------------ */
+/**
+ * The REGIME LABELS on every priced row — R1 mismatch abstentions, the R2
+ * moneyline abstention, and the R3/R4 star cells (src/lib/edgeRules.ts).
+ *
+ * DEFAULT ON (`!== "0"`), because the rules encode a settled week of results
+ * and the owner asked for them on this deploy. They are LABELS, never a
+ * filter: with them on, an abstained row still renders, still prices and still
+ * has a working Place button — it is muted, tagged, and says why on tap.
+ *
+ * THE KILL SWITCH IS THIS ONE LINE: turn the "Week-2 rules" switch off in the
+ * Bets panel (or run `localStorage.setItem("cfb.edgeRules","0")` in the
+ * console and reload). Everything reverts to the pre-2026-09-07 star — a
+ * non-tail row with net edge ≥ 10¢ — with no abstentions and no cell tags.
+ */
+const EDGE_RULES_KEY = "cfb.edgeRules";
+export const readEdgeRules = (): boolean => read(EDGE_RULES_KEY) !== "0";
+export const writeEdgeRules = (v: boolean): void =>
+  write(EDGE_RULES_KEY, v ? "1" : "0");
+
 /* -------------------------- the "My games" tray --------------------------- */
 /**
  * Whether the tray of games the owner already has money on is expanded.

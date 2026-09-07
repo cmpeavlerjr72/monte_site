@@ -727,6 +727,25 @@ export type TeamMarketRow = {
    * exports published before 2026-08-30.
    */
   target?: boolean;
+  /* --- WEEK-2 DECISION RULES, when the publisher ran with `--rules wk2`.
+   *     Absent on every export before 2026-09-07 and on any default-rules
+   *     run, which is why every one of these is optional and why the site
+   *     computes its OWN labels when they are missing (src/lib/edgeRules.ts).
+   *     When they ARE present they WIN: the Python is the source. --- */
+  /** Primary abstention reason, e.g. "mismatch:dog-side". A LABEL — the row
+   *  still publishes and still renders (owner rule 2026-08-30). */
+  abstain?: string | null;
+  /** Every abstention that fired, ";"-joined by the publisher. */
+  abstain_reasons?: string | null;
+  /** The R3 regime cell the star needs, e.g. "spread:3-14". */
+  cell?: string | null;
+  /** Publisher's own verdict: quotable AND not abstained. */
+  tradeable?: boolean;
+  /** The consensus OPEN spread the rules were applied at (home perspective). */
+  open_spread?: number | null;
+  /** "bodybag (P4 host v non-P4)" / "P4 v P4" / ... */
+  game_class?: string | null;
+  mismatch?: boolean;
   close_time?: string;
 };
 
@@ -737,6 +756,15 @@ export type TeamMarkets = {
   rows: TeamMarketRow[];
   /** Markets the toolkit priced but withheld (book too thin to quote at all). */
   withheldCount: number;
+  /**
+   * Which decision-rule set the PUBLISHER ran ("wk2" when it applied the
+   * week-2 abstentions and star cells; null on a default run and on every
+   * export before 2026-09-07). This is what tells the site whether a row's
+   * missing `abstain`/`cell` means "clean" or "never computed" — see
+   * src/lib/edgeRules.ts. When it says "wk2", those columns WIN: the Python
+   * is the source of the rules, here as everywhere.
+   */
+  rules: string | null;
 };
 
 /** Thrown when the week/namespace has no team_markets.json — the FCS
@@ -773,6 +801,16 @@ function parseTeamMarketRow(raw: any): TeamMarketRow | null {
     n_sims: num(raw?.n_sims),
     flags: Array.isArray(raw?.flags) ? raw.flags.map((f: any) => String(f)) : [],
     target: raw?.target === true,
+    // Week-2 rule columns. `undefined` (the key absent) and `null` (present
+    // but empty) mean different things to the reader below: absent = this
+    // export did not run the rules at all, so the site computes its own.
+    abstain: raw?.abstain != null ? String(raw.abstain) : undefined,
+    abstain_reasons: raw?.abstain_reasons != null ? String(raw.abstain_reasons) : undefined,
+    cell: raw?.cell != null ? String(raw.cell) : undefined,
+    tradeable: typeof raw?.tradeable === "boolean" ? raw.tradeable : undefined,
+    open_spread: raw?.open_spread === null ? null : num(raw?.open_spread),
+    game_class: raw?.game_class != null ? String(raw.game_class) : undefined,
+    mismatch: typeof raw?.mismatch === "boolean" ? raw.mismatch : undefined,
     close_time: raw?.close_time != null ? String(raw.close_time) : undefined,
   };
 }
@@ -817,6 +855,7 @@ export async function getTeamMarkets(
     source: raw?.source != null ? String(raw.source) : null,
     rows,
     withheldCount: num(raw?.withheld_count) ?? 0,
+    rules: raw?.rules != null ? String(raw.rules) : null,
   };
 }
 
