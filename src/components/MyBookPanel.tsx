@@ -18,6 +18,10 @@ import { useEffect, useState } from "react";
 import DryRunBadge from "./DryRunBadge";
 import { cancelAppOrders, placeErrorText, type PlaceResponse } from "../lib/placeOrders";
 import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
+import UnitModeControl from "./UnitModeControl";
+// The unit MODE and its risk cap ride with the unit: one row, one decision
+// (owner ask 2026-09-08). The arithmetic is sizeContracts, never here.
+import { sizeContracts, type Sizing, type UnitMode } from "../lib/suggestedBets";
 import { KalshiRecordBlock, MyBookBar } from "./MyBook";
 import {
   cheerLabelWithGame, portalGameCode, useFriendBooks,
@@ -144,15 +148,23 @@ function joinEdgeOf(price: number, ticker: string, side: string,
  * self-directed order entry as everywhere else, staged (dry-run) until this
  * session's account is live.
  */
-function FriendJoin({ token, ticker, side, price, unit }: {
+function FriendJoin({ token, ticker, side, price, unit, sizing }: {
   token: string; ticker: string; side: "yes" | "no"; price: number;
-  unit: number;
+  unit: number; sizing: Sizing;
 }) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const count = Math.max(1, Math.floor(unit / price));
-  const cost = count * price;
+  // THE ONE SIZING KERNEL. A join is a TAKE at `price`, so it sizes exactly
+  // the way a suggested take does — including the unit mode (owner ask
+  // 2026-09-08). This used to be its own floor(unit / price), which is the
+  // second copy that made the modes impossible to ship in one place.
+  const sized = sizeContracts({
+    price, maker: false, unit, sizing,
+    ceiling: unit * sizing.maxRiskMultiple,
+  });
+  const count = sized.count;
+  const cost = sized.outlay;
 
   const place = async () => {
     setBusy(true); setMsg("");
@@ -197,8 +209,8 @@ type FriendGame = {
 /** A friend's book grouped BY GAME (owner ask 2026-09-01): each game gets its
  *  real matchup name, the held bets one line each with a live JOIN price, and
  *  that game's recent fills as a muted timeline underneath. */
-function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug, yesP }: {
-  book: FriendBook; token: string; unit: number;
+function FriendBookBlock({ book, token, unit, sizing, slugTeams, codeToSlug, yesP }: {
+  book: FriendBook; token: string; unit: number; sizing: Sizing;
   slugTeams: Map<string, BetGameNames>; codeToSlug: Map<string, string>;
   yesP: (t: string) => number | null;
 }) {
@@ -298,7 +310,7 @@ function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug, yesP }: {
                 ) : edge !== null && edge > 0 ? (
                   <FriendJoin token={token} ticker={p.ticker}
                               side={p.side === "no" ? "no" : "yes"}
-                              price={join} unit={unit} />
+                              price={join} unit={unit} sizing={sizing} />
                 ) : (
                   <span style={{ fontSize: 10, color: "var(--muted)" }}
                         title={edge === null
@@ -325,8 +337,8 @@ function FriendBookBlock({ book, token, unit, slugTeams, codeToSlug, yesP }: {
   );
 }
 
-function FriendFeedRow({ token, unit, slugTeams, codeToSlug, yesP }: {
-  token: string; unit: number;
+function FriendFeedRow({ token, unit, sizing, slugTeams, codeToSlug, yesP }: {
+  token: string; unit: number; sizing: Sizing;
   slugTeams: Map<string, BetGameNames>; codeToSlug: Map<string, string>;
   yesP: (t: string) => number | null;
 }) {
@@ -368,7 +380,7 @@ function FriendFeedRow({ token, unit, slugTeams, codeToSlug, yesP }: {
         </button>
         {open && friends.map((f) => (
           <FriendBookBlock key={f.account_id} book={f} token={token}
-                           unit={unit} slugTeams={slugTeams}
+                           unit={unit} sizing={sizing} slugTeams={slugTeams}
                            codeToSlug={codeToSlug} yesP={yesP} />
         ))}
       </div>
@@ -400,8 +412,24 @@ function Row({ label, children, top = false }: {
   );
 }
 
+/**
+ * ONE worked example under the switch — the mode's whole consequence in a
+ * sentence, computed by the SAME kernel the rows use so it can never quote
+ * arithmetic the slip disagrees with. A 70c favourite is the case that makes
+ * the modes differ (a dog is identical under `book` and `risk`).
+ */
+function unitModeExample(unit: number, sizing: Sizing): string {
+  const s = sizeContracts({
+    price: 0.7, maker: false, unit, sizing,
+    ceiling: unit * sizing.maxRiskMultiple,
+  });
+  return `a 70¢ favourite: risk $${s.risk.toFixed(0)} to net `
+    + `$${s.netWin.toFixed(0)}${s.capped ? ` (capped at ${sizing.maxRiskMultiple}× unit)` : ""}`;
+}
+
 export default function MyBookPanel({
   token, onToken, note, connected, ordersLive, accountLabel, unit, onUnit,
+  sizing, onSizingMode, onMaxRiskMultiple,
   totals, unmatched, record, slugTeams, codeToSlug, portalYesP, children,
 }: {
   token: string;
@@ -420,6 +448,12 @@ export default function MyBookPanel({
   accountLabel?: string;
   unit: number;
   onUnit: (v: number) => void;
+  /** How a unit is spent (risk / to-win / book) and the risk cap on the two
+   *  stretch modes. Held by the page beside `unit`, so the compute, this row
+   *  and every slip read one value. */
+  sizing: Sizing;
+  onSizingMode: (v: UnitMode) => void;
+  onMaxRiskMultiple: (v: number) => void;
   totals: PortalTotals;
   unmatched: number;
   /** REAL settled results on the games this board is showing. The row renders
@@ -532,8 +566,17 @@ export default function MyBookPanel({
             style={{ width: 76, fontSize: 13, fontWeight: 800, textAlign: "right" }}
           />
         </label>
-        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+        <UnitModeControl
+          mode={sizing.mode}
+          onMode={onSizingMode}
+          multiple={sizing.maxRiskMultiple}
+          onMultiple={onMaxRiskMultiple}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--muted)", flexBasis: "100%" }}>
+          {/* ONE sentence, and it names the money this setting actually moves
+              rather than restating the three definitions the ? already holds. */}
           per ladder (${UNIT_MIN}–${UNIT_MAX}) — sizes every suggestion and slip
+          {sizing.mode !== "risk" && ` · ${unitModeExample(unit, sizing)}`}
         </span>
       </Row>
 
@@ -578,7 +621,7 @@ export default function MyBookPanel({
       {/* The friend pair's books, when the server declares one — renders
           nothing at all otherwise (no empty "Friends" shell). */}
       {token && (
-        <FriendFeedRow token={token} unit={unit}
+        <FriendFeedRow token={token} unit={unit} sizing={sizing}
                        slugTeams={slugTeams} codeToSlug={codeToSlug}
                        yesP={portalYesP} />
       )}

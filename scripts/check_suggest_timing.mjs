@@ -233,7 +233,13 @@ check(/pregameVerdict\(g, nowMs\)/.test(computeSrc),
 check(/}, \[games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs[,\s\]]/
   .test(computeSrc),
   "…and nowMs is a DEPENDENCY of the compute, so a kicked game drops off on its own");
-check(/buildSuggestions\(candidates, feeParams, held, unit, nowMs\)/.test(computeSrc),
+// Like the deps list above, the call may WRAP and may gain trailing arguments
+// (the unit sizing MODE was added 2026-09-08). What must not change is that
+// `nowMs` — the page's ticking clock — is the instant handed to the builder:
+// buildSuggestions defaults `now` to Date.now(), so dropping it here would
+// restore exactly the second clock this gate exists to forbid.
+check(/buildSuggestions\(\s*candidates, feeParams, held, unit, nowMs[,)]/
+  .test(computeSrc),
   "one clock drives both the gate and the bands (no second Date.now())");
 check(/pregameVerdict\(game, nowMs\)/.test(reviewSrc),
   "the resting review refuses a game that is no longer pregame");

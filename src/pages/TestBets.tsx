@@ -6,6 +6,7 @@
 //   /test-bets                                  the two default games
 //   /test-bets?week=week01&games=a_b,c_d        any published slugs
 //   /test-bets?rules=off                        the kill switch, side by side
+//   /test-bets?size=to-win|book                 the unit sizing MODE (2026-09-08)
 //
 // ---------------------------------------------------------------------------
 // WHY THIS EXISTS
@@ -42,8 +43,12 @@ import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { getJsonWeekIndex, getJsonWeekGames, getTeamStats,
   type TeamStats } from "../lib/cfbJson";
 import type { KalshiGame, KalshiRung, KalshiStatQuote } from "../lib/kalshi";
-import type { FeeParams } from "../lib/suggestedBets";
+import {
+  sizeContracts, MAX_RISK_MULTIPLE_DEFAULT,
+  type FeeParams, type Sizing, type UnitMode,
+} from "../lib/suggestedBets";
 import { regimeWords } from "../lib/edgeRules";
+import UnitModeControl from "../components/UnitModeControl";
 
 /** Ball State @ Ohio State is the mismatch (open −50.5, P4 host v MAC — the
  *  Python's own worked example); Clemson @ LSU is the peer game whose open
@@ -168,6 +173,96 @@ function fixtureBook(
   } as unknown as KalshiGame;
 }
 
+/* ===================== THE THREE MODES, SIDE BY SIDE ======================= *
+ *
+ * A favourite rung and a dog rung, priced through the SHIPPED kernel
+ * (`sizeContracts`) under all three modes at once. This is the whole feature
+ * in one block: the same $30 unit buying three different bets, and the guard
+ * biting on the favourite.
+ *
+ * BOTH ARE TAKES, because that is where the fee is real: 7% x P x (1−P) per
+ * contract, rounded up per order. A rest on a per-team family pays nothing and
+ * the to-win arithmetic collapses to unit / (1−P).
+ */
+const MODE_ROWS: { mode: UnitMode; label: string }[] = [
+  { mode: "risk", label: "Risk" },
+  { mode: "to-win", label: "To win" },
+  { mode: "book", label: "Book" },
+];
+
+function SizingTable({ unit, multiple }: { unit: number; multiple: number }) {
+  const rungs = [
+    { name: "favourite", price: 0.7 },
+    { name: "heavy favourite", price: 0.86 },
+    { name: "dog", price: 0.3 },
+  ];
+  const th: React.CSSProperties = {
+    textAlign: "right", padding: "3px 7px", fontWeight: 800,
+    color: "var(--muted)", fontSize: 10.5, whiteSpace: "nowrap",
+  };
+  const td: React.CSSProperties = {
+    textAlign: "right", padding: "3px 7px",
+    fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+  };
+  return (
+    <div style={{
+      border: "1px solid var(--border)", borderRadius: 10, padding: 10,
+      background: "var(--card)", display: "grid", gap: 6, minWidth: 0,
+    }}>
+      <b style={{ fontSize: 13 }}>
+        Unit sizing — ${unit} unit, cap {multiple}× , taker fee
+      </b>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 11.5, minWidth: 420 }}>
+          <thead>
+            <tr>
+              <th style={{ ...th, textAlign: "left" }}>rung</th>
+              <th style={{ ...th, textAlign: "left" }}>mode</th>
+              <th style={th}>contracts</th>
+              <th style={th}>risk</th>
+              <th style={th}>fee</th>
+              <th style={th}>net win</th>
+              <th style={{ ...th, textAlign: "left" }}>capped</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rungs.flatMap((r) => MODE_ROWS.map((m, i) => {
+              const s = sizeContracts({
+                price: r.price, maker: false, unit,
+                sizing: { mode: m.mode, maxRiskMultiple: multiple },
+                ceiling: unit * multiple,
+              });
+              return (
+                <tr key={`${r.name}-${m.mode}`} style={{
+                  borderTop: i === 0 ? "1px solid var(--border)" : "none",
+                }}>
+                  <td style={{ padding: "3px 7px", fontWeight: 700 }}>
+                    {i === 0 ? `${r.name} @ ${Math.round(r.price * 100)}¢` : ""}
+                  </td>
+                  <td style={{ padding: "3px 7px", color: "var(--muted)" }}>{m.label}</td>
+                  <td style={td}>{s.count}</td>
+                  <td style={td}>${s.risk.toFixed(2)}</td>
+                  <td style={td}>${s.fee.toFixed(2)}</td>
+                  <td style={{ ...td, fontWeight: 800 }}>${s.netWin.toFixed(2)}</td>
+                  <td style={{ padding: "3px 7px", color: "var(--muted)" }}>
+                    {s.capped ? `yes — ${(s.outlay / unit).toFixed(1)}× unit` : ""}
+                  </td>
+                </tr>
+              );
+            }))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5 }}>
+        Risk stakes the unit; to-win stakes enough to NET it; book takes to-win
+        on the two favourites and risk on the dog — which is why the dog's three
+        rows are two. The 86¢ row is the guard: a full $30 of profit there would
+        risk $186.
+      </div>
+    </div>
+  );
+}
+
 type Loaded = {
   games: SuggestGame[];
   kalshi: Map<string, KalshiGame>;
@@ -181,6 +276,19 @@ export default function TestBets() {
   const slugs = (params.get("games") || DEFAULT_GAMES.join(",")).split(",")
     .map((s) => s.trim()).filter(Boolean);
   const rulesOn = params.get("rules") !== "off";
+  // THE UNIT SIZING MODE. Same reason the rules switch is a URL: the modes
+  // differ only on a live book, and a settled slate has none — so the harness
+  // is where "what does Book mode do to an 86¢ favourite" stays answerable.
+  const sizeParam = params.get("size");
+  const sizing: Sizing = {
+    mode: sizeParam === "to-win" || sizeParam === "book" ? sizeParam : "risk",
+    maxRiskMultiple: MAX_RISK_MULTIPLE_DEFAULT,
+  };
+  const setSizeMode = (m: UnitMode) => {
+    const q = new URLSearchParams(params);
+    if (m === "risk") q.delete("size"); else q.set("size", m);
+    setParams(q, { replace: true });
+  };
   const skew = Number(params.get("skew") ?? 0.16);
 
   const [data, setData] = useState<Loaded | null>(null);
@@ -265,6 +373,7 @@ export default function TestBets() {
     portal: null,
     docs: data?.docs ?? {},
     unit: 30,
+    sizing,
     nowMs,
     nonce: 0,
     modeFilter: "all",
@@ -317,9 +426,20 @@ export default function TestBets() {
             the kill switch, as a URL — compare the two
           </span>
         </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 11, flexWrap: "wrap" }}>
+          <UnitModeControl
+            mode={sizing.mode} onMode={setSizeMode}
+            multiple={sizing.maxRiskMultiple} compact
+          />
+          <span style={{ color: "var(--muted)" }}>
+            the sizing mode — every panel below re-sizes with it
+          </span>
+        </div>
       </header>
 
       {err && <div style={{ color: "var(--neg)", fontSize: 12 }}>{err}</div>}
+
+      <SizingTable unit={30} multiple={sizing.maxRiskMultiple} />
 
       {(data?.games ?? []).map((g) => {
         const regime = suggestions.regimeBySlug.get(g.key);
@@ -345,6 +465,8 @@ export default function TestBets() {
               hiddenByFilter={suggestions.hiddenBySlug.get(g.key) ?? 0}
               tailCount={suggestions.tailCountBySlug.get(g.key) ?? 0}
               unit={30}
+              sizing={sizing}
+              onSizingMode={setSizeMode}
               token=""
               feeParams={FEES}
               quotedAt={suggestions.computedAt}

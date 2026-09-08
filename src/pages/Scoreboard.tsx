@@ -41,11 +41,12 @@ import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { useRestingReview } from "../lib/restingReview";
 import {
   readEdgeRules, readModeFilter, readMyGamesOpen, readShowTails, readSuggestSort, readTypeFilter, readUnit,
+  readSizing, writeMaxRiskMultiple, writeUnitMode,
   writeEdgeRules, writeModeFilter, writeMyGamesOpen, writeShowTails, writeSuggestSort, writeTypeFilter, writeUnit,
   type BetTypeFilter, type ModeFilter, type SuggestSort,
 } from "../lib/ownerPrefs";
 import { buildGameYesP, buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
-import type { FeeParams, Suggestion } from "../lib/suggestedBets";
+import type { FeeParams, Sizing, Suggestion, UnitMode } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
@@ -1834,6 +1835,20 @@ function ScoreboardPage() {
   /** Dollars of risk per ladder. One knob, every sizing site (suggestion
    *  counts, outlay, the Place slip). Clamped on read AND on write. */
   const [unit, setUnit] = useState<number>(() => readUnit());
+  /** HOW that unit is spent — risk / to-win / book, plus the risk cap on the
+   *  stretch modes. Page state beside `unit` for the same reason the filters
+   *  are: the index, every card badge, the panels and every slip must size off
+   *  ONE value. Persistence happens in these setters (ownerPrefs), the same
+   *  one-place-writes rule the filters follow. */
+  const [sizing, setSizing] = useState<Sizing>(() => readSizing());
+  const onSizingMode = useCallback((v: UnitMode) => {
+    writeUnitMode(v);
+    setSizing(readSizing());
+  }, []);
+  const onMaxRiskMultiple = useCallback((v: number) => {
+    writeMaxRiskMultiple(v);
+    setSizing(readSizing());
+  }, []);
 
   /* ---- Suggested-bets view state, PAGE LEVEL ----
    * The ranked index, every card's "Bets" badge and the per-game panel all
@@ -2692,6 +2707,7 @@ function ScoreboardPage() {
     portal: portal.payload,
     docs: teamStatsDocs,
     unit,
+    sizing,
     nowMs,
     nonce: suggestNonce,
     modeFilter: betMode,
@@ -2874,6 +2890,7 @@ function ScoreboardPage() {
                       group={findGroupById(
                         suggestions.bySlug.get(openCard.key), panelFocus.groupId)}
                       unit={unit}
+                      sizing={sizing}
                       token={portalToken}
                       feeParams={kalshiFees}
                       quotedAt={suggestions.computedAt}
@@ -2892,6 +2909,8 @@ function ScoreboardPage() {
                     hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}
                     tailCount={suggestions.tailCountBySlug.get(openCard.key) ?? 0}
                     unit={unit}
+                    sizing={sizing}
+                    onSizingMode={onSizingMode}
                     token={portalToken}
                     feeParams={kalshiFees}
                     quotedAt={suggestions.computedAt}
@@ -3170,6 +3189,9 @@ function ScoreboardPage() {
           accountLabel={portal.payload?.account_label}
           unit={unit}
           onUnit={(v) => { setUnit(v); writeUnit(v); }}
+          sizing={sizing}
+          onSizingMode={onSizingMode}
+          onMaxRiskMultiple={onMaxRiskMultiple}
           totals={portalBook.totals}
           unmatched={portalBook.unmatched}
           record={portalRecord}
@@ -3187,6 +3209,7 @@ function ScoreboardPage() {
               review={restingReview}
               token={portalToken}
               unit={unit}
+              sizing={sizing}
               sort={betSort}
               onSort={onBetSort}
               onRefresh={() => setSuggestNonce((n) => n + 1)}

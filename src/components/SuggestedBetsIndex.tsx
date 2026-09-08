@@ -23,11 +23,12 @@ import { useState } from "react";
 import { getTeamLogo } from "../utils/teamLogo";
 import DryRunBadge from "./DryRunBadge";
 import RestingBets, { RestingBadge } from "./RestingBets";
-import { kickText, PlaceStrip, signed } from "./SuggestedBets";
+import { kickText, PlaceStrip, signed, SIZING_WORDS } from "./SuggestedBets";
 import type { RestingReview } from "../lib/restingReview";
 // Only the COLLAPSE state is this component's own; the filters and the order
 // live in Scoreboard (one compute, one set of filters) and persist there.
 import { readCardOpen, writeCardOpen, type SuggestSort } from "../lib/ownerPrefs";
+import type { Sizing } from "../lib/suggestedBets";
 import { TAIL_HI, TAIL_LO, type FeeParams } from "../lib/suggestedBets";
 import type { SuggestSection, Suggestions } from "../lib/useSuggestions";
 
@@ -40,13 +41,14 @@ const clockText = (d: Date) => d.toLocaleTimeString();
  * PlaceStrip each (see the header) — the caret rotates like every other
  * disclosure on the page.
  */
-function IndexRow({ sec, showTails, expanded, onToggle, onOpen, unit, token, feeParams, quotedAt, ordersLive }: {
+function IndexRow({ sec, showTails, expanded, onToggle, onOpen, unit, sizing, token, feeParams, quotedAt, ordersLive }: {
   sec: SuggestSection;
   showTails: boolean;
   expanded: boolean;
   onToggle: (slug: string) => void;
   onOpen: (slug: string) => void;
   unit: number;
+  sizing: Sizing;
   token: string;
   feeParams: Record<string, FeeParams>;
   quotedAt: Date;
@@ -130,6 +132,7 @@ function IndexRow({ sec, showTails, expanded, onToggle, onOpen, unit, token, fee
               key={(g.tail ? "tail:" : "") + g.ladder}
               group={g}
               unit={unit}
+              sizing={sizing}
               token={token}
               feeParams={feeParams}
               quotedAt={quotedAt}
@@ -151,7 +154,7 @@ function IndexRow({ sec, showTails, expanded, onToggle, onOpen, unit, token, fee
 }
 
 export default function SuggestedBetsIndex({
-  suggestions, review, token, unit, sort, onSort, onRefresh, ordersLive,
+  suggestions, review, token, unit, sizing, sort, onSort, onRefresh, ordersLive,
   feeParams, showTails, onShowTails, onClearFilters, onOpenGame,
 }: {
   suggestions: Suggestions;
@@ -164,6 +167,9 @@ export default function SuggestedBetsIndex({
   token: string;
   /** Dollars of risk per ladder — printed so the counts have a unit. */
   unit: number;
+  /** How that unit is spent. Printed beside it, because "$30/ladder" means
+   *  something different under to-win (see UnitModeControl). */
+  sizing: Sizing;
   sort: SuggestSort;
   onSort: (v: SuggestSort) => void;
   /** Re-runs the page compute against the feed it already holds. No fetch. */
@@ -294,6 +300,7 @@ export default function SuggestedBetsIndex({
                   onToggle={(slug) => setExpanded((cur) => cur === slug ? null : slug)}
                   onOpen={onOpenGame}
                   unit={unit}
+                  sizing={sizing}
                   token={token}
                   feeParams={feeParams}
                   quotedAt={computedAt}
@@ -313,7 +320,8 @@ export default function SuggestedBetsIndex({
             }} />
             <span>
               Live · {pregameCount} pregame game{pregameCount === 1 ? "" : "s"} ·
-              {" "}${unit}/ladder · edges NET of fee, re-checked at placement
+              {" "}${unit}/ladder {SIZING_WORDS[sizing.mode]} · edges NET of fee,
+              {" "}re-checked at placement
             </span>
           </div>
 

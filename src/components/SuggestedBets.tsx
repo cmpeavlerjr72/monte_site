@@ -103,7 +103,8 @@ import {
   groupLadders, orderFee, timingWords,
   MIN_MAKER_EDGE, TAKE_THRESHOLD, TAKE_THRESHOLD_LATE, TAKE_THRESHOLD_NEAR,
   TAIL_HI, TAIL_LO,
-  type FeeParams, type LadderGroup, type Suggestion,
+  type FeeParams, type LadderGroup, type Sizing, type Suggestion,
+  type UnitMode,
 } from "../lib/suggestedBets";
 import type { PregameVerdict } from "../lib/suggestedBets";
 import {
@@ -117,7 +118,8 @@ import { STAT_FOR_SERIES } from "../lib/teamStatMarkets";
 // truth for the index counts, the card badges and these rows. This panel only
 // reports a press.
 import type { BetTypeFilter, ModeFilter } from "../lib/ownerPrefs";
-import { readUnit } from "../lib/ownerPrefs";
+import { declaredOrderCap } from "../lib/ownerPrefs";
+import UnitModeControl from "./UnitModeControl";
 import DryRunBadge from "./DryRunBadge";
 import type { SuggestSection } from "../lib/useSuggestions";
 // The week-2 decision rules — LABELS ONLY (src/lib/edgeRules.ts). The panel
@@ -127,6 +129,16 @@ import {
   STAR_ASK_HI, STAR_ASK_LO,
   type AbstainReason, type CellName, type GameRegime,
 } from "../lib/edgeRules";
+
+/** What "$30/ladder" MEANS under each mode, in a few words, beside the number
+ *  it qualifies. The full definitions live behind the ? on the switch itself
+ *  (UnitModeControl); this is a caption, not a lesson. Exported because the
+ *  ranked index prints the same line. */
+export const SIZING_WORDS: Record<UnitMode, string> = {
+  risk: "at risk",
+  "to-win": "to win",
+  book: "book style (favourites to win, dogs at risk)",
+};
 
 export const cents = (v: number) => `${Math.round(v * 100)}¢`;
 export const signed = (v: number) =>
@@ -153,6 +165,28 @@ function ModeChip({ mode, price }: { mode: "REST" | "TAKE"; price?: number }) {
     }}>
       {mode}{price === undefined ? "" : ` @${cents(price)}`}
     </span>
+  );
+}
+
+/**
+ * THE CAP, said out loud.
+ *
+ * A to-win row at a high price wants more risk than the guard allows, so it is
+ * sized down. A silently shrunk bet is a lie about the size the owner asked
+ * for, so wherever a capped row shows its money it also shows this: the
+ * multiple, the price that triggered it, and the profit it actually reaches.
+ * Muted, never `--neg` — the row is not a bad bet, it is a smaller one.
+ */
+export function CappedNote({ r }: { r: Suggestion }) {
+  // The multiple ACTUALLY reached, off the outlay the ceiling capped — never a
+  // re-read of the setting, which could drift from the row it is describing.
+  const mult = Math.round((r.outlay / Math.max(r.unitShare, 1e-9)) * 10) / 10;
+  return (
+    <div style={{ color: "var(--muted)", marginTop: 3 }}>
+      Capped at {mult}× unit (price {cents(r.price)}) — a full $
+      {r.unitShare.toFixed(0)} of profit would risk more than the guard allows,
+      so this one nets ${r.netWin.toFixed(2)} on ${r.outlay.toFixed(2)}.
+    </div>
   );
 }
 
@@ -507,9 +541,19 @@ function LadderRows({
                     fontSize: 10.5, color: "var(--muted)", minWidth: 0,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
+                    {/* ONE number, and it is the money that leaves: the
+                        risk, FIRST. What it wins is derivation and lives in
+                        the popover — a "$86 → $30" pair on this line would put
+                        two numbers where the row has room for one.
+                        THE DOLLAR LEADS (2026-09-08). This line is the one
+                        thing allowed to ellipse when the row is squeezed (it
+                        must stay two lines), and at 375px it did: "97 @ 92¢ ·
+                        $89.37" truncated to "9". Under the sizing modes the
+                        risk varies by 3x between rows, so it is exactly the
+                        number that must survive the squeeze. */}
                     {single
-                      ? `${head.count} @ ${cents(head.price)} · $${head.outlay.toFixed(2)}`
-                      : `${g.rungs.length} rungs · $${g.each} each`}
+                      ? `$${head.outlay.toFixed(2)} · ${head.count} @ ${cents(head.price)}`
+                      : `$${g.risk.toFixed(2)} · ${g.rungs.length} rungs`}
                   </span>
                   {/* The rules' verdict, in words, before the number. */}
                   <AbstainTag reason={g.abstain} />
@@ -602,10 +646,14 @@ function LadderRows({
                     fee {(head.fee * 100 / Math.max(head.count, 1)).toFixed(1)}¢/contract
                     {" "}({head.fee.toFixed(2)} total) · net edge {signed(head.edge)}
                     <div style={{ color: "var(--muted)", marginTop: 2 }}>
-                      {head.count} contracts, outlay ${head.outlay.toFixed(2)} of ${unit}
+                      {head.count} contracts, outlay ${head.outlay.toFixed(2)}
+                      {head.sizeMode === "to-win"
+                        ? ` to net $${head.netWin.toFixed(2)}`
+                        : ` of $${unit}`}
                       {" · "}fee type {head.feeType}
                       {" · "}{head.ticker}
                     </div>
+                    {head.capped && <CappedNote r={head} />}
                   </>
                 ) : (
                   <>
@@ -639,10 +687,12 @@ function LadderRows({
                       </div>
                     ))}
                     <div style={{ color: "var(--muted)", marginTop: 4 }}>
-                      ${unit} ladder, ${g.each} per rung
-                      {" · "}outlay ${g.rungs.reduce((s, rr) => s + rr.outlay, 0).toFixed(2)}
+                      {g.sizeMode === "to-win"
+                        ? `sized to win $${unit} · risk $${g.risk.toFixed(2)} to net $${g.netWin.toFixed(2)}`
+                        : `$${unit} ladder, $${g.each} per rung · outlay $${g.risk.toFixed(2)}`}
                       {" · "}fee type {head.feeType}
                     </div>
+                    {g.capped && <CappedNote r={g.rungs.find((rr) => rr.capped)!} />}
                   </>
                 )}
               </div>
@@ -896,7 +946,8 @@ function CompactRung({ r, onPlace }: { r: Suggestion; onPlace: (r: Suggestion) =
 }
 
 export default function GameBetsPanel({
-  section, browse, verdict, hiddenByFilter, tailCount, unit, token, feeParams,
+  section, browse, verdict, hiddenByFilter, tailCount, unit, sizing, onSizingMode,
+  token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
   showTails, onShowTails, regime, edgeRules, onEdgeRules, onProject,
 }: {
@@ -914,6 +965,11 @@ export default function GameBetsPanel({
   tailCount: number;
   /** Dollars of risk per ladder — the owner's unit size from My Book. */
   unit: number;
+  /** HOW that unit is spent (risk / to-win / book) plus the risk cap. Page
+   *  state, like the filters: the index, the badges and these rows all size
+   *  off one value, so the switch below only reports a press. */
+  sizing: Sizing;
+  onSizingMode: (v: UnitMode) => void;
   /** Portal password — the same header the reads use. Placement needs it. */
   token: string;
   feeParams: Record<string, FeeParams>;
@@ -985,8 +1041,23 @@ export default function GameBetsPanel({
       {/* The bars this game's rows had to clear, and what a row costs. The
           take bar is a LADDER in time, so it is printed as one rather than as
           a single number that is wrong for most of the slate. */}
+      {/* HOW a unit is spent, at the top of the surface that spends it. The
+          three definitions live behind the ? — the bars line below is already
+          the densest sentence on the panel. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10.5, color: "var(--muted)", fontWeight: 700 }}>
+          Size a unit by
+        </span>
+        <UnitModeControl
+          mode={sizing.mode} onMode={onSizingMode}
+          multiple={sizing.maxRiskMultiple} compact
+        />
+      </div>
+
       <div style={{ fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5 }}>
-        ${unit}/ladder · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+
+        {/* "$30/ladder" means something different under each mode, so the
+            number never stands without the word that qualifies it. */}
+        ${unit}/ladder {SIZING_WORDS[sizing.mode]} · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+
         {" "}(none inside 1h of kick) / take
         {" "}{Math.round(TAKE_THRESHOLD * 100)}¢ &gt;24h,
         {" "}{(TAKE_THRESHOLD_NEAR * 100).toFixed(1)}¢ 3–24h,
@@ -1161,6 +1232,8 @@ export default function GameBetsPanel({
           group={slip.group}
           idem={slip.idem}
           token={token}
+          unit={unit}
+          sizing={sizing}
           feeParams={feeParams}
           quotedAt={quotedAt}
           ordersLive={ordersLive}
@@ -1196,12 +1269,15 @@ export default function GameBetsPanel({
  * server-side before it signs anything.
  */
 export function PlaceStrip({
-  group, unit, token, feeParams, quotedAt, ordersLive,
+  group, unit, sizing, token, feeParams, quotedAt, ordersLive,
 }: {
   /** The originating ladder, re-read from the CURRENT compute — or null when
    *  it is no longer suggested. */
   group: LadderGroup | null;
   unit: number;
+  /** Passed straight through to the slip: the pair the declared per-order cap
+   *  is derived from (see ConfirmSlip). */
+  sizing: Sizing;
   token: string;
   feeParams: Record<string, FeeParams>;
   quotedAt: Date;
@@ -1249,9 +1325,10 @@ export function PlaceStrip({
         {/* Sizing, from the owner's unit. Muted: it is context, not the
             verdict. */}
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+          {/* Same rule as the panel rows: the money first, then the shape. */}
           {single
-            ? `${head.count} @ ${cents(head.price)} · $${head.outlay.toFixed(2)}`
-            : `${group.rungs.length} rungs · $${group.each} each · $${outlay.toFixed(2)} of $${unit}`}
+            ? `$${head.outlay.toFixed(2)} · ${head.count} @ ${cents(head.price)}`
+            : `$${outlay.toFixed(2)} · ${group.rungs.length} rungs`}
         </span>
         {!ordersLive && (
           <DryRunBadge title="Order entry is staged: the server validates and logs, and submits nothing." />
@@ -1284,6 +1361,8 @@ export function PlaceStrip({
           group={slip.group}
           idem={slip.idem}
           token={token}
+          unit={unit}
+          sizing={sizing}
           feeParams={feeParams}
           quotedAt={quotedAt}
           ordersLive={ordersLive}
@@ -1303,9 +1382,16 @@ export function PlaceStrip({
  */
 // Unit-size-linked since 2026-08-30 (owner ask): the server caps each order
 // at the unit size the request declares (clamped 1..500 server-side, $40
-// fallback when absent) and each slip at 2x that. Mirror the same formula
-// here so the pre-press note names the same number the server will use.
-const capOrderNow = () => Math.min(500, Math.max(1, Math.round(readUnit())));
+// fallback when absent) and each slip at 2x that. Since the unit sizing MODE
+// shipped (2026-09-08) the declared cap is unit x the mode's risk multiple —
+// 1x in `risk` mode, so the default path is unchanged.
+//
+// ONE NUMBER, computed from the slip's OWN unit and sizing (the page state its
+// rows were sized by, passed down as props) and then handed to `placeOrders`
+// as the value to declare. It used to read the stored preferences here and
+// again on the wire; those agree in the app but not necessarily on every
+// surface — the /test-bets harness, whose mode comes from the URL, printed
+// "over the $30 per-order cap" under a row it had itself sized to $89.
 const MAX_ORDERS = 8;
 
 // THE TARGET STAR MOVED (2026-09-07). It used to be a local `bestEdge >= 0.10`
@@ -1343,11 +1429,15 @@ type RungEdit = { include: boolean; raw: string };
  * printed on the same line.
  */
 function ConfirmSlip({
-  group, idem, token, feeParams, quotedAt, ordersLive, onClose,
+  group, idem, token, unit, sizing, feeParams, quotedAt, ordersLive, onClose,
 }: {
   group: LadderGroup;
   idem: string;
   token: string;
+  /** The unit and mode these rows were sized by — the SAME pair the declared
+   *  per-order cap comes from, so the warning and the wire are one number. */
+  unit: number;
+  sizing: Sizing;
   /** Needed to re-price the fee at an EDITED count — Kalshi's own per-series
    *  params, the same ones selection used. */
   feeParams: Record<string, FeeParams>;
@@ -1409,6 +1499,9 @@ function ConfirmSlip({
     return {
       r, e, count, ok, fee,
       cost: ok ? round2(r.price * count + fee) : 0,
+      // What this leg RETURNS if it settles YES, at the EDITED count and net
+      // of the fee the exchange actually charges for that count.
+      netWin: ok ? round2(count * (1 - r.price) - fee) : 0,
       changed: ok && count !== r.count,
     };
   });
@@ -1416,10 +1509,11 @@ function ConfirmSlip({
   const contracts = picked.reduce((s, l) => s + (l.ok ? l.count : 0), 0);
   const fee = round2(picked.reduce((s, l) => s + l.fee, 0));
   const outlay = round2(picked.reduce((s, l) => s + l.cost, 0));
+  const netWin = round2(picked.reduce((s, l) => s + l.netWin, 0));
   const anyTake = picked.some((l) => l.r.mode === "TAKE");
   const anyRest = picked.some((l) => l.r.mode === "REST");
   const badCount = picked.some((l) => !l.ok);
-  const CAP_ORDER = capOrderNow();
+  const CAP_ORDER = declaredOrderCap(unit, sizing);
   const CAP_REQUEST = CAP_ORDER * 2;
   const overRequest = outlay > CAP_REQUEST + 1e-9;
   const tooMany = picked.length > MAX_ORDERS;
@@ -1447,7 +1541,8 @@ function ConfirmSlip({
       count_fp: l.count,
     }));
     try {
-      setResp(await placeOrders(token, idem, orders));
+      // The cap the slip just WARNED about is the cap it declares.
+      setResp(await placeOrders(token, idem, orders, CAP_ORDER));
     } catch {
       setResp({ status: 0, body: { error: "network", detail: "Request failed — nothing was sent." } });
     } finally {
@@ -1588,6 +1683,14 @@ function ConfirmSlip({
                   </span>
                 </div>
 
+                {/* THE CAP, on the row it shrank — before the press, not
+                    after. Gone the moment the count is edited: the guard
+                    described the size WE chose, not the one the reader typed. */}
+                {e.include && ok && !changed && r.capped && (
+                  <div style={{ fontSize: 10.5 }}>
+                    <CappedNote r={r} />
+                  </div>
+                )}
                 {e.include && ok && cost > CAP_ORDER + 1e-9 && (
                   <div style={{ fontSize: 10.5, color: "var(--neg)" }}>
                     ${cost.toFixed(2)} is over the ${CAP_ORDER} per-order cap — the
@@ -1617,6 +1720,14 @@ function ConfirmSlip({
                 </strong>
                 {" "}(${(outlay - fee).toFixed(2)} stake + ${fee.toFixed(2)} fee)
                 {multi && ` · ${picked.length} of ${rungs.length} rung${rungs.length === 1 ? "" : "s"}`}
+                {/* WHAT IT WINS, on its own line. The verdict above is the
+                    money that leaves; this is the derivation, and pairing the
+                    two inline would put two numbers where the reader is
+                    deciding on one. */}
+                <div style={{ fontWeight: 400 }}>
+                  Nets ${netWin.toFixed(2)} if {multi && picked.length > 1
+                    ? "every ticked rung lands" : "it lands"}.
+                </div>
               </div>
             )}
             <div>

@@ -378,6 +378,156 @@ export function orderFee(p: number, count: number, maker: boolean, fp?: FeeParam
   return Math.ceil(per * count * 100) / 100;
 }
 
+/* =========================== THE UNIT SIZING MODE ========================= *
+ *
+ * Owner ask 2026-09-08: "a unit is a unit" is only ONE of the three ways a
+ * bettor means it, and Kalshi's binary makes the difference bigger than a
+ * sportsbook does.
+ *
+ * THE ARITHMETIC, once, so every number below can be undone in the reader's
+ * head. A contract costs P dollars and pays $1. For n contracts at price P:
+ *
+ *     risk    R = n·P                     (the money that leaves and can lose)
+ *     fee     F = ceil(k·P·(1−P)·n)       to the cent, per ORDER (see orderFee)
+ *     net win W = n·(1−P) − F  ≈  n·(1−P)·(1 − k·P)
+ *
+ * with k = 0.07 for a taker, 0.0175 for a maker on a family that charges maker
+ * fees, and 0 for a rest on the per-team families (which charge takers only).
+ * The closed form is what picks the first n; the ROUNDED per-order fee is what
+ * the loops below settle against, because that is what the exchange charges.
+ *
+ * THE THREE MODES:
+ *
+ *   risk    R = unit.  Today's behaviour, unchanged and DEFAULT — the largest
+ *           n whose full outlay (R + F) fits the unit.
+ *   to-win  W = unit.  n = ceil(unit / ((1−P)·(1 − k·P))), so a 30¢ dog and an
+ *           86¢ favourite both return one unit of profit, and the favourite
+ *           risks more to do it.
+ *   book    The owner's sportsbook habit. A favourite (P > 0.50, i.e. negative
+ *           American odds) is sized TO WIN a unit; a dog (P ≤ 0.50, positive
+ *           odds) RISKS a unit and wins whatever it wins. That is exactly how
+ *           a −150 and a +150 offset each other on a book's slip.
+ *
+ * THE GUARD. `maxRiskMultiple` (default 3) is a hard ceiling on the OUTLAY of
+ * a to-win row: at 95¢ a full unit of profit costs twenty units of risk, which
+ * is not a bet, it is a loan to the exchange. The row is sized down to the
+ * ceiling and SAYS SO — the slip prints "capped at 3× unit" with the price and
+ * the net win it actually reaches, because a silently shrunk bet is a lie
+ * about the size the owner asked for.
+ *
+ * ONE FUNCTION. `sizeContracts` below is the only place contracts are solved
+ * for in this app: `sizeSuggestion` (every picked row, every browse row, every
+ * ConfirmSlip and pre-press echo) and the Friend Feed's Join button both call
+ * it. A second copy is how the browse wheel and the picked rows drifted apart
+ * once already (fixed 2026-08-30 by extracting `sizeSuggestion`).
+ */
+export type UnitMode = "risk" | "to-win" | "book";
+export type Sizing = {
+  mode: UnitMode;
+  /** Hard ceiling on a to-win row's outlay, in units. */
+  maxRiskMultiple: number;
+};
+/** DEFAULT: today's behaviour, byte for byte. */
+export const SIZING_DEFAULT: Sizing = { mode: "risk", maxRiskMultiple: 1 };
+export const MAX_RISK_MULTIPLE_DEFAULT = 3;
+export const MAX_RISK_MULTIPLE_MIN = 1;
+/** Mirrored by the client's declared per-order cap (see placeOrders.ts) and
+ *  bounded again by the server's absolute $500 per-order ceiling. */
+export const MAX_RISK_MULTIPLE_MAX = 5;
+
+export const clampRiskMultiple = (v: unknown): number => {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return MAX_RISK_MULTIPLE_DEFAULT;
+  return Math.min(MAX_RISK_MULTIPLE_MAX, Math.max(MAX_RISK_MULTIPLE_MIN, n));
+};
+
+/** Which arithmetic a price actually gets. `book` is not a third formula — it
+ *  CHOOSES one, on the sign of the American odds. */
+export function appliedMode(mode: UnitMode, price: number): "risk" | "to-win" {
+  if (mode === "to-win") return "to-win";
+  if (mode === "book") return price > 0.5 + 1e-9 ? "to-win" : "risk";
+  return "risk";
+}
+
+export type SizedContracts = {
+  count: number;
+  /** price × count — the money at risk, fee excluded. */
+  risk: number;
+  /** Per-ORDER fee, rounded up to the cent as the exchange charges it. */
+  fee: number;
+  /** price × count + fee — what actually leaves the account. */
+  outlay: number;
+  /** count × (1 − price) − fee — what lands if this settles YES. */
+  netWin: number;
+  /** The arithmetic that ran. "book" resolves to one of these per price. */
+  applied: "risk" | "to-win";
+  /** The maxRiskMultiple ceiling stopped this short of a full unit of profit. */
+  capped: boolean;
+};
+
+/**
+ * Solve ONE rung's contract count. The only sizing arithmetic in the app.
+ *
+ * `unit` is the dollars this rung is entitled to — already split across its
+ * ladder and already min'd with any held-market headroom by the caller.
+ * `ceiling` is the hard OUTLAY cap for the stretch modes (unit ×
+ * maxRiskMultiple, itself min'd with that same headroom, because headroom is
+ * a commitment ceiling and a mode may not spend past it).
+ */
+export function sizeContracts(args: {
+  price: number;
+  maker: boolean;
+  fp?: FeeParams;
+  unit: number;
+  ceiling?: number;
+  sizing?: Sizing;
+}): SizedContracts {
+  const { price, maker, fp, unit } = args;
+  const sizing = args.sizing ?? SIZING_DEFAULT;
+  const applied = appliedMode(sizing.mode, price);
+  const feeOf = (n: number) => orderFee(price, n, maker, fp);
+  const outlayOf = (n: number) => price * n + feeOf(n);
+  const netWinOf = (n: number) => n * (1 - price) - feeOf(n);
+
+  let count: number;
+  if (applied === "risk") {
+    // TODAY'S ARITHMETIC, character for character (this branch is the default
+    // and must stay byte-identical): the fee-free count, stepped down while
+    // the real rounded fee pushes total outlay over the budget.
+    count = Math.max(1, Math.floor(unit / Math.max(price, 1e-9)));
+    while (count > 1 && price * count + feeOf(count) > unit + 1e-9) count -= 1;
+  } else {
+    const ceiling = Math.max(unit, args.ceiling ?? unit);
+    // Closed form off the PER-CONTRACT fee...
+    const per = maker ? makerFeePer(price, fp) : takerFeePer(price, fp);
+    count = Math.max(1, Math.ceil(unit / Math.max((1 - price) - per, 1e-9)));
+    // ...then the ceiling, in one step rather than a decrement walk (at 95¢ a
+    // full unit of profit is hundreds of contracts past a 3× cap).
+    count = Math.min(count, Math.max(1, Math.floor(ceiling / Math.max(price, 1e-9))));
+    // The exchange rounds the fee UP per order, so the closed form can land a
+    // contract or two short of a full unit of profit. Correct upward while the
+    // ceiling still allows it, then down until the outlay fits.
+    let guard = 0;
+    while (netWinOf(count) < unit - 1e-9 &&
+           outlayOf(count + 1) <= ceiling + 1e-9 && guard++ < 64) count += 1;
+    while (count > 1 && outlayOf(count) > ceiling + 1e-9) count -= 1;
+  }
+
+  const fee = feeOf(count);
+  const netWin = netWinOf(count);
+  return {
+    count,
+    risk: round2(price * count),
+    fee,
+    outlay: round2(price * count + fee),
+    netWin: round2(netWin),
+    applied,
+    // Half a cent of tolerance: a rounded-up fee can leave a full-size row a
+    // fraction short, which is not what "capped" means.
+    capped: applied === "to-win" && netWin < unit - 0.005,
+  };
+}
+
 /* ------------------------------ candidates -------------------------------- */
 export type Suggestion = {
   key: string;
@@ -414,6 +564,18 @@ export type Suggestion = {
   count: number;
   /** price × count + fee. */
   outlay: number;
+  /** price × count — the money at risk, fee excluded. */
+  risk: number;
+  /** count × (1 − price) − fee — what this returns if it settles YES. */
+  netWin: number;
+  /** Which arithmetic sized it: "risk" (a unit at stake) or "to-win" (a unit
+   *  of profit). The `book` mode resolves to one of these per price. */
+  sizeMode: "risk" | "to-win";
+  /** A to-win row the maxRiskMultiple ceiling stopped short of a full unit. */
+  capped: boolean;
+  /** The per-rung unit this row was sized against — the ladder's split of the
+   *  owner's unit. Both "to net $X" and "capped at N× unit" quote it. */
+  unitShare: number;
   feeType: string;
   /** Outside the [TAIL_LO, TAIL_HI] band on the sim, the ask, or both. Never
    *  ranked among the defaults; shown muted behind the "show tails" toggle. */
@@ -571,6 +733,7 @@ function selectLadders(
   /** Where ladder-cap losers are reported. Null for the tail pass: those are
    *  already accounted for by the tail count and would double-report. */
   suppressed: Suppressed[] | null,
+  sizing: Sizing = SIZING_DEFAULT,
 ): Suggestion[] {
   const byLadder = new Map<string, Priced[]>();
   for (const p of priced) {
@@ -599,8 +762,14 @@ function selectLadders(
     // and a rung with a held-headroom budget never sizes past it.
     const share = unit / Math.max(picked.length, 1);
     for (const p of picked) {
+      // HEADROOM IS A CEILING IN BOTH MODES. A partly-held market may only be
+      // topped up to the unit it has left, so the stretch modes cap against
+      // that same number rather than multiplying it (owner rule 2026-08-30 —
+      // exposure retires a market once it has consumed the unit).
+      const headroom = p.budget ?? Infinity;
       rows.push(sizeSuggestion(p, feeParams,
-        Math.min(share, p.budget ?? Infinity), tail));
+        Math.min(share, headroom), tail, sizing,
+        Math.min(share * sizing.maxRiskMultiple, headroom)));
     }
   }
   rows.sort((a, b) => b.edge - a.edge);
@@ -609,24 +778,26 @@ function selectLadders(
 
 /** Size ONE priced rung to a dollar budget and emit the full Suggestion.
  *  Extracted from `selectLadders` (2026-08-30) so the browse list below sizes
- *  a rung with the identical arithmetic the picked rows use. */
+ *  a rung with the identical arithmetic the picked rows use — and since
+ *  2026-09-08 the one place the unit MODE (risk / to-win / book) is applied.
+ *  The arithmetic itself is `sizeContracts`, shared with the Friend Feed's
+ *  Join button so no surface can size a bet a second way. */
 function sizeSuggestion(
   p: Priced,
   feeParams: Record<string, FeeParams>,
   share: number,
   tail: boolean,
+  sizing: Sizing = SIZING_DEFAULT,
+  /** Hard OUTLAY ceiling for the stretch modes. Defaults to `share`, which is
+   *  no stretch at all — the risk-mode budget. */
+  ceiling: number = share,
 ): Suggestion {
   const fp = feeParams[p.series];
   const maker = p.mode === "REST";
-  // Sizing spends the FEE too: cost = price*count + fee <= share. Solve
-  // by trying the fee-free count first and stepping down while the real
-  // (rounded-up) fee pushes total outlay over budget.
-  let count = Math.max(1, Math.floor(share / Math.max(p.price, 1e-9)));
-  let fee = orderFee(p.price, count, maker, fp);
-  while (count > 1 && p.price * count + fee > share + 1e-9) {
-    count -= 1;
-    fee = orderFee(p.price, count, maker, fp);
-  }
+  const sized = sizeContracts({
+    price: p.price, maker, fp, unit: share, ceiling, sizing,
+  });
+  const { count, fee } = sized;
   // R3+R4 runs LAST, on the finished row, because it reads the price this row
   // would actually pay or post and the net edge after that row's own fee.
   // It decides a LABEL and nothing else.
@@ -641,7 +812,9 @@ function sizeSuggestion(
     mode: p.mode, side: p.side ?? "yes", series: p.series,
     simP: p.simP, price: p.price,
     fee, edge: p.edgePer, count,
-    outlay: round2(p.price * count + fee),
+    outlay: sized.outlay,
+    risk: sized.risk, netWin: sized.netWin,
+    sizeMode: sized.applied, capped: sized.capped, unitShare: round2(share),
     feeType: fp?.fee_type ?? "unknown (assumed maker-charging)",
     tail,
     timing: p.timing,
@@ -664,6 +837,10 @@ export function buildSuggestions(
    *  two `Date.now()` calls a few ms apart can straddle a band edge and put a
    *  row's chip out of step with its own popover. */
   now: number = Date.now(),
+  /** How a unit is spent: risk / to-win / book, plus the to-win risk ceiling.
+   *  Defaults to `risk`, which is the arithmetic that shipped before
+   *  2026-09-08. See THE UNIT SIZING MODE above. */
+  sizing: Sizing = SIZING_DEFAULT,
 ): BuildResult {
   const suppressed: Suppressed[] = [];
   const priced: Priced[] = [];
@@ -738,7 +915,8 @@ export function buildSuggestions(
     return [...best.values()];
   };
 
-  const rows = selectLadders(bestPerMarket(core), feeParams, unit, false, suppressed);
+  const rows = selectLadders(
+    bestPerMarket(core), feeParams, unit, false, suppressed, sizing);
 
   // A market that already produced an in-band bet must NOT also appear as a
   // tail: buying both contracts of one market is a self-hedge that pays two
@@ -747,7 +925,7 @@ export function buildSuggestions(
   const tailOnly = tails.filter((p) => !p.ticker || !betOn.has(p.ticker));
   const tailTickers = new Set(tailOnly.map((p) => p.ticker).filter(Boolean));
   const tailRows = selectLadders(
-    bestPerMarket(tailOnly), feeParams, unit, true, null);
+    bestPerMarket(tailOnly), feeParams, unit, true, null, sizing);
 
   // The suppressed COUNT is per MARKET, not per contract. Every game-line
   // market yields two candidates (its YES and its NO), and the losing half of
@@ -770,7 +948,8 @@ export function buildSuggestions(
   // OWN flag so the table can mute exactly the untrusted rungs.
   const browse = bestPerMarket([...core, ...tails])
     .map((p) => sizeSuggestion(p, feeParams,
-      Math.min(unit, p.budget ?? Infinity), isTail(p.simP, p.ask ?? 1)))
+      Math.min(unit, p.budget ?? Infinity), isTail(p.simP, p.ask ?? 1), sizing,
+      Math.min(unit * sizing.maxRiskMultiple, p.budget ?? Infinity)))
     .sort((a, b) => (a.ladder < b.ladder ? -1 : a.ladder > b.ladder ? 1
       : a.strike - b.strike));
 
@@ -1067,8 +1246,19 @@ export type LadderGroup = {
   bestEdge: number;
   /** Single-line headline for a >1-rung ladder, e.g. "NMST 14+ & 17+ points". */
   headline: string;
-  /** Dollars of the $LADDER_RISK stake allotted per rung in this ladder. */
+  /** Dollars of the $LADDER_RISK stake allotted per rung in this ladder.
+   *  RISK MODE ONLY — under to-win the rungs no longer split the unit evenly,
+   *  and `risk` below is the honest number. */
   each: number;
+  /** What this ladder actually costs: the rungs' outlay summed. */
+  risk: number;
+  /** What it returns if every rung lands: the rungs' net win summed. */
+  netWin: number;
+  /** "to-win" when ANY rung was sized to win rather than to risk — the sizing
+   *  wording keys off it, so a mixed book-mode ladder says the truth. */
+  sizeMode: "risk" | "to-win";
+  /** Any rung hit the maxRiskMultiple ceiling. */
+  capped: boolean;
   /** Every rung is outside the tail band (the two sets never mix — they are
    *  selected in separate passes). Drives the muting and the TAIL badge. */
   tail: boolean;
@@ -1132,6 +1322,10 @@ export function groupLadders(
       bestEdge: best.edge,
       headline,
       each: round2(unit / group.length),
+      risk: round2(rungs.reduce((t, r) => t + r.outlay, 0)),
+      netWin: round2(rungs.reduce((t, r) => t + r.netWin, 0)),
+      sizeMode: rungs.some((r) => r.sizeMode === "to-win") ? "to-win" : "risk",
+      capped: rungs.some((r) => r.capped),
       tail: rungs.every((r) => r.tail),
       timing: best.timing,
       abstain: best.abstain,

@@ -16,7 +16,7 @@
 // `time_in_force` and friends are REJECTED by the server if sent, so the
 // client cannot ask for a market order even by accident.
 
-import { readUnit } from "./ownerPrefs";
+import { declaredOrderCap } from "./ownerPrefs";
 
 export type PlaceMode = "rest" | "take";
 
@@ -111,12 +111,25 @@ async function post(url: string, token: string, body: unknown) {
   return { status: r.status, body: json };
 }
 
-export function placeOrders(token: string, idempotencyKey: string, orders: PlaceOrder[]) {
-  // `unit_size` links the server's per-order cap to the unit the owner set
-  // (2x for the slip). The server clamps it to its own ceiling — sending it
-  // is a preference, not a rail (see the header note).
+export function placeOrders(
+  token: string, idempotencyKey: string, orders: PlaceOrder[],
+  /** The per-order cap to declare. The confirm slip passes the number it
+   *  ALREADY warned about, so the wire and the warning are one value; callers
+   *  with no page state (Friend Feed Join, the partial-fill chase) let it fall
+   *  back to the stored preferences. */
+  cap: number = declaredOrderCap(),
+) {
+  // `unit_size` is THE PER-ORDER CAP THIS SLIP DECLARES (2x for the slip
+  // total). Since the unit sizing MODE shipped (2026-09-08) that is the unit
+  // times the mode's risk multiple — a to-win row at 86c legitimately outlays
+  // more than one unit and would otherwise be refused by our own cap rather
+  // than by a rail. `declaredOrderCap` is 1x the unit in `risk` mode, so the
+  // default path declares exactly what it declared before. The RAIL is
+  // unchanged and still server-side: clamp(unit_size, 1..500) per order, 2x
+  // per slip — sending this is a preference inside the rail, never a
+  // relaxation of it (see the header note).
   return post("/api/portfolio/cfb/orders", token,
-    { idempotency_key: idempotencyKey, orders, unit_size: readUnit() });
+    { idempotency_key: idempotencyKey, orders, unit_size: cap });
 }
 
 /** The kill switch. Reaches ONLY orders this app placed (server filters on the
@@ -177,7 +190,7 @@ export type ConvertResponse = {
 
 export function convertOrder(token: string, idempotencyKey: string, req: ConvertRequest) {
   return post("/api/portfolio/cfb/orders/convert", token,
-    { idempotency_key: idempotencyKey, ...req, unit_size: readUnit() });
+    { idempotency_key: idempotencyKey, ...req, unit_size: declaredOrderCap() });
 }
 
 /** THE state the UI must never soften: the rest is gone and no take replaced

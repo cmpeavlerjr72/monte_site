@@ -575,6 +575,57 @@ pipeline unit are separate knobs on purpose**: the sim repo's maker
 pipeline keeps its own CLI `--ladder-risk` because it sizes an unattended
 overnight book, while this sizes what a human presses Place on.
 
+**Unit sizing MODE (owner ask 2026-09-08) — HOW a unit is spent, beside how
+much.** On a sportsbook "a unit" is ambiguous and nobody notices, because −150
+and +150 sit a few percent apart. On a binary exchange the same word is wildly
+different money: a unit RISKED on an 86¢ favourite wins $4.47, while a unit WON
+on it risks $88.58. So the choice is a setting, `cfb.unitMode` in ownerPrefs
+beside `cfb.unitSize`, DEFAULT `risk` (today's behaviour, byte for byte):
+
+| mode | rule | 30¢ dog / $30 unit | 86¢ fav / $30 unit |
+|------|------|--------------------|--------------------|
+| `risk` (default) | R = unit | 95 ct, risk $28.50, nets $65.10 | 34 ct, risk $29.24, nets $4.47 |
+| `to-win` | n = ceil(unit / ((1−P)(1−k·P))), R = n·P | 44 ct, risk $13.20, nets $30.15 | 103 ct, risk $88.58, nets $13.55 (CAPPED) |
+| `book` | P > 0.50 → to-win, P ≤ 0.50 → risk | same as `risk` | same as `to-win` |
+
+with k = the row's own fee rate (0.07 taker, 0.0175 maker where the family
+charges one, 0 for a rest on the per-team families). `book` is the owner's
+sportsbook habit: favourites risk more to win a unit, dogs risk a unit — a
+−150 and a +150 offset exactly as they would on a book's slip. The switch is
+at **P > 0.50**, where American odds change sign, so 0.50 is a dog and 0.51 a
+favourite.
+
+**THE GUARD.** `cfb.unitMaxRiskMultiple` (default **3**, clamped 1–5) caps a
+to-win row's OUTLAY at that many units. At 95¢ a full unit of profit costs
+twenty units of risk, which is a loan to the exchange, not a bet. A capped row
+is sized down and **says so** wherever it shows money — "Capped at 3× unit
+(price 86¢) — … nets $13.55 on $88.58" — because a silently shrunk bet is a lie
+about the size the owner asked for.
+
+**ONE FUNCTION.** `sizeContracts` in suggestedBets.ts ("THE UNIT SIZING MODE")
+is the only place in this app that solves for a contract count. `sizeSuggestion`
+calls it for every picked row, every browse-wheel rung, every Top-of-index
+PlaceStrip, the ConfirmSlip and its pre-press echo; the Friend Feed's **Join**
+button calls it too (it used to carry its own `floor(unit / price)` — the second
+copy the mode could not have shipped through). The mode threads
+`Scoreboard` state → `useSuggestions` → `buildSuggestions` → `selectLadders`
+→ `sizeSuggestion`, exactly like `unit`. It is a SIZING input, never a
+selection one: no row exists, stops existing, or changes edge because of it.
+
+**HEADROOM STILL BINDS.** A partly-held market may only be topped up to the
+unit it has left (owner rule 2026-08-30), so the stretch modes cap against that
+headroom rather than multiplying it.
+
+**UI.** A segmented control "Risk / To win / Book" (`UnitModeControl.tsx`) sits
+beside the unit input in the My Book console — with the 1–5 risk-cap stepper,
+shown only once something can stretch — and again at the top of every Bets
+panel, compact and without the stepper (a per-panel copy of a global cap is how
+two numbers start disagreeing). The three definitions live behind ONE `?`
+popover, never as three lines of fine print competing with the money on the
+same screen. House style holds: a row's sizing text is still ONE number and it
+is the RISK; "to net $X" is derivation and lives in the popover / the slip's
+own line, never as an inline pair.
+
 ## Per-team stat markets: ONE mapping (`src/lib/teamStatMarkets.ts`)
 
 Kalshi stat SERIES -> our `team_stats.json` stat key, mirroring the
@@ -730,8 +781,9 @@ placed and the retry cannot double up).
    other market.
 3. Mode-derived post_only/TIF + a strict field allowlist; never a market
    order.
-4. Per-order cost cap **$40** (price x count + fee).
-5. Per-request cap **$80**, at most 8 orders.
+4. Per-order cost cap = the **DECLARED cap** on the request, `unit_size`,
+   hard-clamped server-side to **$1–$500** ($40 when absent).
+5. Per-request cap = **2x** that, at most 8 orders.
 6. Rolling 24h cap **$400** — IN-MEMORY, so a Render restart resets it.
    Stated honestly rather than hidden: it throttles a runaway loop within
    one process lifetime, it is not an accounting system.
@@ -753,6 +805,34 @@ placed and the retry cannot double up).
     would_place:[…]}`. Going live is ONE env var in Render, no code
     change and no deploy. **No agent ever sets that variable, anywhere,
     including local tests.**
+
+**THE DECLARED CAP (`unit_size`), and why the unit sizing mode did not need a
+server change.** The rail has been `capOrder = clamp(unit_size, 1..500)` per
+order and `2 x capOrder` per slip since 2026-08-30, when the owner asked for the
+per-order cap to TRACK the unit ("if I raise my unit to $50 it allows up to
+that"). `unit_size` is therefore not the unit — it is **the per-order cap this
+request declares**, a preference INSIDE the rail, never a relaxation of it: the
+$500 ceiling, the 2x slip multiple, the 8-order limit and every other rail are
+server-side and unchanged.
+
+Since the unit sizing mode (2026-09-08) the client declares
+`unit x maxRiskMultiple` through ONE function — `declaredOrderCap(unit,
+sizing)` in ownerPrefs.ts — because a to-win row at 86¢ legitimately outlays
+about 3 units and would otherwise be refused by our own cap rather than by a
+rail. In `risk` mode the multiple is forced to 1, so the default path declares
+exactly what it declared before. **`ConfirmSlip` computes that cap ONCE, from
+the unit and sizing its own rows were sized by, warns about that number, and
+passes it to `placeOrders` as the value to declare** — the warning and the wire
+are one number, not two reads of the same key. (They used to be two reads.
+Those agree in the app, because Scoreboard writes the prefs in the same setter
+that moves the state, but not on every surface: the `/test-bets` harness, whose
+mode comes from the URL, printed "over the $30 per-order cap" under a row it
+had itself sized to $89.37.) Callers with no page state — the Friend Feed's
+Join, the partial-fill chase, convert — fall back to the stored prefs. **NO NEW WIRE FIELD**: the endpoint rejects any key it does not know
+(`unexpected_field`) and `server/dist/liveScores.js` is only rebuilt
+deliberately, so adding one would have broken placement until a dist commit
+shipped. `check_unit_sizing.mjs` asserts both halves — the single declared-cap
+function, and that the request body still carries `unit_size` alone.
 
 The cancel route is deliberately NOT gated on `CFB_ORDERS_LIVE`:
 cancelling only ever REDUCES exposure, and a kill switch staged off is not
@@ -913,10 +993,14 @@ rows there prefer the PUBLISHER's own `abstain`/`cell` whenever
 when it does not.
 
 Harness: hidden route **`/test-bets`** (`?rules=off` for the kill switch,
-`?games=`, `?week=`, `?skew=`). It runs the REAL compute over the REAL published
-week against a DECLARED FIXTURE BOOK on a clock pinned 3 days before kickoff,
-because a settled slate has no Kalshi quotes left to replay — read it for the
-LABELS, never for the cents.
+`?size=to-win|book` for the unit sizing mode, `?games=`, `?week=`, `?skew=`).
+It runs the REAL compute over the REAL published week against a DECLARED
+FIXTURE BOOK on a clock pinned 3 days before kickoff, because a settled slate
+has no Kalshi quotes left to replay — read it for the LABELS, never for the
+cents. Since 2026-09-08 it also heads the page with a **unit-sizing table**: a
+favourite (70¢), a heavy favourite (86¢) and a dog (30¢) through all three
+modes at once, priced by the SHIPPED `sizeContracts`, with the guard biting
+visibly on the 86¢ row.
 
 MOBILE: the row's rule tag is `flex: none` and the panel's grid chain carries
 `minWidth: 0` (`.rule-tag__why` drops the REASON under 430px and keeps the
@@ -940,6 +1024,12 @@ STAT_FOR_SERIES moves) ·
 table on the real week-1 numbers, the conference map's sync with team_info.csv,
 and the static proof that a label never filters a row — whenever edgeRules.ts,
 fbsConferences.ts, team_info.csv or the label wiring moves) ·
+`node scripts/check_unit_sizing.mjs` (the unit sizing MODE: `risk` still
+byte-identical to the pre-2026-09-08 loop at 63 price x unit cases, `to-win`
+against a brute-force solve with the REAL rounded fee, the maxRiskMultiple
+guard, `book`'s 50¢ switch, and the static proof that ONE function sizes and
+ONE function declares the per-order cap — whenever sizeContracts /
+sizeSuggestion / ownerPrefs sizing / placeOrders moves) ·
 SSR words-screenshot for UI changes · no hardcoded colors · report ≤300 words
 + gate table unless findings warrant more.
 

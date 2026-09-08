@@ -28,8 +28,9 @@ import type { PortalPayload } from "./kalshiPortal";
 import {
   buildSuggestions, gameCandidates, groupLadders, heldCostByTicker,
   statCandidates, pregameVerdict,
+  SIZING_DEFAULT,
   type Candidate, type FeeParams, type LadderGroup, type PregameVerdict,
-  type Suggestion, type Suppressed,
+  type Sizing, type Suggestion, type Suppressed,
 } from "./suggestedBets";
 // One mapping, three consumers: this compute, the portal's held-position
 // pricing, and the panel's "see projection" jump (see teamStatMarkets.ts).
@@ -158,6 +159,11 @@ export type SuggestionsInput = {
   docs: Record<string, TeamStatsDoc>;
   /** Dollars of risk per ladder — the owner's unit size. */
   unit: number;
+  /** HOW that unit is spent: risk / to-win / book, plus the risk cap on the
+   *  stretch modes (src/lib/suggestedBets.ts, "THE UNIT SIZING MODE"). It is a
+   *  SIZING input, not a selection one — no row exists or stops existing
+   *  because of it, and no edge changes. */
+  sizing?: Sizing;
   /** The page's TICKING wall clock (30s). Both time-dependent rules — the
    *  pregame gate and the maker/taker bands — must move on their own, and it
    *  is a dependency of the compute below, which is what makes a game DROP OFF
@@ -177,8 +183,8 @@ export type SuggestionsInput = {
 };
 
 export function useSuggestions({
-  games, kalshiBySlug, feeParams, portal, docs, unit, nowMs, nonce,
-  modeFilter, typeFilter, showTails, sort, edgeRules,
+  games, kalshiBySlug, feeParams, portal, docs, unit, sizing = SIZING_DEFAULT,
+  nowMs, nonce, modeFilter, typeFilter, showTails, sort, edgeRules,
 }: SuggestionsInput): Suggestions {
   const {
     rows, tailRows, tailMarkets, suppressed, browse, computedAt, pregameCount,
@@ -273,7 +279,8 @@ export function useSuggestions({
     }
     // ONE clock for the gate above and the timing bands inside: two Date.now()
     // reads a few ms apart can land on opposite sides of a band edge.
-    const built = buildSuggestions(candidates, feeParams, held, unit, nowMs);
+    const built = buildSuggestions(
+      candidates, feeParams, held, unit, nowMs, sizing);
     return {
       ...built, computedAt: new Date(),
       pregameCount: nPregame, blindCount: nBlind, verdicts: verdictBySlug,
@@ -283,8 +290,13 @@ export function useSuggestions({
     // feed the page currently holds, and never triggers a fetch of its own.
     // `nowMs` ticks every 30s upstream, which is what makes a kicked-off game
     // fall out of this list on its own.
+    // `sizing` is a dependency for the obvious reason: flipping the mode
+    // re-sizes every row. It is destructured into primitives so an object
+    // identity re-created upstream cannot re-run the whole compute for nothing
+    // (hard-won rule 4 — the render-loop guard).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs,
-      edgeRules]);
+      edgeRules, sizing.mode, sizing.maxRiskMultiple]);
 
   // Card key -> game, so a same-game run of ladder rows can carry a header
   // and the "Soonest" sort can find a kickoff.
