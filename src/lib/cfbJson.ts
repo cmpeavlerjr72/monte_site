@@ -196,6 +196,152 @@ function parseSummary(raw: any): GameSummaryJson | null {
   };
 }
 
+/* ============================ engine block =================================
+ * weeks/<id>/index.json `engine` (export_site_week.py engine_block, 2026-09-08):
+ * which sweep produced the week and which DECISION RULEBOOK, if any, was
+ * measured on that engine. The site's week-1 rules (src/lib/edgeRules.ts) were
+ * graded on the SHIPPED engine's settled week-0/1 boards and describe that
+ * engine only, so the exporter names the rulebook a week's labels may use:
+ *   "wk1-shipped" -> the week-1 labels apply;
+ *   null          -> no rulebook measured on this engine: plain edge bar,
+ *                    regime shown for information, nothing "not a target".
+ * A week published BEFORE the block existed (weeks 00-01) is the shipped
+ * engine, so an absent block is read as "wk1-shipped" — see rulesApplyFor.
+ */
+export type WeekEngine = {
+  tag: string | null;
+  model: string | null;
+  git: string | null;
+  seeds: number | null;
+  rulebook: string | null;
+  note: string | null;
+};
+
+function parseWeekEngine(raw: any): WeekEngine | null {
+  if (!raw || typeof raw !== "object") return null;
+  const str = (v: any) => (v == null ? null : String(v));
+  return {
+    tag: str(raw.tag), model: str(raw.model), git: str(raw.git),
+    seeds: num(raw.seeds) ?? null,
+    rulebook: raw.rulebook == null ? null : String(raw.rulebook),
+    note: str(raw.note),
+  };
+}
+
+/* ============================ regime trend =================================
+ * weeks/<id>/regime_trend.json (export_regime_trend.py): the served engine's
+ * FIXED regime cells (regime_scorecard.py) on its settled replay board, with
+ * the shipped engine on the same board. A TREND block for the reader, never
+ * a rule — see src/components/RegimeTrend.tsx. 404 = not published (null).
+ */
+export type RegimeTrendCell = {
+  group: string;
+  cell: string;
+  n: number;
+  roi: number | null;
+  hit: number | null;
+  mean_p: number | null;
+  bias: number | null;
+  share_sim: number | null;
+  share_real: number | null;
+  mkt_level: number | null;
+  underpowered: boolean;
+};
+
+export type RegimeTrend = {
+  updated: string | null;
+  engine_tag: string | null;
+  replay: { arm: string | null; frame: string | null; games: number | null;
+            seeds: number | null; contracts: number | null };
+  control: { arm: string | null; cells: RegimeTrendCell[] } | null;
+  convention: string | null;
+  note: string | null;
+  cells: RegimeTrendCell[];
+};
+
+function parseTrendCell(raw: any): RegimeTrendCell | null {
+  if (!raw || typeof raw !== "object" || typeof raw.cell !== "string") return null;
+  const n = num(raw.n) ?? 0;
+  return {
+    group: String(raw.group ?? ""), cell: raw.cell, n,
+    roi: num(raw.roi) ?? null, hit: num(raw.hit) ?? null, mean_p: num(raw.mean_p) ?? null,
+    bias: num(raw.bias) ?? null, share_sim: num(raw.share_sim) ?? null,
+    share_real: num(raw.share_real) ?? null, mkt_level: num(raw.mkt_level) ?? null,
+    underpowered: raw.underpowered === true || n < 30,
+  };
+}
+
+const regimeTrendCache = new Map<string, Promise<RegimeTrend | null>>();
+
+/** Memoized per (season, week); null when the file is not published. */
+export function getRegimeTrendCached(
+  season: Season,
+  weekId: string,
+  signal?: AbortSignal
+): Promise<RegimeTrend | null> {
+  const key = `${season}/${weekId}`;
+  const memo = regimeTrendCache.get(key);
+  if (memo) return memo;
+  const promise = (async () => {
+    const rel = `weeks/${weekId}/regime_trend.json`;
+    const url = await dataUrl(rel, season);
+    const res = await fetch(url, { signal, cache: "no-store" });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
+    const raw = await res.json();
+    const str = (v: any) => (v == null ? null : String(v));
+    const cells = (Array.isArray(raw?.cells) ? raw.cells : [])
+      .map(parseTrendCell).filter((c: RegimeTrendCell | null): c is RegimeTrendCell => c !== null);
+    const ctrlCells = (Array.isArray(raw?.control?.cells) ? raw.control.cells : [])
+      .map(parseTrendCell).filter((c: RegimeTrendCell | null): c is RegimeTrendCell => c !== null);
+    return {
+      updated: str(raw?.updated), engine_tag: str(raw?.engine_tag),
+      replay: {
+        arm: str(raw?.replay?.arm), frame: str(raw?.replay?.frame),
+        games: num(raw?.replay?.games) ?? null, seeds: num(raw?.replay?.seeds) ?? null,
+        contracts: num(raw?.replay?.contracts) ?? null,
+      },
+      control: raw?.control ? { arm: str(raw.control.arm), cells: ctrlCells } : null,
+      convention: str(raw?.convention), note: str(raw?.note), cells,
+    };
+  })().catch((err) => { regimeTrendCache.delete(key); throw err; });
+  regimeTrendCache.set(key, promise);
+  return promise;
+}
+
+const weekEngineCache = new Map<string, Promise<WeekEngine | null | undefined>>();
+
+/**
+ * The week's engine block. Resolves `undefined` when the index has no block
+ * at all (a legacy week); `null` when the index carries an explicit null.
+ * Memoized per (season, week) like the other week-level files; a failed
+ * fetch is not cached so a retry works.
+ */
+export function getWeekEngineCached(
+  season: Season,
+  weekId: string,
+  signal?: AbortSignal
+): Promise<WeekEngine | null | undefined> {
+  const key = `${season}/${weekId}`;
+  const memo = weekEngineCache.get(key);
+  if (memo) return memo;
+  const promise = (async () => {
+    for (const rel of [`weeks/${weekId}/index.json`, `weeks/${weekId}/games/index.json`]) {
+      try {
+        const json = await fetchJson(await dataUrl(rel, season), signal);
+        if (!json || typeof json !== "object") continue;
+        if (!("engine" in json)) return undefined;
+        return parseWeekEngine(json.engine);
+      } catch (err) {
+        if ((err as any)?.name === "AbortError") throw err;
+      }
+    }
+    return undefined;
+  })().catch((err) => { weekEngineCache.delete(key); throw err; });
+  weekEngineCache.set(key, promise);
+  return promise;
+}
+
 /**
  * The week's index rows, or null if this season/week has no new-contract index
  * yet (the caller then falls back to the CSV loader).

@@ -37,9 +37,10 @@ import { Skeleton } from "./Skeleton";
 import { cfbNameKey } from "../../server/cfbNames";
 // The week-2 decision rules — LABELS ONLY (src/lib/edgeRules.ts). Nothing
 // here filters: a labelled row keeps its rank, its numbers and its "+".
+import { RegimeTrendBlock } from "./RegimeTrend";
 import {
   ABSTAIN_WORDS, CELL_TAG, abstainTag, labelFor, starWords, starFor,
-  UNKNOWN_REGIME,
+  UNKNOWN_REGIME, NO_LABEL, engineWords,
   type AbstainReason, type CellName, type GameRegime,
 } from "../lib/edgeRules";
 
@@ -259,8 +260,12 @@ function teamTotalTeam(title: string): string | undefined {
 }
 
 /* ------------------------------- game rows -------------------------------- */
-function GameRow({ e, rank, regime, onPick, onAddLeg }: {
-  e: EdgeEntry; rank: number; regime: GameRegime; onPick: (slug: string) => void;
+function GameRow({ e, rank, regime, rulesApply, onPick, onAddLeg }: {
+  e: EdgeEntry; rank: number; regime: GameRegime;
+  /** Do the week-1 labels describe this week's ENGINE? False = no label at
+   *  all (edgeRules.ts `rulesApplyFor`). */
+  rulesApply: boolean;
+  onPick: (slug: string) => void;
   onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
   // A total is a bet on the game (both logos); win/spread take one side.
@@ -274,13 +279,13 @@ function GameRow({ e, rank, regime, onPick, onAddLeg }: {
   // sim − market, GROSS of the fee. The ★ is a claim about a fee-adjusted
   // net edge, so awarding one off a gross number would be a new and weaker
   // claim wearing the same mark. The Bets panel, which prices net, owns it.
-  const rule = labelFor({
+  const rule = rulesApply ? labelFor({
     series: e.row.key === "win" ? "KXNCAAFGAME"
       : e.row.key === "spread" ? "KXNCAAFSPREAD" : "KXNCAAFTOTAL",
     side: "yes",
     backsTeam: e.row.sideTeam,
     homeTeam: e.teamA,
-  }, regime);
+  }, regime) : NO_LABEL;
   return (
     // A row body click scrolls to the card; the "+" is a separate control, so
     // this is a div (a <button> cannot nest a <button>), not the original
@@ -455,12 +460,15 @@ function orderedSeries(present: Iterable<string>): string[] {
   return [...known, ...unknown];
 }
 
-function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, onPick, onAddLeg }: {
+function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, rulesApply, onPick, onAddLeg }: {
   r: TeamMarketRow; teamA: string; teamB: string; rank: number;
   /** This game's week-2 regime, for the rows the publisher did not label. */
   regime: GameRegime;
   /** Which rule set the PUBLISHER ran ("wk2" or null). */
   publisherRules: string | null;
+  /** Do the week-1 labels describe this week's ENGINE? False = no label,
+   *  and the star is the plain bar (edgeRules.ts `rulesApplyFor`). */
+  rulesApply: boolean;
   onPick: (slug: string) => void;
   onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
@@ -476,7 +484,9 @@ function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, onPick, onA
   // The site only labels these rows itself when that column does not exist,
   // which is the state of every export before 2026-09-07.
   const published = publisherRules === "wk2";
-  const rule = published
+  const rule = !rulesApply
+    ? NO_LABEL
+    : published
     ? {
         abstain: (r.abstain || null) as AbstainReason | null,
         cell: (r.cell || null) as CellName | null,
@@ -495,7 +505,7 @@ function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, onPick, onA
   const starred = r.target === true && starFor(
     { cell: rule.cell, abstain: rule.abstain, tail: false,
       price: ask / 100, edge: r.ev_fee, series: r.series },
-    regime.axis,
+    rulesApply ? regime.axis : "off",
   );
   return (
     <div
@@ -600,9 +610,14 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
     return parts.join(" · ") || null;
   }, [scan, props.length]);
 
-  const gamesFooter = counts && counts.priced < counts.total
+  const gamesFooterCount = counts && counts.priced < counts.total
     ? `${counts.priced} of ${counts.total} game markets priced — the rest have no matching Kalshi line.`
     : null;
+  // The engine line. Only worth a footer when it CHANGES what the marks mean:
+  // a week whose engine has no measured rulebook prints nothing "not a
+  // target", so the reader is told why the labels they saw last week are gone.
+  const engineFooter = scan && !scan.rulesApply ? engineWords(scan.engine) : null;
+  const gamesFooter = [gamesFooterCount, engineFooter].filter(Boolean).join(" · ") || null;
 
   /** Team-markets footer: source note, staleness, and how many the toolkit
    *  withheld outright (book too thin to price at all). */
@@ -658,6 +673,7 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
                 <GameRow
                   key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1}
                   regime={scan?.regimeBySlug.get(e.slug) ?? UNKNOWN_REGIME}
+                  rulesApply={scan?.rulesApply ?? false}
                   onPick={onPick} onAddLeg={onAddLeg}
                 />
               ))
@@ -691,6 +707,7 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
                   r={r} teamA={teamA} teamB={teamB} rank={i + 1}
                   regime={scan?.regimeBySlug.get(r.slug) ?? UNKNOWN_REGIME}
                   publisherRules={scan?.teamMarketsRules ?? null}
+                  rulesApply={scan?.rulesApply ?? false}
                   onPick={onPick} onAddLeg={onAddLeg}
                 />
               ))
@@ -716,6 +733,13 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
               </div>}
         </Column>
       </div>
+      {/* The served engine's settled-replay regime cells. Only drawn when the
+          week-1 rulebook does NOT describe this engine — that is exactly when
+          the reader has lost the labels and needs to see how the regime has
+          fared instead. Trend, never a rule (owner, 2026-09-08). */}
+      {scan && !scan.rulesApply && scan.trend
+        ? <RegimeTrendBlock trend={scan.trend} engine={scan.engine} />
+        : null}
     </section>
   );
 }

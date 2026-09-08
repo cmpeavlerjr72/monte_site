@@ -126,9 +126,11 @@ import type { SuggestSection } from "../lib/useSuggestions";
 // reads the verdict off the row; it never re-derives one.
 import {
   ABSTAIN_WORDS, CELL_TAG, abstainTag, regimeWords, starWords,
-  STAR_ASK_HI, STAR_ASK_LO,
+  STAR_ASK_HI, STAR_ASK_LO, engineWords, rulesApplyFor,
   type AbstainReason, type CellName, type GameRegime,
 } from "../lib/edgeRules";
+import type { WeekEngine, RegimeTrend } from "../lib/cfbJson";
+import { RegimeTrendSummary } from "./RegimeTrend";
 
 /** What "$30/ladder" MEANS under each mode, in a few words, beside the number
  *  it qualifies. The full definitions live behind the ? on the switch itself
@@ -949,7 +951,7 @@ export default function GameBetsPanel({
   section, browse, verdict, hiddenByFilter, tailCount, unit, sizing, onSizingMode,
   token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
-  showTails, onShowTails, regime, edgeRules, onEdgeRules, onProject,
+  showTails, onShowTails, regime, edgeRules, onEdgeRules, engine, trend, onProject,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
@@ -989,9 +991,18 @@ export default function GameBetsPanel({
   /** Week-2 decision rules on/off — the kill switch (ownerPrefs). */
   edgeRules: boolean;
   onEdgeRules: (v: boolean) => void;
+  /** The engine behind this week (index.json `engine`). The week-1 rules
+   *  describe the shipped engine only; for any other engine the toggle is
+   *  moot and the header names the engine instead (edgeRules.ts). */
+  engine?: WeekEngine | null | undefined;
+  /** The served engine's settled-replay regime cells (regime_trend.json),
+   *  summarised in one header line when no rulebook applies. */
+  trend?: RegimeTrend | null;
   /** Switch this card's open panel to the chart this bet came from. */
   onProject: (t: ProjectionTarget) => void;
 }) {
+  /** Whether the week-1 rulebook can describe this board at all. */
+  const rulebookOk = rulesApplyFor(engine);
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
    *  Confirm replays server-side instead of placing twice. */
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
@@ -1073,7 +1084,9 @@ export default function GameBetsPanel({
         display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
         fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5,
       }}>
-        <button
+        {!rulebookOk && <span>{engineWords(engine)}</span>}
+        {!rulebookOk && trend && <RegimeTrendSummary trend={trend} />}
+        {rulebookOk && <button
           type="button" className="ui-btn"
           data-on={edgeRules ? "true" : "false"}
           aria-pressed={edgeRules}
@@ -1088,9 +1101,9 @@ export default function GameBetsPanel({
           style={{ padding: "1px 8px", fontSize: 10, fontWeight: 800 }}
         >
           Week-2 rules {edgeRules ? "on" : "off"}
-        </button>
-        {edgeRules && regime && <span>{regimeWords(regime)}</span>}
-        {edgeRules && (
+        </button>}
+        {rulebookOk && edgeRules && regime && <span>{regimeWords(regime)}</span>}
+        {rulebookOk && edgeRules && (
           <span>
             ★ = a named regime cell at {Math.round(STAR_ASK_LO * 100)}–
             {Math.round(STAR_ASK_HI * 100)}¢, then the 10¢ edge

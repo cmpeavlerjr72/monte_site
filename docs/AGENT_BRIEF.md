@@ -4,6 +4,31 @@ Read this before touching the scoreboard. It replaces inheriting a prior
 agent's transcript. Keep it current: if you change a contract below, update
 this file in the same commit.
 
+## Decision layer is ENGINE-KEYED (2026-09-08)
+
+The week-1 decision rules (`src/lib/edgeRules.ts`: mismatch dog-side /
+moneyline abstentions, regime star cells, the "NOT A TARGET · moneyline"
+badges) were measured on the SHIPPED engine's settled week-0/1 boards and
+describe that engine only. Every week's `index.json` now carries an `engine`
+block (`export_site_week.py engine_block`): `{tag, model, git, seeds,
+rulebook, note}`. `rulebook` names the rule set measured on that engine —
+`"wk1-shipped"` or `null`. `rulesApplyFor(engine)` (edgeRules.ts) is the ONE
+gate: labels and regime stars only reach a board whose engine carries
+`wk1-shipped`; any other engine gets no abstention, no cell, and ★ falls back
+to the plain bar (mode "off": non-tail row, net edge ≥ 10¢). A week with NO
+block (weeks 00–01) is the shipped engine and keeps its labels; the page's
+initial state is `null` so a week never flashes last week's labels before its
+block loads. Week 2 (`cloud10k_wk2m7`, `models_sdfix_serve2025`) publishes
+`rulebook: null`.
+
+What replaces the labels is a TREND, never a rule: `weeks/<id>/regime_trend.
+json` (`export_regime_trend.py`, the fixed cells of `regime_scorecard.py` on
+the served engine's settled replay board, shipped engine beside it) rendered
+by `src/components/RegimeTrend.tsx` — one line in the Bets panel header, the
+full side + band×family grid at the foot of Top Edges. It labels, stars and
+filters nothing. Owner rule 2026-09-08: no hard rules on one week of a new
+engine; the regime scorecard grades it after settlement.
+
 ## Architecture
 
 React 19 + Vite + TS SPA (`src/`), Express data/live server (`server/

@@ -90,6 +90,53 @@
 
 import { cfbNameKey } from "../../server/cfbNames";
 import { FBS_CONFERENCE, FBS_SCHOOLS } from "./fbsConferences";
+import type { WeekEngine } from "./cfbJson";
+
+/* ------------------------------ the rulebook ------------------------------ */
+/**
+ * WHICH ENGINE THESE RULES DESCRIBE (2026-09-08).
+ *
+ * Everything in this module was measured on the SHIPPED engine's settled
+ * week-0/1 boards. It is evidence about that engine and no other. Week 2 is
+ * published by a different engine (the through-2025 candidate,
+ * `models_sdfix_serve2025`), whose only out-of-sample record is 51 games —
+ * far too thin for a rulebook of its own, and the INV-145 lesson stands: a
+ * rulebook fit to one engine's errors is reactive, and it read +35% through
+ * its own book and −13% through the same book on another engine.
+ *
+ * So the exporter names, per week, the rulebook that was measured on the
+ * engine that produced it (`index.json` engine.rulebook), and this is the one
+ * gate: the week-1 labels apply ONLY to a week whose engine carries
+ * "wk1-shipped". Any other engine gets NO abstention, NO cell, and the star
+ * falls back to the plain bar (mode "off": a non-tail row with net edge >= 10c).
+ * The regime (open spread band, conference class) is still computed and
+ * shown, as information — it is the scorecard's cut, not a verdict.
+ *
+ * A week published before the block existed (weeks 00-01) IS the shipped
+ * engine, so an absent block (`undefined`) keeps the labels; an explicit
+ * `null` block or any other rulebook name turns them off.
+ */
+export const RULEBOOK_WK1_SHIPPED = "wk1-shipped";
+
+/** Do the week-1 labels describe this week's engine at all? */
+export function rulesApplyFor(engine: WeekEngine | null | undefined): boolean {
+  if (engine === undefined) return true;       // legacy week = shipped engine
+  if (engine === null) return false;
+  return engine.rulebook === RULEBOOK_WK1_SHIPPED;
+}
+
+/** One line naming the engine behind the board, for a panel header. */
+export function engineWords(engine: WeekEngine | null | undefined): string {
+  if (engine === undefined) return "Week-1 engine (shipped). Week-1 decision rules apply.";
+  if (engine === null) return "Engine not named for this week. No decision rulebook applies.";
+  const name = engine.model ?? engine.tag ?? "unnamed engine";
+  const tag = engine.tag && engine.tag !== name ? ` (${engine.tag})` : "";
+  if (rulesApplyFor(engine)) return `Engine ${name}${tag}. Week-1 decision rules apply.`;
+  return `Engine ${name}${tag}. No decision rulebook has been measured on this `
+    + "engine: ★ is the plain bar (net edge ≥ 10¢ after fees, not a tail), "
+    + "nothing is labelled 'not a target', and the regime shown is information "
+    + "only — the regime scorecard grades it after settlement.";
+}
 
 /* ------------------------------- constants -------------------------------- */
 /** R1 / R3: |open spread| at or above this is a MISMATCH. */

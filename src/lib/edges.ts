@@ -12,14 +12,15 @@
 
 import {
   getCompactCached, getPlayersDistCached, getPropsOddsCached, PropsNotPublished,
-  getTeamMarketsCached, TeamMarketsNotPublished,
-  type JsonWeekRow, type TeamMarketRow,
+  getTeamMarketsCached, TeamMarketsNotPublished, getWeekEngineCached,
+  getRegimeTrendCached,
+  type JsonWeekRow, type TeamMarketRow, type WeekEngine, type RegimeTrend,
 } from "./cfbJson";
 import { propEdge, type PropEdge } from "./propEdge";
 import { buildMarketRows, makeSeedCounts, rowEdge, type MarketRow } from "./marketEdge";
 import type { KalshiGame } from "./kalshi";
 import { DatasetUnavailable, type Division, type Season } from "./cfbData";
-import { regimeFor, type GameRegime } from "./edgeRules";
+import { regimeFor, rulesApplyFor, type GameRegime } from "./edgeRules";
 
 /** What the scan needs from a card, without importing the page's types. */
 export type EdgeInput = {
@@ -84,6 +85,16 @@ export type SlateScan = {
    * See src/lib/edgeRules.ts.
    */
   regimeBySlug: Map<string, GameRegime>;
+  /**
+   * The engine behind this week (index.json `engine`), and the one gate on
+   * the week-1 labels: they describe the shipped engine only. `undefined`
+   * engine = a legacy week = shipped. See edgeRules.ts `rulesApplyFor`.
+   */
+  engine: WeekEngine | null | undefined;
+  rulesApply: boolean;
+  /** The served engine's settled-replay regime cells (regime_trend.json);
+   *  null when not published. Information for the reader, never a rule. */
+  trend: RegimeTrend | null;
 };
 
 export type GameEdges = {
@@ -127,6 +138,20 @@ export async function ensureSlateEdges(
   // with the per-game Promise.all below starts right after).
   const propsPromise = getPropsOddsCached(season, weekId);
   const teamMarketsPromise = getTeamMarketsCached(season, weekId);
+  // The engine block is a tiny read of a file already fetched for the slate;
+  // a failure here must never take the scan down — it degrades to "legacy".
+  const enginePromise: Promise<WeekEngine | null | undefined> =
+    getWeekEngineCached(season, weekId, signal).catch((err) => {
+      if ((err as any)?.name === "AbortError") throw err;
+      console.warn("[edges] engine block unavailable; treating as legacy:", err);
+      return undefined;
+    });
+  const trendPromise: Promise<RegimeTrend | null> =
+    getRegimeTrendCached(season, weekId, signal).catch((err) => {
+      if ((err as any)?.name === "AbortError") throw err;
+      console.warn("[edges] regime trend unavailable:", err);
+      return null;
+    });
 
   // Props: a 404 is the expected state until the props pipeline publishes,
   // not a failure.
@@ -246,6 +271,9 @@ export async function ensureSlateEdges(
     })
   );
 
+  const engine = await enginePromise;
+  const trend = await trendPromise;
+
   return {
     byGame: out, props, propsStatus,
     propsUpdated: propsOdds?.updated ?? null,
@@ -257,6 +285,9 @@ export async function ensureSlateEdges(
     teamMarketsWithheld: teamMarketsResult?.withheldCount ?? 0,
     teamMarketsRules: teamMarketsResult?.rules ?? null,
     regimeBySlug: regimes,
+    engine,
+    rulesApply: rulesApplyFor(engine),
+    trend,
   };
 }
 

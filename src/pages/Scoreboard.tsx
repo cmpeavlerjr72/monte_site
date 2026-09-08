@@ -16,6 +16,7 @@ import { useThemeMode, useDensity, useDivisionFilter, useIsDark, type Density } 
 import MarketEdge from "../components/MarketEdge";
 import TopEdges from "../components/TopEdges";
 import { type EdgeInput, type GameEdges } from "../lib/edges";
+import { rulesApplyFor } from "../lib/edgeRules";
 import { useSlateEdges } from "../lib/useSlateEdges";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
@@ -24,7 +25,9 @@ import {
   type CfbCatalog, type Division, type DivisionFilter, type FileItem, type Season,
 } from "../lib/cfbData";
 import {
-  getJsonWeekGames, getCompactJson, getCompactCached,
+  getJsonWeekGames, getCompactJson, getCompactCached, getWeekEngineCached,
+  getRegimeTrendCached,
+  type WeekEngine, type RegimeTrend,
   type JsonGame, type JsonWeekRow,
 } from "../lib/cfbJson";
 import MyBookStrip from "../components/MyBook";
@@ -1549,6 +1552,22 @@ function ScoreboardPage() {
           setJsonGames(rows);
           setGames({});
           setMeta({});
+          // The engine block, off the same index. A miss degrades to "no
+          // rulebook" (null) — never to last week's labels.
+          getWeekEngineCached(season, weekId, ac.signal)
+            .then((eng) => { if (alive) setWeekEngine(eng); })
+            .catch((err) => {
+              if ((err as any)?.name === "AbortError") return;
+              console.warn("[week] engine block unavailable:", err);
+              if (alive) setWeekEngine(null);
+            });
+          getRegimeTrendCached(season, weekId, ac.signal)
+            .then((t) => { if (alive) setWeekTrend(t); })
+            .catch((err) => {
+              if ((err as any)?.name === "AbortError") return;
+              console.warn("[week] regime trend unavailable:", err);
+              if (alive) setWeekTrend(null);
+            });
           return;
         }
 
@@ -1864,6 +1883,16 @@ function ScoreboardPage() {
    *  the Bets panel is the kill switch. Labels only — it can never hide a
    *  row or change a price. */
   const [edgeRules, setEdgeRules] = useState<boolean>(() => readEdgeRules());
+  /** The engine behind the FBS week on screen (index.json `engine`). The
+   *  week-1 rules describe the SHIPPED engine only (edgeRules.ts
+   *  `rulesApplyFor`); this is the one gate on every label the page draws.
+   *  Starts as `null` (no rulebook) so a week never flashes last week's
+   *  labels before its block has loaded. */
+  const [weekEngine, setWeekEngine] = useState<WeekEngine | null | undefined>(null);
+  const rulesApply = edgeRules && rulesApplyFor(weekEngine);
+  /** The served engine's settled-replay regime cells, for the Bets panel's
+   *  one-line trend when no rulebook applies. */
+  const [weekTrend, setWeekTrend] = useState<RegimeTrend | null>(null);
   const [betSort, setBetSort] = useState<SuggestSort>(() => readSuggestSort());
   const onBetMode = useCallback((v: ModeFilter) => { setBetMode(v); writeModeFilter(v); }, []);
   const onBetType = useCallback((v: BetTypeFilter) => { setBetType(v); writeTypeFilter(v); }, []);
@@ -2714,7 +2743,9 @@ function ScoreboardPage() {
     typeFilter: betType,
     showTails: betTails,
     sort: betSort,
-    edgeRules,
+    // The kill switch AND the engine gate: the week-1 labels only reach a
+    // board whose engine they were measured on.
+    edgeRules: rulesApply,
   });
 
   /**
@@ -2920,6 +2951,8 @@ function ScoreboardPage() {
                     showTails={betTails} onShowTails={onBetTails}
                     regime={suggestions.regimeBySlug.get(openCard.key)}
                     edgeRules={edgeRules} onEdgeRules={onEdgeRules}
+                    engine={weekEngine}
+                    trend={weekTrend}
                     onProject={(t: ProjectionTarget) => focusPanel(
                       openCard.key,
                       t.kind === "scores" ? "scores" : "teamstats",
