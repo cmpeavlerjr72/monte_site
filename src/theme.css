@@ -1599,8 +1599,11 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 1px solid var(--border);
 }
 
-/* The rows sit flush inside the card; their own top border is the separator. */
-.bkt .feed__item:first-of-type .feed__row { border-top: 0; }
+/* The rows sit flush inside the card; their own top border is the separator
+   BETWEEN rows. The first one directly under the header would double that
+   header's bottom border, so it drops its own — but only there: after a score
+   strip the line is wanted. */
+.bkt__head + .feed__item .feed__row { border-top: 0; }
 .bkt .feed__row { padding-left: 6px; padding-right: 6px; }
 .bkt .feed__pop { margin-left: calc(10px + var(--feed-hang)); margin-right: 8px; }
 
