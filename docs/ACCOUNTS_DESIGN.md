@@ -113,3 +113,31 @@ rather than a phase: see below.
    unit, plus the market price — never counts, costs, fills or dollars. The
    unit size itself is a private column reachable only through
    `my_settings()` / `set_my_settings()`.
+
+## Owner changes 2026-09-09
+
+1. **The feed is AUTOMATIC.** The "post a pick" form is removed. Every order
+   placed through the app appears in the poster's friends' feeds, because
+   `app_orders` is already written server-side on placement. `picks` is left
+   alone (no new writes; existing rows still render).
+2. **A feed line is a sentence**: "{username} placed {x} units on {bet} at
+   {price}¢ · sim EV {ev} per $1". To print it, `app_orders` gained
+   `title`, `home_team`, `away_team`, `sim_p`, `ev_fee` and `sport`
+   (`supabase/migrations/20260909_feed_detail.sql`), threaded from ConfirmSlip
+   through `placeOrders` to `appOrdersRecord` as optional, sanitised
+   attribution that never reaches Kalshi. The money rule is unchanged: units
+   and the market price, never a count, a cost or a fill.
+3. **Live updates** via Realtime `postgres_changes` on `public.app_orders`
+   INSERT, 60s poll fallback. RLS applies to realtime; the client refetches
+   `feed_items` on each event rather than trusting the payload.
+4. **Flares** (`20260909_flares.sql`): up to three school logos beside a
+   username, `profiles.flares text[]`, `team:<school>` for any FBS or FCS
+   school. Cosmetic and public within the friend graph — a flare says nothing
+   about money. Editor on `/me`; rendered in the feed and the friends list.
+5. **Three account destinations, at the TOP level** (an account is
+   sport-agnostic — NCAAB lands on the same login, book and friends):
+   `/mybook` = the book only, `/feed` = the social feed, `/me` = everything
+   about the person. `/cfb/mybook`, `/cfb/feed`, `/cfb/me` and `/cfb/friends`
+   redirect up. Ribbon menu: My Book · Feed · Profile · Log out. Scoreboards
+   stay under `/cfb` and `/cbb`, and the scoreboard's slim book strip is
+   unchanged.

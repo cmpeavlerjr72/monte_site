@@ -798,9 +798,40 @@ byte as before. That is also the state the owner trades in today.
   friends`, the owner's Kalshi books). NetworkFeed sits beside it in the same
   console slot — same slot, new source — until the owner's accounts are linked
   and the old one is retired.
-- Routes: `/cfb/me` (profile, share_book, delete via `delete_own_account`),
-  `/cfb/mybook` (THE DASHBOARD, below) and `/cfb/friends` (a redirect to the
-  dashboard since 2026-09-08). Scoreboard, Top Edges and props stay PUBLIC.
+- Routes (RESTRUCTURED 2026-09-09, top level — an account is sport-agnostic):
+  `/mybook` (positions, resting, settled — nothing else), `/feed` (the
+  automatic social feed + legacy friend books) and `/me` (profile, flares,
+  share_book, sizing, friends, Kalshi link, delete). `/cfb/mybook`,
+  `/cfb/feed`, `/cfb/me` and `/cfb/friends` all redirect up. Scoreboards stay
+  under `/cfb` and `/cbb`; Scoreboard, Top Edges and props stay PUBLIC.
+
+### THE FEED IS AUTOMATIC (2026-09-09)
+
+`supabase/migrations/20260909_feed_detail.sql` + `20260909_flares.sql` (NEITHER
+APPLIED — run them in order in the SQL editor).
+
+- **There is no "post a pick" form.** Placing an order through the app IS
+  posting it: `app_orders` is already written server-side, and that row is the
+  feed item. `picks` is untouched — nothing writes to it, rows already there
+  still render, labelled "posted".
+- **A row is a sentence**, so the row has to carry one. The place request
+  gained five more optional attribution fields — `title` (the bet in the words
+  the slip confirmed), `home_team`, `away_team`, `sim_p`, `ev_fee` — plus
+  `sport` (a league id). All added to the strict unknown-key allowlist in the
+  same change, all SANITISED to null rather than rejected, none on the Kalshi
+  wire. `ev_fee` is the rung's net edge over its price: EV per $1 STAKED.
+- **Still no dollars.** `feed_items` selects units + the market price and no
+  count, cost or filled, for every row including the viewer's own. `sim_p` and
+  `ev_fee` are RATES — our model's opinion — which is why they are publishable.
+- **Live.** Realtime `postgres_changes` INSERT on `public.app_orders` (the
+  migration adds the table to `supabase_realtime`), 60s poll as the fallback.
+  RLS applies to realtime, and the client REFETCHES the view on each event
+  rather than trusting the payload — the raw row carries cost and count.
+- **Flares**: `profiles.flares text[]`, max 3, each `team:<school>` (FBS or
+  FCS, from `team_info.csv`). Cosmetic, granted to `authenticated` like the
+  handle; catalog and validation in `src/lib/flares.ts`, rendered by
+  `src/components/Flares.tsx` wherever a person is named. `src/lib/leagues.ts`
+  is the one map from a stored league id to its words.
 
 ### The 2026-09-08 restructure — username login, ribbon, dashboard
 
@@ -830,14 +861,17 @@ NOT move: the settled RECORD (slate-scoped — it cannot be computed on a page
 that loads no week) and the legacy portal PASSWORD login (the owner's way in
 through the cutover).
 
-**THE DASHBOARD** is `src/pages/BookDashboard.tsx` — positions/resting/
-settlements, Kalshi linking, friends (`FriendsPanel`, the old page), the feed
-(`NetworkFeed allWeeks`), settings. Two rules hold it together: it makes NO
-new data fetches (Supabase + the portal payload only — which is why the post
-form's game list comes from `src/lib/slateCache.ts`, written by the scoreboard
-as it goes past), and it prices NOTHING with the sim (portal bets are computed
-with empty slate maps, so Sim EV is an honest "—" and the row says the fair
-values live with the games).
+**THE DASHBOARD SPLIT IN THREE (2026-09-09).** `src/pages/BookDashboard.tsx`
+(`/mybook`) is now positions/resting/settlements and nothing else;
+`src/pages/FeedPage.tsx` (`/feed`) is `NetworkFeed allWeeks` plus the legacy
+`FriendBooks`; `src/pages/Profile.tsx` (`/me`) carries display name, avatar,
+the flares editor, share_book, the sizing settings + fill alerts,
+`FriendsPanel` and `KalshiLinkCard`. The two rules still hold on all three:
+NO new data fetches (Supabase + the portal payload only — which is why the
+season/week default comes from `src/lib/slateCache.ts`, written by the
+scoreboard as it goes past), and the sim prices NOTHING there (portal bets are
+computed with empty slate maps, so Sim EV is an honest "—" and the row says the
+fair values live with the games).
 
 ### Users trade their OWN Kalshi account (2026-09-08)
 
