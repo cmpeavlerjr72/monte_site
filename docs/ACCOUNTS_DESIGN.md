@@ -12,9 +12,12 @@ Owner decisions (2026-09-08 evening):
 
 ## Security posture
 
-- **Auth = Supabase Auth, email + password** (what pickem ships), with email
-  confirmation ON and a strong-password rule (>= 10 chars) in the sign-up form.
-  Magic-link and Google can be added in the dashboard later without code changes.
+- **Auth = Supabase Auth, email + password** (what pickem ships). Email
+  confirmation is OFF (owner 2026-09-08: no custom SMTP sender to maintain) —
+  an account is live on sign-up, so the strong-password rule (>= 10 chars) in
+  the sign-up form is the bar, and the trading allowlist (`CFB_PORTAL_OWNERS`)
+  is what guards money. Magic-link and Google can be added in the dashboard
+  later without code changes.
 - **The browser holds only the anon key + the user's JWT.** The service-role key
   lives in Render env (`SUPABASE_SERVICE_ROLE_KEY`) and is used by the Express
   server ONLY to (a) verify JWTs, (b) write `app_orders` rows after a placement,
