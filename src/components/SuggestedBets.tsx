@@ -1577,6 +1577,9 @@ function ConfirmSlip({
       mode: l.r.mode === "REST" ? "rest" : "take",
       price_dollars: l.r.price,
       count_fp: l.count,
+      // ACCOUNTS ATTRIBUTION ONLY — which game this bet came from, so the
+      // network feed can group it. Never sent to Kalshi, never a rail.
+      game_slug: l.r.slug,
     }));
     try {
       // The cap the slip just WARNED about is the cap it declares.

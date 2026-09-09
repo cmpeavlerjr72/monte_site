@@ -17,6 +17,11 @@
 // client cannot ask for a market order even by accident.
 
 import { declaredOrderCap } from "./ownerPrefs";
+// ACCOUNTS (docs/ACCOUNTS_DESIGN.md): a placement that can be ATTRIBUTED to a
+// signed-in user gets mirrored into `app_orders` server-side. The bearer is
+// what makes it attributable; without it (accounts off, or nobody signed in)
+// the request is byte-for-byte the one this file has always sent.
+import { getAccessToken } from "./supabase";
 
 export type PlaceMode = "rest" | "take";
 
@@ -27,6 +32,13 @@ export type PlaceOrder = {
   mode: PlaceMode;
   price_dollars: number;
   count_fp: number;
+  /** OPTIONAL ATTRIBUTION for the accounts feed — which board this bet came
+   *  from. The server sanitises these to null rather than rejecting a bad
+   *  value: metadata must never be why a confirmed bet is refused, and none
+   *  of it reaches Kalshi. */
+  season?: number;
+  week?: number;
+  game_slug?: string;
 };
 
 /** Echo of one order, as the server describes it back. */
@@ -108,9 +120,19 @@ export function newIdempotencyKey(): string {
 }
 
 async function post(url: string, token: string, body: unknown) {
+  // BOTH credentials, when both exist. `x-cfb-token` stays the trading
+  // authority through the owner cutover (docs/ACCOUNTS_DESIGN.md); the bearer
+  // only says WHO pressed the button, so the server can file the placement
+  // under a user. A build without accounts sends exactly the old headers.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-cfb-token": token,
+  };
+  const jwt = await getAccessToken();
+  if (jwt) headers.authorization = `Bearer ${jwt}`;
   const r = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-cfb-token": token },
+    headers,
     cache: "no-store",
     body: JSON.stringify(body),
   });

@@ -13,6 +13,10 @@ import { fileURLToPath } from "url";
 // Pure, so scripts/check_fcs_names.mjs can verify the Kalshi join against the
 // real FBS + FCS school lists without booting this server.
 import { cfbNameKey, pairKeyOf } from "./cfbNames.js";
+// ACCOUNTS (docs/ACCOUNTS_DESIGN.md): the SERVICE-ROLE client. It exists to do
+// three things and nothing else — verify JWTs, write app_orders rows, and read
+// allowlists. It is never exposed to a client and its key is never logged.
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type Sport = "cfb" | "cbb" | "mlb";
 
@@ -1954,6 +1958,118 @@ marketSignerAcct =
         ordersLive: false,
       }
     : null);
+// ============================================================================
+// ACCOUNTS — Supabase JWT verification and the app_orders mirror
+//
+// See docs/ACCOUNTS_DESIGN.md. Three rules govern everything below:
+//
+//  1. FEATURE-FLAGGED BY ENV. Without SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+//     `supa` is null, `supabaseAuth` sets no user, `CFB_PORTAL_OWNERS` names
+//     nobody, and every route in this file behaves EXACTLY as it did before
+//     accounts existed — the legacy `x-cfb-token` password is then the only
+//     way in, which is also the cutover state the owner trades in today.
+//  2. TRADING AUTHORITY IS UNCHANGED. A verified user is not a trader. Only a
+//     uid listed in CFB_PORTAL_OWNERS ("mp:<uuid>,roth:<uuid>") resolves to a
+//     PortalAccount, and it resolves to THAT account and no other — the same
+//     one-session-one-account isolation the password gives.
+//  3. A SUPABASE FAILURE NEVER COSTS AN ORDER. The app_orders mirror is
+//     written after the fact, asynchronously, retried once and then logged.
+//     The JSONL audit line is still the durable record; this table is the
+//     attributable, queryable copy.
+// ============================================================================
+
+type SupaUser = { id: string; email: string | null };
+
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const supa: SupabaseClient | null =
+  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+    : null;
+
+/** uid -> portal account id. Empty (and accounts unreachable) unless the env
+ *  names them; a uid pointing at an account that is not registered is dropped
+ *  loudly at boot rather than failing at login time. */
+const PORTAL_OWNER_UIDS = new Map<string, string>();
+{
+  const raw = process.env.CFB_PORTAL_OWNERS || "";
+  const have = new Set(PORTAL_ACCOUNTS.map((a) => a.id));
+  for (const entry of raw.split(",").map((x) => x.trim()).filter(Boolean)) {
+    const i = entry.indexOf(":");
+    const id = (i < 0 ? "" : entry.slice(0, i)).trim().toLowerCase();
+    const uid = (i < 0 ? "" : entry.slice(i + 1)).trim();
+    if (!id || !uid || !have.has(id)) {
+      console.warn(`[accounts] CFB_PORTAL_OWNERS entry "${entry}" DROPPED ` +
+                   "(malformed, or names an unregistered account)");
+      continue;
+    }
+    PORTAL_OWNER_UIDS.set(uid, id);
+  }
+}
+if (supa) {
+  console.log("[accounts] Supabase configured; portal owners:",
+    PORTAL_OWNER_UIDS.size
+      ? [...PORTAL_OWNER_UIDS.values()].join(", ")
+      : "none (password login only)");
+}
+
+/** Verified tokens, keyed by a HASH of the token (never the token itself) so a
+ *  heap dump or a stray log line cannot hand someone a live session. 60s TTL:
+ *  long enough that a busy page costs one Auth call, short enough that a
+ *  signed-out or deleted user stops being served within a minute. */
+const SUPA_TOKEN_TTL_MS = 60_000;
+const SUPA_TOKEN_CACHE_MAX = 500;
+const supaTokenCache = new Map<string, { at: number; user: SupaUser | null }>();
+
+async function supaVerify(jwt: string): Promise<SupaUser | null> {
+  if (!supa || !jwt) return null;
+  const k = crypto.createHash("sha256").update(jwt).digest("hex");
+  const hit = supaTokenCache.get(k);
+  if (hit && Date.now() - hit.at < SUPA_TOKEN_TTL_MS) return hit.user;
+  let user: SupaUser | null = null;
+  try {
+    const { data, error } = await supa.auth.getUser(jwt);
+    if (!error && data?.user) {
+      user = { id: data.user.id, email: data.user.email ?? null };
+    }
+  } catch (err: any) {
+    // A verification OUTAGE is not a rejection: do not cache it, so the next
+    // request retries instead of locking a real user out for a minute.
+    console.warn("[accounts] auth.getUser failed:", err?.message ?? err);
+    return null;
+  }
+  if (supaTokenCache.size >= SUPA_TOKEN_CACHE_MAX) supaTokenCache.clear();
+  supaTokenCache.set(k, { at: Date.now(), user });
+  return user;
+}
+
+/**
+ * Reads `Authorization: Bearer <jwt>` and, when it verifies, hangs the user on
+ * the request. It NEVER rejects: authorisation is `portalGate`'s decision, and
+ * a middleware that 401s would change the answer for every unauthenticated
+ * read this family already serves on a password alone.
+ */
+async function supabaseAuth(req: Request, _res: Response, next: NextFunction) {
+  if (!supa) { next(); return; }
+  const h = String(req.header("authorization") || "");
+  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
+  if (m) {
+    try { (req as any).supaUser = await supaVerify(m[1].trim()); }
+    catch { /* never block a request on the accounts layer */ }
+  }
+  next();
+}
+// Mounted BEFORE any /api/portfolio route is registered, so portalGate can
+// read the verified user synchronously.
+app.use("/api/portfolio", supabaseAuth);
+
+/** The verified user on a request, or null. */
+function supaUserOf(req: Request): SupaUser | null {
+  return ((req as any).supaUser as SupaUser | null) ?? null;
+}
+
 const PORTAL_MAX_FAILS = 5;
 const PORTAL_LOCK_MS = 60_000;
 let portalFails = 0;
@@ -2394,6 +2510,22 @@ function portalGate(req: Request, res: Response): PortalAccount | null {
     const want = Buffer.from(a.password, "utf8");
     if (got.length === want.length && crypto.timingSafeEqual(got, want)) hit = a;
   }
+  // ACCOUNTS CUTOVER (docs/ACCOUNTS_DESIGN.md): a VERIFIED Supabase user whose
+  // uid is named in CFB_PORTAL_OWNERS is that account, exactly as its password
+  // is. Checked only AFTER the password loop above has run in full, so the
+  // timing-safe comparison's cost is unchanged whichever way a caller gets in.
+  if (!hit) {
+    const uid = supaUserOf(req)?.id;
+    const acctId = uid ? PORTAL_OWNER_UIDS.get(uid) : undefined;
+    if (acctId) hit = PORTAL_ACCOUNTS.find((a) => a.id === acctId) ?? null;
+    if (!hit && uid) {
+      // Signed in, but a trader on no account. Say so plainly and DO NOT
+      // touch the lockout counter: a signed-in stranger polling this route
+      // must never be able to lock the owner out of their own book.
+      res.status(403).json({ error: "not_a_trader" });
+      return null;
+    }
+  }
   if (!hit) {
     portalFails++;
     if (portalFails >= PORTAL_MAX_FAILS) {
@@ -2641,6 +2773,60 @@ function ordersAudit(acct: PortalAccount, rec: Record<string, unknown>): void {
   }
 }
 
+/**
+ * THE app_orders MIRROR — the attributable copy of a placement.
+ *
+ * Called from `ordersSubmitOne` immediately after the `placed` audit line, so
+ * the two records are written from the same fact and cannot disagree about
+ * what landed. Everything about it is deliberately non-blocking:
+ *
+ *  * NO USER, NO ROW. `user_id` is `not null` and references profiles(id); a
+ *    legacy password-only session has no uid, so there is simply nothing to
+ *    attribute and the JSONL audit line is the whole record — the same
+ *    behaviour as before accounts existed.
+ *  * FIRE AND FORGET, retried once. A Supabase outage, an RLS surprise or a
+ *    user with no profile row must never fail, delay or un-place an order that
+ *    the exchange has already accepted. Failures are logged and dropped.
+ *  * UPSERT ON order_id (unique), so a retry cannot double-count a placement.
+ */
+type AppOrderState = { status: string; filled: number | null; remaining: number | null } | null;
+
+function appOrdersRecord(
+  acct: PortalAccount, w: WireOrder, orderId: string, state: AppOrderState,
+  userId: string | null,
+): void {
+  if (!supa || !userId || !orderId) return;
+  const row = {
+    user_id: userId,
+    account_id: acct.id,
+    season: w.season ?? null,
+    week: w.week ?? null,
+    game_slug: w.game_slug ?? null,
+    ticker: w.ticker,
+    side: w.side,
+    mode: w.mode,
+    price: w.price_dollars,
+    count: w.count,
+    filled: state?.filled ?? null,
+    cost: w.cost,
+    order_id: orderId,
+    state: state ?? null,
+  };
+  void (async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { error } = await supa!
+        .from("app_orders")
+        .upsert(row, { onConflict: "order_id" });
+      if (!error) return;
+      if (attempt === 1) {
+        console.warn("[accounts] app_orders write failed:", error.message);
+      }
+    }
+  })().catch((err: any) => {
+    console.warn("[accounts] app_orders write threw:", err?.message ?? err);
+  });
+}
+
 /** Audit re-read at most this often. The settlements cache is the same 60s,
  *  so in practice the disk is touched once per settlements refresh. Keyed by
  *  account id — attribution is per account. */
@@ -2837,6 +3023,13 @@ type WireOrder = {
   /** YES-denominated price actually sent (a NO buy at q is a YES ask at 1−q). */
   yes_price: number;
   book_side: "bid" | "ask";
+  /** ACCOUNTS ATTRIBUTION ONLY (app_orders). Optional, never sent to Kalshi —
+   *  the wire body is built field by field, so these cannot leak into it — and
+   *  never a reason to refuse an order: a malformed value is dropped, not
+   *  rejected. Metadata must not be able to block money. */
+  season?: number | null;
+  week?: number | null;
+  game_slug?: string | null;
 };
 
 /** Reject a body that tries to dictate execution mechanics instead of intent.
@@ -2913,8 +3106,15 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
       const o = (raw[i] ?? {}) as Record<string, unknown>;
       const f = ordersForbidden(o, `orders[${i}]`);
       if (f) { bad(400, { error: "forbidden_field", detail: f }); return; }
+      // ACCOUNTS: season / week / game_slug are OPTIONAL ATTRIBUTION for the
+      // app_orders mirror (docs/ACCOUNTS_DESIGN.md) — added to this allowlist
+      // in the same change that started accepting them, because the strict
+      // unknown-key rejection is the rail that keeps execution mechanics out
+      // of a request and it must never be loosened accidentally. They are
+      // read by `appOrdersRecord` and by nothing else.
       for (const k of Object.keys(o)) {
-        if (!["ticker", "side", "mode", "price_dollars", "count_fp"].includes(k)) {
+        if (!["ticker", "side", "mode", "price_dollars", "count_fp",
+              "season", "week", "game_slug"].includes(k)) {
           bad(400, { error: "unexpected_field", detail: `orders[${i}]: "${k}"` });
           return;
         }
@@ -2952,8 +3152,19 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
         });
         return;
       }
+      // SANITISED, NOT VALIDATED: a bad attribution value is dropped to null
+      // and the order still goes. These fields decide who a row is filed
+      // under in a feed; they must never be why a confirmed bet does not
+      // reach the exchange.
+      const seasonN = Number(o.season);
+      const weekN = Number(o.week);
+      const slugRaw = o.game_slug == null ? "" : String(o.game_slug);
       wire.push({
         ticker, side, mode, price_dollars: price, count, fee, cost,
+        season: Number.isInteger(seasonN) && seasonN >= 2000 && seasonN <= 2100
+          ? seasonN : null,
+        week: Number.isInteger(weekN) && weekN >= 0 && weekN <= 30 ? weekN : null,
+        game_slug: /^[A-Za-z0-9_.:@+-]{1,120}$/.test(slugRaw) ? slugRaw : null,
         client_order_id: `${ORDERS_TAG}${key}-${i}`,
         // `price` on this endpoint is ALWAYS the YES price: side "bid" buys
         // YES at it, side "ask" sells YES at it — which IS buying NO at 1−p.
@@ -3051,7 +3262,7 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
     const placed: any[] = [];
     const errors: any[] = [];
     for (const w of wire) {
-      const r = await ordersSubmitOne(acct, w, key);
+      const r = await ordersSubmitOne(acct, w, key, supaUserOf(req)?.id ?? null);
       (r.ok ? placed : errors).push(r.echo);
     }
     const after = ordersSpent24h(acct);
@@ -3100,6 +3311,9 @@ function pickWire(w: WireOrder) {
  */
 async function ordersSubmitOne(
   acct: PortalAccount, w: WireOrder, key: string,
+  /** The signed-in user this placement belongs to, when there is one. Null on
+   *  a legacy password-only session — see appOrdersRecord. */
+  userId: string | null = null,
 ): Promise<{ ok: boolean; echo: any }> {
   const wireBody: Record<string, unknown> = {
     ticker: w.ticker,
@@ -3193,6 +3407,9 @@ async function ordersSubmitOne(
       } catch { /* offer simply not made this time */ }
     }
     ordersAudit(acct, { event: "placed", key, ticker: w.ticker, order_id: orderId, cost: w.cost, state, ...(nextAsk ?? {}) });
+    // The attributable copy, beside the durable JSONL line. Never awaited:
+    // the exchange already has the order.
+    appOrdersRecord(acct, w, orderId, state, userId);
     return {
       ok: true,
       echo: { ...pickWire(w), order_id: orderId, tif_downgraded: tifDowngraded, state, ...(nextAsk ?? {}) },
@@ -3611,7 +3828,7 @@ app.post("/api/portfolio/cfb/orders/convert", asyncRoute(async (req: Request, re
     }
 
     // --- 7. the take, down the ONE placement path -------------------------
-    const sub = await ordersSubmitOne(acct, w, key);
+    const sub = await ordersSubmitOne(acct, w, key, supaUserOf(req)?.id ?? null);
     const after = ordersSpent24h(acct);
     if (!sub.ok) {
       const payload = {
