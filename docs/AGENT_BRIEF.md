@@ -798,9 +798,103 @@ byte as before. That is also the state the owner trades in today.
   friends`, the owner's Kalshi books). NetworkFeed sits beside it in the same
   console slot — same slot, new source — until the owner's accounts are linked
   and the old one is retired.
-- Routes: `/cfb/me` (profile, share_book, delete via `delete_own_account`) and
-  `/cfb/friends` (exact-handle `find_profile` only — there is no user
-  directory, deliberately). Scoreboard, Top Edges and props stay PUBLIC.
+- Routes: `/cfb/me` (profile, share_book, delete via `delete_own_account`),
+  `/cfb/mybook` (THE DASHBOARD, below) and `/cfb/friends` (a redirect to the
+  dashboard since 2026-09-08). Scoreboard, Top Edges and props stay PUBLIC.
+
+### The 2026-09-08 restructure — username login, ribbon, dashboard
+
+**LOGIN IS A USERNAME.** Supabase Auth needs an address, so ONE function
+derives it and nobody types one: `loginEmailFor(handle)` in `src/lib/
+supabase.ts` = `<handle>@users.mvpeav.com`, lower-case, called by BOTH sign-up
+and sign-in so the two can never disagree about who a username is. Sign-up is
+username + password (>= 10) + an OPTIONAL real email on `profiles.email`
+(migration `20260908_profiles_email.sql`); it claims the name with
+`find_profile` BEFORE creating the auth user (granted to `anon` in
+`20260908_find_profile_anon.sql`, because that check runs signed-out), and the
+derived address is the race-proof second guard — a taken handle IS a taken
+address. There is NO reset UI: no SMTP sender exists, so "Forgot password?"
+says to ask the owner. An input containing "@" signs in VERBATIM — the cutover
+path for accounts made before usernames.
+
+**THE RIBBON OWNS THE ENTRY POINT.** `src/components/AccountMenu.tsx` in
+`Header.tsx`: signed out it opens the AuthPanel in a `--card` slide-down;
+signed in it shows the username over My Book / Profile / Log out. It also
+pulls the account's sizing settings down and mirrors them (below).
+
+**THE SCOREBOARD IS A BETS MENU.** `MyBookPanel` is now a STRIP: login, open
+orders, exposure, the kill switch beside the number it acts on, this board's
+settled record, and the suggestions index. Profile, friends, the network feed,
+unit size and alerts all moved to the dashboard. Two things deliberately did
+NOT move: the settled RECORD (slate-scoped — it cannot be computed on a page
+that loads no week) and the legacy portal PASSWORD login (the owner's way in
+through the cutover).
+
+**THE DASHBOARD** is `src/pages/BookDashboard.tsx` — positions/resting/
+settlements, Kalshi linking, friends (`FriendsPanel`, the old page), the feed
+(`NetworkFeed allWeeks`), settings. Two rules hold it together: it makes NO
+new data fetches (Supabase + the portal payload only — which is why the post
+form's game list comes from `src/lib/slateCache.ts`, written by the scoreboard
+as it goes past), and it prices NOTHING with the sim (portal bets are computed
+with empty slate maps, so Sim EV is an honest "—" and the row says the fair
+values live with the games).
+
+### Users trade their OWN Kalshi account (2026-09-08)
+
+`supabase/migrations/20260908_kalshi_credentials.sql` + the linking block in
+`server/liveScores.ts` + `src/components/KalshiLinkCard.tsx`.
+
+- Storage: RLS ON with **zero policies** and revoked grants, so no client role
+  can read the table at all. The PEM is **AES-256-GCM** under
+  `KALSHI_CRED_SECRET` (base64, 32 bytes), fresh 12-byte IV per write. No
+  route returns the PEM in any form; the key id comes back masked to 4.
+- `POST/GET/DELETE /api/me/kalshi` require a verified bearer. A link is
+  **proven before it is stored**: the PEM must parse AND fetch that account's
+  own `/portfolio/balance` through the same `portalGet` every signed read uses.
+- Resolution is a middleware (`portalLinkedUser`), because `portalGate` is
+  synchronous and the lookup is not. `CFB_PORTAL_OWNERS` **still wins**; a
+  linked user resolves to `u:<uid>` and every rail applies unchanged. The
+  KeyObject caches 10 min per uid; the PEM text is never cached.
+- Every linked user is **DRY-RUN until `CFB_ORDERS_LIVE_USERS=1`** — one env
+  switch, the same never-inherited staging a suffixed account gets. An
+  undecryptable row answers 403 `credentials_unreadable`, never `not_a_trader`.
+- The card carries a collapsible first-timer walkthrough with optional
+  screenshots at `public/help/kalshi/stepN.png` (a missing file hides its own
+  image via `onError` — never a broken-image icon; see that folder's README).
+
+### A friend never sees another user's money (2026-09-08)
+
+`supabase/migrations/20260908_units.sql`. Everything one user sees about
+another's bets is in **units of that user's own unit size**, and the unit size
+is **private**. Price stays: it is the exchange's information, not the
+bettor's.
+
+- `profiles.unit_size` / `sizing_mode` / `risk_multiple` are NOT granted to any
+  client role. Postgres will not let a column REVOKE cut a hole in a
+  table-level grant, so the table SELECT is revoked and re-granted COLUMN BY
+  COLUMN without them — which is why `select *` on profiles is now a client
+  error and every read names its columns.
+- The owner of the row reaches them through `my_settings()` /
+  `set_my_settings()` only — SECURITY DEFINER on `auth.uid()`, taking no user
+  id, so neither can be pointed at anyone else.
+- `feed_items` carries units/side/market/line/price/note/ticker/time/poster and
+  NOTHING else, for every row including the viewer's own: no branch that could
+  leak the wrong way. `app_orders.units` is written server-side as
+  `cost / the poster's unit size`; a unit it cannot read leaves NULL and the
+  feed shows no size rather than a made-up 1u.
+- Client: `src/lib/userSettings.ts` reads and writes through those RPCs and
+  MIRRORS into the existing localStorage prefs, because the scoreboard reads
+  the unit synchronously at mount. The mirror lands on the next mount — that
+  is the honest limit and the dashboard's wording says so.
+- The ONE place dollars still cross accounts is the legacy env-paired Kalshi
+  friend feed (`FriendBooks.tsx`, owner decision 2026-09-01: full stakes and
+  P&L between the owner's own MP/ROTH accounts). It is env-declared, not a
+  user feature; convert it to units if that decision ever changes.
+
+| where | var | what it is |
+|---|---|---|
+| Render (server) | `KALSHI_CRED_SECRET` | base64, 32 bytes. Absent => linking answers 503 and nothing else changes |
+| Render (server) | `CFB_ORDERS_LIVE_USERS` | `1` lets LINKED users' confirmed orders reach Kalshi. Default staged |
 
 ### The held-book display (`src/components/MyBook.tsx`) — bar-test rules
 

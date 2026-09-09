@@ -87,8 +87,29 @@ query, RLS-filtered.
 Render (server): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CFB_PORTAL_OWNERS`.
 Build (client): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
 
-## Phase 2 (not built now)
+## Phase 2 — BUILT 2026-09-08 (per-user Kalshi linking)
 
-Per-user Kalshi linking: key id + PEM encrypted with pgsodium / Vault, decrypted
-only by the server; per-user live flag and caps; the feed can then show a linked
-user's real book. Explicit opt-in, separate review.
+Shipped as described, with node crypto rather than pgsodium: the PEM is
+AES-256-GCM under `KALSHI_CRED_SECRET` in `kalshi_credentials`, a table with
+RLS on and no policies (service role only). `POST /api/me/kalshi` proves the
+pair against `/portfolio/balance` before storing anything and sets
+`is_trader`; the portal gate resolves a linked user to `u:<uid>` with every
+existing rail, and `CFB_ORDERS_LIVE_USERS` is the one switch that takes those
+users off dry run. `CFB_PORTAL_OWNERS` still wins for the owner's uids.
+
+The feed does NOT show a linked user's real book, and that is now a rule
+rather than a phase: see below.
+
+## Owner rules added 2026-09-08 (evening)
+
+1. **Login is a username.** The auth address is derived from the handle
+   (`<handle>@users.mvpeav.com`); a real email is optional, lives on
+   `profiles.email`, and is never a credential. No reset UI — no sender exists.
+2. **One ribbon control** is the entry point to accounts on every page.
+3. **The scoreboard is a bets menu**; everything about the person lives on the
+   `/cfb/mybook` dashboard (positions, Kalshi linking, friends, feed,
+   settings). `/cfb/friends` redirects there.
+4. **A friend never sees another user's money.** Units of the poster's own
+   unit, plus the market price — never counts, costs, fills or dollars. The
+   unit size itself is a private column reachable only through
+   `my_settings()` / `set_my_settings()`.
