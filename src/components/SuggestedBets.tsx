@@ -121,6 +121,7 @@ import type { BetTypeFilter, ModeFilter } from "../lib/ownerPrefs";
 import { declaredOrderCap } from "../lib/ownerPrefs";
 import UnitModeControl from "./UnitModeControl";
 import DryRunBadge from "./DryRunBadge";
+import FriendsOnGame from "./FriendsOnGame";
 import type { SuggestSection } from "../lib/useSuggestions";
 // The week-2 decision rules — LABELS ONLY (src/lib/edgeRules.ts). The panel
 // reads the verdict off the row; it never re-derives one.
@@ -953,7 +954,7 @@ export default function GameBetsPanel({
   token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
   showTails, onShowTails, regime, edgeRules, onEdgeRules, engine, trend, onProject,
-  homeTeam, awayTeam, league,
+  homeTeam, awayTeam, league, gameSlug,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
@@ -1008,6 +1009,11 @@ export default function GameBetsPanel({
   awayTeam?: string;
   /** Which league this card is on ("fbs" / "fcs"). Attribution only. */
   league?: LeagueId;
+  /** THIS CARD'S KEY, which is what a placement from it files itself under
+   *  (`app_orders.game_slug`) — so it is also how the friends-on-this-game
+   *  strip finds the rows. Optional: a harness that passes none simply gets
+   *  no strip. */
+  gameSlug?: string;
 }) {
   /** Whether the week-1 rulebook can describe this board at all. */
   const rulebookOk = rulesApplyFor(engine);
@@ -1032,6 +1038,11 @@ export default function GameBetsPanel({
     // 2026-08-29. Every child already knows how to give: the headline wraps,
     // the sizing text ellipses, the chip rows wrap.
     <div style={{ display: "grid", gap: 7, minWidth: 0 }}>
+      {/* WHO ELSE IS ON THIS GAME, first — a friend's position is context for
+          the rows underneath it. Renders nothing when nobody the viewer can
+          see has a bet here (src/components/FriendsOnGame.tsx). */}
+      <FriendsOnGame slug={gameSlug} />
+
       <FilterChips
         modeFilter={modeFilter} onModeFilter={onModeFilter}
         typeFilter={typeFilter} onTypeFilter={onTypeFilter}

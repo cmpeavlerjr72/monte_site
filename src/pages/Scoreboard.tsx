@@ -61,6 +61,7 @@ import {
   computeSettlementRecord, buildSlatePairs, parseNcaafTicker, buildCodeToSlug, buildPortalYesP,
   type PortalBet, type PortalTotals, type SeedPair,
 } from "../lib/kalshiPortal";
+import { TailProvider, type TailCtx } from "../components/TailButton";
 import LegPicker from "../components/LegPicker";
 import ParlaySlip from "../components/ParlaySlip";
 import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
@@ -2819,6 +2820,30 @@ function ScoreboardPage() {
     nowMs,
   });
 
+  /**
+   * THE TAIL CONTEXT for the friends-on-this-game strip inside a Bets panel
+   * (src/components/TailButton.tsx). Everything in it is page state this file
+   * already holds — and `quotes` is THIS compute's own candidate map, so a
+   * Tail button and the rows beneath it price a market with one opinion.
+   */
+  const tailCtx: TailCtx = useMemo(() => ({
+    quotes: suggestions.quoteByTicker,
+    feeParams: kalshiFees,
+    unit,
+    sizing,
+    token: portalToken,
+    ordersLive: portal.payload?.orders_live === true,
+    viewerId: authSession?.user?.id ?? null,
+    blocked: !signedIn && !portalToken ? "sign in to tail"
+      : portal.status === "forbidden" ? "link a Kalshi key to tail"
+      : portal.status === "ok" ? null
+      : "your book is unreachable",
+    quotedAt: suggestions.computedAt,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [suggestions.quoteByTicker, suggestions.computedAt, kalshiFees, unit,
+       sizing.mode, sizing.maxRiskMultiple, portalToken, portal.status,
+       portal.payload?.orders_live, authSession?.user?.id, signedIn]);
+
   const openIdx = useMemo(
     () => (openPanel ? filteredCards.findIndex((c) => c.key === openPanel.key) : -1),
     [openPanel, filteredCards]
@@ -2991,8 +3016,13 @@ function ScoreboardPage() {
                 // through the host: it needs page state (filters, unit,
                 // token, the compute) that no other panel does.
                 betsPanel={openPanel.kind === "bets" && ownerOn ? (
+                  <TailProvider value={tailCtx}>
                   <GameBetsPanel
                     section={suggestions.bySlug.get(openCard.key)}
+                    /* The key a placement from this card files itself under —
+                       and therefore how the friends-on-this-game strip finds
+                       who else is on it. */
+                    gameSlug={openCard.key}
                     browse={suggestions.browseBySlug.get(openCard.key) ?? NO_BROWSE_ROWS}
                     verdict={suggestions.pregameBySlug.get(openCard.key)}
                     hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}
@@ -3023,6 +3053,7 @@ function ScoreboardPage() {
                       t,
                     )}
                   />
+                  </TailProvider>
                 ) : null}
               />
             </div>
