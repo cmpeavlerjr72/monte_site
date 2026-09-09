@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import logoLight from "../assets/mvpeav-logo-light.png";
 
 import SupportButton from "../components/SupportButton";
+import AccountMenu from "./AccountMenu";
 
 export default function Header() {
   const { pathname } = useLocation();
@@ -128,6 +129,12 @@ export default function Header() {
             </>
           )}
         </nav>
+
+        {/* ACCOUNTS: one control, every page. Signed out it opens the login
+            panel; signed in it names the user and holds My Book / Profile /
+            Log out. Renders nothing at all when accounts are not configured
+            for this build. */}
+        <AccountMenu />
 
         {/* Mobile hamburger -> dropdown (also uses basePath) */}
         <div className="menu-wrap">
