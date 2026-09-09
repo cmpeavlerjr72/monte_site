@@ -33,11 +33,13 @@ import AuthPanel from "../components/AuthPanel";
 import MyBookStrip from "../components/MyBook";
 import { supabaseEnabled, useProfile, useSession } from "../lib/supabase";
 import {
-  cheerLabel, computePortalBets, readPortalToken, usePortalBook,
-  writePortalToken,
+  computePortalBets, readPortalToken, usePortalBook, writePortalToken,
 } from "../lib/kalshiPortal";
-import type { PortalSettlement } from "../lib/kalshiPortal";
 import { useBookPricing } from "../lib/bookPricing";
+import { useBookGames, usePlacedTimes } from "../lib/bookGames";
+import { settledBets } from "../lib/bookTree";
+import BookTree from "../components/BookTree";
+import { fetchMySettings, localSettings } from "../lib/userSettings";
 
 export default function BookDashboard() {
   const { session, loading } = useSession();
@@ -65,6 +67,26 @@ export default function BookDashboard() {
 
   useEffect(() => { document.title = "My Book · MVPeav"; }, []);
 
+  /* ---- the SETTLED TREE's inputs ----
+   * The join to each bet's published game (open spread, open total, kickoff,
+   * conference class) and the app's own order log for entry timing. Both are
+   * keyed on primitive signatures, so the 30s portal poll costs nothing. */
+  const games = useBookGames(portal.settlements);
+  const placed = usePlacedTimes(session?.user?.id ?? null);
+  const settled = useMemo(
+    () => settledBets(portal.settlements, games.byPair, placed),
+    [portal.settlements, games.byPair, placed],
+  );
+
+  /* The UNIT is on the account, not this browser (userSettings.ts rule 1), so
+   * it comes from the settings RPC with the local mirror as the fallback. */
+  const [unit, setUnit] = useState<number>(() => localSettings().unit);
+  useEffect(() => {
+    let alive = true;
+    fetchMySettings().then((v) => { if (alive && v) setUnit(v.unit); });
+    return () => { alive = false; };
+  }, [session?.user?.id]);
+
   if (!supabaseEnabled) {
     return (
       <Page>
@@ -86,7 +108,7 @@ export default function BookDashboard() {
   }
 
   return (
-    <Page who={`@${profile?.handle}`}>
+    <Page who={profile?.handle}>
       <Section
         title="My positions"
         note="Held bets and resting orders, live from Kalshi.">
@@ -97,11 +119,22 @@ export default function BookDashboard() {
           status={portal.status}
           bets={book.bets}
           totals={book.totals}
-          settlements={portal.settlements}
           accountLabel={portal.payload?.account_label}
           ordersLive={portal.payload?.orders_live === true}
         />
       </Section>
+
+      {settled.length > 0 && (
+        <Section
+          title="Settled"
+          note="The whole account, cut the way the sim is graded.">
+          <SettledTree
+            bets={settled} unit={unit}
+            ready={games.ready} joined={games.joined}
+            withLine={games.withLine} total={games.total}
+          />
+        </Section>
+      )}
 
       <Section
         title="Elsewhere"
@@ -119,8 +152,7 @@ export default function BookDashboard() {
 /* ------------------------------- positions ------------------------------- */
 
 function Positions({
-  token, onToken, status, bets, totals, settlements, accountLabel, ordersLive,
-  pricingReady,
+  token, onToken, status, bets, totals, accountLabel, ordersLive, pricingReady,
 }: {
   token: string;
   /** False until the week docs have answered — a book-wide "no sim" that is
@@ -130,7 +162,6 @@ function Positions({
   status: ReturnType<typeof usePortalBook>["status"];
   bets: ReturnType<typeof computePortalBets>["bets"];
   totals: ReturnType<typeof computePortalBets>["totals"];
-  settlements: PortalSettlement[] | null;
   accountLabel?: string;
   ordersLive: boolean;
 }) {
@@ -224,55 +255,53 @@ function Positions({
           </span>
         </>
       )}
-
-      <Settled rows={settlements} />
     </div>
   );
 }
 
-/** The realised half, in the same words the book uses. Fee-inclusive by the
- *  standing rule: revenue − cost − fees, never a fee-blind number. */
-function Settled({ rows }: { rows: PortalSettlement[] | null }) {
-  const [open, setOpen] = useState(false);
-  if (!rows || rows.length === 0) return null;
-  const net = (s: PortalSettlement) => s.revenue - s.cost - s.fees;
-  const total = rows.reduce((a, s) => a + net(s), 0);
-  const wins = rows.filter((s) => net(s) > 0).length;
-  const losses = rows.filter((s) => net(s) < 0).length;
-  const money = (n: number) => `${n < 0 ? "−" : "+"}$${Math.abs(n).toFixed(2)}`;
-  const shown = open ? rows.slice(0, 60) : rows.slice(0, 6);
+/* ------------------------------- settled tree ----------------------------- */
 
+/**
+ * THE SETTLED TREE (owner, 2026-09-09 12:15 AM). It replaces the flat
+ * "Settled 5W-6L −$54.02" block that stood here: a headline plus one line per
+ * bet type could say WHAT lost, never WHERE — which regime, which side, which
+ * band, which week — and "where" is the whole question the regime scorecard
+ * exists to answer (scripts/regime_scorecard.py, owner rule 2026-09-08).
+ *
+ * The cuts are that scorecard's FIXED cells, applied to the account's own
+ * money. Dollars are right here and only here: this is the owner's book, not a
+ * backtest's unit ledger, so the tree prints real dollars with the profile's
+ * unit beside them.
+ *
+ * The JOIN RATE is stated, never assumed. A settled market reaches its open
+ * spread, open total, kickoff and conference class only through the published
+ * week files; one that joins nothing still counts, under its family, marked
+ * "no line" — and the line under the tree says how many of them there are,
+ * because a cut computed on two thirds of a book is a different claim from one
+ * computed on all of it.
+ */
+function SettledTree({ bets, unit, ready, joined, withLine, total }: {
+  bets: ReturnType<typeof settledBets>;
+  unit: number;
+  ready: boolean;
+  joined: number;
+  withLine: number;
+  total: number;
+}) {
   return (
-    <div style={{ display: "grid", gap: 4, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-        <span style={LABEL}>Settled</span>
-        <span style={{ fontSize: 11 }}>
-          {wins}W–{losses}L ·{" "}
-          <b style={{ color: total >= 0 ? "var(--pos)" : "var(--neg)" }}>{money(total)}</b>
-        </span>
-        {rows.length > shown.length && (
-          <button type="button" className="ui-btn" onClick={() => setOpen(true)}
-                  style={{ ...BTN, marginLeft: "auto" }}>
-            Show all {rows.length}
-          </button>
-        )}
-      </div>
-      {shown.map((s, i) => {
-        const n = net(s);
-        return (
-          <div key={`${s.ticker}|${s.settled_time}|${i}`} style={{
-            display: "flex", gap: 8, alignItems: "center", minHeight: 26,
-            fontSize: 11, flexWrap: "wrap",
-          }}>
-            <span style={{ minWidth: 0, flex: "1 1 160px" }}>
-              {cheerLabel(s.ticker, s.yes_count >= s.no_count ? "yes" : "no")}
-            </span>
-            <span style={{ fontWeight: 800, color: n >= 0 ? "var(--pos)" : "var(--neg)" }}>
-              {money(n)}
-            </span>
-          </div>
-        );
-      })}
+    <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+      <BookTree bets={bets} unit={unit} />
+      <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+        {!ready
+          ? "Joining these to their published games…"
+          : `${joined} of ${total} settled markets joined a published game; ` +
+            `${withLine} of those carry a book open spread. The rest still count — ` +
+            "they sit under their family, marked \"no line\", and every regime cut " +
+            "says how many it could not place."}
+        {unit > 0
+          ? ` Units are at your $${unit.toFixed(2)} unit, from your profile.`
+          : " Set a unit size on your profile to see these in units."}
+      </span>
     </div>
   );
 }

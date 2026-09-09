@@ -1541,3 +1541,347 @@ input:focus, select:focus, textarea:focus {
   .feed__row { column-gap: 6px; }
   .feed__pop { margin-left: 6px; }
 }
+
+/* ------------------------------------------------------------------------
+   THE SETTLED TREE (src/components/BookTree.tsx, route /mybook)
+
+   Every row of the tree is the same shape at every depth: cut name, ONE bar
+   on ONE axis, the money, the sample. Depth is carried by indent alone —
+   giving each level its own type scale would make two comparable cells look
+   like different kinds of fact.
+
+   Tokens only, both themes. --pos/--neg here mean the sign of a return and
+   nothing else; the bar also carries the sign as POSITION (left or right of
+   the centre line), so no verdict is colour-alone.
+   ------------------------------------------------------------------------ */
+.booktree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.booktree__groups { display: flex; flex-direction: column; gap: 4px; }
+.booktree__group { display: flex; flex-direction: column; gap: 1px; }
+
+/* The cut's own name — a label, not a row: it has no numbers, so it must not
+   look like something with numbers. */
+.booktree__grouphead {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin: 4px 0 1px 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.booktree__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 9px;
+  border: 1px solid transparent;
+}
+.booktree__row[data-depth="0"] {
+  min-height: 40px;
+  border-color: color-mix(in oklab, var(--brand) 35%, var(--border));
+  background: color-mix(in oklab, var(--brand) 8%, var(--card));
+}
+.booktree__row[data-depth="1"] { margin-left: 6px; }
+.booktree__row[data-depth="2"] { margin-left: 14px; }
+.booktree__row[data-depth="3"] { margin-left: 22px; }
+.booktree__row[data-sel="true"] {
+  border-color: var(--brand);
+  background: color-mix(in oklab, var(--brand) 7%, var(--card));
+}
+/* UNDERPOWERED: shown, dimmed, and said out loud in the popover. Opacity
+   alone (not a colour swap) so the sign of the bar survives it. */
+.booktree__row[data-weak="true"] { opacity: 0.62; }
+
+.booktree__twist {
+  flex: 0 0 20px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.booktree__twist--leaf { cursor: default; }
+
+.booktree__main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 2px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.booktree__row[data-depth="0"] .booktree__main { min-height: 38px; }
+.booktree__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.booktree__row[data-depth="0"] .booktree__label { font-weight: 800; }
+
+/* THE ONE AXIS. Fixed width at every depth, zero in the middle: bar length is
+   comparable between any two rows in the tree, which is the whole point of a
+   shared axis. */
+.booktree__bar {
+  position: relative;
+  flex: 0 0 64px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--fill);
+  overflow: hidden;
+}
+.booktree__axis {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+.booktree__fill {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 3px;
+  background: var(--muted);
+}
+.booktree__fill[data-tone="pos"] { background: color-mix(in oklab, var(--pos) 82%, var(--text)); }
+.booktree__fill[data-tone="neg"] { background: color-mix(in oklab, var(--neg) 82%, var(--text)); }
+
+/* The money and the same money in units — STACKED, never a number-pair
+   sideways: each line reads as a labelled quantity by its position. */
+.booktree__money {
+  flex: 0 0 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
+}
+.booktree__net { font-size: 12.5px; font-weight: 800; color: var(--mybook-dim); }
+.booktree__net[data-tone="pos"] { color: color-mix(in oklab, var(--pos) 82%, var(--text)); }
+.booktree__net[data-tone="neg"] { color: color-mix(in oklab, var(--neg) 82%, var(--text)); }
+.booktree__units { font-size: 9.5px; font-weight: 700; color: var(--muted); }
+
+/* The SAMPLE the money came from. Dim, and it never takes --pos/--neg: it is
+   not a second verdict. */
+.booktree__sample {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
+  color: var(--mybook-dim);
+}
+.booktree__n { font-size: 10px; font-weight: 700; }
+.booktree__hit { font-size: 9.5px; font-weight: 700; color: var(--muted); }
+
+.booktree__info {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+  padding: 0;
+}
+.booktree__info--btn {
+  min-height: 28px;
+  height: 28px;
+  width: 22px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.booktree__pop {
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.booktree__close { justify-self: start; padding: 1px 7px; font-size: 10.5px; }
+
+/* The selection bar: what "Show bets" would show, before it is pressed. */
+.booktree__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.booktree__selname {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.booktree__seln { font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.booktree__actions .ui-btn { margin-left: auto; }
+
+/* THE PULL-UP. Bottom sheet on a phone, right-hand panel from 720px up —
+   one component, the difference is here. */
+.booktree__sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  border-radius: 14px 14px 0 0;
+  background: var(--card);
+  box-shadow: 0 -8px 26px var(--shadow);
+}
+@media (min-width: 720px) {
+  .booktree__sheet {
+    left: auto;
+    top: 0;
+    bottom: 0;
+    width: 420px;
+    max-height: none;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+    border-radius: 14px 0 0 14px;
+    box-shadow: -8px 0 26px var(--shadow);
+  }
+}
+.booktree__sheethead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.booktree__sheettitle { font-size: 13px; font-weight: 800; }
+.booktree__sheetsum { font-size: 11px; color: var(--muted); }
+.booktree__sheetx { margin-left: auto; padding: 2px 9px; font-size: 11px; }
+.booktree__sheetbody {
+  overflow-y: auto;
+  padding: 4px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.booktree__bet {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+}
+.booktree__betwhen { flex: 0 0 40px; font-size: 10px; font-weight: 700; color: var(--muted); }
+.booktree__betmain {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.booktree__betmatch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.booktree__betlogos { display: inline-flex; gap: 1px; }
+.booktree__betlogos img { border-radius: 2px; }
+.booktree__betside {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.booktree__betfam {
+  display: inline-block;
+  margin-right: 5px;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.booktree__betprice {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--mybook-dim);
+}
+.booktree__betcost { font-size: 9.5px; font-weight: 600; color: var(--muted); }
+/* The result as a SHAPE, repeating the sign the money already carries. */
+.booktree__betmark { flex: 0 0 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.booktree__betmark[data-tone="pos"] { background: var(--pos); }
+.booktree__betmark[data-tone="neg"] { background: var(--neg); border-radius: 1px; }
+.booktree__betnet {
+  flex: 0 0 66px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--mybook-dim);
+}
+.booktree__betnet[data-tone="pos"] { color: color-mix(in oklab, var(--pos) 82%, var(--text)); }
+.booktree__betnet[data-tone="neg"] { color: color-mix(in oklab, var(--neg) 82%, var(--text)); }
+
+@media (max-width: 400px) {
+  .booktree__bar { flex-basis: 46px; }
+  .booktree__money { flex-basis: 68px; }
+  .booktree__sample { flex-basis: 38px; }
+}

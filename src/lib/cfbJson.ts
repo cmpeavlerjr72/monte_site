@@ -433,6 +433,35 @@ export type CompactJson = {
   hist?: Record<string, { start: number; end: number; count: number }[]>;
 };
 
+/**
+ * ONE game's summary.json, memoized.
+ *
+ * `getJsonWeekGames` already joins every row to its summary, but a consumer
+ * that only wants the odds block for a HANDFUL of games (the settled tree on
+ * /mybook, joining its bets to their open spread and total) would be fetching
+ * a whole slate to read three fields off four games. Same parse, same
+ * tolerance for a missing file (null, never a throw), one file at a time.
+ */
+const summaryCache = new Map<string, Promise<GameSummaryJson | null>>();
+
+export function getGameSummaryCached(
+  row: JsonWeekRow,
+  season: Season,
+): Promise<GameSummaryJson | null> {
+  const key = `${season}/${row.summary_path}`;
+  const memo = summaryCache.get(key);
+  if (memo) return memo;
+  const promise = (async () => {
+    try {
+      return parseSummary(await fetchJson(await dataUrl(row.summary_path, season)));
+    } catch {
+      return null;   // unpublished / unreachable: the caller says "no line"
+    }
+  })();
+  summaryCache.set(key, promise);
+  return promise;
+}
+
 /** Per-game memo: the market block and the distribution panel both want this
  *  file, and it is the largest thing a card fetches. */
 const compactCache = new Map<string, Promise<CompactJson>>();
