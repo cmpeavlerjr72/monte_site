@@ -1495,6 +1495,31 @@ function ConfirmSlip({
     }
   };
 
+  /**
+   * PRICE MOVED — RE-OFFER, NOT A HARD STOP (owner ask 2026-09-08: "it should
+   * say 'price is now X and has value Y, is that okay' so the user can still
+   * place the bet"). The server re-reads the book before signing and refuses
+   * a take whose ask moved past the confirmed price, returning the live book
+   * with the refusal. The slip used to print the new ask and tell the reader
+   * to close, refresh and re-find the row. Now it re-prices THIS rung at the
+   * live ask — net edge after fee, EV per dollar, the money — and offers a
+   * one-press take at that price. Same route, same caps, fresh idempotency
+   * key (a new price is a new decision). Nothing is placed without the press.
+   */
+  const retake = async (r: PlaceEcho, price: number) => {
+    setBusy(true);
+    try {
+      setResp(await placeOrders(
+        token, newIdempotencyKey(),
+        [{ ticker: r.ticker, side: r.side, mode: "take", price_dollars: price, count_fp: r.count }],
+      ));
+    } catch {
+      setResp({ status: 0, body: { error: "network", detail: "Request failed — nothing was sent." } });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const rungs = group.rungs;
   const multi = rungs.length > 1;
   const [edits, setEdits] = useState<Record<string, RungEdit>>(() =>
@@ -1912,10 +1937,70 @@ function ConfirmSlip({
                     {r.ticker} — live book: bid {r.book.yes_bid ?? "—"} / ask {r.book.yes_ask ?? "—"}
                   </div>
                 ))}
-                <div style={{ color: "var(--muted)", fontSize: 11 }}>
-                  Close this, hit Refresh in the index, and re-read the row at
-                  the new price.
-                </div>
+                {/* THE RE-OFFER. For every take the book moved out from under
+                    (or a rest the ask fell onto), re-price this rung at the
+                    live ask and let the reader take it or leave it. */}
+                {body?.rejected?.map((r) => {
+                  if (!r.book || (r.reason !== "book_moved" && r.reason !== "would_cross")) return null;
+                  const rung = rungs.find((x) => x.ticker === r.ticker && x.side === r.side)
+                    ?? rungs.find((x) => x.ticker === r.ticker);
+                  const ask = r.side === "yes" ? r.book.yes_ask : r.book.no_ask;
+                  if (ask === null || ask === undefined || !(ask > 0 && ask < 1)) return null;
+                  const size = r.side === "yes" ? r.book.yes_ask_size : r.book.yes_bid_size;
+                  const n = Math.max(1, Math.floor(r.count));
+                  const series = r.ticker.split("-")[0];
+                  const fee = orderFee(ask, n, false, feeParams[series]);
+                  const risk = round2(ask * n);
+                  const simP = rung?.simP;
+                  const edge = simP === undefined ? null : simP - ask - fee / n;
+                  const evPerDollar = edge === null ? null : edge / ask;
+                  const was = rung?.edge;
+                  const stillPositive = edge !== null && edge > 0;
+                  return (
+                    <div key={`re-${r.client_order_id}`} style={{
+                      display: "grid", gap: 4, marginTop: 4, padding: "6px 8px",
+                      border: "1px solid var(--border)", borderRadius: 8,
+                    }}>
+                      <div style={{ color: "var(--accent)", fontWeight: 800, fontSize: 12 }}>
+                        Price is now {cents(ask)}{size !== null && size !== undefined ? ` (${Math.floor(size)} there)` : ""}
+                        {" "}— you confirmed {cents(r.price_dollars)}.
+                      </div>
+                      <div style={{ fontSize: 11.5, color: "var(--text)", lineHeight: 1.45 }}>
+                        {edge === null ? (
+                          <>At {cents(ask)}, {n} contract{n === 1 ? "" : "s"} risk ${risk.toFixed(2)} + ${fee.toFixed(2)} fee.</>
+                        ) : (
+                          <>
+                            At {cents(ask)} this bet's net edge is{" "}
+                            <strong style={{ color: stillPositive ? "var(--pos)" : "var(--neg)" }}>
+                              {(edge * 100).toFixed(1)}¢
+                            </strong>
+                            {was !== undefined && ` (was ${(was * 100).toFixed(1)}¢)`}, EV{" "}
+                            {evPerDollar !== null && `${evPerDollar >= 0 ? "+" : ""}${evPerDollar.toFixed(3)}`} per $1
+                            — {n} contract{n === 1 ? "" : "s"} risk ${risk.toFixed(2)} + ${fee.toFixed(2)} fee
+                            {simP !== undefined && `, sim ${(simP * 100).toFixed(0)}%`}.
+                            {!stillPositive && " No edge left at this price."}
+                          </>
+                        )}
+                      </div>
+                      <div>
+                        <button
+                          type="button" className="ui-btn" data-on={stillPositive ? "true" : "false"}
+                          disabled={busy}
+                          onClick={() => retake(r, ask)}
+                          style={{ padding: "5px 12px", fontSize: 11.5, fontWeight: 800 }}
+                        >
+                          {busy ? "Sending…" : `Take ${n} @ ${cents(ask)}`}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {!body?.rejected?.some((r) => r.reason === "book_moved" || r.reason === "would_cross") && (
+                  <div style={{ color: "var(--muted)", fontSize: 11 }}>
+                    Close this, hit Refresh in the index, and re-read the row at
+                    the new price.
+                  </div>
+                )}
               </>
             )}
           </div>

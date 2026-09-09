@@ -64,7 +64,12 @@ export type PlaceEcho = {
   reason?: string;
   message?: string;
   http_status?: number;
-  book?: { yes_bid: number | null; yes_ask: number | null; no_bid: number | null; no_ask: number | null };
+  book?: {
+    yes_bid: number | null; yes_ask: number | null; no_bid: number | null; no_ask: number | null;
+    /** Contracts at the best YES ask / YES bid (a NO taker lifts 1 − yes_bid,
+     *  so the NO side's size is the YES bid's). Absent on older servers. */
+    yes_ask_size?: number | null; yes_bid_size?: number | null;
+  };
 };
 
 export type PlaceResponse = {
