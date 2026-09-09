@@ -70,7 +70,10 @@ export type Profile = {
  *  fills are not selected for anyone, including the viewer's own rows, so no
  *  branch here could ever leak them. */
 export type FeedItem = {
-  kind: "pick" | "order";
+  /** Which branch of the union this row came from. "score" is a `feed_events`
+   *  row — a fact about a GAME addressed to whoever is on it, not a placement
+   *  — so it carries a payload and no price, size or ticker. */
+  kind: "pick" | "order" | "score";
   id: number;
   user_id: string;
   handle: string;
@@ -110,7 +113,46 @@ export type FeedItem = {
    *  ("fbs" / "fcs" / "ncaab" / "ncaaw"). Null on every row placed before the
    *  book went sport-agnostic; null means NO CHIP, never a guessed one. */
   sport: string | null;
+  /** The exchange's own order id for an order row, and the order a score
+   *  update is ABOUT for a score row. An opaque identifier, never an amount —
+   *  it is what lets a tail find the bet it copied inside the same
+   *  RLS-filtered result set. Null on a pick and on legacy rows. */
+  order_id: string | null;
+  /** THIS BET IS A COPY of the order with that id. The renderer resolves it
+   *  against the rows it already has: found, the line reads "roth tailed
+   *  mvpeav"; not found (the parent is outside the loaded window, or the
+   *  viewer may not see it), it reads as a tail without naming anyone. */
+  tailed_from: string | null;
+  /** Settled: when the exchange paid, the grade, and the money in the
+   *  poster's OWN units, net of fees. All three null while a bet is open.
+   *  `result` is graded pre-fee (the sign of revenue − cost) to agree with My
+   *  Book's record; `units_net` is fee-inclusive, like every ROI here. */
+  settled_at: string | null;
+  result: "won" | "lost" | "push" | null;
+  units_net: number | null;
+  /** A score row's contents: the score, the period and clock, the bet's side
+   *  in words, and the probability of that side either side of the play.
+   *  Null on every other kind. */
+  payload: FeedScorePayload | null;
   at: string;
+};
+
+/** `feed_events.payload` for kind 'score'. Everything in it is either public
+ *  (a score, a clock) or a RATE (two probabilities) or a unit count — the
+ *  same test every other feed column passes. */
+export type FeedScorePayload = {
+  score?: {
+    home_team?: string; away_team?: string;
+    home?: number; away?: number;
+  };
+  period?: number;
+  clock?: string;
+  /** The bet this update is about, in the words the slip used. */
+  side?: string;
+  prob_before?: number;
+  prob_after?: number;
+  units?: number;
+  [k: string]: unknown;
 };
 
 /** Minimum a stranger lookup returns (find_profile RPC). */
