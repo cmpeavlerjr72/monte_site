@@ -45,6 +45,17 @@
 //     reason lives in the button's tooltip and here — never printed beside
 //     every button on the page.
 //   • History is a sentence list behind "N actions", newest first.
+//   • A SALE IS NOT A WIN (owner 2026-09-09 evening). The owner saw his own
+//     mvpeav Auburn −6.5 settled LOSS sitting beside beatty's Auburn −6.5
+//     reading "+0.16u won" — the same side of the same game — because beatty
+//     bought at 55¢ and SOLD at 85¢ before kickoff. Auburn covered for
+//     nobody. So a position whose rows all closed by a sell is a FLIP: its
+//     word is "flip" in the header and on the row, its meta carries both
+//     prices ("0.32u at 55¢ → sold 85¢", the one arrow in the feed, because
+//     in-and-out IS the fact), and its sentence reads "Sold at 85¢ before
+//     settlement — a flip: +0.16 units, net of fees." The COLOUR still
+//     follows the money: "did it make money" and "how did it end" are two
+//     questions and the feed answers both.
 //
 // THE FILTERING IS THE DATABASE'S JOB. `feed_items` is a security_invoker view
 // over RLS-protected tables, so what comes back is exactly what this viewer may
@@ -429,16 +440,25 @@ function PositionRow({ pos, byOrderId, open, onToggle }: {
   const isTail = Boolean(latest?.tailed_from);
   const u = unitsShort(pos.units);
   const price = pos.avgPrice != null ? `${Math.round(pos.avgPrice * 100)}¢` : null;
+  /** SOLD BEFORE SETTLEMENT — a flip. It did not win the game; it left. */
+  const flip = pos.closedBy === "sell";
+  const exit = pos.exitPrice != null
+    ? `${Math.round(pos.exitPrice * 100)}¢` : null;
   const resultWord = settled
-    ? (pos.net! > 0 ? "won" : pos.net! < 0 ? "lost" : "push") : null;
+    ? (flip ? "flip" : pos.net! > 0 ? "won" : pos.net! < 0 ? "lost" : "push")
+    : null;
 
   const meta: string[] = [];
   const avg = pos.fills > 1 ? " avg" : "";
-  if (u && price) meta.push(`${u} at ${price}${avg}`);
-  else if (u) meta.push(u);
-  else if (price) meta.push(`at ${price}${avg}`);
+  // THE ONE PLACE AN ARROW IS THE FACT (the feed has no other): a flip is two
+  // prices, the one it was bought at and the one it left at, and "55¢ → sold
+  // 85¢" is the whole story of it.
+  const sold = flip && exit ? ` → sold ${exit}` : "";
+  if (u && price) meta.push(`${u} at ${price}${avg}${sold}`);
+  else if (u) meta.push(`${u}${sold}`);
+  else if (price) meta.push(`at ${price}${avg}${sold}`);
+  else if (sold) meta.push(`sold ${exit}`);
   if (pos.fills > 1) meta.push(`${pos.fills} fills`);
-  if (resultWord) meta.push(partly ? `${resultWord} so far` : resultWord);
 
   return (
     <div className={`fdp${open ? " fdp--open" : ""}`}>
@@ -463,6 +483,17 @@ function PositionRow({ pos, byOrderId, open, onToggle }: {
         </span>
         <span className="fdp__meta">
           {meta.join(" · ")}
+          {resultWord && (
+            <>
+              {meta.length > 0 && " · "}
+              <span className={flip ? "fdp__flip" : undefined}
+                    title={flip
+                      ? "Sold before settlement — it never reached a result"
+                      : undefined}>
+                {partly ? `${resultWord} so far` : resultWord}
+              </span>
+            </>
+          )}
           {pos.ev != null && !settled && (
             <>
               {meta.length > 0 && " · "}
@@ -480,6 +511,8 @@ function PositionRow({ pos, byOrderId, open, onToggle }: {
           <span className="fdp__net" style={{ color: toneOf(pos.net!) }}
                 title={partly
                   ? `${pos.settledFills} of ${pos.fills} fills settled so far`
+                  : flip
+                  ? "Sold before settlement — the trade, net of fees, in their own units"
                   : "Settled, net of fees, in their own units"}>
             {sign(pos.net!)}{Math.abs(pos.net!).toFixed(2)}u
           </span>
@@ -606,7 +639,13 @@ type Kind = {
   rail: string | null;
 };
 
-/** On a settlement the colour follows the MONEY (`units_net`), not the word. */
+/** On a settlement the colour follows the MONEY (`units_net`), not the word.
+ *
+ *  A SALE IS ITS OWN KIND (owner 2026-09-09 evening). A position sold before
+ *  kickoff never reached settlement, so it did not win and it did not lose:
+ *  its word is "flip". The colour still follows the money — a profitable flip
+ *  is green — because the tone answers "did this make money", which is a
+ *  different question from "how did it end". */
 function kindOf(item: FeedItem): Kind {
   if (item.kind === "score") return { word: "score", tone: "var(--info)", rail: "var(--info)" };
   if (item.result) {
@@ -615,7 +654,10 @@ function kindOf(item: FeedItem): Kind {
     const tone = item.result === "push" || net === 0 || net == null
       ? "var(--muted)"
       : (net > 0 ? "var(--pos)" : "var(--neg)");
-    return { word: item.result, tone, rail: tone };
+    return {
+      word: item.closed_by === "sell" ? "flip" : item.result,
+      tone, rail: tone,
+    };
   }
   if (item.tailed_from) return { word: "tailed", tone: "var(--accent)", rail: "var(--accent)" };
   return {
@@ -679,11 +721,18 @@ function words(item: FeedItem, tailOf: FeedItem | undefined): string[] {
   if (item.result) {
     const net = item.units_net != null && Number.isFinite(item.units_net)
       ? item.units_net : null;
-    const word = item.result === "won" ? "Won"
-      : item.result === "lost" ? "Lost" : "Push";
-    out.push(net != null
-      ? `${word}: ${sign(net)}${Math.abs(net).toFixed(2)} units, net of fees.`
-      : `${word}.`);
+    const money = net != null
+      ? `: ${sign(net)}${Math.abs(net).toFixed(2)} units, net of fees.` : ".";
+    if (item.closed_by === "sell") {
+      // NOT "won". The bet was sold and the game was played without it.
+      const at2 = item.exit_price != null && Number.isFinite(item.exit_price)
+        ? ` at ${Math.round(item.exit_price * 100)}¢` : "";
+      out.push(`Sold${at2} before settlement — a flip${money}`);
+    } else {
+      const word = item.result === "won" ? "Won"
+        : item.result === "lost" ? "Lost" : "Push";
+      out.push(`${word}${money}`);
+    }
   }
   if (item.note) out.push(`“${item.note}”`);
   const tail = [leagueLabel(item.sport), ago(item.at)].filter(Boolean).join(" · ");

@@ -73,6 +73,17 @@ export type FeedPosition = {
    *  none has. `settledFills` says how much of the position that covers. */
   net: number | null;
   settledFills: number;
+  /** HOW IT ENDED, folded from the rows that ended (null while none has).
+   *  'sell' is a FLIP — sold before settlement, so it never won or lost the
+   *  game — and a position earns that word only when EVERY row that closed is
+   *  sell-closed. MIXED (some sold, some held to the whistle) reads as
+   *  'settlement': the position did reach settlement, part of it settled
+   *  there, and calling the whole thing a flip would be the same overclaim in
+   *  the other direction. */
+  closedBy: "settlement" | "sell" | null;
+  /** The contract-weighted mean price the closed part LEFT at, in dollars.
+   *  Null unless `closedBy` is 'sell' — a settlement has no exit price. */
+  exitPrice: number | null;
   /** The sim's verdict on the NEWEST fill: EV per $1 after the fee, and P(yes).
    *  A position's opinion is its latest row's — the rows underneath are in
    *  `items` for a reader who wants every fill. */
@@ -115,7 +126,13 @@ export function orderSide(i: FeedItem): "yes" | "no" | null {
 export function positionsOf(
   items: FeedItem[], tailCounts?: Map<string, number>,
 ): FeedPosition[] {
-  const by = new Map<string, FeedPosition & { wSum: number; pSum: number }>();
+  const by = new Map<string, FeedPosition & {
+    wSum: number; pSum: number;
+    /** The exit price's own weighted sum, over the sell-closed rows only. */
+    xwSum: number; xpSum: number;
+    /** How the closed rows closed — the two counts decide `closedBy`. */
+    sold: number; held: number;
+  }>();
   for (const i of items) {
     if (i.kind === "score") continue;
     const key = `${i.user_id}|${contractKey(i)}`;
@@ -134,11 +151,11 @@ export function positionsOf(
         label: compactBet(i),
         ticker: i.ticker, side: orderSide(i), orderId: i.order_id,
         avgPrice: null, units: null, fills: 0, tails: 0, lastMs: ms,
-        net: null, settledFills: 0,
+        net: null, settledFills: 0, closedBy: null, exitPrice: null,
         ev: null, simP: null, items: [],
         sport: i.sport, home_team: i.home_team, away_team: i.away_team,
         game_slug: i.game_slug, season: i.season, week: i.week, title: i.title,
-        wSum: 0, pSum: 0,
+        wSum: 0, pSum: 0, xwSum: 0, xpSum: 0, sold: 0, held: 0,
       };
       by.set(key, p);
     }
@@ -152,6 +169,16 @@ export function positionsOf(
     if (i.result && i.units_net != null && Number.isFinite(i.units_net)) {
       p.net = (p.net ?? 0) + i.units_net;
       p.settledFills += 1;
+      // A row that ended before `closed_by` existed ended at settlement —
+      // that is what every ended row in the table did until a sale could be
+      // recorded — so only an explicit 'sell' counts as sold.
+      if (i.closed_by === "sell") {
+        p.sold += 1;
+        if (i.exit_price != null && Number.isFinite(i.exit_price)) {
+          p.xwSum += w;
+          p.xpSum += w * i.exit_price;
+        }
+      } else p.held += 1;
     }
     if (i.order_id && tailCounts) p.tails += tailCounts.get(i.order_id) ?? 0;
     // NEWEST WINS for everything that describes the position now: which order
@@ -168,8 +195,15 @@ export function positionsOf(
   const out: FeedPosition[] = [];
   for (const p of by.values()) {
     p.avgPrice = p.wSum > 0 ? p.pSum / p.wSum : null;
+    // ALL of it sold, or it is not a flip. See the type: a mixed position
+    // did reach settlement and is described by that.
+    p.closedBy = p.sold + p.held === 0 ? null
+      : p.held === 0 ? "sell" : "settlement";
+    p.exitPrice = p.closedBy === "sell" && p.xwSum > 0
+      ? p.xpSum / p.xwSum : null;
     p.items.sort((a, b) => msOf(b.at) - msOf(a.at));
-    const { wSum: _w, pSum: _p, ...rest } = p;
+    const { wSum: _w, pSum: _p, xwSum: _xw, xpSum: _xp,
+            sold: _s, held: _h, ...rest } = p;
     out.push(rest);
   }
   out.sort((a, b) => b.lastMs - a.lastMs);

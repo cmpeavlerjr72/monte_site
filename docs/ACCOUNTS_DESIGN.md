@@ -166,3 +166,46 @@ block in theme.css):
 - `FeedPosition` gained `ev`, `simP` and `items` (feedBuckets.ts); the game
   card strip (FriendsOnGame) keeps its `.bkt__*` rules untouched.
 
+
+## Owner change 2026-09-09 (evening): a sale is its own kind — FLIP
+
+The owner opened `/feed` and saw his own `mvpeav` **Auburn −6.5** settled as a
+LOSS sitting beside `beatty`'s **Auburn −6.5** reading **+0.16u "won"** — the
+same side of the same game. Both sentences were true of their own row and the
+pair was a lie: beatty bought that contract at 55¢ and **sold it at 85¢ before
+kickoff**. It never reached settlement; Auburn covered for nobody. His words:
+"we need to categorize it specifically as a flip sale".
+
+`scripts/sync_feed_account.py` had always known — it matches sells to buys FIFO
+and prices a sell-close off the sell's own proceeds (a "sell yes" books as a NO
+buy and nets on the spot, so that market's settlement row reads `revenue: 0`
+with the count on both sides, and grading it as a settlement turns a winner
+into a total loss) — but it recorded the fact only in the private `state` JSON,
+which `feed_items` does not select and no client role may read. The fact
+existed and could not reach a reader.
+
+- **Two columns** (`supabase/migrations/20260909_feed_flip.sql`, applied):
+  `app_orders.closed_by` (`'settlement' | 'sell' | null` while open — a partly
+  sold position is still a position) and `app_orders.exit_price`, the
+  per-contract price the position LEFT at in dollars on its own side, null on a
+  settlement because a settlement pays out rather than exits. `feed_items` is
+  `create or replace`d with both **appended** on the order branch and null on
+  the pick and score branches. The money rule is unchanged: `exit_price` is a
+  market price, the same kind of number as `price` — no count, no cost, no
+  fill, no dollars.
+- **The sync writes them** (cfb-props-sim `scripts/sync_feed_account.py`): a
+  sell-closed row gets `closed_by='sell'` and the contract-weighted mean of the
+  sells that closed it, weighted the way `price` is on the way in.
+- **`FeedPosition` gained `closedBy` / `exitPrice`** (feedBuckets.ts). A
+  position is a flip only when EVERY closed row of it was sold; mixed reads as
+  a settlement, because part of it did reach one and the other overclaim is
+  just as wrong.
+- **The feed says flip** (NetworkFeed.tsx): `kindOf` returns the word "flip"
+  for the card header's latest action, the row's result word is "flip" instead
+  of won/lost, the meta reads `0.32u at 55¢ → sold 85¢` — the one arrow in the
+  feed, because in-and-out is the fact — and the tapped sentence reads "Sold at
+  85¢ before settlement — a flip: +0.16 units, net of fees." The COLOUR still
+  follows the money (`--pos`/`--neg`, and the card rail with it): "did it make
+  money" and "how did it end" are two questions and both get answered. The
+  friend-bucket net summary is unchanged; `.bkt__*` (FriendsOnGame) untouched.
+  One new rule, `.fdp__flip`, in the `.fd*` block of theme.css.

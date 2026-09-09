@@ -135,6 +135,18 @@ export type FeedItem = {
    *  Null on every other kind. */
   payload: FeedScorePayload | null;
   at: string;
+  /** HOW THE BET ENDED, and it is not a detail: a position SOLD before
+   *  settlement is a FLIP, not a win. The owner saw his own Auburn −6.5
+   *  settled LOSS beside beatty's Auburn −6.5 reading "+0.16u won" — same
+   *  side, same game — because beatty bought at 55¢ and sold at 85¢ before
+   *  kickoff. Auburn covered for nobody. 'sell' is that flip, 'settlement' is
+   *  a bet held to the whistle, null is open (or partly closed: a partly sold
+   *  position is still a position). `exit_price` is what one contract left
+   *  at, in dollars on the position's own side — a market price like `price`,
+   *  never a quantity of anyone's money — and is null on a settlement,
+   *  because a settlement pays out rather than exiting. */
+  closed_by: "settlement" | "sell" | null;
+  exit_price: number | null;
 };
 
 /** `feed_events.payload` for kind 'score'. Everything in it is either public
