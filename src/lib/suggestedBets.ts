@@ -832,6 +832,119 @@ function sizeSuggestion(
   };
 }
 
+/* ============================== THE TAIL ==================================
+ * Copying a friend's bet, priced by the SAME engine that prices a suggestion.
+ *
+ * A tail is not a new kind of bet and it gets no new kind of arithmetic. It is
+ * a TAKE at the current ask on a contract somebody else already holds, sized
+ * in the TAILER'S own unit, placed on the TAILER'S own account, down the same
+ * confirm slip and the same server route as everything else. The only two
+ * things this section adds are (1) a yes/no gate that refuses to offer a copy
+ * of a bet the sim no longer likes, and (2) the one-rung Suggestion the slip
+ * needs in order to show it.
+ *
+ * WHY A GATE AT ALL (owner 2026-09-08, docs/SOCIAL_ROADMAP.md §1): "the
+ * product is the sim, so the feed only encourages what the sim still likes."
+ * A friend's 41c fill is not an argument for paying 63c an hour later. There
+ * is deliberately NO Fade button — the inverse of a bet the sim dislikes is
+ * not a bet the sim likes.
+ * ========================================================================= */
+
+/** Why a contract cannot be tailed right now, or that it can. `edge` is the
+ *  NET edge per contract at the ask — the number the gate turns on — and is
+ *  null exactly when there is no sim or no book to compute one from. */
+export type TailGate = {
+  ok: boolean;
+  /** The price a tail would cross at, in dollars. Null = nothing to cross. */
+  ask: number | null;
+  edge: number | null;
+  /** One clause, for the muted button: "edge gone at 63c". */
+  why: string;
+};
+
+/**
+ * MAY THIS CONTRACT BE TAILED, and at what price.
+ *
+ * THE GATE IS `simP − ask − takerFeePer(ask) > 0` — character for character
+ * the `edgeTake` line in `priceOne`, which is what the Bets panel decides a
+ * TAKE on. The threshold is the only thing that differs and deliberately so:
+ * a suggestion has to clear the timing band's bar (6c far out, 3c late) to be
+ * WORTH SURFACING unprompted, while a tail is a bet the reader is already
+ * looking at and asking for. Zero is the honest line for "the sim still likes
+ * this at this price"; anything above it would be this file inventing a second
+ * opinion about a bet, and anything below it would be encouraging a negative-EV
+ * copy.
+ *
+ * `quote` is the CANDIDATE for the contract (useSuggestions' `quoteByTicker`):
+ * the sim's P(YES) for the side being tailed and the live book. Undefined means
+ * this compute cannot price the market at all — an unpublished game, a market
+ * with no rung, a game that has kicked and left the pregame gate — and the
+ * button says so instead of guessing.
+ */
+export function tailGate(
+  quote: Candidate | undefined,
+  feeParams: Record<string, FeeParams>,
+): TailGate {
+  if (!quote) {
+    return { ok: false, ask: null, edge: null, why: "no sim for this market" };
+  }
+  const ask = quote.ask;
+  if (ask === null || !(ask > 0) || ask >= 1) {
+    return { ok: false, ask: null, edge: null, why: "no offer to take" };
+  }
+  const edge = quote.simP - ask - takerFeePer(ask, feeParams[quote.series]);
+  const cents = Math.round(ask * 100);
+  return {
+    ok: edge > 0,
+    ask,
+    edge,
+    why: edge > 0
+      ? `sim edge ${(edge * 100).toFixed(1)}c at ${cents}c`
+      : `edge gone at ${cents}c`,
+  };
+}
+
+/**
+ * THE TAIL AS ONE RUNG, ready for the confirm slip.
+ *
+ * Everything about it is the suggestion machinery: `sizeContracts` decides the
+ * count (the ONE sizing kernel — see `sizeSuggestion`), the fee is the
+ * exchange's own, the timing band comes off the same kickoff clock. What makes
+ * it a tail rather than a suggestion is the BUDGET: `unit` here is the poster's
+ * size translated into the tailer's money — the tailer's unit times the units
+ * the poster is on — so copying a friend's 2u bet with a $10 unit stakes $20 of
+ * the tailer's, and a friend's stake never sets a stranger's.
+ *
+ * Mode is always TAKE. A tail rests for nobody: the reader is copying a bet
+ * that exists now, at the price that exists now.
+ */
+export function tailSuggestion(args: {
+  quote: Candidate;
+  /** The price to cross, from `tailGate` — never re-derived here. */
+  ask: number;
+  feeParams: Record<string, FeeParams>;
+  /** The tailer's unit x the poster's units: the dollars this copy may risk. */
+  unit: number;
+  sizing?: Sizing;
+  nowMs?: number;
+}): Suggestion {
+  const { quote, ask, feeParams, unit } = args;
+  const sizing = args.sizing ?? SIZING_DEFAULT;
+  const now = args.nowMs ?? Date.now();
+  const edgePer = quote.simP - ask - takerFeePer(ask, feeParams[quote.series]);
+  const priced: Priced = {
+    ...quote,
+    mode: "TAKE",
+    price: ask,
+    edgePer,
+    timing: timingFor(quote.kickoffMs, now),
+  };
+  return sizeSuggestion(
+    priced, feeParams, unit, isTail(quote.simP, ask), sizing,
+    unit * Math.max(1, sizing.maxRiskMultiple),
+  );
+}
+
 export function buildSuggestions(
   candidates: Candidate[],
   feeParams: Record<string, FeeParams>,

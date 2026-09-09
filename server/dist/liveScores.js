@@ -2661,6 +2661,11 @@ function appOrdersRecord(acct, w, orderId, state, userId) {
         sim_p: w.sim_p ?? null,
         ev_fee: w.ev_fee ?? null,
         sport: w.sport ?? null,
+        // WHOSE BET THIS COPIES (owner 2026-09-09, the Tail button). Deliberately
+        // NOT in ATTR_INHERIT: the parent is a fact about ONE press, so a later
+        // independent order on the same contract must never inherit it and read
+        // as a tail it was not.
+        tailed_from: w.tailed_from ?? null,
         ticker: w.ticker,
         side: w.side,
         mode: w.mode,
@@ -2909,6 +2914,15 @@ function attrText(v) {
         return null;
     return s.length > 120 ? s.slice(0, 120) : s;
 }
+/** An OPAQUE ID for attribution (a Kalshi order id): trimmed, id-shaped, at
+ *  most 80 characters. Null when absent or the wrong shape. Never throws,
+ *  never rejects — a tail whose parent id is malformed is still a bet. */
+function attrId(v) {
+    if (v == null)
+        return null;
+    const s = String(v).trim();
+    return /^[A-Za-z0-9_.:@-]{1,80}$/.test(s) ? s : null;
+}
 /** An attribution number inside `[lo, hi]`, null when absent, not finite, or
  *  out of range. A wrong number in a feed sentence is worse than a blank. */
 function attrNum(v, lo, hi) {
@@ -3009,7 +3023,7 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
                 if (!["ticker", "side", "mode", "price_dollars", "count_fp",
                     "season", "week", "game_slug",
                     "title", "home_team", "away_team", "sim_p", "ev_fee",
-                    "sport"].includes(k)) {
+                    "sport", "tailed_from"].includes(k)) {
                     bad(400, { error: "unexpected_field", detail: `orders[${i}]: "${k}"` });
                     return;
                 }
@@ -3073,6 +3087,10 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
                 sim_p: attrNum(o.sim_p, 0, 1),
                 ev_fee: attrNum(o.ev_fee, -5, 5),
                 sport: SPORT_IDS.has(String(o.sport ?? "")) ? String(o.sport) : null,
+                // THE BET THIS ONE COPIES. An exchange order id, so the shape test is
+                // the shape of an id and nothing more; anything else is dropped and
+                // the order is still placed, as an ordinary bet rather than a tail.
+                tailed_from: attrId(o.tailed_from),
                 client_order_id: `${ORDERS_TAG}${key}-${i}`,
                 // `price` on this endpoint is ALWAYS the YES price: side "bid" buys
                 // YES at it, side "ask" sells YES at it — which IS buying NO at 1−p.

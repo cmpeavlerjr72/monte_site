@@ -7,21 +7,42 @@
 // reaches your friends by being placed, not by being typed twice.
 //
 // ────────────────────────────────────────────────────────────────────────────
+// THE UNIT OF THE FEED IS THE GAME (owner 2026-09-09, ~12:55 AM)
+//
+// It used to be a chronological list of rows under day headings. Nobody
+// watching football asks "what happened next"; they ask "who is on this game".
+// So the feed is a list of GAME BUCKETS, ordered by the time of the latest
+// action in each — a new bet on an old game bumps that game back to the top —
+// and each bucket answers both questions at once:
+//
+//   ▎🏈 [logo][logo] Rutgers at Ohio State                    TAIL · 2m
+//     ▎roth ᵃ   🏈 [logos] ↳ mvpeav  Rutgers o23.5 · 61¢ · 1u   TAIL 2m
+//     ── who's on it ─────────────────────────────────────────────────
+//     mvpeav ᵃᵇ  Rutgers o23.5    2.5u @ 39¢ avg  ↳1   4m   [Tail]
+//     roth       Rutgers o23.5    1u   @ 61¢          2m
+//     Show all 6
+//
+// THE HEADER SAYS WHAT JUST HAPPENED — the kind rail and the kind tag are the
+// LATEST action's, not the bucket's — and the latest action is then repeated
+// underneath as its own full glanceable row, in the row style shipped
+// tonight. Everything else in the bucket is one press away ("Show all"), in
+// the same rows, chronologically.
+//
+// A POSITION, NOT A FILL. The summary folds a poster's rows on one contract
+// into one line: total units, and the UNITS-WEIGHTED AVERAGE PRICE across them
+// (owner: "when there are multiple at different prices show the average"). A
+// ladder placed as two rungs, a partial fill chased at the next price and a
+// re-offer taken a cent higher are one bet in a bettor's head; the fold is in
+// src/lib/feedBuckets.ts, shared with the scoreboard's "friends on this game"
+// strip so the two surfaces can never tell different stories.
+//
+// ────────────────────────────────────────────────────────────────────────────
 // THE FACE OF A ROW IS GLYPHS AND NUMBERS. THE SENTENCE IS ON TAP.
 // (owner 2026-09-09, the "drunk at a bar" rule + the Team Stats v3 house style)
 //
-// This surface used to render one English sentence per row:
+//   ▎mvpeav ᵃᵇ   🏈 [logo][logo] Rutgers o23.5 · 59¢ · 1.5u · EV +0.21  PLACED 4m
 //
-//     🏈 mvpeav placed 1.5 units on Rutgers over 23.5 points at 59¢
-//        sim EV +0.21 per $1 · sim 63% · FBS FOOTBALL · 4 min ago
-//
-// which is a good sentence and a bad glance. Nothing in it is lost — it is now
-// what a tap on the row reveals — but the FACE of the card is the four things
-// a reader wants at arm's length: WHO, WHICH GAME, WHAT BET, HOW IT IS GOING.
-//
-//   ▎@mvpeav ᵃᵇ   🏈 [logo][logo] Rutgers o23.5 · 59¢ · 1.5u · EV +0.21  PLACED 4m
-//
-// FOUR RULES HOLD THE LAYOUT TOGETHER:
+// FOUR RULES HOLD THE ROW TOGETHER:
 //
 //  1. HANGING INDENT. Two columns: a fixed overhang carrying ONLY the handle
 //     and its flares, and a content block that starts at the end of it and
@@ -45,6 +66,17 @@
 //     is done the answer is the money, so "+1.45u" in the result's colour
 //     outweighs everything else on the line it belongs to.
 //
+// THE ARROWS ARE READ AT ARM'S LENGTH (owner 2026-09-09). ↳ and ↑ ↓ → carry
+// the two facts a glance is FOR — this is a copy of someone's bet, this bet
+// just got better or worse — and at row size they were decoration. They are
+// 1.35× the row's font, heavy, coloured (tail = --accent, a move = --pos /
+// --neg / --muted), and each one carries its own one-line tooltip, because a
+// glyph that means something must be able to say what.
+//
+// HANDLES ARE BARE (owner 2026-09-09). No "@" anywhere on this surface: the
+// handle is the person's name here, not a mention, and the sigil was one more
+// mark to read on every single line.
+//
 // THE FILTERING IS THE DATABASE'S JOB, not this component's. `feed_items` is a
 // security_invoker view over RLS-protected tables, so what comes back is
 // already exactly what this viewer may see. There is no client-side "is this
@@ -56,21 +88,16 @@
 // 2026-09-08). Nothing on this surface can print a count, a cost or a fill,
 // because the query it reads does not select one.
 //
-// GROUPED BY DAY, newest first: the feed is a timeline of what people did, and
-// "today / yesterday / Saturday" is how anyone recalls a bet. Consecutive rows
-// from the SAME poster inside one day leave the overhang blank, the way a
-// thread does — the rail, the tag, the popover and the row's accessible label
-// all still say whose it is, so nothing is withheld, only un-repeated.
-//
 // The tail link and the "tailed by N" count are resolved INSIDE the rows this
 // viewer already has: `tailed_from` is an order id and the parent, if the
 // viewer may see it at all, is in the same RLS-filtered result set. A parent
 // that is not there is not fetched behind the user's back — the row simply
 // says it tailed a bet and names nobody.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import AuthPanel from "./AuthPanel";
 import Flares from "./Flares";
+import TailButton from "./TailButton";
 import {
   supabase, supabaseEnabled, useProfile, useSession,
   type FeedItem, type FeedScorePayload,
@@ -81,6 +108,13 @@ import { getTeamLogo } from "../utils/teamLogo";
 // One map from a stored league id to what a reader sees: the emoji on the face
 // of the card, the words in its tooltip and in the popover (src/lib/leagues.ts).
 import { leagueEmoji, leagueLabel } from "../lib/leagues";
+// The grouping, the fold and the formatting — shared with the game card's
+// "friends on this game" strip (src/lib/feedBuckets.ts).
+import {
+  ago, betText, bucketize, compactBet, matchupWords, orderSide, shortTeam,
+  unitsShort, unitsText,
+  type FeedBucket, type FeedPosition,
+} from "../lib/feedBuckets";
 
 export type NetworkFeedProps = {
   /** Calendar season, for the single-week view. */
@@ -102,6 +136,11 @@ export type NetworkFeedProps = {
  *  switched off. */
 const POLL_MS = 60_000;
 
+/** Buckets before the "older" divider, and how many more each press adds.
+ *  Ten games is a slate's worth of what is happening now; everything past it
+ *  is history and says so. */
+const FIRST_BUCKETS = 10;
+
 export default function NetworkFeed({
   season, week, allWeeks = false, startOpen = true,
 }: NetworkFeedProps) {
@@ -119,6 +158,10 @@ export default function NetworkFeed({
   /** Which row has its words open. ONE at a time: the popover is the reading
    *  of one row, and two open at once is a paragraph again. */
   const [pop, setPop] = useState<string | null>(null);
+  /** Which buckets are showing their whole history. */
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  /** How many buckets are rendered at all. */
+  const [shown, setShown] = useState(FIRST_BUCKETS);
 
   const signedIn = Boolean(session && profile);
 
@@ -158,7 +201,9 @@ export default function NetworkFeed({
    * a bet is PLACED (app_orders INSERT — a tail is a placement like any
    * other), a bet SETTLES (app_orders UPDATE, which rewrites a row that is
    * already on screen), and a game MOVES (feed_events INSERT). All three are
-   * doorbells into the same refetch.
+   * doorbells into the same refetch, and any of them can re-sort the buckets:
+   * a new action on an old game pulls that game to the top by itself, because
+   * the order is a function of the rows and not of a list this file keeps.
    */
   useEffect(() => {
     if (!supabase || !signedIn) return;
@@ -191,8 +236,6 @@ export default function NetworkFeed({
     return () => window.clearInterval(id);
   }, [signedIn, load]);
 
-  const days = useMemo(() => groupByDay(items), [items]);
-
   /** THE TAIL GRAPH, built from what is already loaded. `byOrderId` resolves
    *  a tail to the bet it copied so the row can name the poster it followed;
    *  `tailCounts` is how many of the loaded rows copied each bet. Both are
@@ -211,6 +254,10 @@ export default function NetworkFeed({
     return m;
   }, [items]);
 
+  /** ONE GAME PER BUCKET, latest action first (src/lib/feedBuckets.ts). */
+  const buckets = useMemo(
+    () => bucketize(items, tailCounts), [items, tailCounts]);
+
   /** Bets, not rows: a score update is news about a bet, not another bet. */
   const betCount = useMemo(
     () => items.filter((i) => i.kind !== "score").length, [items]);
@@ -225,6 +272,8 @@ export default function NetworkFeed({
     );
   }
 
+  const visible = buckets.slice(0, shown);
+
   return (
     <div style={{ display: "grid", gap: 8, width: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -235,7 +284,8 @@ export default function NetworkFeed({
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
           {betCount === 0
             ? "nothing yet"
-            : `${betCount} bet${betCount === 1 ? "" : "s"}`}
+            : `${betCount} bet${betCount === 1 ? "" : "s"} on `
+              + `${buckets.length} game${buckets.length === 1 ? "" : "s"}`}
           {" · "}
           {live ? "updating live" : "checking every minute"}
           {" · "}
@@ -251,32 +301,194 @@ export default function NetworkFeed({
         </span>
       )}
 
-      {open && days.map((d) => (
-        <div key={d.key} style={{ display: "grid", gap: 0 }}>
-          <div style={{
-            fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4,
-            textTransform: "uppercase", color: "var(--muted)",
-            padding: "4px 0 1px",
-          }}>
-            {d.label}
-          </div>
-          {d.items.map((it, i) => {
-            const key = `${it.kind}:${it.id}`;
-            return (
-              <FeedRow
-                key={key} item={it} rowKey={key}
-                tailOf={it.tailed_from ? byOrderId.get(it.tailed_from) : undefined}
-                tailedBy={it.order_id ? (tailCounts.get(it.order_id) ?? 0) : 0}
-                // A THREAD, not a repetition: the same person twice in a row
-                // inside one day keeps the overhang blank.
-                threaded={i > 0 && d.items[i - 1].user_id === it.user_id}
-                open={pop === key}
-                onToggle={() => setPop((p) => (p === key ? null : key))}
-              />
-            );
-          })}
-        </div>
+      {open && visible.map((b, i) => (
+        <Fragment key={b.key}>
+          {/* THE ONLY DIVIDER LEFT. Day headings are gone — every bucket wears
+              its own clock — but "this is where now stops" is still worth
+              one line. */}
+          {i === FIRST_BUCKETS && (
+            <div style={{
+              fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4,
+              textTransform: "uppercase", color: "var(--muted)",
+              borderTop: "1px solid var(--border)", paddingTop: 6, marginTop: 2,
+            }}>
+              Older
+            </div>
+          )}
+          <Bucket
+            bucket={b}
+            byOrderId={byOrderId}
+            tailCounts={tailCounts}
+            expanded={expanded.has(b.key)}
+            onToggleExpand={() => setExpanded((s) => {
+              const next = new Set(s);
+              if (next.has(b.key)) next.delete(b.key); else next.add(b.key);
+              return next;
+            })}
+            pop={pop}
+            onPop={(k) => setPop((p) => (p === k ? null : k))}
+          />
+        </Fragment>
       ))}
+
+      {open && shown < buckets.length && (
+        <button type="button" className="ui-btn"
+                onClick={() => setShown((n) => n + FIRST_BUCKETS)}
+                style={{ padding: "4px 12px", fontSize: 11, justifySelf: "start" }}>
+          Load more ({buckets.length - shown} more game
+          {buckets.length - shown === 1 ? "" : "s"})
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------- a bucket -------------------------------- */
+
+/**
+ * ONE GAME. Header (what just happened), the latest score line when there is
+ * one, the latest action as a full row, who is on it, and the whole history on
+ * demand.
+ */
+function Bucket({
+  bucket, byOrderId, tailCounts, expanded, onToggleExpand, pop, onPop,
+}: {
+  bucket: FeedBucket;
+  byOrderId: Map<string, FeedItem>;
+  tailCounts: Map<string, number>;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  pop: string | null;
+  onPop: (key: string) => void;
+}) {
+  const k = kindOf(bucket.latest);
+  const rowsShown = expanded ? bucket.items : [bucket.latest];
+  // The score belongs in the header — UNLESS the score IS the latest action,
+  // in which case it is already about to be rendered as its own row.
+  const headScore = bucket.score && bucket.score !== bucket.latest
+    ? bucket.score : null;
+
+  return (
+    <section className="bkt">
+      <header className="bkt__head">
+        <span aria-hidden className="bkt__rail" style={{ background: k.tone }} />
+        <span className="bkt__title">
+          <SportChip sport={bucket.sport} />
+          <MatchupLogos home={bucket.home} away={bucket.away} on={null} />
+          <span className="bkt__words">{matchupWords(bucket)}</span>
+        </span>
+        <span className="bkt__when">
+          {/* THE NEWEST THING, AT A GLANCE: the tag and the rail above are the
+              LATEST action's kind, not a summary of the bucket. */}
+          <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: 0.5, color: k.tone }}>
+            {k.tag}
+          </span>
+          <span style={{ fontSize: 9.5, color: "var(--muted)" }}>{ago(bucket.atMs)}</span>
+        </span>
+      </header>
+
+      {headScore && <ScoreStrip item={headScore} />}
+
+      {rowsShown.map((it, i) => {
+        const key = `${it.kind}:${it.id}`;
+        return (
+          <FeedRow
+            key={key} item={it} rowKey={key}
+            tailOf={it.tailed_from ? byOrderId.get(it.tailed_from) : undefined}
+            tailedBy={it.order_id ? (tailCounts.get(it.order_id) ?? 0) : 0}
+            // A THREAD, not a repetition: the same person twice in a row
+            // inside one bucket keeps the overhang blank.
+            threaded={i > 0 && rowsShown[i - 1].user_id === it.user_id}
+            open={pop === key}
+            onToggle={() => onPop(key)}
+          />
+        );
+      })}
+
+      {bucket.positions.length > 0 && (
+        <div className="bkt__who">
+          <div className="bkt__whoLabel">who's on it</div>
+          {bucket.positions.map((p) => (
+            <PositionLine key={p.key} pos={p} />
+          ))}
+        </div>
+      )}
+
+      {bucket.items.length > 1 && (
+        <button type="button" className="bkt__more" onClick={onToggleExpand}
+                aria-expanded={expanded}>
+          {expanded
+            ? "Show less"
+            : `Show all ${bucket.items.length}`}
+        </button>
+      )}
+    </section>
+  );
+}
+
+/**
+ * ONE LINE PER (POSTER, POSITION) — the answer to "who is on this game".
+ *
+ * The price is the UNITS-WEIGHTED AVERAGE across every fill of that position,
+ * and it says "avg" whenever there is more than one, because an average price
+ * and a price paid are different claims and the reader must not have to guess
+ * which one is on screen.
+ */
+function PositionLine({ pos }: { pos: FeedPosition }) {
+  const u = unitsShort(pos.units);
+  const settled = pos.net != null;
+  return (
+    <div className="bkt__pos">
+      <span className="bkt__posWho" title={pos.display_name || pos.handle}>
+        {pos.handle}
+        <Flares flares={pos.flares} raised />
+      </span>
+      <span className="bkt__posBet">{pos.label}</span>
+      {pos.avgPrice != null && (
+        <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}
+              title={pos.fills > 1
+                ? `${pos.fills} fills, averaged by units`
+                : "the price paid"}>
+          {Math.round(pos.avgPrice * 100)}¢{pos.fills > 1 ? " avg" : ""}
+        </span>
+      )}
+      {u && <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{u}</span>}
+      {pos.tails > 0 && (
+        <span style={{ whiteSpace: "nowrap" }}>
+          <Arrow glyph="↳" tone="var(--accent)"
+                 label={`Tailed by ${pos.tails} of the people you can see`} />
+          <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent)" }}>
+            {pos.tails}
+          </span>
+        </span>
+      )}
+      <span style={{ fontSize: 9.5, color: "var(--muted)", whiteSpace: "nowrap" }}
+            title="last update on this position">
+        {ago(pos.lastMs)}
+      </span>
+      {/* THE ANSWER, once there is one. Same rule as a settled row: when a bet
+          is done, the units are the loudest thing on its line. */}
+      {settled && (
+        <span style={{
+          fontWeight: 900, fontSize: 13, whiteSpace: "nowrap",
+          color: pos.net! > 0 ? "var(--pos)" : pos.net! < 0 ? "var(--neg)" : "var(--muted)",
+        }} title={pos.settledFills < pos.fills
+          ? `${pos.settledFills} of ${pos.fills} fills settled so far`
+          : "settled, net of fees, in their own units"}>
+          {pos.net! > 0 ? "+" : pos.net! < 0 ? "−" : "±"}{Math.abs(pos.net!).toFixed(2)}u
+        </span>
+      )}
+      <span className="bkt__posAct">
+        <TailButton
+          compact
+          target={{
+            ticker: pos.ticker, side: pos.side, orderId: pos.orderId,
+            userId: pos.user_id, units: pos.units,
+            title: pos.title, home_team: pos.home_team,
+            away_team: pos.away_team, sport: pos.sport,
+          }}
+        />
+      </span>
     </div>
   );
 }
@@ -300,7 +512,7 @@ function FeedRow({ item, rowKey, tailOf, tailedBy, threaded, open, onToggle }: {
   tailOf?: FeedItem;
   /** How many loaded rows copied THIS bet. */
   tailedBy: number;
-  /** Previous row in this day is the same poster — blank the overhang. */
+  /** Previous row in this bucket is the same poster — blank the overhang. */
   threaded: boolean;
   open: boolean;
   onToggle: () => void;
@@ -319,8 +531,8 @@ function FeedRow({ item, rowKey, tailOf, tailedBy, threaded, open, onToggle }: {
 
         <span className="feed__hang">
           {!threaded && (
-            <span className="feed__handle" title={`@${item.handle}`}>
-              @{item.handle}
+            <span className="feed__handle" title={item.display_name || item.handle}>
+              {item.handle}
               <Flares flares={item.flares} raised />
             </span>
           )}
@@ -328,11 +540,12 @@ function FeedRow({ item, rowKey, tailOf, tailedBy, threaded, open, onToggle }: {
               see, so it can never announce a bet they may not. Gold, on the
               rail side, because a tail is the gold channel. */}
           {tailedBy > 0 && (
-            <span style={{
-              fontSize: 9.5, fontWeight: 800, color: "var(--accent)",
-              whiteSpace: "nowrap",
-            }}>
-              ↳{tailedBy}
+            <span style={{ whiteSpace: "nowrap" }}>
+              <Arrow glyph="↳" tone="var(--accent)"
+                     label={`Tailed by ${tailedBy} of the people you can see`} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent)" }}>
+                {tailedBy}
+              </span>
             </span>
           )}
         </span>
@@ -347,10 +560,26 @@ function FeedRow({ item, rowKey, tailOf, tailedBy, threaded, open, onToggle }: {
       {open && (
         <div id={`${rowKey}-words`} role="status" className="feed__pop">
           {lines.map((l, i) => <div key={i}>{l}</div>)}
-          <button type="button" className="ui-btn" onClick={onToggle}
-                  style={{ padding: "2px 9px", fontSize: 10.5, marginTop: 3 }}>
-            Close
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}>
+            {/* THE ACTION, where the words are: a reader who opened a row to
+                understand it is exactly the reader deciding whether to copy
+                it. Muted with its reason when the sim says no. */}
+            {item.kind !== "score" && (
+              <TailButton
+                target={{
+                  ticker: item.ticker, side: orderSide(item),
+                  orderId: item.order_id, userId: item.user_id,
+                  units: item.units, title: item.title,
+                  home_team: item.home_team, away_team: item.away_team,
+                  sport: item.sport,
+                }}
+              />
+            )}
+            <button type="button" className="ui-btn" onClick={onToggle}
+                    style={{ padding: "2px 9px", fontSize: 10.5 }}>
+              Close
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -377,10 +606,16 @@ function BetFace({ item, tailOf, tone }: {
       <MatchupLogos home={item.home_team} away={item.away_team}
                     on={postedSide(item)} />
       {/* A TAIL POINTS AT WHO IT FOLLOWED, when the parent is visible to this
-          viewer. The arrow is the whole verb. */}
+          viewer. The arrow is the whole verb, so it is drawn like one. */}
       {item.tailed_from && (
-        <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
-          ↳ {tailOf ? `@${tailOf.handle}` : "a bet"}
+        <span style={{ whiteSpace: "nowrap" }}>
+          <Arrow glyph="↳" tone="var(--accent)"
+                 label={tailOf
+                   ? `A copy of ${tailOf.display_name || tailOf.handle}'s bet`
+                   : "A copy of a bet you cannot see"} />
+          <span style={{ color: "var(--muted)" }}>
+            {tailOf ? tailOf.handle : "a bet"}
+          </span>
         </span>
       )}
       <span style={{ fontWeight: 700, minWidth: 0 }}>{compactBet(item)}</span>
@@ -427,9 +662,6 @@ function ScoreFace({ item }: { item: FeedItem }) {
   const away = s.away_team ?? item.away_team;
   const before = typeof p.prob_before === "number" ? p.prob_before : null;
   const after = typeof p.prob_after === "number" ? p.prob_after : null;
-  const moved = before != null && after != null ? after - before : null;
-  const tone = moved == null || Math.abs(moved) < 0.005
-    ? "var(--muted)" : (moved > 0 ? "var(--pos)" : "var(--neg)");
   const when = [p.period ? `Q${p.period}` : null, p.clock || null]
     .filter(Boolean).join(" ");
   const u = unitsShort(typeof p.units === "number" ? p.units : null);
@@ -450,25 +682,94 @@ function ScoreFace({ item }: { item: FeedItem }) {
       {when && (
         <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{when}</span>
       )}
-      {after != null && (
-        <span style={{ whiteSpace: "nowrap" }} title={p.side ?? undefined}>
-          {before != null && (
-            <span style={{ color: "var(--muted)" }}>
-              {Math.round(before * 100)}%{" "}
-            </span>
-          )}
-          <span style={{ color: tone, fontWeight: 900 }}>
-            {moved != null && moved < -0.005
-              ? "↓"
-              : moved != null && moved > 0.005 ? "↑" : "→"}
-            {Math.round(after * 100)}%
-          </span>
-        </span>
-      )}
+      <ProbMove before={before} after={after} side={p.side ?? null} />
       {u && (
         <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{u}</span>
       )}
       <RightEdge item={item} tone="var(--info)" />
+    </span>
+  );
+}
+
+/** The bucket header's score line — the same face, without the row chrome, so
+ *  a reader sees the state of the game before reading who is on it. */
+function ScoreStrip({ item }: { item: FeedItem }) {
+  const p: FeedScorePayload = item.payload ?? {};
+  const s = p.score ?? {};
+  const when = [p.period ? `Q${p.period}` : null, p.clock || null]
+    .filter(Boolean).join(" ");
+  return (
+    <div className="bkt__score">
+      <span style={{ fontWeight: 800 }}>
+        <span style={{ color: "var(--muted)" }}>{shortTeam(s.away_team ?? item.away_team)}</span>{" "}
+        {s.away ?? "–"} – {s.home ?? "–"}{" "}
+        <span style={{ color: "var(--muted)" }}>{shortTeam(s.home_team ?? item.home_team)}</span>
+      </span>
+      {when && <span style={{ color: "var(--muted)" }}>{when}</span>}
+      <ProbMove
+        before={typeof p.prob_before === "number" ? p.prob_before : null}
+        after={typeof p.prob_after === "number" ? p.prob_after : null}
+        side={p.side ?? null}
+      />
+      <span style={{ marginLeft: "auto", fontSize: 9.5, color: "var(--muted)" }}>
+        {ago(item.at)}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * WHICH WAY A BET JUST MOVED. The arrow is the fact — up, down, or nowhere —
+ * so it is drawn at 1.35× the row and carries the whole sentence in its
+ * tooltip. Colour follows the poster's interest, never the home team's.
+ */
+function ProbMove({ before, after, side }: {
+  before: number | null; after: number | null; side: string | null;
+}) {
+  if (after === null) return null;
+  const moved = before === null ? null : after - before;
+  const up = moved !== null && moved > 0.005;
+  const down = moved !== null && moved < -0.005;
+  const tone = up ? "var(--pos)" : down ? "var(--neg)" : "var(--muted)";
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const what = side ? `"${side}"` : "this bet";
+  const label = moved === null
+    ? `${what} is ${pct(after)} right now`
+    : up
+      ? `${what} got better: ${pct(before!)} → ${pct(after)}`
+      : down
+        ? `${what} got worse: ${pct(before!)} → ${pct(after)}`
+        : `${what} is unchanged at ${pct(after)}`;
+  return (
+    <span style={{ whiteSpace: "nowrap" }} title={label}>
+      {before !== null && (
+        <span style={{ color: "var(--muted)" }}>{pct(before)} </span>
+      )}
+      <Arrow glyph={up ? "↑" : down ? "↓" : "→"} tone={tone} label={label} />
+      <span style={{ color: tone, fontWeight: 900 }}>{pct(after)}</span>
+    </span>
+  );
+}
+
+/**
+ * AN ARROW THAT CAN BE READ ACROSS A BAR (owner 2026-09-09).
+ *
+ * 1.35× the row's 11.5px font, heavy, coloured by its meaning, and never
+ * silent: the same sentence is its tooltip and its accessible label, because a
+ * glyph carrying a fact has to be able to say the fact. Sized in px rather
+ * than em on purpose — these sit inside spans as small as 9.5px, and the point
+ * is that the arrow is bigger than its surroundings, not proportional to them.
+ */
+function Arrow({ glyph, tone, label }: {
+  glyph: string; tone: string; label: string;
+}) {
+  return (
+    <span role="img" aria-label={label} title={label}
+          style={{
+            fontSize: 15.5, fontWeight: 900, color: tone, lineHeight: 1,
+            verticalAlign: "-0.09em", padding: "0 1px",
+          }}>
+      {glyph}
     </span>
   );
 }
@@ -635,68 +936,6 @@ function words(item: FeedItem, tailOf: FeedItem | undefined, tailedBy: number): 
 
 /* ------------------------------- formatting -------------------------------- */
 
-/** A size in units, in the words people use: "1.5 units", "0.5 units", and
- *  "1 unit" when it is exactly one. Null renders as nothing at all — never as
- *  a guessed unit. This is the POPOVER's spelling; the face uses
- *  `unitsShort`. */
-function unitsText(u: number | null): string | null {
-  if (u == null || !Number.isFinite(u) || u <= 0) return null;
-  const r = Math.round(u * 100) / 100;
-  const n = Number.isInteger(r) ? String(r) : r.toFixed(2).replace(/0$/, "");
-  return `${n} unit${r === 1 ? "" : "s"}`;
-}
-
-/** The same number for the FACE: "1.5u", "0.16u", "1u". */
-function unitsShort(u: number | null): string | null {
-  if (u == null || !Number.isFinite(u) || u <= 0) return null;
-  const r = Math.round(u * 100) / 100;
-  return `${r.toFixed(2).replace(/\.?0+$/, "")}u`;
-}
-
-/** THE BET IN WORDS. The confirmed title when the row carries one; a posted
- *  pick spells out side + line; otherwise the exchange's own string, which is
- *  ugly but true. The POPOVER's version — full, unabbreviated. */
-function betText(item: FeedItem): string {
-  if (item.title) return item.title;
-  if (item.kind === "order") return item.ticker || item.side;
-  const line = item.line == null ? "" : ` ${item.line > 0 ? "+" : ""}${item.line}`;
-  return `${item.side}${line}`;
-}
-
-/**
- * THE BET AS A GLYPH STRING, for the face: "Rutgers over 23.5 points" becomes
- * "Rutgers o23.5", "Memphis -20.5" becomes "Memphis −20.5", a moneyline
- * becomes ML.
- *
- * Purely a RE-SPELLING of the row's own confirmed title — no fact is added,
- * dropped or rounded, and the untouched sentence is one tap away — so a title
- * this does not recognise passes through exactly as written rather than being
- * mangled into a shape it does not have.
- */
-function compactBet(item: FeedItem): string {
-  return betText(item)
-    .replace(/\s+/g, " ")
-    .replace(/\bover\s+/gi, "o")
-    .replace(/\bunder\s+/gi, "u")
-    .replace(/\s*\bpoints?\b/gi, "")
-    .replace(/\bmoneyline\b/gi, "ML")
-    .replace(/\bto win\b/gi, "ML")
-    .replace(/(^|\s)-(?=\d)/g, "$1−")
-    .trim();
-}
-
-/** A team in a few characters, beside its own logo and under its own tooltip:
- *  initials for a multi-word school, the first three letters for a one-word
- *  one. A DISPLAY abbreviation, never an identity — the logo carries that and
- *  the popover spells the name out. */
-function shortTeam(name: string | null | undefined): string {
-  const n = String(name ?? "").trim();
-  if (!n) return "";
-  const w = n.split(/\s+/).filter((x) => !/^(of|the|at|and|&)$/i.test(x));
-  if (w.length >= 2) return w.map((x) => x[0]).join("").toUpperCase().slice(0, 4);
-  return n.slice(0, 3).toUpperCase();
-}
-
 /** WHICH TEAM WAS BACKED, for the logo highlight — read off the bet's own
  *  words, because that is the only place the answer honestly lives (a total
  *  names neither team, and "yes"/"no" is about a contract, not a side). Null
@@ -743,59 +982,4 @@ function MatchupLogos({ home, away, on }: {
       ))}
     </span>
   );
-}
-
-/* ------------------------------ day grouping ------------------------------ */
-
-type Day = { key: string; label: string; items: FeedItem[] };
-
-const DAY_MS = 86_400_000;
-
-/** Group by LOCAL calendar day, newest first. The view is already time-ordered
- *  descending, so first appearance is newest and no re-sort is needed. */
-function groupByDay(items: FeedItem[]): Day[] {
-  const out: Day[] = [];
-  const byKey = new Map<string, Day>();
-  for (const it of items) {
-    const d = new Date(it.at);
-    const key = Number.isNaN(d.getTime())
-      ? "unknown"
-      : `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-    let g = byKey.get(key);
-    if (!g) {
-      g = { key, label: key === "unknown" ? "Earlier" : dayLabel(d), items: [] };
-      byKey.set(key, g);
-      out.push(g);
-    }
-    g.items.push(it);
-  }
-  return out;
-}
-
-const midnight = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-
-function dayLabel(d: Date): string {
-  const diff = Math.round((midnight(new Date()) - midnight(d)) / DAY_MS);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  if (diff > 1 && diff < 7) {
-    return d.toLocaleDateString(undefined, { weekday: "long" });
-  }
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-/** "now" / "4m" / "3h" / "2d" — the clock is a corner mark on a card, not a
- *  phrase, so it is spelled the way a corner mark is. The popover repeats it
- *  unchanged; it just has the room. */
-function ago(at: string): string {
-  const t = new Date(at).getTime();
-  if (!Number.isFinite(t)) return "";
-  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
-  if (s < 45) return "now";
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.round(h / 24)}d`;
 }

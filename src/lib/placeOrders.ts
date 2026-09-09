@@ -52,6 +52,13 @@ export type PlaceOrder = {
   /** WHICH LEAGUE (src/lib/leagues.ts): the book is sport-agnostic, so the
    *  feed row says which one. Unknown ids are dropped server-side. */
   sport?: string;
+  /** THIS IS A TAIL of somebody else's bet — their exchange order id, which
+   *  the server stores as `app_orders.tailed_from`. It is what lets the feed
+   *  say "tailed by 3" on the original and name the poster on the copy. Same
+   *  contract as every attribution field: sanitised server-side, never sent to
+   *  Kalshi, never a rail. The order it describes is an ordinary self-directed
+   *  take on the tailer's OWN account, at the tailer's OWN size. */
+  tailed_from?: string;
 };
 
 /** Echo of one order, as the server describes it back. */

@@ -2480,8 +2480,11 @@ function ScoreboardPage() {
       [...slugTeams.entries()].map(([slug, n]) => ({
         slug, label: `${n.teamB} @ ${n.teamA}`,
       })),
+      // ...and the DATASET directory, so a page that never loads a week file
+      // can still fetch this week's docs (the feed's Tail gate does).
+      weekId,
     );
-  }, [feedSeason, feedWeek, slugTeams]);
+  }, [feedSeason, feedWeek, slugTeams, weekId]);
 
   /** ticker game-code -> slug, at panel scope: the Friend Feed groups a
    *  friend's bets by game and names them with the card's real teams. Same

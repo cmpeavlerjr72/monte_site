@@ -1461,9 +1461,9 @@ type RungEdit = { include: boolean; raw: string };
  * so the user can bump it to a full unit himself, with the cost of doing so
  * printed on the same line.
  */
-function ConfirmSlip({
+export function ConfirmSlip({
   group, idem, token, unit, sizing, feeParams, quotedAt, ordersLive,
-  homeTeam, awayTeam, league, onClose,
+  homeTeam, awayTeam, league, tailedFrom, onClose,
 }: {
   group: LadderGroup;
   idem: string;
@@ -1477,6 +1477,13 @@ function ConfirmSlip({
   /** Which league this board is (src/lib/leagues.ts) — the feed prints it as
    *  a chip so a football bet and a basketball bet are told apart. */
   league?: LeagueId;
+  /** THIS SLIP IS A TAIL of somebody else's bet: their exchange order id
+   *  (docs/SOCIAL_ROADMAP.md 1). Attribution only — it rides on every order
+   *  the slip sends, including a chase or a re-offer, because continuing into
+   *  the next price is still the same copy of the same bet. The order itself
+   *  is an ordinary self-directed take on THIS account at THIS account's size;
+   *  nothing about the placement path changes. */
+  tailedFrom?: string;
   /** The unit and mode these rows were sized by — the SAME pair the declared
    *  per-order cap comes from, so the warning and the wire are one number. */
   unit: number;
@@ -1538,7 +1545,9 @@ function ConfirmSlip({
   ): Partial<PlaceOrder> => {
     const rung = group.rungs.find((x) => x.ticker === ticker && x.side === side)
       ?? group.rungs.find((x) => x.ticker === ticker);
-    if (!rung) return {};
+    // A contract with no rung in this slip is not a bet this slip can
+    // describe — but if it is a TAIL, whose bet it copies is still true.
+    if (!rung) return tailedFrom ? { tailed_from: tailedFrom } : {};
     const fee = orderFee(price, count, rest, feeParams[rung.series]);
     // NET edge at this price and this count — sim − price − fee/count, the
     // same arithmetic that sized the row and that the re-offer card prints.
@@ -1546,6 +1555,7 @@ function ConfirmSlip({
       ? rung.simP - price - fee / count
       : NaN;
     return {
+      tailed_from: tailedFrom,
       game_slug: rung.slug,
       title: rung.label,
       home_team: homeTeam || undefined,

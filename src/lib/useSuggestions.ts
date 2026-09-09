@@ -143,6 +143,11 @@ export type Suggestions = {
    * early-week games, Kalshi lines visible, no Bets button anywhere).
    */
   candCountBySlug: Map<string, number>;
+  /** `ticker|side` -> the CANDIDATE behind it: the sim's P(YES) and the live
+   *  book, before selection. The Tail gate prices a friend's contract off
+   *  this, so a tail and a suggestion can never disagree about a market (see
+   *  the block comment where it is built). */
+  quoteByTicker: Map<string, Candidate>;
   computedAt: Date;
   pregameCount: number;
   blindCount: number;
@@ -188,7 +193,7 @@ export function useSuggestions({
 }: SuggestionsInput): Suggestions {
   const {
     rows, tailRows, tailMarkets, suppressed, browse, computedAt, pregameCount,
-    blindCount, verdicts, candCounts, regimes,
+    blindCount, verdicts, candCounts, regimes, quotes,
   } = useMemo(() => {
     const heldBoth = heldByTicker(portal?.positions, portal?.orders);
     const held = heldBoth.cost;
@@ -278,6 +283,29 @@ export function useSuggestions({
       // BuildResult doc above). A game that `continue`d out has no entry -> 0.
       candBySlug.set(g.key, candidates.length - candBefore);
     }
+    /**
+     * EVERY MARKET THIS COMPUTE CAN PRICE, by contract — the TAIL gate's
+     * source (owner 2026-09-09).
+     *
+     * A tail is a bet on somebody else's contract, which is very often NOT a
+     * row this board would suggest: it may be a rest, it may be a rung the
+     * filters hide, it may have no edge left at all. The gate still has to be
+     * able to say what the sim thinks of it, and it must say so with THIS
+     * compute's numbers — the Bets panel's numbers — rather than a second
+     * pricing of its own. `browse` cannot serve: it holds PRICED rows, whose
+     * `price` is a rest's quote when the row rests, and a tail always crosses
+     * the ask. So the map is of CANDIDATES: sim P(YES), and both sides of the
+     * live book, before any selection or mode decision.
+     *
+     * Keyed by ticker + side, which is one position. First writer wins: a
+     * contract reached twice is the same contract, and the first pass came
+     * from the game whose loop is authoritative for it.
+     */
+    const quotes = new Map<string, Candidate>();
+    for (const c of candidates) {
+      const k = `${c.ticker}|${c.side ?? "yes"}`;
+      if (!quotes.has(k)) quotes.set(k, c);
+    }
     // ONE clock for the gate above and the timing bands inside: two Date.now()
     // reads a few ms apart can land on opposite sides of a band edge.
     const built = buildSuggestions(
@@ -285,7 +313,7 @@ export function useSuggestions({
     return {
       ...built, computedAt: new Date(),
       pregameCount: nPregame, blindCount: nBlind, verdicts: verdictBySlug,
-      candCounts: candBySlug, regimes: regimeBySlug,
+      candCounts: candBySlug, regimes: regimeBySlug, quotes,
     };
     // `nonce` is the manual refresh: it re-runs the compute against whatever
     // feed the page currently holds, and never triggers a fetch of its own.
@@ -401,6 +429,7 @@ export function useSuggestions({
   return {
     ...grouped,
     browseBySlug,
+    quoteByTicker: quotes,
     regimeBySlug: regimes,
     candCountBySlug: candCounts,
     pregameBySlug: verdicts,
