@@ -39,6 +39,16 @@ export type PlaceOrder = {
   season?: number;
   week?: number;
   game_slug?: string;
+  /** THE FEED'S SENTENCE, from the confirm slip that already holds it: the bet
+   *  in the words the user pressed Confirm on ("Rutgers over 23.5 points"),
+   *  the two teams so the feed row can wear their logos, and our sim's opinion
+   *  — P(YES) and EV per $1 after the fee. Same contract as the three above:
+   *  sanitised server-side, never sent to Kalshi, never a rail. */
+  title?: string;
+  home_team?: string;
+  away_team?: string;
+  sim_p?: number;
+  ev_fee?: number;
 };
 
 /** Echo of one order, as the server describes it back. */

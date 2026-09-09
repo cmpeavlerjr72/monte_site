@@ -137,6 +137,11 @@ function IndexRow({ sec, showTails, expanded, onToggle, onOpen, unit, sizing, to
               feeParams={feeParams}
               quotedAt={quotedAt}
               ordersLive={ordersLive}
+              /* Accounts attribution only (see ConfirmSlip): this row already
+                 knows the matchup, so a placement made from the index is filed
+                 with the same two names one made from the card is. */
+              homeTeam={home || undefined}
+              awayTeam={away || undefined}
             />
           ))}
           <button

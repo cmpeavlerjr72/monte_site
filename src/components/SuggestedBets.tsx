@@ -952,6 +952,7 @@ export default function GameBetsPanel({
   token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
   showTails, onShowTails, regime, edgeRules, onEdgeRules, engine, trend, onProject,
+  homeTeam, awayTeam,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
@@ -1000,6 +1001,10 @@ export default function GameBetsPanel({
   trend?: RegimeTrend | null;
   /** Switch this card's open panel to the chart this bet came from. */
   onProject: (t: ProjectionTarget) => void;
+  /** This card's matchup, for accounts attribution on a placement (see
+   *  ConfirmSlip). Optional — the test harness passes neither. */
+  homeTeam?: string;
+  awayTeam?: string;
 }) {
   /** Whether the week-1 rulebook can describe this board at all. */
   const rulebookOk = rulesApplyFor(engine);
@@ -1250,6 +1255,8 @@ export default function GameBetsPanel({
           feeParams={feeParams}
           quotedAt={quotedAt}
           ordersLive={ordersLive}
+          homeTeam={homeTeam}
+          awayTeam={awayTeam}
           onClose={() => setSlip(null)}
         />
       )}
@@ -1282,7 +1289,7 @@ export default function GameBetsPanel({
  * server-side before it signs anything.
  */
 export function PlaceStrip({
-  group, unit, sizing, token, feeParams, quotedAt, ordersLive,
+  group, unit, sizing, token, feeParams, quotedAt, ordersLive, homeTeam, awayTeam,
 }: {
   /** The originating ladder, re-read from the CURRENT compute — or null when
    *  it is no longer suggested. */
@@ -1295,6 +1302,10 @@ export function PlaceStrip({
   feeParams: Record<string, FeeParams>;
   quotedAt: Date;
   ordersLive: boolean;
+  /** Passed straight to the slip: accounts attribution for the network feed
+   *  (see ConfirmSlip). Display data, never a rail. */
+  homeTeam?: string;
+  awayTeam?: string;
 }) {
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
 
@@ -1379,6 +1390,8 @@ export function PlaceStrip({
           feeParams={feeParams}
           quotedAt={quotedAt}
           ordersLive={ordersLive}
+          homeTeam={homeTeam}
+          awayTeam={awayTeam}
           onClose={() => setSlip(null)}
         />
       )}
@@ -1442,11 +1455,18 @@ type RungEdit = { include: boolean; raw: string };
  * printed on the same line.
  */
 function ConfirmSlip({
-  group, idem, token, unit, sizing, feeParams, quotedAt, ordersLive, onClose,
+  group, idem, token, unit, sizing, feeParams, quotedAt, ordersLive,
+  homeTeam, awayTeam, onClose,
 }: {
   group: LadderGroup;
   idem: string;
   token: string;
+  /** ACCOUNTS ATTRIBUTION ONLY — the matchup this ladder is on, so the network
+   *  feed can wear the two teams' logos and highlight the posted side. Both
+   *  optional: a surface that does not know the names sends none and the feed
+   *  row simply shows no logos. Nothing here prices, sizes or places. */
+  homeTeam?: string;
+  awayTeam?: string;
   /** The unit and mode these rows were sized by — the SAME pair the declared
    *  per-order cap comes from, so the warning and the wire are one number. */
   unit: number;
@@ -1580,6 +1600,19 @@ function ConfirmSlip({
       // ACCOUNTS ATTRIBUTION ONLY — which game this bet came from, so the
       // network feed can group it. Never sent to Kalshi, never a rail.
       game_slug: l.r.slug,
+      // ...and WHAT the bet is, in the words this slip just showed, plus the
+      // matchup and the sim's opinion. The feed prints a sentence — "placed
+      // 1.5 units on Rutgers over 23.5 points at 59c · sim EV +0.21 per $1" —
+      // and `ticker` + `side` is not one. `ev_fee` is EV per $1 STAKED, net of
+      // the fee: the row's net edge over its price, the same arithmetic the
+      // browse rows print. Both sim numbers are rates, never money.
+      title: l.r.label,
+      home_team: homeTeam || undefined,
+      away_team: awayTeam || undefined,
+      sim_p: Number.isFinite(l.r.simP) ? l.r.simP : undefined,
+      ev_fee: l.r.price > 0 && Number.isFinite(l.r.edge)
+        ? Math.round((l.r.edge / l.r.price) * 1000) / 1000
+        : undefined,
     }));
     try {
       // The cap the slip just WARNED about is the cap it declares.

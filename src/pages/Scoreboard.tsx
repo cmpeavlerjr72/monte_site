@@ -2972,6 +2972,11 @@ function ScoreboardPage() {
                       feeParams={kalshiFees}
                       quotedAt={suggestions.computedAt}
                       ordersLive={portal.payload?.orders_live === true}
+                      /* Accounts attribution only: the matchup a placement
+                         from this strip is filed under, so the network feed
+                         can name and badge it. Never a rail. */
+                      homeTeam={openCard.teamA}
+                      awayTeam={openCard.teamB}
                     />
                   ) : null
                 }
@@ -2995,6 +3000,8 @@ function ScoreboardPage() {
                     modeFilter={betMode} onModeFilter={onBetMode}
                     typeFilter={betType} onTypeFilter={onBetType}
                     showTails={betTails} onShowTails={onBetTails}
+                    homeTeam={openCard.teamA}
+                    awayTeam={openCard.teamB}
                     regime={suggestions.regimeBySlug.get(openCard.key)}
                     edgeRules={edgeRules} onEdgeRules={onEdgeRules}
                     engine={weekEngine}
