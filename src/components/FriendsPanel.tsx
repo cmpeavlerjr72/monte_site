@@ -115,7 +115,7 @@ export default function FriendsPanel() {
       <div style={{ display: "grid", gap: 16 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
-            you are <strong style={{ color: "var(--text)" }}>@{profile.handle}</strong>
+            you are <strong style={{ color: "var(--text)" }}>{profile.handle}</strong>
           </span>
         </div>
 
@@ -257,7 +257,7 @@ function PartyRow({ party, children }: { party: Party | null; children: React.Re
       }}>
         <span style={{ fontWeight: 700 }}>{party?.display_name ?? "—"}</span>
         <Flares flares={party?.flares} size={15} />
-        <span style={{ color: "var(--muted)" }}>@{party?.handle ?? "…"}</span>
+        <span style={{ color: "var(--muted)" }}>{party?.handle ?? "…"}</span>
       </span>
       <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>{children}</span>
     </div>

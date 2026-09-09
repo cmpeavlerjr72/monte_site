@@ -23,16 +23,30 @@ const KEY = "cfb.lastSlate";
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type SlateGame = { slug: string; label: string };
-export type CachedSlate = { season: number; week: number; at: number; games: SlateGame[] };
+export type CachedSlate = {
+  season: number;
+  week: number;
+  /** The DATASET directory for that week ("week02"). The season/week integers
+   *  are what the accounts tables store; this is what a data fetch needs, and
+   *  deriving one from the other is a guess about a naming convention. Absent
+   *  on a slate written before the Tail button needed it — the reader then
+   *  falls back to that guess, and says so. */
+  weekId?: string;
+  at: number;
+  games: SlateGame[];
+};
 
 /** Cap the write: a full slate is ~60 games and this is a convenience, not a
  *  database. */
 const MAX_GAMES = 80;
 
-export function writeSlateGames(season: number, week: number, games: SlateGame[]): void {
+export function writeSlateGames(
+  season: number, week: number, games: SlateGame[], weekId?: string,
+): void {
   if (!Number.isFinite(season) || !Number.isFinite(week) || !games.length) return;
   const body: CachedSlate = {
-    season, week, at: Date.now(), games: games.slice(0, MAX_GAMES),
+    season, week, weekId: weekId || undefined,
+    at: Date.now(), games: games.slice(0, MAX_GAMES),
   };
   try { window.localStorage.setItem(KEY, JSON.stringify(body)); }
   catch { /* the dashboard simply will not offer a picker */ }

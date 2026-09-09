@@ -3127,6 +3127,46 @@ async function userUnitSize(uid: string): Promise<number | null> {
   return unit;
 }
 
+/** The columns a bare re-post may inherit from its own earlier order on the
+ *  same contract. All DISPLAY attribution: the bet in words, the matchup, the
+ *  league, which slate week it belongs to, and the sim's opinion. Nothing
+ *  here prices, sizes, routes or settles anything. */
+const ATTR_INHERIT = [
+  "title", "home_team", "away_team", "sport",
+  "season", "week", "game_slug", "sim_p", "ev_fee",
+] as const;
+
+/**
+ * Fill this row's NULL attribution columns from the most recent app_orders row
+ * with the same user, ticker and side. Mutates `row` in place; never throws.
+ * See the block comment at the call site for why this exists and why the match
+ * key is safe.
+ */
+async function backfillAttribution(row: Record<string, unknown>): Promise<void> {
+  if (!supa) return;
+  try {
+    const { data, error } = await supa
+      .from("app_orders")
+      .select(ATTR_INHERIT.join(","))
+      .eq("user_id", row.user_id as string)
+      .eq("ticker", row.ticker as string)
+      .eq("side", row.side as string)
+      .not("title", "is", null)
+      .order("placed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return;
+    for (const k of ATTR_INHERIT) {
+      if (row[k] == null && (data as any)[k] != null) row[k] = (data as any)[k];
+    }
+  } catch (err: any) {
+    // The row still goes in, bare. A blank is honest; a delayed or dropped
+    // placement record is not.
+    console.warn("[accounts] attribution backfill failed:", err?.message ?? err);
+  }
+}
+
 function appOrdersRecord(
   acct: PortalAccount, w: WireOrder, orderId: string, state: AppOrderState,
   userId: string | null,
@@ -3149,6 +3189,11 @@ function appOrdersRecord(
     sim_p: w.sim_p ?? null,
     ev_fee: w.ev_fee ?? null,
     sport: w.sport ?? null,
+    // WHOSE BET THIS COPIES (owner 2026-09-09, the Tail button). Deliberately
+    // NOT in ATTR_INHERIT: the parent is a fact about ONE press, so a later
+    // independent order on the same contract must never inherit it and read
+    // as a tail it was not.
+    tailed_from: w.tailed_from ?? null,
     ticker: w.ticker,
     side: w.side,
     mode: w.mode,
@@ -3160,6 +3205,25 @@ function appOrdersRecord(
     state: state ?? null,
   };
   void (async () => {
+    // A BARE RE-POST INHERITS THE WORDS OF THE BET IT CONTINUES.
+    //
+    // Every route into this function is supposed to carry the confirm slip's
+    // attribution, and since 2026-09-09 the chase and the re-offer do (see
+    // `attrFor` in src/components/SuggestedBets.tsx). This is the SERVER's
+    // half of that fix and it is deliberately not a duplicate of it: any
+    // caller — a future surface, a script, an older client still deployed —
+    // that posts a bare {ticker, side, price, count} for a market this user
+    // has already bet gets the same title, teams, league, week and sim
+    // numbers as their last order on that exact contract, instead of a
+    // half-decoded row that shows the reader "KXNCAAFGAME-25SEP06RUTG-RUTG".
+    //
+    // SAME TICKER + SAME SIDE + SAME USER is the whole match: that pair IS
+    // one position ("Rutgers over 23.5 points"), so the words cannot be
+    // wrong. It never overwrites anything the caller sent — only null columns
+    // are filled — and it never blocks the write: a failed lookup logs and
+    // the row goes in exactly as it arrived, because attribution must never
+    // be why a placement that the exchange already accepted goes unrecorded.
+    if (row.title == null) await backfillAttribution(row);
     // UNITS, not dollars: what a friend is allowed to see. A unit size we
     // cannot read leaves the column NULL — a wrong "1u" would be worse than a
     // blank, and the feed renders a blank as no size at all.
@@ -3172,6 +3236,18 @@ function appOrdersRecord(
         .from("app_orders")
         .upsert(row, { onConflict: "order_id" });
       if (!error) return;
+      // A TAIL'S PARENT IS A FOREIGN KEY (20260909_feed_kinds.sql:
+      // tailed_from -> app_orders.order_id). An id that is not an app_orders
+      // row rejects the WHOLE insert, which would lose the record of a
+      // placement the exchange has already accepted — attribution blocking
+      // the record, the one thing it must never do. So the retry drops it and
+      // the copy lands as an ordinary bet rather than as nothing.
+      if (row.tailed_from != null) {
+        console.warn("[accounts] app_orders write failed, retrying without"
+          + " tailed_from:", error.message);
+        row.tailed_from = null;
+        continue;
+      }
       if (attempt === 1) {
         console.warn("[accounts] app_orders write failed:", error.message);
       }
@@ -3400,6 +3476,13 @@ type WireOrder = {
    *  unknown value becomes null — an unlabelled bet shows no chip rather than
    *  a wrong one. */
   sport?: string | null;
+  /** THIS ORDER IS A COPY of another user's order, by its exchange order id
+   *  (`app_orders.tailed_from`). Same contract as every field above: optional,
+   *  sanitised to null, never on the wire to Kalshi, never a reason to refuse
+   *  a placement. It is an OPAQUE ID and nothing here reads it back — the feed
+   *  resolves it against rows the viewer may already see, so a tail can never
+   *  announce a bet its reader has no right to. */
+  tailed_from?: string | null;
 };
 
 /** The league ids the feed knows how to name. Kept as a plain list because
@@ -3414,6 +3497,15 @@ function attrText(v: unknown): string | null {
   const s = String(v).trim();
   if (!s) return null;
   return s.length > 120 ? s.slice(0, 120) : s;
+}
+
+/** An OPAQUE ID for attribution (a Kalshi order id): trimmed, id-shaped, at
+ *  most 80 characters. Null when absent or the wrong shape. Never throws,
+ *  never rejects — a tail whose parent id is malformed is still a bet. */
+function attrId(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return /^[A-Za-z0-9_.:@-]{1,80}$/.test(s) ? s : null;
 }
 
 /** An attribution number inside `[lo, hi]`, null when absent, not finite, or
@@ -3512,7 +3604,7 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
         if (!["ticker", "side", "mode", "price_dollars", "count_fp",
               "season", "week", "game_slug",
               "title", "home_team", "away_team", "sim_p", "ev_fee",
-              "sport"].includes(k)) {
+              "sport", "tailed_from"].includes(k)) {
           bad(400, { error: "unexpected_field", detail: `orders[${i}]: "${k}"` });
           return;
         }
@@ -3573,6 +3665,10 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
         sim_p: attrNum(o.sim_p, 0, 1),
         ev_fee: attrNum(o.ev_fee, -5, 5),
         sport: SPORT_IDS.has(String(o.sport ?? "")) ? String(o.sport) : null,
+        // THE BET THIS ONE COPIES. An exchange order id, so the shape test is
+        // the shape of an id and nothing more; anything else is dropped and
+        // the order is still placed, as an ordinary bet rather than a tail.
+        tailed_from: attrId(o.tailed_from),
         client_order_id: `${ORDERS_TAG}${key}-${i}`,
         // `price` on this endpoint is ALWAYS the YES price: side "bid" buys
         // YES at it, side "ask" sells YES at it — which IS buying NO at 1−p.
