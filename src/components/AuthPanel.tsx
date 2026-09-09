@@ -147,7 +147,9 @@ function CredentialsForm({ prompt, compact, startMode }: {
   const nameOk = mode === "signup"
     ? HANDLE_RE.test(uname)
     : uname.length >= 3;
-  const passOk = password.length >= MIN_PASSWORD;
+  // The length rule is a SIGN-UP rule. Existing accounts (roth: "Bearcats",
+  // created by the admin API) must still log in with what they have.
+  const passOk = mode === "signin" ? password.length > 0 : password.length >= MIN_PASSWORD;
   const contactOk = contact.trim() === "" || /\S+@\S+\.\S+/.test(contact.trim());
   const canSubmit = nameOk && passOk && (mode === "signin" || contactOk);
 
