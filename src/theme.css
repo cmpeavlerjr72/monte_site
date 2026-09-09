@@ -1486,6 +1486,10 @@ input:focus, select:focus, textarea:focus {
   padding-top: 1px;
 }
 .feed__handle {
+  /* `text-overflow` needs a BLOCK box; on the inline span it was declared on
+     it is silently inert and a long handle just clips. The grid's
+     `justify-items: start` keeps the block shrink-to-fit either way. */
+  display: block;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
