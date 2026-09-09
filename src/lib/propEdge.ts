@@ -136,7 +136,7 @@ export function propEdge(
     player: row.player,
     playerTeam: ctx.playerTeam,
     stat: row.stat,
-    statLabel: statLabel(row.stat),
+    statLabel: EXTRA_STAT_LABELS[row.stat] ?? statLabel(row.stat),
     line: row.line,
     side,
     simP,
@@ -163,6 +163,24 @@ export function propEdge(
   };
 }
 
+/**
+ * Labels for venue stats that are NOT site PMF stats.
+ *
+ * Deliberately separate from `PROP_STATS`: that list is also the parlay leg
+ * picker's menu and every key in it must be priceable from seeds.json. An
+ * anytime-TD market is rush_td + rec_td — a sum seeds.json does not carry — so
+ * putting it in PROP_STATS would offer a leg the slip cannot evaluate. It gets
+ * a display name here and nothing more.
+ */
+const EXTRA_STAT_LABELS: Record<string, string> = {
+  anytime_td: "Anytime TD",
+};
+
+/** True when the parlay slip cannot price this stat from seeds.json. */
+export function isSlipPriceable(e: PropEdge): boolean {
+  return !(e.stat in EXTRA_STAT_LABELS);
+}
+
 /** "J. Craig" — surnames stay whole so two Craigs stay distinguishable. */
 export function shortPlayer(name: string): string {
   const parts = String(name || "").trim().split(/\s+/);
@@ -170,7 +188,15 @@ export function shortPlayer(name: string): string {
   return `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
 }
 
-/** "J. Craig · Pass Yds o243.5" */
+/**
+ * "J. Craig · Pass Yds o243.5".
+ *
+ * A yes/no market has no line to print: "Anytime TD o0.5" states a threshold
+ * the bet does not have, so the market's own wording is used instead.
+ */
 export function propLabel(e: PropEdge): string {
+  if (e.stat in EXTRA_STAT_LABELS) {
+    return `${shortPlayer(e.player)} · ${e.statLabel}`;
+  }
   return `${shortPlayer(e.player)} · ${e.statLabel} ${e.side === "over" ? "o" : "u"}${e.line}`;
 }

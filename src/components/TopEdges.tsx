@@ -23,7 +23,7 @@ import {
   type SlateScan, type EdgeEntry,
 } from "../lib/edges";
 import { americanOdds, pctText, type MarketRow } from "../lib/marketEdge";
-import { propLabel, type PropEdge } from "../lib/propEdge";
+import { isSlipPriceable, propLabel, type PropEdge } from "../lib/propEdge";
 import { snapHalf, type LegSpec, type TeamRef } from "../lib/parlay";
 import type { TeamMarketRow } from "../lib/cfbJson";
 import { getTeamLogo } from "../utils/teamLogo";
@@ -454,7 +454,13 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
             ? "EV per $1 staked, after a flat 2¢ round trip"
             : "sim probability minus market, in points"}
         />
-        <AddLegButton label={propLabel(p)} onAdd={() => onAddLeg(p.slug, legSpecForPropRow(p))} />
+        {/* The slip prices a leg off seeds.json. An anytime-TD market is
+            rush_td + rec_td, a sum seeds.json does not carry, so offering the
+            "+" there would add a leg the slip could only fail on. The row is
+            still a bet at the venue — it just is not a parlay leg here. */}
+        {isSlipPriceable(p)
+          ? <AddLegButton label={propLabel(p)} onAdd={() => onAddLeg(p.slug, legSpecForPropRow(p))} />
+          : <span className="edge-row__add-gap" aria-hidden />}
       </div>
       {p.ladder && open && <LadderRungs p={p} />}
     </>

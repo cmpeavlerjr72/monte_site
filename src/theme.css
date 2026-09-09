@@ -2482,3 +2482,7 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 520px) {
   .prop-rung { grid-template-columns: 42px minmax(0, 1fr) 42px; }
 }
+
+/* The "+" quick-add's grid cell, held open when the row has no addable leg so
+   the columns stay aligned down the list. */
+.edge-row__add-gap { display: block; width: 100%; }
