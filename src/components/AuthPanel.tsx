@@ -7,8 +7,11 @@
 //
 //   1. FEATURE FLAG FIRST. `supabaseEnabled` false => this renders null, so a
 //      build without VITE_SUPABASE_URL/ANON_KEY is the app exactly as it was.
-//   2. EMAIL CONFIRMATION IS ON in the project, so a sign-up that returns no
-//      session is SUCCESS, not an error — say so plainly ("check your email")
+//   2. Email confirmation is OFF in the project (owner 2026-09-08: no SMTP
+//      sender to maintain), so sign-up normally returns a session and lands on
+//      the handle form at once. If the dashboard setting is ever flipped on, a
+//      sign-up that returns no session is SUCCESS, not an error — say so
+//      plainly ("check your email")
 //      rather than leaving a spinner and a form that looks like it failed.
 //   3. A PROFILE IS REQUIRED before any accounts feature works: `picks`,
 //      `friendships` and `app_orders` all have a foreign key to profiles.id.
