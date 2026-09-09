@@ -562,6 +562,9 @@ export type RecordFilters = {
 };
 
 export const PRICE_BANDS: { key: string; label: string; lo: number; hi: number }[] = [
+  // The site's standing no-tails rule, and the page's default: tails at a
+  // few cents turn a flat 1u stake into 30u swings and drown the record.
+  { key: "10-90", label: "10–90¢ (no tails)", lo: 0.10, hi: 0.90 },
   { key: "0-20", label: "under 20¢", lo: 0, hi: 0.2 },
   { key: "20-40", label: "20–40¢", lo: 0.2, hi: 0.4 },
   { key: "40-60", label: "40–60¢", lo: 0.4, hi: 0.6 },

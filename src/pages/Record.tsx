@@ -450,13 +450,13 @@ export default function Record() {
 
   const [family, setFamily] = useState<RecordFilters["family"]>("all");
   const [market, setMarket] = useState("all");
-  const [period, setPeriod] = useState("all");
-  const [ev, setEv] = useState<EvMode>("all");
-  const [rung, setRung] = useState<RungMode>("main");
+  const [period, setPeriod] = useState("");
+  const [ev, setEv] = useState<EvMode>("star");
+  const [rung, setRung] = useState<RungMode>("best");
   const [week, setWeek] = useState<"all" | number>("all");
   const [team, setTeam] = useState("all");
   const [conference, setConference] = useState("all");
-  const [band, setBand] = useState("all");
+  const [band, setBand] = useState("10-90");
   const [q, setQ] = useState("");
   /** Once the reader picks a rung mode by hand it stops following the EV
    *  selector. Until then, +EV and ★ default to Best EV (owner's rule). */
