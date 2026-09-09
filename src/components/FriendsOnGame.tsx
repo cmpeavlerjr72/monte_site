@@ -21,6 +21,7 @@
 // nobody's, and the strip does not render at all.
 
 import { useEffect, useState } from "react";
+import BetLabel from "./BetLabel";
 import Flares from "./Flares";
 import TailButton from "./TailButton";
 import { supabase, supabaseEnabled, type FeedItem } from "../lib/supabase";
@@ -67,7 +68,12 @@ export default function FriendsOnGame({ slug }: { slug: string | undefined }) {
             {p.handle}
             <Flares flares={p.flares} raised />
           </span>
-          <span className="bkt__posBet">{p.label}</span>
+          {/* The feed's words, exactly (src/components/BetLabel.tsx): the
+              team is its logo, "points" and the bare "total" are gone, and
+              the untouched sentence is the tooltip. This strip already sits
+              on the game's own card, so a total needs no matchup pair. */}
+          <BetLabel className="bkt__posBet" label={p.title ?? p.label}
+                    home={p.home_team} away={p.away_team} size={17} />
           {p.avgPrice != null && (
             <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}
                   title={p.fills > 1 ? `${p.fills} fills, averaged by units` : "the price paid"}>

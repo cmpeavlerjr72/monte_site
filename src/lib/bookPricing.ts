@@ -45,7 +45,8 @@ import {
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "./kalshi";
 import { buildGameYesP, buildStatYesP, type StatGameRef } from "./teamStatMarkets";
 import {
-  buildCodeToSlug, parseNcaafTicker, type PortalPayload, type SeedPair,
+  buildCodeToSlug, parseNcaafTicker,
+  type BetGameNames, type PortalPayload, type SeedPair,
 } from "./kalshiPortal";
 
 /* ------------------------------------------------------------ week cache --
@@ -122,6 +123,11 @@ export type BookPricing = {
    *  collide on a slug. Keys are opaque; only this module mints them. */
   kalshiBySlug: Map<string, KalshiGame>;
   seeds: Map<string, SeedPair>;
+  /** Same keys as `kalshiBySlug` -> the game's real team names. Display-only,
+   *  and free: the week index rows the pricer already read carry them. It is
+   *  what lets the dashboard's book rows draw the team as its LOGO instead of
+   *  the ticker's letter code (owner 2026-09-09). */
+  names: Map<string, BetGameNames>;
   statYesP: (ticker: string) => number | null;
   gameYesP: (ticker: string) => number | null;
   /** The (ns, week) pairs that actually answered — for the page's own words. */
@@ -132,7 +138,7 @@ export type BookPricing = {
 };
 
 const EMPTY_PRICING: BookPricing = {
-  kalshiBySlug: new Map(), seeds: new Map(),
+  kalshiBySlug: new Map(), seeds: new Map(), names: new Map(),
   statYesP: () => null, gameYesP: () => null,
   weeks: [], ready: false,
 };
@@ -158,6 +164,7 @@ async function loadBundle(
 ): Promise<{
   kalshi: Map<string, KalshiGame>;
   seeds: Map<string, SeedPair>;
+  names: Map<string, BetGameNames>;
   statYesP: (t: string) => number | null;
   gameYesP: (t: string) => number | null;
   matched: number;
@@ -184,10 +191,12 @@ async function loadBundle(
   // The pricers are asked about the games the BOOK is on, no more: they index
   // by ticker, and a ref for a game nothing is held on can only add work.
   const refs: StatGameRef[] = [];
+  const names = new Map<string, BetGameNames>();
   for (const slug of wanted) {
     const r = byRowSlug.get(slug);
     if (!r) continue;
     refs.push({ key: slug, slug, ns: w.ns, teamA: r.teamA, teamB: r.teamB });
+    names.set(slug, { teamA: r.teamA, teamB: r.teamB });
   }
 
   // Seed arrays, one compact per game the book is on (never the whole slate).
@@ -206,6 +215,7 @@ async function loadBundle(
   return {
     kalshi,
     seeds,
+    names,
     statYesP: buildStatYesP(docs, refs, kalshi),
     gameYesP: buildGameYesP(docs, refs, kalshi),
     matched: wanted.size,
@@ -239,6 +249,7 @@ export function useBookPricing(payload: PortalPayload | null, enabled = true): B
 
       const kalshiBySlug = new Map<string, KalshiGame>();
       const seeds = new Map<string, SeedPair>();
+      const names = new Map<string, BetGameNames>();
       const stats: ((t: string) => number | null)[] = [];
       const games: ((t: string) => number | null)[] = [];
       const answered: BookWeek[] = [];
@@ -251,13 +262,14 @@ export function useBookPricing(payload: PortalPayload | null, enabled = true): B
         const keyOf = (slug: string) => `${w.ns}#${w.weekId}#${slug}`;
         for (const [slug, kg] of b.kalshi) kalshiBySlug.set(keyOf(slug), kg);
         for (const [slug, sp] of b.seeds) seeds.set(keyOf(slug), sp);
+        for (const [slug, n] of b.names) names.set(keyOf(slug), n);
         stats.push(b.statYesP);
         games.push(b.gameYesP);
         answered.push(w);
       });
 
       setState({
-        kalshiBySlug, seeds,
+        kalshiBySlug, seeds, names,
         statYesP: chain(stats), gameYesP: chain(games),
         weeks: answered, ready: true,
       });

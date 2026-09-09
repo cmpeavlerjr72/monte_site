@@ -39,6 +39,7 @@
 // rows that `feed_items` (a security_invoker view) already decided this viewer
 // may see, and `feed_items` carries no cost, count or fill for anyone.
 
+import { compactBetWords } from "./betWords";
 import type { FeedItem } from "./supabase";
 
 /* ------------------------------- positions -------------------------------- */
@@ -319,15 +320,7 @@ export function betText(item: FeedItem): string {
  * mangled into a shape it does not have.
  */
 export function compactBet(item: FeedItem): string {
-  return betText(item)
-    .replace(/\s+/g, " ")
-    .replace(/\bover\s+/gi, "o")
-    .replace(/\bunder\s+/gi, "u")
-    .replace(/\s*\bpoints?\b/gi, "")
-    .replace(/\bmoneyline\b/gi, "ML")
-    .replace(/\bto win\b/gi, "ML")
-    .replace(/(^|\s)-(?=\d)/g, "$1−")
-    .trim();
+  return compactBetWords(betText(item), item.home_team, item.away_team);
 }
 
 /** A size in units for a FACE: "1.5u", "0.16u", "1u". Null renders as nothing

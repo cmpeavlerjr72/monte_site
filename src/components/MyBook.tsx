@@ -46,9 +46,9 @@
 import { Fragment, useState } from "react";
 import { americanOdds, pctText } from "../lib/marketEdge";
 import CancelConfirm from "./CancelOrder";
+import BetLabel from "./BetLabel";
 import { cheerLabelWithGame } from "../lib/kalshiPortal";
 import type { BetGameNames, PortalBet, PortalTotals, RecordBet, RecordLine, SettlementRecord } from "../lib/kalshiPortal";
-import { getTeamLogo } from "../utils/teamLogo";
 
 /* Geometry — fixed on purpose (see header). */
 const ROW_H = 40;
@@ -206,8 +206,20 @@ function Legend({ held, resting }: { held: boolean; resting: boolean }) {
  * The owner's book on ONE game. Labels are cheer-side (a held NO is flipped to
  * the complement bet), so the row reads as the outcome being rooted for.
  */
-export default function MyBookStrip({ bets, token = "" }: {
+export default function MyBookStrip({
+  bets, token = "", slugTeams, mixed = false,
+}: {
   bets: PortalBet[];
+  /** slug -> the game's real team names. What lets a row read "[logo] -21.5"
+   *  instead of the ticker's letter code "NICH -21.5" (owner 2026-09-09: the
+   *  team is its logo everywhere the book is shown). Absent, or missing this
+   *  bet's slug, and the row keeps `cheerLabel`'s own wording. */
+  slugTeams?: Map<string, BetGameNames>;
+  /** This list MIXES games (the dashboard's whole book) rather than sitting on
+   *  one game's card. A bet that names neither team — a game total — then gets
+   *  both schools drawn dim beside it, because nothing else on the row says
+   *  which game it is. */
+  mixed?: boolean;
   /** Portal password. Present only for the owner, and only then does a resting
    *  row that THIS APP placed get its ✕. Without it the strip is exactly the
    *  read-only block it has always been. */
@@ -246,6 +258,8 @@ export default function MyBookStrip({ bets, token = "" }: {
         const row = (
           <BetRow
             bet={b}
+            game={slugTeams?.get(b.slugs[0] ?? "")}
+            mixed={mixed}
             on={b.key === pop?.key}
             onToggle={() => setPop((p) => (p?.key === b.key && p.mode === "info" ? null : { key: b.key, mode: "info" }))}
           />
@@ -313,9 +327,18 @@ export default function MyBookStrip({ bets, token = "" }: {
  * row height is unchanged (40px), which the popover's index arithmetic
  * depends on.
  */
-function BetRow({ bet, on, onToggle }: { bet: PortalBet; on: boolean; onToggle: () => void }) {
+function BetRow({ bet, game, mixed, on, onToggle }: {
+  bet: PortalBet; game?: BetGameNames; mixed?: boolean;
+  on: boolean; onToggle: () => void;
+}) {
   const tone = toneOf(bet.simEV);
   const { risk, win } = exposure(bet.risked, bet.toWin);
+  // REAL NAMES FIRST, so the logo swap has something to match. A combo trades
+  // several markets and keeps its joined `cheerLabel` wording; a straight bet
+  // whose slug resolved to a card gets that card's schools.
+  const label = !bet.combo && bet.ticker
+    ? cheerLabelWithGame(bet.ticker, bet.side, game)
+    : bet.label;
   return (
     <button
       type="button"
@@ -326,7 +349,8 @@ function BetRow({ bet, on, onToggle }: { bet: PortalBet; on: boolean; onToggle: 
       aria-label={betLines(bet).join(" ")}
     >
       <Mark resting={bet.kind === "order"} />
-      <span className="mybook__label">{bet.label}</span>
+      <BetLabel className="mybook__label" label={label}
+                home={game?.teamA} away={game?.teamB} pair={mixed} size={17} />
       {bet.legN > 1 && <span className="mybook__legs">{bet.legN}-leg</span>}
       <span className="mybook__stake">
         <span className="mybook__stake-risk">risk {risk}</span>
@@ -524,24 +548,16 @@ function RecordBetRow({ bet, slugTeams }: { bet: RecordBet; slugTeams: Map<strin
   // falls back to bet.label's own wording internally.
   const game = slugTeams.get(bet.slug);
   const label = cheerLabelWithGame(bet.key, bet.side, game);
-  const awayLogo = game ? getTeamLogo(game.teamB) : undefined;
-  const homeLogo = game ? getTeamLogo(game.teamA) : undefined;
   return (
     <div className="mybook-record__bet">
-      {(awayLogo || homeLogo) && (
-        <span className="mybook-record__logos" aria-hidden="true">
-          {awayLogo && (
-            <img src={awayLogo} alt="" width={16} height={16} loading="lazy"
-                 className="mybook-record__logo" />
-          )}
-          {homeLogo && (
-            <img src={homeLogo} alt="" width={16} height={16} loading="lazy"
-                 className="mybook-record__logo" />
-          )}
-        </span>
-      )}
       <span className="mybook-record__mark" data-tone={tone} aria-hidden="true" />
-      <span className="mybook-record__bet-label">{label}</span>
+      {/* THE TEAM IS ITS LOGO (owner 2026-09-09). The matchup pair that used to
+          lead this row was the same fact twice for a spread or a winner, and
+          the words repeated it a third time; now the bet's own school stands in
+          front of its line, and only a bet that names NEITHER team — a game
+          total — draws the pair, dim, to say which game it was. */}
+      <BetLabel className="mybook-record__bet-label" label={label}
+                home={game?.teamA} away={game?.teamB} pair size={16} wrap />
       {bet.app === false && (
         <span
           className="mybook-record__tag"

@@ -34,6 +34,7 @@ import MyBookStrip from "../components/MyBook";
 import { supabaseEnabled, useProfile, useSession } from "../lib/supabase";
 import {
   computePortalBets, readPortalToken, usePortalBook, writePortalToken,
+  type BetGameNames,
 } from "../lib/kalshiPortal";
 import { useBookPricing } from "../lib/bookPricing";
 import { useBookGames, usePlacedTimes } from "../lib/bookGames";
@@ -121,6 +122,7 @@ export default function BookDashboard() {
           totals={book.totals}
           accountLabel={portal.payload?.account_label}
           ordersLive={portal.payload?.orders_live === true}
+          slugTeams={pricing.names}
         />
       </Section>
 
@@ -153,8 +155,12 @@ export default function BookDashboard() {
 
 function Positions({
   token, onToken, status, bets, totals, accountLabel, ordersLive, pricingReady,
+  slugTeams,
 }: {
   token: string;
+  /** slug -> the game's real names, from the same pricing load. What lets a
+   *  row draw the team as its LOGO instead of the ticker's letter code. */
+  slugTeams: Map<string, BetGameNames>;
   /** False until the week docs have answered — a book-wide "no sim" that is
    *  only not-loaded-yet would be a lie the page tells for a second. */
   pricingReady: boolean;
@@ -241,7 +247,7 @@ function Positions({
         <>
           {/* Sim EV is real here now: `useBookPricing` loaded the same feed,
               seeds and published rungs the Scoreboard prices with. */}
-          <MyBookStrip bets={bets} token={token} />
+          <MyBookStrip bets={bets} token={token} slugTeams={slugTeams} mixed />
           <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
             {!pricingReady
               ? "Pricing the book against the published sims…"

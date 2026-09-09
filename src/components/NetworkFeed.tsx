@@ -74,6 +74,7 @@ import {
   supabase, supabaseEnabled, useProfile, useSession,
   type FeedItem, type FeedScorePayload,
 } from "../lib/supabase";
+import BetLabel from "./BetLabel";
 import { getTeamLogo } from "../utils/teamLogo";
 import { leagueLabel } from "../lib/leagues";
 import {
@@ -465,7 +466,8 @@ function PositionRow({ pos, byOrderId, open, onToggle }: {
       <button type="button" className="fdp__main" onClick={onToggle}
               aria-expanded={open} title="Tap for the details">
         <span className="fdp__bet">
-          <BetLabel pos={pos} />
+          <BetLabel label={pos.label} home={pos.home_team} away={pos.away_team}
+                    title={pos.title ?? pos.label} className="fdp__label" size={18} />
           {isTail && (
             <span className="fdp__chip"
                   title={tailOf
@@ -542,34 +544,9 @@ function PositionRow({ pos, byOrderId, open, onToggle }: {
   );
 }
 
-/**
- * THE BET WITHOUT THE TEAM NAME (owner 2026-09-09: "we really don't need
- * team names, that can be replaced with logos"). When the label starts with
- * one of the game's two schools, that prefix becomes the school's logo and
- * the rest of the label follows it: "Rutgers 24+" is [R] 24+, "Memphis +7.5"
- * is [M] +7.5. A total ("u55.5") names no team and is left alone; a label
- * whose team has no logo file keeps its words rather than losing them.
- */
-function BetLabel({ pos }: { pos: FeedPosition }) {
-  const label = pos.label;
-  const low = label.toLowerCase();
-  for (const team of [pos.home_team, pos.away_team]) {
-    if (!team || team.length < 3) continue;
-    const t = team.toLowerCase();
-    if (!low.startsWith(t)) continue;
-    const src = getTeamLogo(team);
-    if (!src) break;
-    const rest = label.slice(team.length).trim();
-    return (
-      <span className="fdp__label" title={label}>
-        <img src={src} alt={team} width={18} height={18} loading="lazy"
-             style={{ objectFit: "contain" }} />
-        {rest && <span>{rest}</span>}
-      </span>
-    );
-  }
-  return <span title={label}>{label}</span>;
-}
+/* THE BET WITHOUT THE TEAM NAME now lives in src/components/BetLabel.tsx —
+   the feed was where it was invented and the book surfaces needed the same
+   rule (owner 2026-09-09), so it moved rather than being copied. */
 
 const tailTarget = (pos: FeedPosition) => ({
   ticker: pos.ticker, side: pos.side, orderId: pos.orderId,

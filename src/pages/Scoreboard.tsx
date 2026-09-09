@@ -3693,6 +3693,14 @@ export function GameCard({
      same 20s cadence), so a card tracking bets and an open gamecast on that
      game cost ONE fetch between them. */
   const progressBets = useMemo(() => progressBetsOf(book), [book]);
+  /** THIS CARD'S SCHOOLS, in the shape the book strip's label swap wants. The
+   *  strip is scoped to one game, so a one-entry map IS the whole join — and
+   *  it is what turns "NICH -21.5" into the Nicholls logo and a line (owner
+   *  2026-09-09: the team is its logo everywhere the book is shown). */
+  const cardTeams = useMemo(
+    () => new Map([[card.key, { teamA: card.teamA, teamB: card.teamB }]]),
+    [card.key, card.teamA, card.teamB],
+  );
   const trackable = progressBets.length > 0 && (liveNow || lv?.state === "final");
   const liveStats = useGameTeamStats(trackable ? lv?.id : undefined, liveNow);
 
@@ -3965,10 +3973,13 @@ export function GameCard({
           "what is it" is the reference. Mounted off the ticker test alone, so
           the first reading landing never moves the card. */}
       {trackable && (
-        <LiveProgressStrip bets={progressBets} espnHomeIsA={espnHomeIsA} stats={liveStats} />
+        <LiveProgressStrip bets={progressBets} espnHomeIsA={espnHomeIsA} stats={liveStats}
+                           home={card.teamA} away={card.teamB} />
       )}
 
-      {book && book.length > 0 && <MyBookStrip bets={book} token={bookToken} />}
+      {book && book.length > 0 && (
+        <MyBookStrip bets={book} token={bookToken} slugTeams={cardTeams} />
+      )}
 
       {/* Action buttons.
           Player panels are gated on the export's has_players FLAG rather than

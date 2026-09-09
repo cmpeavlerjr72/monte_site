@@ -27,6 +27,7 @@ import {
   newIdempotencyKey, placeOrders, type PlaceOrder,
 } from "../lib/placeOrders";
 import { getTeamLogo } from "../utils/teamLogo";
+import BetLabel from "./BetLabel";
 
 /**
  * FRIEND FEED — the declared friend pair's books, read-only ("see what your
@@ -218,7 +219,14 @@ function FriendBookBlock({ book, token, unit, sizing, slugTeams, codeToSlug, yes
                 flexWrap: "wrap", fontSize: 11, padding: "2px 0",
               }}>
                 <span style={{ minWidth: 0 }}>
-                  {p.count} × {cheerLabelWithGame(p.ticker, p.side, g.names)}
+                  {p.count} ×{" "}
+                  {/* The team as its LOGO, "points"/"total" dropped — the same
+                      words the feed and the owner's own book now use. The game
+                      header above already names the matchup, so a total needs
+                      no dim pair here. */}
+                  <BetLabel label={cheerLabelWithGame(p.ticker, p.side, g.names)}
+                            home={g.names?.teamA} away={g.names?.teamB} size={16}
+                            style={{ verticalAlign: "middle" }} />
                   {p.avg_price !== null && (
                     <span style={{ color: "var(--muted)" }}>
                       {" "}@ {Math.round(p.avg_price * 100)}¢
@@ -247,7 +255,12 @@ function FriendBookBlock({ book, token, unit, sizing, slugTeams, codeToSlug, yes
           {g.fills.map((f, i) => (
             <div key={`${f.ticker}|${f.created_time}|${i}`}
                  style={{ fontSize: 10, color: "var(--muted)", padding: "1px 0" }}>
-              {when(f.created_time)} · filled {f.count ?? "?"} × {cheerLabelWithGame(f.ticker, f.side, g.names)}
+              {when(f.created_time)} · filled {f.count ?? "?"} ×{" "}
+              {/* 14px, not the house 16–18: this is a 10px footnote line and a
+                  full-size mark would set the row's height, not sit in it. */}
+              <BetLabel label={cheerLabelWithGame(f.ticker, f.side, g.names)}
+                        home={g.names?.teamA} away={g.names?.teamB} size={14}
+                        style={{ verticalAlign: "middle" }} />
             </div>
           ))}
         </div>

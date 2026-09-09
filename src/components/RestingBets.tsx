@@ -31,6 +31,7 @@
 // Every chip is direct-labelled in words, so identity never rests on colour.
 
 import { useState } from "react";
+import BetLabel from "./BetLabel";
 import DryRunBadge from "./DryRunBadge";
 import CancelConfirm from "./CancelOrder";
 import { cents, signed } from "./SuggestedBets";
@@ -242,12 +243,14 @@ export default function RestingBets({
                     the left, THE VERDICT right-aligned in a column of its own,
                     so every row's verdict lands at the same x and the eye reads
                     the column instead of hunting mid-row. */}
-                <span style={{
-                  fontWeight: 700, lineHeight: 1.25, minWidth: 0,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}>
-                  {r.label}
-                </span>
+                {/* The team is its LOGO, "points" and the bare "total" are
+                    gone — the feed's own words (owner 2026-09-09,
+                    src/components/BetLabel.tsx). The untouched sentence is the
+                    tooltip, and the popover below still spells it all out. */}
+                <BetLabel
+                  label={r.label} home={r.teamA} away={r.teamB} size={17} pair
+                  style={{ fontWeight: 700, lineHeight: 1.25 }}
+                />
                 {/* WRAPS rather than truncates. The chip is nowrap by design, so
                     on a 390px screen a nowrap context next to it ellipsised down
                     to "20 …" — a number-shaped noise. Wrapping puts the chip on
@@ -518,7 +521,8 @@ function ConvertSlip({
               border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px",
               display: "grid", gap: 5, fontSize: 12,
             }}>
-              <div style={{ fontWeight: 800 }}>{row.label}</div>
+              <BetLabel label={row.label} home={row.teamA} away={row.teamB}
+                        size={18} pair wrap style={{ fontWeight: 800 }} />
               <div style={{ color: "var(--muted)" }}>
                 {row.count} contract{row.count === 1 ? "" : "s"} still working at
                 {" "}{cents(row.restPrice)} — cancelled, then bought at

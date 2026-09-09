@@ -60,7 +60,7 @@
 import { useMemo } from "react";
 import type { KalshiGame } from "./kalshi";
 import {
-  cheerLabel, parseNcaafTicker, buildCodeToSlug,
+  cheerLabelWithGame, parseNcaafTicker, buildCodeToSlug,
   type PortalPayload,
 } from "./kalshiPortal";
 import { seriesOfTicker } from "./teamStatMarkets";
@@ -350,7 +350,11 @@ export function computeRestingReview({
       orderId: o.order_id,
       ticker: o.ticker,
       side,
-      label: cheerLabel(o.ticker, side),
+      // REAL NAMES, not the ticker's letter code: this label is what the
+      // review row, the cancel confirm and the convert sheet all print, and
+      // the display swaps a leading team name for that school's LOGO (owner
+      // 2026-09-09, src/components/BetLabel.tsx) — which needs the name.
+      label: cheerLabelWithGame(o.ticker, side, game),
       cardKey: cardKey as string,
       teamA: game.teamA, teamB: game.teamB,
       count,

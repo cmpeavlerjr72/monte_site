@@ -45,15 +45,22 @@ import { useState } from "react";
 import {
   progressFor, type LiveTeamStats, type ProgressBet, type StatProgress,
 } from "../lib/liveProgress";
-import { cheerLabel } from "../lib/kalshiPortal";
+import BetLabel from "./BetLabel";
+import { cheerLabelWithGame } from "../lib/kalshiPortal";
 
 /* Geometry — fixed, and shared with MyBookStrip on purpose (see header). */
 const ROW_H = 40;
 const HEAD_H = 16;
 
 export default function LiveProgressStrip({
-  bets, espnHomeIsA, stats,
+  bets, espnHomeIsA, stats, home, away,
 }: {
+  /** The card's two schools, so a tracked bet reads the way the feed and the
+   *  book strip read it: the team as its LOGO, "points" and the bare "total"
+   *  dropped (owner 2026-09-09). Without them the row keeps the ticker's
+   *  letter-code wording, exactly as before. */
+  home?: string | null;
+  away?: string | null;
   /** Already filtered to trackable markets and de-duplicated by the caller —
    *  the row order is the caller's. */
   bets: ProgressBet[];
@@ -67,9 +74,14 @@ export default function LiveProgressStrip({
   const [open, setOpen] = useState<string | null>(null);
   if (!bets.length) return null;
 
+  const game = home && away ? { teamA: home, teamB: away } : undefined;
   const rows = bets.map((b) => ({
     key: `${b.ticker}|${b.side}`,
     bet: b,
+    // REAL NAMES, so BetLabel has a team to swap for a logo. `progressFor`
+    // words its own rows off `cheerLabel` (letter codes), and the two would
+    // otherwise disagree about the same bet on the same card.
+    label: cheerLabelWithGame(b.ticker, b.side, game),
     p: progressFor(b.ticker, b.side, espnHomeIsA, stats),
   }));
   const openIdx = rows.findIndex((r) => r.key === open);
@@ -86,7 +98,9 @@ export default function LiveProgressStrip({
         <ProgressRow
           key={r.key}
           p={r.p}
-          fallbackLabel={cheerLabel(r.bet.ticker, r.bet.side)}
+          label={r.label}
+          home={home}
+          away={away}
           on={r.key === open}
           onToggle={() => setOpen((k) => (k === r.key ? null : r.key))}
         />
@@ -123,9 +137,12 @@ export default function LiveProgressStrip({
  * in a dash rather than a zero — 0 yards is a real reading and must not be
  * faked while we are still waiting for one.
  */
-function ProgressRow({ p, fallbackLabel, on, onToggle }: {
+function ProgressRow({ p, label, home, away, on, onToggle }: {
   p: StatProgress | null;
-  fallbackLabel: string;
+  /** The bet in full words — the row's own, team-named version. */
+  label: string;
+  home?: string | null;
+  away?: string | null;
   on: boolean;
   onToggle: () => void;
 }) {
@@ -140,10 +157,11 @@ function ProgressRow({ p, fallbackLabel, on, onToggle }: {
       aria-label={
         p
           ? p.lines.join(" ")
-          : `${fallbackLabel} — no live reading yet.`
+          : `${label} — no live reading yet.`
       }
     >
-      <span className="liveprog__label">{p?.label ?? fallbackLabel}</span>
+      <BetLabel className="liveprog__label" label={label}
+                home={home} away={away} size={17} />
       <span className="liveprog__meter">
         <span className="liveprog__value">{pending ? "—" : p.value}</span>
         <span className="liveprog__track">

@@ -38,6 +38,7 @@ import {
 } from "../lib/bookTree";
 import { cheerLabelWithGame } from "../lib/kalshiPortal";
 import { getTeamLogo } from "../utils/teamLogo";
+import BetLabel from "./BetLabel";
 
 /* ------------------------------------------------------------- money ------ */
 
@@ -341,18 +342,29 @@ function BetRow({ bet, teamsOf }: {
     <div className="booktree__bet">
       <span className="booktree__betwhen">{when}</span>
       <span className="booktree__betmain">
-        <span className="booktree__betmatch">
-          {(away || home) && (
-            <span className="booktree__betlogos" aria-hidden="true">
+        {/* THE MATCHUP IS ITS LOGOS (owner 2026-09-09, the feed's rule): the
+            two marks with a small "at" between them ARE "Rutgers at Ohio
+            State", and the spelt-out names are the tooltip and the accessible
+            name. A bet that joined no published game has no logos to draw and
+            keeps its words. */}
+        <span className="booktree__betmatch" role="img" aria-label={matchup} title={matchup}>
+          {(away || home) ? (
+            <span className="booktree__betlogos" style={{ gap: 3, alignItems: "center" }}>
               {away && <img src={away} alt="" width={14} height={14} loading="lazy" />}
+              <span aria-hidden style={{ fontSize: 9, fontWeight: 800, color: "var(--muted)" }}>
+                at
+              </span>
               {home && <img src={home} alt="" width={14} height={14} loading="lazy" />}
             </span>
-          )}
-          {matchup}
+          ) : matchup}
         </span>
         <span className="booktree__betside">
           <span className="booktree__betfam">{familyLabel(bet.fam)}</span>
-          {cheerLabelWithGame(bet.ticker, bet.side, game)}
+          {/* Same words as the feed and the book strip: the bet's own team as
+              its logo, "points" and the bare "total" dropped. The matchup line
+              above already says which game, so no dim pair here. */}
+          <BetLabel label={cheerLabelWithGame(bet.ticker, bet.side, game)}
+                    home={game?.teamA} away={game?.teamB} size={16} />
         </span>
       </span>
       <span className="booktree__betprice">
