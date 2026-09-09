@@ -745,6 +745,63 @@ fail-soft) + the My Book "Friends" row (renders nothing when no pairs).
 Any wider cross-account read needs its own review — this feature is the
 exception, not the precedent.
 
+### Accounts, profiles, friends (Supabase, 2026-09-08)
+
+THE SPEC IS `docs/ACCOUNTS_DESIGN.md` and the owner decisions in it are fixed.
+Schema: `supabase/migrations/20260908_accounts.sql` (applied) plus
+`20260908_accounts_feed_everyone.sql` (a one-policy follow-up, NOT applied —
+read its header; without it `share_book='everyone'` behaves like `'friends'`).
+
+**Everything here is FEATURE-FLAGGED BY ENV, in both halves.** With the client
+vars absent `supabaseEnabled` is false, `supabase` is null, and AuthPanel,
+NetworkFeed, the two console rows and both routes render nothing but a
+"not configured" line — the app is exactly what it was. With the server vars
+absent `supa` is null, `supabaseAuth` sets no user, and every
+`/api/portfolio/cfb*` route answers on the legacy password alone, byte for
+byte as before. That is also the state the owner trades in today.
+
+| where | var | what it is |
+|---|---|---|
+| Render (server) | `SUPABASE_URL` | the project URL |
+| Render (server) | `SUPABASE_SERVICE_ROLE_KEY` | service role — verifies JWTs, writes `app_orders`. NEVER shipped to a client, never logged |
+| Render (server) | `CFB_PORTAL_OWNERS` | `mp:<uuid>,roth:<uuid>` — which auth uid may trade AS which portal account |
+| Vite build | `VITE_SUPABASE_URL` | same project URL |
+| Vite build | `VITE_SUPABASE_ANON_KEY` | anon/publishable key (new `sb_publishable_…` format needs supabase-js >= 2.5x) |
+
+- **`supabaseAuth` never rejects.** It verifies `Authorization: Bearer <jwt>`
+  with `auth.getUser` (cached 60s keyed on a SHA-256 of the token, never the
+  token) and hangs the user on the request. Authorisation is `portalGate`'s
+  call and only its call; a 401ing middleware would change the answer for every
+  password-only read this family already serves. A verification OUTAGE is not
+  cached — an Auth blip must not lock a real user out for a minute.
+- **`portalGate` gained ONE new way in and no new authority.** A verified uid
+  named in `CFB_PORTAL_OWNERS` resolves to THAT account, exactly as its
+  password does, and is checked only after the timing-safe password loop has
+  run in full. A signed-in NON-trader gets a plain 403 `not_a_trader` and does
+  NOT touch the failure counter: otherwise any signed-in stranger could lock
+  the owner out of his own book with five polls.
+- **`app_orders` is a mirror, never a rail.** `appOrdersRecord` runs after the
+  `placed` audit line, upserts on `order_id`, retries once, then logs and drops.
+  No uid (a legacy password session) means no row and the JSONL audit is the
+  whole record. A Supabase failure can never fail, delay or un-place an order
+  the exchange has already accepted.
+- `season` / `week` / `game_slug` are accepted per order and were added to the
+  strict unknown-key allowlist in the same change (that rail is what keeps
+  execution mechanics out of a request; it is never loosened by accident).
+  They are SANITISED to null rather than rejected and never reach the Kalshi
+  wire body — attribution must not be able to block money.
+- **The client never decides who may see what.** `NetworkFeed` reads the
+  `feed_items` view and renders what comes back; the RLS policies are the
+  filter. A client-side "is this mine / are we friends" test would be a second,
+  weaker copy of a rule the database already enforces, so there is not one.
+- The existing env-paired **Friend Feed stays** (server `/api/portfolio/cfb/
+  friends`, the owner's Kalshi books). NetworkFeed sits beside it in the same
+  console slot — same slot, new source — until the owner's accounts are linked
+  and the old one is retired.
+- Routes: `/cfb/me` (profile, share_book, delete via `delete_own_account`) and
+  `/cfb/friends` (exact-handle `find_profile` only — there is no user
+  directory, deliberately). Scoreboard, Top Edges and props stay PUBLIC.
+
 ### The held-book display (`src/components/MyBook.tsx`) — bar-test rules
 
 `MyBookStrip` (the block on a game card) and `MyBookBar` (the console's "Book"
