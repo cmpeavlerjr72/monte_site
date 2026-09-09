@@ -21,6 +21,7 @@
 
 import { useState } from "react";
 import { getTeamLogo } from "../utils/teamLogo";
+import { leagueForDivision } from "../lib/leagues";
 import DryRunBadge from "./DryRunBadge";
 import RestingBets, { RestingBadge } from "./RestingBets";
 import { kickText, PlaceStrip, signed, SIZING_WORDS } from "./SuggestedBets";
@@ -142,6 +143,7 @@ function IndexRow({ sec, showTails, expanded, onToggle, onOpen, unit, sizing, to
                  with the same two names one made from the card is. */
               homeTeam={home || undefined}
               awayTeam={away || undefined}
+              league={leagueForDivision(sec.game?.division)}
             />
           ))}
           <button

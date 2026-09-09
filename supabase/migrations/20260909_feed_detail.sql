@@ -34,8 +34,17 @@ alter table public.app_orders
   add column if not exists home_team  text,
   add column if not exists away_team  text,
   add column if not exists sim_p      numeric,
-  add column if not exists ev_fee     numeric;
+  add column if not exists ev_fee     numeric,
+  -- WHICH LEAGUE (owner 2026-09-08): the account, the book and the friend
+  -- graph are sport-agnostic — NCAAB is next season on the same account — so
+  -- the feed row says which league it is about. Stored values are the league
+  -- ids in src/lib/leagues.ts: "fbs", "fcs", "ncaab", "ncaaw". NULL on every
+  -- row placed before now, and null means NO CHIP — an unlabelled bet is not
+  -- relabelled by a guess.
+  add column if not exists sport      text;
 
+comment on column public.app_orders.sport is
+  'League id: fbs | fcs | ncaab | ncaaw (src/lib/leagues.ts). Null = unlabelled, shown without a chip.';
 comment on column public.app_orders.title is
   'The bet in the words the bettor confirmed ("Rutgers over 23.5 points"). Display only.';
 comment on column public.app_orders.sim_p is
@@ -63,6 +72,7 @@ with (security_invoker = true) as
          null::text    as away_team,
          null::numeric as sim_p,
          null::numeric as ev_fee,
+         null::text    as sport,
          k.created_at as at
   from public.picks k join public.profiles p on p.id = k.user_id
   union all
@@ -71,6 +81,7 @@ with (security_invoker = true) as
          o.season, o.week, o.game_slug, 'order', o.side || ' ' || o.ticker, null, o.price,
          o.units, null, 'app_order', o.ticker,
          o.title, o.home_team, o.away_team, o.sim_p, o.ev_fee,
+         o.sport,
          o.placed_at
   from public.app_orders o join public.profiles p on p.id = o.user_id;
 grant select on public.feed_items to authenticated;

@@ -2617,6 +2617,7 @@ function appOrdersRecord(acct, w, orderId, state, userId) {
         away_team: w.away_team ?? null,
         sim_p: w.sim_p ?? null,
         ev_fee: w.ev_fee ?? null,
+        sport: w.sport ?? null,
         ticker: w.ticker,
         side: w.side,
         mode: w.mode,
@@ -2831,6 +2832,10 @@ async function ordersBook(ticker) {
         yes_ask_size: noBid?.size ?? null,
     };
 }
+/** The league ids the feed knows how to name. Kept as a plain list because
+ *  this is a LABEL, not authority: an id we do not recognise is dropped, and
+ *  the row is still a real bet. */
+const SPORT_IDS = new Set(["fbs", "fcs", "ncaab", "ncaaw"]);
 /** An attribution string: trimmed, capped at 120 characters, null when empty
  *  or absent. Never throws, never rejects — see the WireOrder note. */
 function attrText(v) {
@@ -2940,7 +2945,8 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
             for (const k of Object.keys(o)) {
                 if (!["ticker", "side", "mode", "price_dollars", "count_fp",
                     "season", "week", "game_slug",
-                    "title", "home_team", "away_team", "sim_p", "ev_fee"].includes(k)) {
+                    "title", "home_team", "away_team", "sim_p", "ev_fee",
+                    "sport"].includes(k)) {
                     bad(400, { error: "unexpected_field", detail: `orders[${i}]: "${k}"` });
                     return;
                 }
@@ -3003,6 +3009,7 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req, res) => {
                 away_team: attrText(o.away_team),
                 sim_p: attrNum(o.sim_p, 0, 1),
                 ev_fee: attrNum(o.ev_fee, -5, 5),
+                sport: SPORT_IDS.has(String(o.sport ?? "")) ? String(o.sport) : null,
                 client_order_id: `${ORDERS_TAG}${key}-${i}`,
                 // `price` on this endpoint is ALWAYS the YES price: side "bid" buys
                 // YES at it, side "ask" sells YES at it — which IS buying NO at 1−p.

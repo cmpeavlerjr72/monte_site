@@ -49,6 +49,9 @@ export type PlaceOrder = {
   away_team?: string;
   sim_p?: number;
   ev_fee?: number;
+  /** WHICH LEAGUE (src/lib/leagues.ts): the book is sport-agnostic, so the
+   *  feed row says which one. Unknown ids are dropped server-side. */
+  sport?: string;
 };
 
 /** Echo of one order, as the server describes it back. */

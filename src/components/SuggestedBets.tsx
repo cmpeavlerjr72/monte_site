@@ -130,6 +130,7 @@ import {
   type AbstainReason, type CellName, type GameRegime,
 } from "../lib/edgeRules";
 import type { WeekEngine, RegimeTrend } from "../lib/cfbJson";
+import type { LeagueId } from "../lib/leagues";
 import { RegimeTrendSummary } from "./RegimeTrend";
 
 /** What "$30/ladder" MEANS under each mode, in a few words, beside the number
@@ -952,7 +953,7 @@ export default function GameBetsPanel({
   token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
   showTails, onShowTails, regime, edgeRules, onEdgeRules, engine, trend, onProject,
-  homeTeam, awayTeam,
+  homeTeam, awayTeam, league,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
@@ -1005,6 +1006,8 @@ export default function GameBetsPanel({
    *  ConfirmSlip). Optional — the test harness passes neither. */
   homeTeam?: string;
   awayTeam?: string;
+  /** Which league this card is on ("fbs" / "fcs"). Attribution only. */
+  league?: LeagueId;
 }) {
   /** Whether the week-1 rulebook can describe this board at all. */
   const rulebookOk = rulesApplyFor(engine);
@@ -1257,6 +1260,7 @@ export default function GameBetsPanel({
           ordersLive={ordersLive}
           homeTeam={homeTeam}
           awayTeam={awayTeam}
+          league={league}
           onClose={() => setSlip(null)}
         />
       )}
@@ -1290,6 +1294,7 @@ export default function GameBetsPanel({
  */
 export function PlaceStrip({
   group, unit, sizing, token, feeParams, quotedAt, ordersLive, homeTeam, awayTeam,
+  league,
 }: {
   /** The originating ladder, re-read from the CURRENT compute — or null when
    *  it is no longer suggested. */
@@ -1306,6 +1311,7 @@ export function PlaceStrip({
    *  (see ConfirmSlip). Display data, never a rail. */
   homeTeam?: string;
   awayTeam?: string;
+  league?: LeagueId;
 }) {
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
 
@@ -1392,6 +1398,7 @@ export function PlaceStrip({
           ordersLive={ordersLive}
           homeTeam={homeTeam}
           awayTeam={awayTeam}
+          league={league}
           onClose={() => setSlip(null)}
         />
       )}
@@ -1456,7 +1463,7 @@ type RungEdit = { include: boolean; raw: string };
  */
 function ConfirmSlip({
   group, idem, token, unit, sizing, feeParams, quotedAt, ordersLive,
-  homeTeam, awayTeam, onClose,
+  homeTeam, awayTeam, league, onClose,
 }: {
   group: LadderGroup;
   idem: string;
@@ -1467,6 +1474,9 @@ function ConfirmSlip({
    *  row simply shows no logos. Nothing here prices, sizes or places. */
   homeTeam?: string;
   awayTeam?: string;
+  /** Which league this board is (src/lib/leagues.ts) — the feed prints it as
+   *  a chip so a football bet and a basketball bet are told apart. */
+  league?: LeagueId;
   /** The unit and mode these rows were sized by — the SAME pair the declared
    *  per-order cap comes from, so the warning and the wire are one number. */
   unit: number;
@@ -1609,6 +1619,7 @@ function ConfirmSlip({
       title: l.r.label,
       home_team: homeTeam || undefined,
       away_team: awayTeam || undefined,
+      sport: league,
       sim_p: Number.isFinite(l.r.simP) ? l.r.simP : undefined,
       ev_fee: l.r.price > 0 && Number.isFinite(l.r.edge)
         ? Math.round((l.r.edge / l.r.price) * 1000) / 1000

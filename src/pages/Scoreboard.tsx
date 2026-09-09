@@ -42,6 +42,9 @@ import GameBetsPanel, {
 import SuggestedBetsIndex from "../components/SuggestedBetsIndex";
 import MyBookPanel from "../components/MyBookPanel";
 import { writeSlateGames } from "../lib/slateCache";
+// Which league a placement is filed under — the merged board is two divisions
+// and the feed says which one (src/lib/leagues.ts).
+import { leagueForDivision } from "../lib/leagues";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { useRestingReview } from "../lib/restingReview";
 import {
@@ -2977,6 +2980,7 @@ function ScoreboardPage() {
                          can name and badge it. Never a rail. */
                       homeTeam={openCard.teamA}
                       awayTeam={openCard.teamB}
+                      league={leagueForDivision(openCard.division)}
                     />
                   ) : null
                 }
@@ -3002,6 +3006,7 @@ function ScoreboardPage() {
                     showTails={betTails} onShowTails={onBetTails}
                     homeTeam={openCard.teamA}
                     awayTeam={openCard.teamB}
+                    league={leagueForDivision(openCard.division)}
                     regime={suggestions.regimeBySlug.get(openCard.key)}
                     edgeRules={edgeRules} onEdgeRules={onEdgeRules}
                     engine={weekEngine}
