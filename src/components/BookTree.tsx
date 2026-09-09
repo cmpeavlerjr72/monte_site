@@ -14,7 +14,7 @@
 //                        scale, zero in    owner's units
 //                        the middle
 //
-// Four rules carried in from MarketEdge and the settled record:
+// Five rules carried in from MarketEdge and the settled record:
 //
 //  1. THE BAR IS THE VERDICT and it is on ONE axis for the whole tree, so two
 //     rows are comparable by length alone. Number-pairs never sit inline: the
@@ -23,14 +23,17 @@
 //     it is really "no sample". The row dims and the popover says so.
 //  3. WORDS ON TAP. Every node and every group carries a sentence explaining
 //     what the cut is asking; nothing on the row itself explains itself.
-//  4. THE BETS ARE NOT IN THE TREE. Tapping a node SELECTS it; the "Show bets"
+//  4. THE TOP BRANCH IS THE DIVISION (owner 2026-09-09). FBS / FCS / "no
+//     published game" open by default because they are the frame, not a
+//     finding; every family under them starts collapsed, as before.
+//  5. THE BETS ARE NOT IN THE TREE. Tapping a node SELECTS it; the "Show bets"
 //     pull-up (a bottom sheet on a phone, a side panel on a desktop) lists
 //     that node's settled markets. A tree that inlines its leaves is a
 //     statement, not a cut.
 
 import { Fragment, useMemo, useState } from "react";
 import {
-  buildBookTree, checkTree, familyLabel, nodeLines,
+  buildBookTree, checkTree, familyLabel, nodeLines, DIVISION_NODE_KEYS,
   type SettledBet, type TreeGroup, type TreeNode,
 } from "../lib/bookTree";
 import { cheerLabelWithGame } from "../lib/kalshiPortal";
@@ -83,7 +86,13 @@ export default function BookTree({ bets, unit, teamsOf }: {
     return max;
   }, [root]);
 
-  const [open, setOpen] = useState<Set<string>>(() => new Set(["root"]));
+  // Root and the DIVISIONS start open; families start collapsed. The keys are
+  // the fixed level-1 keys rather than a walk of `root`, because this
+  // initializer runs once and the first render can precede the settlements.
+  // A key for a division this book has no bets on is simply inert.
+  const [open, setOpen] = useState<Set<string>>(
+    () => new Set(["root", ...DIVISION_NODE_KEYS]),
+  );
   const [selected, setSelected] = useState<string>("root");
   const [words, setWords] = useState<string | null>(null);
   const [sheet, setSheet] = useState(false);

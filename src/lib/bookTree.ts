@@ -15,7 +15,15 @@
 //   D total tercile low / mid / high, cut on the bets' own opens x over/under
 //   E tier          P4 v P4 / P4 v G5 / G5 v G5 / FCS    x family
 //   F phase         entry timing: 3-5d / 1-3d / same day / in-play x family
-//   (plus a flat by-WEEK list off the root)
+//   (plus a flat by-WEEK list beside the families)
+//
+// THE TOP LEVEL IS THE DIVISION (owner 2026-09-09: "in the settled section on
+// the profile, the top level branch should be FBS/FCS"). FBS and FCS are two
+// boards — different priors, different liquidity, different books pricing them
+// — so the whole structure above hangs UNDER a division rather than mixing the
+// two in one family row. Settlements that joined no published game get their
+// own explicit third branch (rule 1: nothing is dropped) and keep whichever
+// cuts still work with no game attached.
 //
 // FOUR RULES this file will not bend:
 //
@@ -365,7 +373,10 @@ const venueWords =
   + "are different bets even at the same number.";
 const tierWords =
   "Conference class of the matchup, from the FBS conference table — P4 v P4, "
-  + "P4 v G5, G5 v G5, or an FCS game (no book line, its own board).";
+  + "P4 v G5, G5 v G5, or an FCS game (no book line, its own board). Under the "
+  + "FBS branch the FCS cell is empty BY CONSTRUCTION — an FCS game is on the "
+  + "FCS branch — so the cell is kept where it can be filled and simply does "
+  + "not appear where it cannot.";
 const tercileWords =
   "The game's OPEN total, cut into thirds ACROSS THE GAMES IN THIS BOOK — not "
   + "a fixed number. High- and low-total games are different environments and "
@@ -614,15 +625,47 @@ function applyCut(
   return { key: `${parentKey}/${cut.key}`, label: cut.label, words: cut.words, nodes };
 }
 
+/* ------------------------------------------------------------ division --- */
+
+/** Which board the game was on. "none" is not a division — it is the explicit
+ *  bucket for a settlement that joined no published game, kept because rule 1
+ *  drops nothing. */
+type DivKey = "fbs" | "fcs" | "none";
+
+const DIV_ORDER: DivKey[] = ["fbs", "fcs", "none"];
+
+const DIV_LABEL: Record<DivKey, string> = {
+  fbs: "FBS",
+  fcs: "FCS",
+  none: "No published game",
+};
+
+const DIV_WORDS: Record<DivKey, string> = {
+  fbs: "Every settled FBS bet in the book. The main board: sportsbook opens "
+    + "exist for these games, so every line-based cut below is filled in.",
+  fcs: "Every settled FCS bet in the book. Its own board with its own priors "
+    + "and its own liquidity, and most of it carries no sportsbook open — the "
+    + "line-based cuts below will say so rather than guess.",
+  none: "Settled markets that joined no published game — no title match on any "
+    + "published week, or a date outside the ±4-day guard. Nothing is dropped, "
+    + "so they sit here in full; the cuts that need a game (open spread, total, "
+    + "tier, timing against kickoff) simply cannot speak and are not drawn.",
+};
+
+/** The level-1 keys, exported so the renderer can open the divisions by
+ *  default without walking a tree that may not be built yet. */
+export const DIVISION_NODE_KEYS = DIV_ORDER.map((k) => `root/div:${k}`);
+
 /**
  * THE TREE.
  *
- * Root = every settled bet. Level 1 = family. Level 2 = the side cut for that
- * family. Levels 3+ = the regime cuts, hung off BOTH the family node (the
- * scorecard's "x family") and each side node (its "x over/under"), so the
- * question "which spread band did my dog bets lose in" is one path, not a
- * mental join. Below that, leaves: a fourth level of cutting on this many
- * bets is noise with a label on it.
+ * Root = every settled bet. Level 1 = DIVISION (FBS / FCS / no published
+ * game). Level 2 = family, beside a flat by-week reading of the same bets.
+ * Level 3 = the side cut for that family. Levels 4+ = the regime cuts, hung
+ * off BOTH the family node (the scorecard's "x family") and each side node
+ * (its "x over/under"), so the question "which spread band did my dog bets
+ * lose in" is one path, not a mental join. Below that, leaves: another level
+ * of cutting on this many bets is noise with a label on it.
  */
 export function buildBookTree(bets: SettledBet[]): TreeNode {
   const cuts = totalTercileCuts(bets);
@@ -652,59 +695,90 @@ export function buildBookTree(bets: SettledBet[]): TreeNode {
     return out;
   };
 
-  // ---- level 1: family ----
-  const byFam = new Map<string, SettledBet[]>();
-  for (const b of bets) {
-    const k = FAMILY_LABEL[b.fam] ? b.fam : "OTHER";
-    (byFam.get(k) ?? byFam.set(k, []).get(k)!).push(b);
-  }
-  const famRank = (k: string) => {
-    const i = FAMILY_ORDER.indexOf(k);
-    return i < 0 ? FAMILY_ORDER.length : i;
-  };
-  const famNodes = [...byFam.entries()]
-    .sort((a, b) => famRank(a[0]) - famRank(b[0]) || familyLabel(a[0]).localeCompare(familyLabel(b[0])))
-    .map(([fam, list]) => makeNode(
-      `root/fam:${fam}`, familyLabel(fam),
-      fam === "OTHER"
-        ? "Families this page has no wording for yet — halves, periods, anything Kalshi listed since. Counted, never guessed at."
-        : `Every settled ${familyLabel(fam).toLowerCase()} market in the book.`,
-      1, list, familyGroups,
-    ));
+  // ---- level 2 and below, UNDER one division: family, and the week reading ----
+  const divisionGroups = (n: { key: string; bets: SettledBet[]; depth: number }): TreeGroup[] => {
+    const out: TreeGroup[] = [];
 
-  // ---- level 1 (second reading): season week, flat, newest first ----
-  const byWeek = new Map<string, SettledBet[]>();
+    const byFam = new Map<string, SettledBet[]>();
+    for (const b of n.bets) {
+      const k = FAMILY_LABEL[b.fam] ? b.fam : "OTHER";
+      (byFam.get(k) ?? byFam.set(k, []).get(k)!).push(b);
+    }
+    const famRank = (k: string) => {
+      const i = FAMILY_ORDER.indexOf(k);
+      return i < 0 ? FAMILY_ORDER.length : i;
+    };
+    const famNodes = [...byFam.entries()]
+      .sort((a, b) => famRank(a[0]) - famRank(b[0]) || familyLabel(a[0]).localeCompare(familyLabel(b[0])))
+      .map(([fam, list]) => makeNode(
+        `${n.key}/fam:${fam}`, familyLabel(fam),
+        fam === "OTHER"
+          ? "Families this page has no wording for yet — halves, periods, anything Kalshi listed since. Counted, never guessed at."
+          : `Every settled ${familyLabel(fam).toLowerCase()} market on this branch.`,
+        n.depth + 1, list, familyGroups,
+      ));
+    if (famNodes.length) {
+      out.push({
+        key: `${n.key}/fam`, label: "By family",
+        words: "What kind of market it was. Every deeper cut hangs off this one, "
+          + "because a spread and a team total are not the same bet in the same regime.",
+        nodes: famNodes,
+      });
+    }
+
+    // Second reading of the same bets: season week, flat, newest first.
+    const byWeek = new Map<string, SettledBet[]>();
+    for (const b of n.bets) {
+      const k = b.game ? `${b.game.week}` : "unknown";
+      (byWeek.get(k) ?? byWeek.set(k, []).get(k)!).push(b);
+    }
+    const weekNodes = [...byWeek.entries()]
+      .sort((a, b) => (a[0] === "unknown" ? 1 : b[0] === "unknown" ? -1 : Number(b[0]) - Number(a[0])))
+      .map(([w, list]) => makeNode(
+        `${n.key}/week:${w}`,
+        w === "unknown" ? "Week unknown" : `Week ${w}`,
+        w === "unknown"
+          ? "Settlements that joined no published game, so they carry no week."
+          : `Everything on this branch that settled on week ${w}'s slate.`,
+        n.depth + 1, list, leafGroups,
+      ));
+    // On the "no published game" branch every bet is week-unknown, so the cut
+    // would restate its own parent — the same "this cut cannot say anything"
+    // rule `applyCut` uses when no bucket forms.
+    const weekSaysNothing = weekNodes.length === 1 && byWeek.has("unknown");
+    if (weekNodes.length && !weekSaysNothing) {
+      out.push({
+        key: `${n.key}/week`, label: "By week",
+        words: "The season, newest first. A flat list on purpose: a week is a "
+          + "date, not a regime, and cutting it further would just re-split the "
+          + "cells above on a smaller sample.",
+        nodes: weekNodes,
+      });
+    }
+    return out;
+  };
+
+  // ---- level 1: DIVISION ----
+  const byDiv = new Map<DivKey, SettledBet[]>();
   for (const b of bets) {
-    const k = b.game ? `${b.game.week}` : "unknown";
-    (byWeek.get(k) ?? byWeek.set(k, []).get(k)!).push(b);
+    const k: DivKey = b.game ? b.game.division : "none";
+    (byDiv.get(k) ?? byDiv.set(k, []).get(k)!).push(b);
   }
-  const weekNodes = [...byWeek.entries()]
-    .sort((a, b) => (a[0] === "unknown" ? 1 : b[0] === "unknown" ? -1 : Number(b[0]) - Number(a[0])))
-    .map(([w, list]) => makeNode(
-      `root/week:${w}`,
-      w === "unknown" ? "Week unknown" : `Week ${w}`,
-      w === "unknown"
-        ? "Settlements that joined no published game, so they carry no week."
-        : `Everything that settled on week ${w}'s slate.`,
-      1, list, leafGroups,
+  const divNodes = DIV_ORDER
+    .filter((k) => byDiv.has(k))
+    .map((k) => makeNode(
+      `root/div:${k}`, DIV_LABEL[k], DIV_WORDS[k], 1, byDiv.get(k)!, divisionGroups,
     ));
 
   const groups: TreeGroup[] = [];
-  if (famNodes.length) {
+  if (divNodes.length) {
     groups.push({
-      key: "root/fam", label: "By family",
-      words: "What kind of market it was. Every deeper cut hangs off this one, "
-        + "because a spread and a team total are not the same bet in the same regime.",
-      nodes: famNodes,
-    });
-  }
-  if (weekNodes.length) {
-    groups.push({
-      key: "root/week", label: "By week",
-      words: "The season, newest first. A flat list on purpose: a week is a "
-        + "date, not a regime, and cutting it further would just re-split the "
-        + "cells above on a smaller sample.",
-      nodes: weekNodes,
+      key: "root/div", label: "By division",
+      words: "Which board the game was on. FBS and FCS are two different "
+        + "markets — different priors, different liquidity, different books "
+        + "pricing them — so the book splits there before anything else, and "
+        + "everything below is read inside one board at a time.",
+      nodes: divNodes,
     });
   }
 
