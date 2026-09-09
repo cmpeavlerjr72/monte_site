@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  rankEdges, rankProps, rankTeamMarkets, isTradeableTeamMarket,
+  rankEdges, rankProps, propOversBelowEv, rankTeamMarkets, isTradeableTeamMarket,
   pricedRowCount, hoursSince,
   type SlateScan, type EdgeEntry,
 } from "../lib/edges";
@@ -181,9 +181,19 @@ function DivisionTag({ division }: { division?: string }) {
   return <span className="division-badge" data-division="fcs">FCS</span>;
 }
 
-function EdgePill({ edge }: { edge: number }) {
+/**
+ * The verdict number for a row.
+ *
+ * `title` exists because the pill carries different quantities in different
+ * columns and the number alone cannot say which: a two-sided row's verdict is
+ * the probability gap in points, while an over-only binary's verdict is EV per
+ * $1 staked (there is no other side to compare a gap against, and EV is what
+ * decides the bet). Same pill, same sign colouring, one hover that names it.
+ */
+function EdgePill({ edge, title }: { edge: number; title?: string }) {
   return (
-    <span className="top-edges__edge" data-sign={edge >= 0 ? "pos" : "neg"}>
+    <span className="top-edges__edge" data-sign={edge >= 0 ? "pos" : "neg"}
+      title={title ?? "sim probability minus market, in points"}>
       {edge >= 0 ? "+" : ""}{(edge * 100).toFixed(1)}
     </span>
   );
@@ -326,49 +336,128 @@ function GameRow({ e, rank, regime, rulesApply, onPick, onAddLeg }: {
 }
 
 /* ------------------------------- prop rows -------------------------------- */
+/**
+ * The rung list of a ladder candidate.
+ *
+ * House bar-test grammar (Team Stats v3): every rung's price and sim
+ * probability sit on ONE shared 0-100% axis so the SHAPE of the disagreement
+ * is what you see, and exactly ONE number per rung is printed at rest — the
+ * fee-inclusive EV, which is the number that decides the bet. The price is a
+ * tick on the axis, the sim is the fill; how far the fill runs past the tick
+ * IS the edge, so there is no number-pair to read.
+ */
+function LadderRungs({ p }: { p: PropEdge }) {
+  const rungs = p.ladderRungs ?? [];
+  if (!rungs.length) return null;
+  return (
+    <div className="prop-ladder">
+      <div className="prop-ladder__note">
+        {rungs.length} rungs on one player — perfectly correlated. This is a
+        shape bet on {p.player}&rsquo;s distribution, <b>not</b> diversification:
+        size the whole set as one position.
+        {p.ladderBoardAdjacent === false && (
+          <> Rungs are not neighbours on the venue&rsquo;s full listed ladder,
+          so the strikes between them never traded.</>
+        )}
+      </div>
+      {rungs.map((r) => {
+        const sim = Math.max(0, Math.min(1, r.sim_over));
+        const px = Math.max(0, Math.min(1, r.px_cents / 100));
+        return (
+          <div className="prop-rung" key={r.line}>
+            <span className="prop-rung__k">{r.line}+</span>
+            <span className="prop-rung__axis" aria-hidden="true">
+              <span className="prop-rung__fill" style={{ width: `${sim * 100}%` }} />
+              <span className="prop-rung__tick" style={{ left: `${px * 100}%` }} />
+            </span>
+            <span className="prop-rung__ev" data-sign={r.ev_fee2 >= 0 ? "pos" : "neg"}>
+              {r.ev_fee2 >= 0 ? "+" : ""}{(r.ev_fee2 * 100).toFixed(0)}%
+            </span>
+          </div>
+        );
+      })}
+      {p.ladderCombinedEv !== undefined && (
+        <div className="prop-ladder__foot">
+          equal stake per rung ·{" "}
+          <b>{p.ladderCombinedEv >= 0 ? "+" : ""}
+            {(p.ladderCombinedEv * 100).toFixed(0)}%</b> EV on the position
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PropRow({ p, rank, onPick, onAddLeg }: {
   p: PropEdge; rank: number; onPick: (slug: string) => void;
   onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  // An over-only venue has no under to bet, so the decision number is EV per
+  // $1 staked, not the probability gap — and there is no second side button
+  // anywhere on this row by construction.
+  const verdict = p.overOnly ? (p.evFee ?? p.edge) : p.edge;
   return (
-    <div
-      className="edge-row" role="button" tabIndex={0}
-      onClick={() => onPick(p.slug)}
-      onKeyDown={(ev) => {
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onPick(p.slug); }
-      }}
-      title={`Go to ${p.teamB} @ ${p.teamA}`}
-    >
-      <span className="edge-row__rank">{rank}</span>
-      <Logos teams={[p.playerTeam]} />
-      <span className="edge-row__main">
-        <span className="edge-row__t1">
-          {propLabel(p)}
-          {p.flagged && (
-            <span
-              className="edge-flag"
-              title="high-usage over — sim tends to over-project these; see props caveats"
-            >
-              T3
-            </span>
-          )}
+    <>
+      <div
+        className="edge-row" role="button" tabIndex={0}
+        onClick={() => onPick(p.slug)}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onPick(p.slug); }
+        }}
+        title={`Go to ${p.teamB} @ ${p.teamA}`}
+      >
+        <span className="edge-row__rank">{rank}</span>
+        <Logos teams={[p.playerTeam]} />
+        <span className="edge-row__main">
+          <span className="edge-row__t1">
+            {propLabel(p)}
+            {p.ladder && (
+              <button
+                type="button"
+                className="edge-flag edge-flag--ladder"
+                data-primary={open ? "true" : undefined}
+                aria-expanded={open}
+                title="ladder candidate — two or more consecutive rungs clear the EV floor; tap for the rungs"
+                onClick={(ev) => { ev.stopPropagation(); setOpen((v) => !v); }}
+                onKeyDown={(ev) => ev.stopPropagation()}
+              >
+                Ladder {open ? "▾" : "▸"}
+              </button>
+            )}
+            {p.flagged && (
+              <span
+                className="edge-flag"
+                title="high-usage over — sim tends to over-project these; see props caveats"
+              >
+                T3
+              </span>
+            )}
+          </span>
+          <span className="edge-row__t2">
+            {/* The venue is named once in the column footer, not per row. */}
+            {p.priceCents !== undefined
+              ? `${p.priceCents}¢${p.nTrades !== undefined ? ` · ${p.nTrades} trade${p.nTrades === 1 ? "" : "s"}` : ""}`
+              : p.price !== undefined
+                ? `${p.price > 0 ? "+" : ""}${p.price}`
+                : shortTeam(p.playerTeam)}
+          </span>
         </span>
-        <span className="edge-row__t2">
-          {/* The book is named once in the column footer, not per row. */}
-          {p.price !== undefined
-            ? `${p.price > 0 ? "+" : ""}${p.price}`
-            : shortTeam(p.playerTeam)}
+        <span className="edge-row__num">
+          <b>{pctText(p.simP)}</b><i>{americanOdds(p.simP)}</i>
         </span>
-      </span>
-      <span className="edge-row__num">
-        <b>{pctText(p.simP)}</b><i>{americanOdds(p.simP)}</i>
-      </span>
-      <span className="edge-row__num">
-        <b>{pctText(p.fairP)}</b><i>{americanOdds(p.fairP)}</i>
-      </span>
-      <EdgePill edge={p.edge} />
-      <AddLegButton label={propLabel(p)} onAdd={() => onAddLeg(p.slug, legSpecForPropRow(p))} />
-    </div>
+        <span className="edge-row__num">
+          <b>{pctText(p.fairP)}</b><i>{americanOdds(p.fairP)}</i>
+        </span>
+        <EdgePill
+          edge={verdict}
+          title={p.overOnly
+            ? "EV per $1 staked, after a flat 2¢ round trip"
+            : "sim probability minus market, in points"}
+        />
+        <AddLegButton label={propLabel(p)} onAdd={() => onAddLeg(p.slug, legSpecForPropRow(p))} />
+      </div>
+      {p.ladder && open && <LadderRungs p={p} />}
+    </>
   );
 }
 
@@ -606,6 +695,17 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
 
     // Anything older than a day and a half is worth calling out explicitly.
     if (age !== null && age > 36) parts.push("(stale)");
+    // An over-only venue lists no under contract at all, so the reader has to
+    // be told that the missing side is the market's shape and not a filter we
+    // applied — and how many of its overs the sim priced but did not rank.
+    if (scan.propsSideOnly === "over") {
+      parts.push("overs only — this venue lists no under contract");
+      const below = propOversBelowEv(scan.props);
+      if (below) parts.push(`${below} more priced, none at positive EV`);
+    }
+    if (scan.propsFeeModel === "none_published_flat2") {
+      parts.push("EV after a flat 2¢ round trip (venue publishes no fee schedule)");
+    }
     if (props.length < 10) parts.push(`only ${props.length} prop edge${props.length === 1 ? "" : "s"} priced`);
     return parts.join(" · ") || null;
   }, [scan, props.length]);
@@ -720,7 +820,12 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
               </div>}
         </Column>
 
-        <Column title="Player props" count={props.length ? `${props.length}` : undefined}
+        {/* Title says which bet this column is offering. On an over-only venue
+            "Player props" would imply both sides exist; "Top prop overs" is
+            what the reader can actually place. */}
+        <Column
+          title={scan?.propsSideOnly === "over" ? "Top prop overs" : "Player props"}
+          count={props.length ? `${props.length}` : undefined}
           loading={loading} footer={propsFooter}>
           {props.length
             ? props.map((p, i) => (
@@ -729,7 +834,9 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
             : <div className="edge-col__empty">
                 {scan?.propsStatus === "missing"
                   ? "Props odds not published for this week yet."
-                  : "No prop edges could be priced."}
+                  : scan?.propsSideOnly === "over" && scan.props.length > 0
+                    ? "Every priced over on this venue is at negative EV after fees — nothing to buy, and there is no under to sell."
+                    : "No prop edges could be priced."}
               </div>}
         </Column>
       </div>

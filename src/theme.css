@@ -2381,3 +2381,104 @@ input:focus, select:focus, textarea:focus {
   .rec__rung { grid-template-columns: minmax(0, 1fr) auto; }
   .rec__rungNums { grid-column: 1 / -1; }
 }
+
+/* ===========================================================================
+   PROP LADDER RUNGS  (TopEdges "Top prop overs" column)
+   ---------------------------------------------------------------------------
+   Appended as its own block on purpose: theme.css is never union-merged, and
+   an unbalanced brace here is a css-syntax-error, which is a BUILD FAILURE
+   even though vite only prints it as a warning (incident 2026-09-09).
+
+   House bar-test grammar (Team Stats v3): every rung sits on ONE shared
+   0-100% axis, the market price is a TICK on that axis and the sim is the
+   FILL, so how far the fill runs past the tick IS the edge and there is no
+   number-pair to read. Exactly one number is printed per rung at rest -- the
+   fee-inclusive EV, which is the number that decides an over-only bet.
+   ========================================================================= */
+.edge-flag--ladder {
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+}
+
+.edge-flag--ladder[data-primary="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.prop-ladder {
+  display: grid;
+  gap: 4px;
+  margin: -2px 0 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 6%, var(--card));
+}
+
+.prop-ladder__note,
+.prop-ladder__foot {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.prop-ladder__foot {
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
+.prop-rung {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 8px;
+}
+
+.prop-rung__k {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.prop-rung__axis {
+  position: relative;
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--border) 60%, transparent);
+  overflow: hidden;
+}
+
+.prop-rung__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--brand) 55%, var(--card));
+}
+
+.prop-rung__tick {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--text);
+  transform: translateX(-1px);
+}
+
+.prop-rung__ev {
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.prop-rung__ev[data-sign="pos"] { color: var(--pos); }
+.prop-rung__ev[data-sign="neg"] { color: var(--neg); }
+
+@media (max-width: 520px) {
+  .prop-rung { grid-template-columns: 42px minmax(0, 1fr) 42px; }
+}

@@ -734,17 +734,57 @@ export function pmfBins(pmf: Pmf, width: number): DistBin[] {
 
 export type PropPrice = { price: number; book: string };
 
+/** One rung of a ladder, as decided by the publisher (never re-grouped here). */
+export type PropLadderRung = {
+  line: number;
+  px_cents: number;
+  sim_over: number;
+  ev_fee2: number;
+  n_trades?: number;
+};
+
 export type PropOddsRow = {
   player: string;
   stat: string;
   line: number;
-  /** Consensus de-vigged P(over). */
+  /**
+   * P(over) implied by the market. For a two-sided book this is the de-vigged
+   * consensus; for a one-sided binary venue it is the contract price itself,
+   * because there is no second side to normalise against — `fair_source`
+   * says which, and `binary_price_no_devig` means the venue's own edge is
+   * still inside the number.
+   */
   fair_over: number;
+  fair_source?: string;
   n_books?: number;
   best_over?: PropPrice;
   best_under?: PropPrice;
   /** Usage volatility bucket; T3 overs carry a known over-projection caveat. */
   vol_tercile?: "T1" | "T2" | "T3";
+
+  /* ---- one-sided (binary exchange) venues -------------------------------
+   * DKeX lists every player market as a GTE binary: yes pays $1 if the stat
+   * clears the strike. There is no under contract and the owner cannot sell,
+   * so `side: "over"` on a record is a statement about the VENUE, and the
+   * page must never offer the other side of it. */
+  side?: "over";
+  venue?: string;
+  /** The publisher's own P(over) — the only sim number for a stat that has
+   * no PMF in players_dist.json (anytime_td). */
+  sim_over?: number;
+  no_pmf?: boolean;
+  /** EV per $1 staked: `ev` pre-fee, `ev_fee2` after a flat 2c round trip. */
+  ev?: number;
+  ev_fee2?: number;
+  fee_model?: string;
+  px_cents?: number;
+  n_trades?: number;
+  flag?: string;
+  ladder_candidate?: boolean;
+  ladder_rungs?: number[];
+  ladder_ev_combined?: number;
+  ladder_board_adjacent?: boolean;
+  ladder_detail?: PropLadderRung[];
 };
 
 export type PropsOdds = {
@@ -752,6 +792,11 @@ export type PropsOdds = {
   source: string | null;
   /** Single-book exports name the book once at the top level. */
   book: string | null;
+  /** Named when the whole file comes from one venue (e.g. "dkex"). */
+  venue: string | null;
+  /** "over" when the venue lists only one side of every market. */
+  sideOnly: "over" | null;
+  feeModel: string | null;
   byGame: Map<string, PropOddsRow[]>;
 };
 
@@ -799,10 +844,16 @@ export async function getPropsOdds(
   const games = raw?.games ?? {};
   for (const slug of Object.keys(games)) {
     const rows: PropOddsRow[] = [];
-    // The export is moving to single-book (one row per player+stat). While both
-    // shapes are in flight, keep the FIRST row per (player, stat) as listed.
-    // Picking the most extreme instead would be selection bias — we would be
-    // choosing the line that flatters the sim.
+    // Two dedupe rules, because two shapes are in flight and they mean
+    // different things.
+    //   LEGACY (no `side`): a two-sided book export, one row per (player,
+    //     stat) by construction; keep the FIRST as listed, because picking
+    //     the most extreme line would be selection bias — we would be
+    //     choosing the number that flatters the sim.
+    //   ONE-SIDED (`side` present): every strike on a binary ladder is its
+    //     own contract, and the LADDER is the product. Collapsing to one
+    //     line per (player, stat) would delete the rungs, so the key
+    //     includes the line and a genuine duplicate contract still collapses.
     const seen = new Set<string>();
     for (const p of games[slug]?.props ?? []) {
       const player = String(p?.player ?? "").trim();
@@ -810,18 +861,46 @@ export async function getPropsOdds(
       const line = num(p?.line);
       const fair = num(p?.fair_over);
       if (!player || !stat || line === undefined || fair === undefined) continue;
-      const dedupeKey = `${player}|${stat}`;
+      const oneSided = p?.side === "over";
+      const dedupeKey = oneSided ? `${player}|${stat}|${line}` : `${player}|${stat}`;
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
+      const rungs = Array.isArray(p?.ladder_detail)
+        ? (p.ladder_detail as any[])
+            .map((r) => ({
+              line: num(r?.line), px_cents: num(r?.px_cents),
+              sim_over: num(r?.sim_over), ev_fee2: num(r?.ev_fee2),
+              n_trades: num(r?.n_trades),
+            }))
+            .filter((r) => r.line !== undefined && r.ev_fee2 !== undefined)
+        : undefined;
       rows.push({
         player, stat, line,
         fair_over: fair,
+        fair_source: p?.fair_source != null ? String(p.fair_source) : undefined,
         n_books: num(p?.n_books),
         best_over: parsePropPrice(p?.best_over),
         best_under: parsePropPrice(p?.best_under),
         vol_tercile: p?.vol_tercile === "T1" || p?.vol_tercile === "T2" || p?.vol_tercile === "T3"
           ? p.vol_tercile
           : undefined,
+        side: oneSided ? "over" : undefined,
+        venue: p?.venue != null ? String(p.venue) : undefined,
+        sim_over: num(p?.sim_over),
+        no_pmf: p?.no_pmf === true,
+        ev: num(p?.ev),
+        ev_fee2: num(p?.ev_fee2),
+        fee_model: p?.fee_model != null ? String(p.fee_model) : undefined,
+        px_cents: num(p?.px_cents),
+        n_trades: num(p?.n_trades),
+        flag: p?.flag != null ? String(p.flag) : undefined,
+        ladder_candidate: p?.ladder_candidate === true,
+        ladder_rungs: Array.isArray(p?.ladder_rungs)
+          ? (p.ladder_rungs as any[]).map(num).filter((x): x is number => x !== undefined)
+          : undefined,
+        ladder_ev_combined: num(p?.ladder_ev_combined),
+        ladder_board_adjacent: p?.ladder_board_adjacent === true,
+        ladder_detail: rungs?.length ? (rungs as PropLadderRung[]) : undefined,
       });
     }
     if (rows.length) byGame.set(slug, rows);
@@ -831,6 +910,9 @@ export async function getPropsOdds(
     updated: raw?.updated != null ? String(raw.updated) : null,
     source: raw?.source != null ? String(raw.source) : null,
     book: raw?.book != null ? String(raw.book) : null,
+    venue: raw?.venue != null ? String(raw.venue) : null,
+    sideOnly: raw?.side_only === "over" ? "over" : null,
+    feeModel: raw?.fee_model != null ? String(raw.fee_model) : null,
     byGame,
   };
 }

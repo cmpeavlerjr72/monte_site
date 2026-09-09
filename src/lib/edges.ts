@@ -67,6 +67,13 @@ export type SlateScan = {
   propsUpdated: string | null;
   /** Single-book exports name the book once; shown in the column footer. */
   propsBook: string | null;
+  /** Named when the whole props file is one venue (e.g. "dkex"). */
+  propsVenue: string | null;
+  /** "over" when the venue lists only one side of every player market, so
+   *  the page must never render the other one. */
+  propsSideOnly: "over" | null;
+  /** The venue's fee model as the publisher named it; null when unstated. */
+  propsFeeModel: string | null;
   /** Kalshi team-stat/period markets for the week, unsorted. FBS-only — see
    *  cfbJson's team_markets.json note; "missing" covers the FCS namespace too. */
   teamMarkets: TeamMarketRow[];
@@ -278,6 +285,9 @@ export async function ensureSlateEdges(
     byGame: out, props, propsStatus,
     propsUpdated: propsOdds?.updated ?? null,
     propsBook: propsOdds?.book ?? null,
+    propsVenue: propsOdds?.venue ?? null,
+    propsSideOnly: propsOdds?.sideOnly ?? null,
+    propsFeeModel: propsOdds?.feeModel ?? null,
     teamMarkets: teamMarketsResult?.rows ?? [],
     teamMarketsStatus,
     teamMarketsUpdated: teamMarketsResult?.updated ?? null,
@@ -329,9 +339,37 @@ export function pricedRowCount(edges: Map<string, GameEdges>): { priced: number;
   return { priced, total };
 }
 
-/** Prop edges ranked by edge descending. */
+/**
+ * Prop edges ranked for the board.
+ *
+ * TWO-SIDED rows keep the old behaviour: the side was chosen as the one the
+ * sim likes, so `edge` is non-negative by construction and ranking on it is
+ * the same thing as ranking on conviction.
+ *
+ * ONE-SIDED (over-only) rows are different in a way that matters. The side is
+ * fixed by the venue, so `edge` is SIGNED, and on a board where the sim sits
+ * below the market most rows are negative — a market over the sim thinks is
+ * too dear. Those are information, not bets, so they are excluded here rather
+ * than ranked last, and what survives is ranked on FEE-INCLUSIVE EV per $1
+ * staked, which is the number that decides an over-only bet (profitability
+ * frame, user rule 2026-08-15). Nothing is hidden: the full file is still in
+ * `scan.props` and every row is in the publisher's parquet.
+ */
 export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
-  return [...props].sort((a, b) => b.edge - a.edge).slice(0, limit);
+  const keep = props.filter((p) => !p.overOnly || (p.evFee ?? -1) > 0);
+  return keep
+    .sort((a, b) => {
+      const ea = a.overOnly ? (a.evFee ?? -Infinity) : NaN;
+      const eb = b.overOnly ? (b.evFee ?? -Infinity) : NaN;
+      if (Number.isFinite(ea) && Number.isFinite(eb)) return eb - ea;
+      return b.edge - a.edge;
+    })
+    .slice(0, limit);
+}
+
+/** How many over-only rows the venue priced but the ranking excluded. */
+export function propOversBelowEv(props: PropEdge[]): number {
+  return props.filter((p) => p.overOnly && (p.evFee ?? -1) <= 0).length;
 }
 
 /**
