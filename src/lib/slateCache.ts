@@ -2,12 +2,14 @@
 //
 // THE LAST SLATE THIS BROWSER SAW — slug, matchup words, season and week.
 //
-// Why it exists: the My Book dashboard (/cfb/mybook) carries the "post a pick"
-// form, and a pick needs a GAME (`picks.game_slug` is `not null`). The
-// dashboard is not the scoreboard: it loads no week file, and the standing
-// rule for this pass is NO new data fetches beyond Supabase and the portal
-// payload. So the scoreboard — which already builds exactly this map to name
-// its cards — leaves it here on its way past, and the dashboard reads it.
+// Why it exists: the account pages (/feed, /me, /mybook) are not the
+// scoreboard — they load no week file, and the standing rule for that pass is
+// NO new data fetches beyond Supabase and the portal payload. So the
+// scoreboard, which already builds exactly this map to name its cards, leaves
+// it here on its way past and they read it. It began as the game picker for
+// the "post a pick" form; that form is gone (the feed is automatic since
+// 2026-09-09) and what remains is knowing which season and week this browser
+// last looked at.
 //
 // It is a CONVENIENCE, not state anything depends on. Storage is guarded the
 // ownerPrefs way: any failure (private window, cleared data, a browser that
