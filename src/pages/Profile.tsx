@@ -245,7 +245,7 @@ export default function Profile() {
         </Field>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button type="button" className="ui-btn" disabled={!dirty || busy || !emailOk}
+          <button type="button" className="ui-btn" data-primary="true" disabled={!dirty || busy || !emailOk}
                   onClick={save} style={{ padding: "5px 14px", fontSize: 12, fontWeight: 700 }}>
             {busy ? "Saving…" : "Save"}
           </button>

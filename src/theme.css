@@ -231,6 +231,26 @@ body {
   background: color-mix(in oklab, var(--accent) 85%, var(--text));
 }
 
+/* PRIMARY ACTION (owner, 2026-09-08 11:45 PM: "buttons are the same colour as
+   the background so the user cannot tell they are being prompted to click").
+   The one button that commits a form — Save, Sign up, Link, Accept, Find —
+   wears the brand fill whenever it can be pressed, and a dashed muted outline
+   when it cannot, so the eye finds it either way. */
+.ui-btn[data-primary="true"]:not(:disabled) {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: var(--brand-contrast);
+  font-weight: 800;
+  box-shadow: 0 1px 2px rgba(0,0,0,.18);
+}
+.ui-btn[data-primary="true"]:not(:disabled):hover {
+  background: color-mix(in oklab, var(--brand) 85%, var(--text));
+}
+.ui-btn[data-primary="true"]:disabled {
+  border-style: dashed;
+  opacity: .6;
+}
+
 /* Compact icon-only variant (theme / density toggles). */
 .ui-btn.icon { padding: 5px 8px; min-width: 30px; text-align: center; }
 

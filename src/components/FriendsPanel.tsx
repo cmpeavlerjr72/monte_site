@@ -126,7 +126,7 @@ export default function FriendsPanel() {
         <Group label="Wants to be friends" empty="No incoming requests.">
           {incoming.map((e) => (
             <PartyRow key={e.id} party={other(e)}>
-              <button type="button" className="ui-btn" disabled={busy} style={BTN}
+              <button type="button" className="ui-btn" data-primary="true" disabled={busy} style={BTN}
                       onClick={() => decide(e.id, "accepted")}>Accept</button>
               <button type="button" className="ui-btn" disabled={busy}
                       style={{ ...BTN, color: "var(--neg)" }}
@@ -224,7 +224,7 @@ function AddFriend({ me, onSent, known }: {
                placeholder="their exact handle"
                autoCapitalize="none" autoCorrect="off" spellCheck={false}
                style={{ fontSize: 12, flex: "1 1 160px", minWidth: 0 }} />
-        <button type="submit" className="ui-btn" disabled={busy || !handle.trim()} style={BTN}>
+        <button type="submit" className="ui-btn" data-primary="true" disabled={busy || !handle.trim()} style={BTN}>
           {busy ? "…" : "Find"}
         </button>
       </form>
@@ -235,7 +235,7 @@ function AddFriend({ me, onSent, known }: {
       )}
       {found && found !== "none" && (
         <PartyRow party={found as Party}>
-          <button type="button" className="ui-btn" disabled={busy} style={BTN}
+          <button type="button" className="ui-btn" data-primary="true" disabled={busy} style={BTN}
                   onClick={request}>Send request</button>
         </PartyRow>
       )}

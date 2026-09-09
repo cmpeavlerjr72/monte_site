@@ -299,7 +299,7 @@ function CredentialsForm({ prompt, compact, startMode }: {
         <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{error}</span>
       )}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        <button type="submit" className="ui-btn" data-on={canSubmit && !busy ? "true" : "false"} disabled={!canSubmit || busy} style={BTN}>
+        <button type="submit" className="ui-btn" data-primary="true" disabled={!canSubmit || busy} style={BTN}>
           {busy ? "One sec…" : mode === "signin" ? "Log in" : "Sign up"}
         </button>
         {mode === "signin" && (
@@ -381,7 +381,7 @@ function ProfileForm({ userId, onDone }: { userId: string; onDone: () => void })
         </span>
       )}
       {error && <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{error}</span>}
-      <button type="submit" className="ui-btn" data-on={handleOk && !busy ? "true" : "false"} disabled={!handleOk || busy} style={BTN}>
+      <button type="submit" className="ui-btn" data-primary="true" disabled={!handleOk || busy} style={BTN}>
         {busy ? "Saving…" : "Continue"}
       </button>
     </form>

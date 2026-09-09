@@ -203,7 +203,7 @@ export default function KalshiLinkCard() {
             </span>
           </label>
 
-          <button type="button" className="ui-btn" disabled={busy}
+          <button type="button" className="ui-btn" data-primary="true" disabled={busy}
                   onClick={() => void link()}
                   style={{ ...BTN, fontWeight: 700, width: "fit-content" }}>
             {busy ? "Checking with Kalshi…" : "Link my Kalshi account"}
