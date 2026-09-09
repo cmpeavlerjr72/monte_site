@@ -173,9 +173,14 @@ export function betLines(b: PortalBet): string[] {
       : `Kalshi: ${pctText(b.kalshiP)}${odds(b.kalshiP)} · EV ${signedUsd(b.kalshiEV)}.`
   );
   out.push(
-    b.simP === null || b.simEV === null
-      ? "Sim: no price for this market — nothing we simulate maps to it, so there is no verdict."
-      : `Sim: ${pctText(b.simP)}${odds(b.simP)} · EV ${signedUsd(b.simEV)}.`
+    b.simP !== null && b.simEV !== null
+      ? `Sim: ${pctText(b.simP)}${odds(b.simP)} · EV ${signedUsd(b.simEV)}.`
+      : b.slugs.length === 0
+        // NOT the same failure. "Nothing maps to it" is a statement about the
+        // MARKET; this one is a statement about the LOAD — the game is not on
+        // a week we have published sims for, so no family would price.
+        ? "Sim: this game is not on a published week right now, so nothing prices it."
+        : "Sim: no price for this market — nothing we simulate maps to it, so there is no verdict."
   );
   return out;
 }
@@ -328,7 +333,17 @@ function BetRow({ bet, on, onToggle }: { bet: PortalBet; on: boolean; onToggle: 
         <span className="mybook__stake-win">wins {win}</span>
       </span>
       <span className="mybook__ev" data-tone={tone}>
-        {bet.simEV === null ? "—" : signedUsd(bet.simEV, true)}
+        {/* Two different silences, said differently (owner, 2026-09-09): a
+            dash is "the week is published and nothing maps to this market";
+            "no sim" is "this game is not on a published week at all", which
+            is the state a book page full of other weeks' games sits in. The
+            join is the bet's own slug list — empty means no published game
+            was found for it. */}
+        {bet.simEV !== null
+          ? signedUsd(bet.simEV, true)
+          : bet.slugs.length === 0
+            ? <span className="mybook__nosim">no sim</span>
+            : "—"}
       </span>
     </button>
   );

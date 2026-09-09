@@ -942,6 +942,17 @@ input:focus, select:focus, textarea:focus {
   color: color-mix(in oklab, var(--neg) 82%, var(--text));
   background: color-mix(in oklab, var(--neg) 12%, var(--card));
 }
+/* "no sim" — the game is not on a published week at all, which is a
+   different silence from the dash (published, but nothing maps to the
+   market). It is a WORD, not a verdict, so it drops to the dim ink and to a
+   size that fits the 60px chip without widening the money column. */
+.mybook__nosim {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--mybook-dim);
+  text-transform: none;
+}
 
 /* ------------------------------------------------------------------------
    LIVE PROGRESS — where a held per-team stat bet stands right now

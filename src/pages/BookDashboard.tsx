@@ -17,11 +17,15 @@
 //     props stay public; here a signed-out visitor gets the AuthPanel inline.
 //  2. NO NEW DATA FETCHES. The portal payload the site already polls, and
 //     Supabase — nothing else.
-//  3. THE SIM PRICES NOTHING HERE. Portal bets are computed with EMPTY slate
-//     maps, so every row's KALSHI EV is live and real and its SIM EV is an
-//     honest "—". A page that guessed at fair value would be inventing numbers
-//     it has no data to support; the per-game Bets panel is where sim pricing
-//     lives.
+//  3. THE SIM PRICES THE BOOK (owner, 2026-09-09 12:20 AM). It used to price
+//     nothing: portal bets were computed with EMPTY slate maps and every row
+//     read "Sim EV —", which is not honesty, it is a missing load. The page
+//     now builds the SAME four pricing inputs the Scoreboard builds — the
+//     Kalshi feed, the seed arrays for the book's own games, and the published
+//     team_stats rungs + `game` block — through `useBookPricing`
+//     (src/lib/bookPricing.ts), which imports the existing builders and adds
+//     no math of its own. A position on a game no published week carries
+//     still has no verdict, and says "no sim" rather than "—".
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -32,14 +36,8 @@ import {
   cheerLabel, computePortalBets, readPortalToken, usePortalBook,
   writePortalToken,
 } from "../lib/kalshiPortal";
-import type { PortalSettlement, SeedPair } from "../lib/kalshiPortal";
-import type { KalshiGame } from "../lib/kalshi";
-
-/** Module-level so the compute memo below is keyed on the payload alone —
- *  a fresh `new Map()` per render is the render-loop trap this file must not
- *  fall into (docs/AGENT_BRIEF.md rule 4). */
-const NO_KALSHI: Map<string, KalshiGame> = new Map();
-const NO_SEEDS: Map<string, SeedPair> = new Map();
+import type { PortalSettlement } from "../lib/kalshiPortal";
+import { useBookPricing } from "../lib/bookPricing";
 
 export default function BookDashboard() {
   const { session, loading } = useSession();
@@ -53,9 +51,16 @@ export default function BookDashboard() {
    * cutover. */
   const [token, setToken] = useState<string>(() => readPortalToken());
   const portal = usePortalBook(token, signedIn);
+  /* The sim's side of every row: the Kalshi feed, the book's own seed arrays
+   * and the published rungs, loaded once per CHANGE OF BOOK (not per poll).
+   * Same builders the Scoreboard uses — see src/lib/bookPricing.ts. */
+  const pricing = useBookPricing(portal.payload, portal.status === "ok");
   const book = useMemo(
-    () => computePortalBets(portal.payload, NO_KALSHI, NO_SEEDS),
-    [portal.payload],
+    () => computePortalBets(
+      portal.payload, pricing.kalshiBySlug, pricing.seeds,
+      pricing.statYesP, pricing.gameYesP,
+    ),
+    [portal.payload, pricing],
   );
 
   useEffect(() => { document.title = "My Book · MVPeav"; }, []);
@@ -87,6 +92,7 @@ export default function BookDashboard() {
         note="Held bets and resting orders, live from Kalshi.">
         <Positions
           token={token}
+          pricingReady={pricing.ready}
           onToken={(t) => { writePortalToken(t); setToken(t); }}
           status={portal.status}
           bets={book.bets}
@@ -114,8 +120,12 @@ export default function BookDashboard() {
 
 function Positions({
   token, onToken, status, bets, totals, settlements, accountLabel, ordersLive,
+  pricingReady,
 }: {
   token: string;
+  /** False until the week docs have answered — a book-wide "no sim" that is
+   *  only not-loaded-yet would be a lie the page tells for a second. */
+  pricingReady: boolean;
   onToken: (t: string) => void;
   status: ReturnType<typeof usePortalBook>["status"];
   bets: ReturnType<typeof computePortalBets>["bets"];
@@ -198,13 +208,15 @@ function Positions({
         <Muted>Nothing held and nothing resting.</Muted>
       ) : (
         <>
-          {/* Sim EV reads "—" on every row here, by design: this page loads no
-              week, so it has no fair value to quote. The Kalshi side is live. */}
+          {/* Sim EV is real here now: `useBookPricing` loaded the same feed,
+              seeds and published rungs the Scoreboard prices with. */}
           <MyBookStrip bets={bets} token={token} />
           <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-            Sim EV is blank here — the fair values live with the games. Open a
-            game's Bets panel on the <Link to="/cfb/scoreboard">scoreboard</Link>{" "}
-            for the sim's verdict on a market.
+            {!pricingReady
+              ? "Pricing the book against the published sims…"
+              : totals.simPriced === totals.n
+                ? "Sim EV is the published sim's verdict on each market, against the price this book paid."
+                : `Sim EV is priced on ${totals.simPriced} of ${totals.n}. "no sim" means the game is not on a published week; "—" means the week is published but nothing we simulate maps to that market.`}
           </span>
           <span style={{ fontSize: 11 }}>
             {totals.n} in the book · risked ${totals.risked.toFixed(2)} to win
