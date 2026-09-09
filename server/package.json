@@ -6,6 +6,7 @@
     "start": "node dist/liveScores.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
     "@types/web-push": "^3.6.4",
     "abort-controller": "^3.0.0",
     "compression": "^1.8.1",
