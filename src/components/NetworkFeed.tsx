@@ -29,12 +29,31 @@
 //
 // GROUPED BY DAY, newest first: the feed is a timeline of what people did, and
 // "today / yesterday / Saturday" is how anyone recalls a bet.
+//
+// FOUR KINDS, ONE CARD LANGUAGE (owner 2026-09-08 11:25 PM). Every row is the
+// same sentence with the same matchup logos on its left; what changes is the
+// verb and what hangs off the end:
+//
+//   PLACED    mvpeav placed 0.97 units on Massachusetts 10+ points at 59c
+//   TAIL      roth tailed mvpeav · 0.16 units on … at 60c
+//   SETTLED   the SAME row, now wearing a WON / LOST / PUSH ribbon and the
+//             money in the poster's units (+0.64u) — a settlement is not a
+//             new item, it is the item you already saw, finished
+//   SCORE     San José State 24 – Eastern Michigan 21, Q4 11:19
+//             your San José State ML now 58% (was 34%)
+//
+// The tail link and the "tailed by N" chip are resolved INSIDE the rows this
+// viewer already has: `tailed_from` is an order id and the parent, if the
+// viewer may see it at all, is in the same RLS-filtered result set. A parent
+// that is not there is not fetched behind the user's back — the row simply
+// says "tailed a bet" and names nobody.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AuthPanel from "./AuthPanel";
 import Flares from "./Flares";
 import {
-  supabase, supabaseEnabled, useProfile, useSession, type FeedItem,
+  supabase, supabaseEnabled, useProfile, useSession,
+  type FeedItem, type FeedScorePayload,
 } from "../lib/supabase";
 // The same helper the Top Edges rows badge their teams with — one logo file,
 // one mapping, everywhere a school is drawn.
@@ -112,15 +131,25 @@ export default function NetworkFeed({
    *
    * If the channel does not come up — realtime off, a proxy eating the socket
    * — the 60s poll below is the whole feature, a minute late.
+   *
+   * THREE SUBSCRIPTIONS, because there are three ways the feed changes:
+   * a bet is PLACED (app_orders INSERT — a tail is a placement like any
+   * other), a bet SETTLES (app_orders UPDATE, which rewrites a row that is
+   * already on screen), and a game MOVES (feed_events INSERT). All three are
+   * doorbells into the same refetch.
    */
   useEffect(() => {
     if (!supabase || !signedIn) return;
     let alive = true;
+    const ring = () => { if (alive) void load(); };
     const ch = supabase
       .channel("feed-app-orders")
       .on("postgres_changes",
-          { event: "INSERT", schema: "public", table: "app_orders" },
-          () => { if (alive) void load(); })
+          { event: "INSERT", schema: "public", table: "app_orders" }, ring)
+      .on("postgres_changes",
+          { event: "UPDATE", schema: "public", table: "app_orders" }, ring)
+      .on("postgres_changes",
+          { event: "INSERT", schema: "public", table: "feed_events" }, ring)
       .subscribe((status) => {
         if (!alive) return;
         setLive(status === "SUBSCRIBED");
@@ -142,6 +171,28 @@ export default function NetworkFeed({
 
   const days = useMemo(() => groupByDay(items), [items]);
 
+  /** THE TAIL GRAPH, built from what is already loaded. `byOrderId` resolves
+   *  a tail to the bet it copied so the row can name the poster it followed;
+   *  `tailCounts` is how many of the loaded rows copied each bet. Both are
+   *  deliberately scoped to the visible rows — a count that reached past RLS
+   *  would be telling the viewer about bets they may not see. */
+  const byOrderId = useMemo(() => {
+    const m = new Map<string, FeedItem>();
+    for (const i of items) if (i.kind === "order" && i.order_id) m.set(i.order_id, i);
+    return m;
+  }, [items]);
+  const tailCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const i of items) {
+      if (i.tailed_from) m.set(i.tailed_from, (m.get(i.tailed_from) ?? 0) + 1);
+    }
+    return m;
+  }, [items]);
+
+  /** Bets, not rows: a score update is news about a bet, not another bet. */
+  const betCount = useMemo(
+    () => items.filter((i) => i.kind !== "score").length, [items]);
+
   if (!supabaseEnabled) return null;
   if (loading) return null;
 
@@ -160,9 +211,9 @@ export default function NetworkFeed({
           {open ? "Hide" : "Show"} feed
         </button>
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-          {items.length === 0
+          {betCount === 0
             ? "nothing yet"
-            : `${items.length} bet${items.length === 1 ? "" : "s"}`}
+            : `${betCount} bet${betCount === 1 ? "" : "s"}`}
           {" · "}
           {live ? "updating live" : "checking every minute"}
         </span>
@@ -185,7 +236,11 @@ export default function NetworkFeed({
           }}>
             {d.label}
           </div>
-          {d.items.map((it) => <FeedRow key={`${it.kind}:${it.id}`} item={it} />)}
+          {d.items.map((it) => (
+            <FeedRow key={`${it.kind}:${it.id}`} item={it}
+                     tailOf={it.tailed_from ? byOrderId.get(it.tailed_from) : undefined}
+                     tailedBy={it.order_id ? (tailCounts.get(it.order_id) ?? 0) : 0} />
+          ))}
         </div>
       ))}
     </div>
@@ -199,9 +254,19 @@ export default function NetworkFeed({
  * emoji, name and flares, what they are on and for how much, and how long ago.
  *
  * There is deliberately no dollar figure anywhere: the view does not carry
- * one, for anyone's rows, including the viewer's own.
+ * one, for anyone's rows, including the viewer's own. `units_net` is the same
+ * kind of number as `units` — a count of the poster's own unit — and the unit
+ * itself is a private column no client role may select, so "+0.64u" is not a
+ * dollar amount in disguise.
  */
-function FeedRow({ item }: { item: FeedItem }) {
+function FeedRow({ item, tailOf, tailedBy }: {
+  item: FeedItem;
+  /** The bet this one copied, when it is among the loaded rows. */
+  tailOf?: FeedItem;
+  /** How many loaded rows copied THIS bet. */
+  tailedBy: number;
+}) {
+  if (item.kind === "score") return <ScoreRow item={item} />;
   const bet = betText(item);
   const side = postedSide(item);
   return (
@@ -220,7 +285,16 @@ function FeedRow({ item }: { item: FeedItem }) {
             {item.display_name || item.handle}
           </span>
           <Flares flares={item.flares} />
+          {/* A TAIL NAMES WHO IT FOLLOWED, when the parent is visible to this
+              viewer. It is the whole point of the verb: "tailed" with nobody
+              after it is just a bet. */}
           <span style={{ color: "var(--muted)" }}>{verb(item)}</span>
+          {item.tailed_from && (
+            <span style={{ fontWeight: 800 }} title={tailOf ? `@${tailOf.handle}` : undefined}>
+              {tailOf ? (tailOf.display_name || tailOf.handle) : "a bet"}
+            </span>
+          )}
+          {item.tailed_from && <span style={{ color: "var(--muted)" }}>·</span>}
           {(() => {
             const u = unitsText(item.units);
             return u
@@ -237,6 +311,10 @@ function FeedRow({ item }: { item: FeedItem }) {
               </span>
             </>
           )}
+          {/* THE RIBBON. A settled bet is the same item, finished — so the
+              grade rides at the end of the sentence it belongs to rather than
+              arriving as a second row nobody asked for. */}
+          <Ribbon result={item.result} unitsNet={item.units_net} />
         </div>
         <div style={{
           display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
@@ -270,6 +348,13 @@ function FeedRow({ item }: { item: FeedItem }) {
               {leagueLabel(item.sport)}
             </span>
           )}
+          {/* WHO FOLLOWED THIS ONE. Counted over the rows this viewer can
+              already see, so it can never announce a bet they may not. */}
+          {tailedBy > 0 && (
+            <span style={{ fontWeight: 700 }}>
+              tailed by {tailedBy}
+            </span>
+          )}
           <span>{ago(item.at)}</span>
         </div>
         {item.note && (
@@ -280,10 +365,141 @@ function FeedRow({ item }: { item: FeedItem }) {
   );
 }
 
-/** "placed" for an app order, "posted" for a legacy hand-typed pick. The form
- *  is gone; the rows people already wrote stay, and stay honest about which
- *  they are. */
-const verb = (item: FeedItem) => (item.source === "posted" ? "posted" : "placed");
+/** "tailed" for a copy, "placed" for an app order, "posted" for a legacy
+ *  hand-typed pick. The form is gone; the rows people already wrote stay, and
+ *  stay honest about which they are. */
+const verb = (item: FeedItem) =>
+  item.tailed_from ? "tailed" : (item.source === "posted" ? "posted" : "placed");
+
+/* ------------------------------ settled ----------------------------------- */
+
+/**
+ * WON / LOST / PUSH, and what it paid in the poster's own units.
+ *
+ * Renders NOTHING for an open bet, which is why a settlement needs no second
+ * feed item: the row a friend already scrolled past simply grows a ribbon
+ * when the game finishes.
+ *
+ * The colour follows the MONEY (`units_net`), not the word: they agree in
+ * every ordinary case, and where they can differ — a win so thin the fees ate
+ * it, which is exactly the case a bettor wants to see — the sign is the truth
+ * and the word is the record. A push is neither, so it stays muted.
+ */
+function Ribbon({ result, unitsNet }: {
+  result: FeedItem["result"]; unitsNet: number | null;
+}) {
+  if (!result) return null;
+  const net = unitsNet != null && Number.isFinite(unitsNet) ? unitsNet : null;
+  const tone = result === "push" || net === 0 || net == null
+    ? "var(--muted)"
+    : (net > 0 ? "var(--pos)" : "var(--neg)");
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap",
+    }}>
+      <span style={{
+        fontSize: 9.5, fontWeight: 900, letterSpacing: 0.5,
+        textTransform: "uppercase", color: tone,
+        border: `1px solid ${tone}`, borderRadius: 5, padding: "0 5px",
+      }}>
+        {result}
+      </span>
+      {net != null && (
+        <span style={{ fontWeight: 900, color: tone }}>
+          {net > 0 ? "+" : net < 0 ? "−" : "±"}{Math.abs(net).toFixed(2)}u
+        </span>
+      )}
+    </span>
+  );
+}
+
+/* ---------------------------- score update -------------------------------- */
+
+/**
+ * A GAME MOVED AND IT MOVED SOMEBODY'S BET.
+ *
+ * Same card language as a placement — the two logos, the person, one sentence
+ * — but the verb is the scoreboard's, not the bettor's, so the score itself is
+ * the loudest thing on the row and the bet hangs off it:
+ *
+ *     🏈 mvpeav · San José State 24 – Eastern Michigan 21 · Q4 11:19
+ *        San José State ML now 58% (was 34%) · 0.95 units
+ *
+ * The two probabilities are the LIVE probability of the side that was taken,
+ * before and after the play. They are rates about a public game, never a
+ * quantity of anyone's money, which is the same test `sim_p` passes.
+ */
+function ScoreRow({ item }: { item: FeedItem }) {
+  const p: FeedScorePayload = item.payload ?? {};
+  const s = p.score ?? {};
+  const home = s.home_team ?? item.home_team;
+  const away = s.away_team ?? item.away_team;
+  const before = typeof p.prob_before === "number" ? p.prob_before : null;
+  const after = typeof p.prob_after === "number" ? p.prob_after : null;
+  const moved = before != null && after != null ? after - before : null;
+  const tone = moved == null || Math.abs(moved) < 0.005
+    ? "var(--muted)" : (moved > 0 ? "var(--pos)" : "var(--neg)");
+  const when = [
+    p.period ? `Q${p.period}` : null,
+    p.clock || null,
+  ].filter(Boolean).join(" ");
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "flex-start", gap: 8,
+      padding: "7px 0", borderTop: "1px solid var(--border)",
+    }}>
+      <MatchupLogos home={home} away={away} on={null} />
+      <div style={{ display: "grid", gap: 2, minWidth: 0, flex: 1 }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap",
+          fontSize: 11.5, lineHeight: 1.45,
+        }}>
+          <span aria-hidden style={{ fontSize: 14 }}>{item.avatar_emoji || "🏈"}</span>
+          <span style={{ fontWeight: 800 }} title={`@${item.handle}`}>
+            {item.display_name || item.handle}
+          </span>
+          <Flares flares={item.flares} />
+          <span style={{ color: "var(--muted)" }}>·</span>
+          <span style={{ fontWeight: 800 }}>
+            {away} {s.away ?? "–"} – {home} {s.home ?? "–"}
+          </span>
+          {when && <span style={{ color: "var(--muted)" }}>{when}</span>}
+        </div>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap",
+          fontSize: 10.5, color: "var(--muted)",
+        }}>
+          {p.side && <span style={{ fontWeight: 700, color: "var(--text)" }}>{p.side}</span>}
+          {after != null && (
+            <span>
+              now{" "}
+              <span style={{ fontWeight: 900, color: tone }}>
+                {Math.round(after * 100)}%
+              </span>
+              {before != null && ` (was ${Math.round(before * 100)}%)`}
+            </span>
+          )}
+          {(() => {
+            const u = unitsText(typeof p.units === "number" ? p.units : null);
+            return u ? <span>{u}</span> : null;
+          })()}
+          {leagueLabel(item.sport) && (
+            <span style={{
+              fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3,
+              textTransform: "uppercase", color: "var(--muted)",
+              border: "1px solid var(--border)", borderRadius: 5,
+              padding: "0 5px", whiteSpace: "nowrap",
+            }}>
+              {leagueLabel(item.sport)}
+            </span>
+          )}
+          <span>{ago(item.at)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** A size in units, in the words people use: "1.5 units", "0.5 units", and
  *  "1 unit" when it is exactly one. Null renders as nothing at all — never as
