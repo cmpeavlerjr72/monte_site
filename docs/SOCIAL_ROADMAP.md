@@ -48,7 +48,13 @@ The product is the sim, so the feed only encourages what the sim still likes.
 ## 5. Push notifications from the feed
 
 The site already runs a push-only service worker (fill / settlement alerts).
-Add, per-user toggles on the profile:
+
+**Opt-in, every one of them (owner, 11:05 PM).** Push is OFF for a new account;
+the profile page has one master switch plus a toggle per kind, all default
+off. The FEED is the silent version of the same stream: everything a push
+could say is already an item the user can scroll through, so nobody needs
+push to keep up — push is for the people who want to be tapped on the
+shoulder. Kinds, each its own toggle:
 
 - **A friend placed a bet** (the feed sentence as the notification body).
 - **Someone tailed you.**
