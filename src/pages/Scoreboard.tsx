@@ -17,6 +17,7 @@ import MarketEdge from "../components/MarketEdge";
 import TopEdges from "../components/TopEdges";
 import { type EdgeInput, type GameEdges } from "../lib/edges";
 import { rulesApplyFor } from "../lib/edgeRules";
+import { useSession } from "../lib/supabase";
 import { useSlateEdges } from "../lib/useSlateEdges";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
@@ -1855,8 +1856,13 @@ function ScoreboardPage() {
    * the collection. The poll effect lives in usePortalBook and depends only
    * on the token string (render-loop rule 1). */
   const [portalToken, setPortalToken] = useState<string>(() => readPortalToken());
-  const [portalUiOpen, setPortalUiOpen] = useState(false);
-  const portal = usePortalBook(portalToken);
+  /** SIGNED IN = CONNECTED (owner, 2026-09-08 10:20 PM): a Supabase session
+   *  opens the book on its own — no My Book button, no password box. The
+   *  legacy password still works for the cutover and is simply another way
+   *  in (usePortalBook sends both). */
+  const { session: authSession } = useSession();
+  const signedIn = Boolean(authSession);
+  const portal = usePortalBook(portalToken, signedIn);
   /** Resting orders still working — the one COUNT the slim console owes a
    *  trader looking at the board. Derived from the same book the strip
    *  already renders, never a second read. */
@@ -1871,7 +1877,7 @@ function ScoreboardPage() {
    * its declaration in the same function body is a temporal-dead-zone crash,
    * not a hoist.
    */
-  const ownerOn = Boolean(portalToken) && portal.status === "ok";
+  const ownerOn = (Boolean(portalToken) || signedIn) && portal.status === "ok";
   /** Dollars of risk per ladder. One knob, every sizing site (suggestion
    *  counts, outlay, the Place slip). Clamped on read AND on write. */
   const [unit, setUnit] = useState<number>(() => readUnit());
@@ -2488,9 +2494,10 @@ function ScoreboardPage() {
     [kalshiBySlug, portalSeeds, statYesP, gameYesP]
   );
   const portalNote = useMemo(() => {
-    if (!portalToken) return "log in with your portal password";
+    if (!portalToken && !signedIn) return "sign in to connect your book";
     switch (portal.status) {
-      case "unauthorized": return "wrong password — log in again";
+      case "forbidden": return "trading is not enabled on this account — link a Kalshi key on My Book";
+      case "unauthorized": return signedIn ? "not signed in to the server — reload" : "wrong password — log in again";
       case "locked": return "too many attempts — wait a minute";
       case "unconfigured": return "server portal not configured";
       case "error": return "portal unreachable — will retry";
@@ -2501,7 +2508,7 @@ function ScoreboardPage() {
           + (portalBook.unmatched ? ` · ${portalBook.unmatched} off-slate` : "");
       }
     }
-  }, [portalToken, portal.status, portalBook]);
+  }, [portalToken, signedIn, portal.status, portalBook]);
 
   /**
    * A TICKING WALL CLOCK — for every rule that is a function of "how long until
@@ -3123,22 +3130,6 @@ function ScoreboardPage() {
               Top Edges
             </button>
 
-            {/* One entry point for every owner feature. The login form, the
-                kill switch, unit size and the suggestions all live in the My
-                Book console below — this button only opens it. */}
-            <button
-              type="button"
-              className="ui-btn"
-              data-on={portalToken || portalUiOpen ? "true" : "false"}
-              onClick={() => setPortalUiOpen((v) => !v)}
-              style={{ whiteSpace: "nowrap" }}
-              title={portalNote}
-            >
-              {portalToken
-                ? portal.status === "ok" ? "My Book ✓" : "My Book…"
-                : "My Book"}
-            </button>
-
             <button
               type="button"
               className="ui-btn icon"
@@ -3248,13 +3239,13 @@ function ScoreboardPage() {
           index. Profile, friends, the network feed, unit size and Kalshi
           linking moved to the My Book dashboard (/cfb/mybook) — they are about
           the person, not about this board. */}
-      {(portalToken || portalUiOpen) && (
+      {(portalToken || signedIn) && (
         <MyBookPanel
           token={portalToken}
+          signedIn={signedIn}
           onToken={(t) => {
             writePortalToken(t);
             setPortalToken(t);
-            if (!t) setPortalUiOpen(false);
           }}
           note={portalNote}
           connected={portal.status === "ok"}

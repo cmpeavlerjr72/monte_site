@@ -57,9 +57,12 @@ function Row({ label, children, top = false }: {
 
 export default function MyBookPanel({
   token, onToken, note, connected, ordersLive, accountLabel,
-  totals, unmatched, openOrders, record, slugTeams, children,
+  totals, unmatched, openOrders, record, slugTeams, children, signedIn = false,
 }: {
   token: string;
+  /** A Supabase session is the other way in: the book is connected without a
+   *  password and the Account row shows no login form. */
+  signedIn?: boolean;
   /** "" disconnects. Persisting is the caller's job (writePortalToken). */
   onToken: (t: string) => void;
   /** One-line status from the page ("3 bets · 2 games on this board", …). */
@@ -116,7 +119,7 @@ export default function MyBookPanel({
           My Book
         </span>
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>{note}</span>
-        {token && !ordersLive && (
+        {(token || signedIn) && !ordersLive && (
           <span style={{ marginLeft: "auto" }}>
             <DryRunBadge title="Order entry is staged for this account: the server validates, caps, re-checks the book and logs — and submits nothing." />
           </span>
@@ -124,7 +127,7 @@ export default function MyBookPanel({
       </div>
 
       <Row label="Account">
-        {token ? (
+        {token || signedIn ? (
           <>
             <span style={{ fontSize: 12, color: connected ? "var(--pos)" : "var(--muted)" }}>
               {/* The password IS the account (multi-account server), so the
@@ -132,12 +135,12 @@ export default function MyBookPanel({
                   have to infer whose money is on screen. */}
               {connected
                 ? accountLabel ? `Connected — ${accountLabel}` : "Connected"
-                : "Connecting…"}
+                : signedIn && !token ? "Connecting as you…" : "Connecting…"}
             </span>
-            <button type="button" className="ui-btn" onClick={() => onToken("")}
+            {token && <button type="button" className="ui-btn" onClick={() => onToken("")}
                     style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 11 }}>
               Disconnect
-            </button>
+            </button>}
           </>
         ) : (
           <form
@@ -158,7 +161,7 @@ export default function MyBookPanel({
         )}
       </Row>
 
-      {token && (
+      {(token || signedIn) && (
         <Row label="Book">
           {/* THE STRIP'S ONE MONEY LINE: what is still working, what it is
               worth, and the switch that pulls it. Everything else about the
@@ -192,7 +195,7 @@ export default function MyBookPanel({
           all, rather than an honest-looking 0-0 that is really "no data". It
           stays here rather than moving to the dashboard because it is a fact
           about THIS SLATE, computed from this page's own join. */}
-      {token && record.slate.n > 0 && (
+      {(token || signedIn) && record.slate.n > 0 && (
         <Row label="Record" top>
           <KalshiRecordBlock record={record} slugTeams={slugTeams} />
         </Row>
