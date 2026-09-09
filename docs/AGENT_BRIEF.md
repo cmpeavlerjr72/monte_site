@@ -806,7 +806,7 @@ byte as before. That is also the state the owner trades in today.
 
 **LOGIN IS A USERNAME.** Supabase Auth needs an address, so ONE function
 derives it and nobody types one: `loginEmailFor(handle)` in `src/lib/
-supabase.ts` = `<handle>@users.mvpeav.com`, lower-case, called by BOTH sign-up
+supabase.ts` = `<handle>@mvpeav.com`, lower-case, called by BOTH sign-up
 and sign-in so the two can never disagree about who a username is. Sign-up is
 username + password (>= 10) + an OPTIONAL real email on `profiles.email`
 (migration `20260908_profiles_email.sql`); it claims the name with

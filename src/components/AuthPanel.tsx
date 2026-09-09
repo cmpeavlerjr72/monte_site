@@ -9,7 +9,7 @@
 //      build without VITE_SUPABASE_URL/ANON_KEY is the app exactly as it was.
 //   2. THE LOGIN IS A USERNAME (owner decision 2026-09-08). Supabase Auth
 //      wants an address, so one is DERIVED — `loginEmailFor(handle)`, i.e.
-//      `<handle>@users.mvpeav.com` — by BOTH sign-up and sign-in, so the two
+//      `<handle>@mvpeav.com` — by BOTH sign-up and sign-in, so the two
 //      can never disagree about who a username is. Nobody types an address to
 //      get in. A REAL address is optional, goes on `profiles.email`, and
 //      exists only so the owner can reach a user.
@@ -297,7 +297,7 @@ function CredentialsForm({ prompt, compact, startMode }: {
         <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{error}</span>
       )}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        <button type="submit" className="ui-btn" disabled={!canSubmit || busy} style={BTN}>
+        <button type="submit" className="ui-btn" data-on={canSubmit && !busy ? "true" : "false"} disabled={!canSubmit || busy} style={BTN}>
           {busy ? "One sec…" : mode === "signin" ? "Log in" : "Sign up"}
         </button>
         {mode === "signin" && (
@@ -379,7 +379,7 @@ function ProfileForm({ userId, onDone }: { userId: string; onDone: () => void })
         </span>
       )}
       {error && <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{error}</span>}
-      <button type="submit" className="ui-btn" disabled={!handleOk || busy} style={BTN}>
+      <button type="submit" className="ui-btn" data-on={handleOk && !busy ? "true" : "false"} disabled={!handleOk || busy} style={BTN}>
         {busy ? "Saving…" : "Continue"}
       </button>
     </form>

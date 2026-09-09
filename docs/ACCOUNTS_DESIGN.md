@@ -103,7 +103,7 @@ rather than a phase: see below.
 ## Owner rules added 2026-09-08 (evening)
 
 1. **Login is a username.** The auth address is derived from the handle
-   (`<handle>@users.mvpeav.com`); a real email is optional, lives on
+   (`<handle>@mvpeav.com`); a real email is optional, lives on
    `profiles.email`, and is never a credential. No reset UI — no sender exists.
 2. **One ribbon control** is the entry point to accounts on every page.
 3. **The scoreboard is a bets menu**; everything about the person lives on the

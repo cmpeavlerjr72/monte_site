@@ -197,7 +197,7 @@ export const MIN_PASSWORD = 10;
  * an email address, so the address is DERIVED from the username and never
  * typed by anyone:
  *
- *     `${handle.toLowerCase()}@users.mvpeav.com`
+ *     `${handle.toLowerCase()}@mvpeav.com`
  *
  * It is a routing artefact, not a mailbox — this project has no SMTP sender,
  * email confirmation is OFF, and no mail is ever sent to it. A user's REAL
@@ -214,7 +214,11 @@ export const MIN_PASSWORD = 10;
  * account. A handle can never contain "@" (HANDLE_RE), so the two cases
  * cannot collide.
  */
-export const AUTH_EMAIL_DOMAIN = "users.mvpeav.com";
+// 2026-09-08 9:58 PM: Supabase public sign-up refuses an address whose domain
+// has no DNS record ("email_address_invalid"); users.mvpeav.com has none, the
+// site's own domain does. The admin API had accepted the subdomain, which is
+// why the roth account was first created there and then moved.
+export const AUTH_EMAIL_DOMAIN = "mvpeav.com";
 
 export function loginEmailFor(username: string): string {
   const u = username.trim().toLowerCase();
