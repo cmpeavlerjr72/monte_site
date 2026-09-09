@@ -1429,3 +1429,100 @@ input:focus, select:focus, textarea:focus {
   .skel::after { animation: none; }
   .ui-btn { transition: none; }
 }
+
+/* ============================================================================
+   The feed (src/components/NetworkFeed.tsx)
+   ----------------------------------------------------------------------------
+   A HANGING INDENT, the shape every timeline uses (owner 2026-09-09): a fixed
+   overhang column holds ONLY the handle and its flares, and everything the row
+   is actually about — logos, the bet, the score, the money — lives in one
+   content block that starts at the end of that column and stays left-aligned
+   to it on every wrapped line. Nothing ever flows back under the handle, so
+   the eye finds the bets by running down a single edge.
+
+   Two reasons this is CSS and not inline style, which is otherwise this app's
+   habit: the overhang narrows on a phone (a media query), and the row is a
+   button whose default chrome has to be reset in one place.
+
+   The rail is the 4px first column. It is a KIND channel, always paired with
+   the one-word tag at the right edge — colour is never the only carrier.
+   ========================================================================= */
+.feed__item { display: block; --feed-hang: 104px; }
+
+.feed__row {
+  display: grid;
+  grid-template-columns: 4px var(--feed-hang) minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  width: 100%;
+  margin: 0;
+  padding: 7px 2px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.feed__row:hover,
+.feed__row[aria-expanded="true"] { background: var(--fill); }
+
+/* The kind rail: full-height, its colour set inline per row. */
+.feed__rail {
+  align-self: stretch;
+  min-height: 18px;
+  border-radius: 2px;
+}
+
+/* The overhang. `min-width: 0` is what lets a long handle ellipsis instead of
+   widening the column and shoving the content block sideways. */
+.feed__hang {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  justify-items: start;
+  padding-top: 1px;
+}
+.feed__handle {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+/* The content block. Every line inside it wraps back to this same left edge. */
+.feed__body { min-width: 0; display: grid; gap: 2px; }
+.feed__line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* The words, on tap. Same register as MyBook's popover: one fact per line,
+   a Close button, no document-level listener. */
+.feed__pop {
+  margin: 0 0 6px calc(4px + var(--feed-hang) + 16px);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 6px 18px var(--shadow);
+  font-size: 11.5px;
+  line-height: 1.5;
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+}
+
+@media (max-width: 520px) {
+  .feed__item { --feed-hang: 84px; }
+  .feed__row { column-gap: 6px; }
+  .feed__pop { margin-left: 6px; }
+}
