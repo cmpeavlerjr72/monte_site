@@ -58,7 +58,12 @@ export type Profile = {
 };
 
 /** One row of `feed_items` (the RLS-filtered UNION view). `kind` says which
- *  half it came from; an order row carries no note and a synthetic side. */
+ *  half it came from; an order row carries no note and a synthetic side.
+ *
+ *  THERE ARE NO DOLLARS IN THIS TYPE, and that is the point: the view carries
+ *  UNITS and the market PRICE only (owner rule 2026-09-08). Counts, costs and
+ *  fills are not selected for anyone, including the viewer's own rows, so no
+ *  branch here could ever leak them. */
 export type FeedItem = {
   kind: "pick" | "order";
   id: number;
@@ -73,6 +78,10 @@ export type FeedItem = {
   side: string;
   line: number | null;
   price: number | null;
+  /** SIZE, in units of the poster's OWN unit — never dollars. Null on a row
+   *  written before units existed, or one whose unit size could not be read;
+   *  the feed then simply shows no size, never a made-up 1u. */
+  units: number | null;
   note: string | null;
   source: string;
   ticker: string | null;

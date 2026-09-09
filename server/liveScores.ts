@@ -3092,12 +3092,47 @@ function ordersAudit(acct: PortalAccount, rec: Record<string, unknown>): void {
  */
 type AppOrderState = { status: string; filled: number | null; remaining: number | null } | null;
 
+/**
+ * THE POSTER'S UNIT SIZE, for the units the feed shows (owner rule
+ * 2026-09-08: a friend sees units, never dollars). It is a PRIVATE profile
+ * column — no client role may read it — so the conversion happens here, with
+ * the service client, and only the RESULT (a unit count) is ever stored where
+ * another user can see it.
+ *
+ * Cached 10 minutes per uid: a changed unit affects the next order's units,
+ * not the last one's, which is the right way round anyway — a bet was sized
+ * against the unit that was set when it was placed.
+ */
+const unitSizeCache = new Map<string, { at: number; unit: number | null }>();
+const UNIT_CACHE_TTL_MS = 10 * 60_000;
+
+async function userUnitSize(uid: string): Promise<number | null> {
+  if (!supa || !uid) return null;
+  const hit = unitSizeCache.get(uid);
+  if (hit && Date.now() - hit.at < UNIT_CACHE_TTL_MS) return hit.unit;
+  let unit: number | null = null;
+  try {
+    const { data, error } = await supa
+      .from("profiles").select("unit_size").eq("id", uid).maybeSingle();
+    if (error) throw new Error(error.message);
+    const v = Number((data as any)?.unit_size);
+    unit = Number.isFinite(v) && v > 0 ? v : null;
+  } catch (err: any) {
+    // Do NOT cache a failure: a blip must not blank the units on every order
+    // for the next ten minutes.
+    console.warn("[accounts] unit_size lookup failed:", err?.message ?? err);
+    return null;
+  }
+  unitSizeCache.set(uid, { at: Date.now(), unit });
+  return unit;
+}
+
 function appOrdersRecord(
   acct: PortalAccount, w: WireOrder, orderId: string, state: AppOrderState,
   userId: string | null,
 ): void {
   if (!supa || !userId || !orderId) return;
-  const row = {
+  const row: Record<string, unknown> = {
     user_id: userId,
     account_id: acct.id,
     season: w.season ?? null,
@@ -3114,6 +3149,13 @@ function appOrdersRecord(
     state: state ?? null,
   };
   void (async () => {
+    // UNITS, not dollars: what a friend is allowed to see. A unit size we
+    // cannot read leaves the column NULL — a wrong "1u" would be worse than a
+    // blank, and the feed renders a blank as no size at all.
+    const unit = await userUnitSize(userId);
+    row.units = unit && Number.isFinite(w.cost)
+      ? Math.round((w.cost / unit) * 100) / 100
+      : null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const { error } = await supa!
         .from("app_orders")

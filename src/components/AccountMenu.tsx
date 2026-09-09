@@ -25,6 +25,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import AuthPanel from "./AuthPanel";
 import { supabase, supabaseEnabled, useProfile, useSession } from "../lib/supabase";
+import { fetchMySettings } from "../lib/userSettings";
 
 export default function AccountMenu() {
   const { session, loading } = useSession();
@@ -52,6 +53,18 @@ export default function AccountMenu() {
 
   // Close on navigation (the menu's own links are navigations).
   useEffect(() => { setOpen(false); }, [pathname]);
+
+  // THE SETTINGS MIRROR. The sizing settings live on the account now
+  // (src/lib/userSettings.ts), but the scoreboard reads them synchronously
+  // from localStorage at mount. This control is on EVERY page, so it is where
+  // the account copy is pulled down and mirrored — once per signed-in session,
+  // keyed on the uid primitive, and it sets no state of its own, so it cannot
+  // drive a render loop.
+  const uid = session?.user?.id ?? "";
+  useEffect(() => {
+    if (!uid) return;
+    void fetchMySettings();
+  }, [uid]);
 
   if (!supabaseEnabled) return null;
 

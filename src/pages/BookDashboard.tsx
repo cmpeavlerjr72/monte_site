@@ -37,10 +37,10 @@ import KalshiLinkCard from "../components/KalshiLinkCard";
 import MyBookStrip from "../components/MyBook";
 import UnitModeControl from "../components/UnitModeControl";
 import { supabaseEnabled, useProfile, useSession } from "../lib/supabase";
+import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
 import {
-  clampUnit, readMaxRiskMultiple, readSizing, readUnit, UNIT_MAX, UNIT_MIN,
-  writeMaxRiskMultiple, writeUnit, writeUnitMode,
-} from "../lib/ownerPrefs";
+  fetchMySettings, localSettings, saveMySettings, type UserSettings,
+} from "../lib/userSettings";
 import type { Sizing, UnitMode } from "../lib/suggestedBets";
 import {
   cheerLabel, computePortalBets, readPortalToken, usePortalBook,
@@ -76,16 +76,45 @@ export default function BookDashboard() {
     [portal.payload],
   );
 
-  /* ---- the sizing knobs (per browser, localStorage — unchanged) ---- */
-  const [unit, setUnit] = useState<number>(() => readUnit());
-  const [unitText, setUnitText] = useState<string>(() => String(readUnit()));
-  const [sizing, setSizing] = useState<Sizing>(() => readSizing());
+  /* ---- the sizing knobs, ON THE ACCOUNT ----
+   * They live on the profile now (owner rule 2026-09-08) because the feed
+   * prices every bet in UNITS of the poster's own unit, which the server has
+   * to be able to read. `userSettings` mirrors each read and write into this
+   * browser's prefs, so the scoreboard's synchronous read still works and a
+   * signed-out visitor is unaffected. The page starts from the local mirror so
+   * nothing flickers while the RPC lands. */
+  const [settings, setSettings] = useState<UserSettings>(() => localSettings());
+  const [unitText, setUnitText] = useState<string>(() => String(localSettings().unit));
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const uid = session?.user?.id ?? "";
+  useEffect(() => {
+    if (!uid) return;
+    let alive = true;
+    void fetchMySettings().then((s) => {
+      if (!alive || !s) return;
+      setSettings(s);
+      setUnitText(String(s.unit));
+    });
+    return () => { alive = false; };
+  }, [uid]);
+
+  const persist = (next: UserSettings) => {
+    setSettings(next);
+    void saveMySettings(next).then((err) => setSaveErr(err));
+  };
   const commitUnit = () => {
     const v = clampUnit(unitText);
-    setUnit(v); writeUnit(v); setUnitText(String(v));
+    setUnitText(String(v));
+    persist({ ...settings, unit: v });
   };
-  const onSizingMode = (v: UnitMode) => { writeUnitMode(v); setSizing(readSizing()); };
-  const onMultiple = (v: number) => { writeMaxRiskMultiple(v); setSizing(readSizing()); };
+  const onSizingMode = (v: UnitMode) => persist({ ...settings, mode: v });
+  const onMultiple = (v: number) => persist({ ...settings, multiple: v });
+  /** What the sizing kernel wants. `risk` cannot stretch, so its guard is 1 —
+   *  the same rule ownerPrefs.readSizing applies. */
+  const sizing: Sizing = {
+    mode: settings.mode,
+    maxRiskMultiple: settings.mode === "risk" ? 1 : settings.multiple,
+  };
 
   /* ---- the games a pick can name (rule 2: cached, never fetched) ---- */
   const slate = useMemo(() => readSlateGames(), []);
@@ -137,7 +166,7 @@ export default function BookDashboard() {
         />
         {/* The env-paired Kalshi friend books, when the server declares a
             pair. Renders nothing at all otherwise. */}
-        <FriendBooks token={token} unit={unit} sizing={sizing}
+        <FriendBooks token={token} unit={settings.unit} sizing={sizing}
                      slugTeams={NO_TEAMS} codeToSlug={NO_CODES}
                      yesP={NO_PRICE} />
       </Section>
@@ -182,17 +211,29 @@ export default function BookDashboard() {
               />
             </label>
             <UnitModeControl
-              mode={sizing.mode}
+              mode={settings.mode}
               onMode={onSizingMode}
-              multiple={sizing.mode === "risk" ? readMaxRiskMultiple() : sizing.maxRiskMultiple}
+              multiple={settings.multiple}
               onMultiple={onMultiple}
             />
           </div>
           <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
             Your unit is the dollars a suggestion spends (${UNIT_MIN}–${UNIT_MAX}),
-            and the switch beside it is HOW it spends them. Both are remembered
-            in this browser and are what the scoreboard sizes with.
+            and the switch beside it is HOW it spends them. They are saved to
+            your account and are what the scoreboard sizes with the next time it
+            loads.
           </span>
+          <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+            {/* The privacy half of the same setting, said where it is set. */}
+            <b>Nobody else sees this number.</b> Your unit size is private to
+            your account — friends see your bets in <b>units</b> (“0.5u @ 61¢”)
+            and never in dollars.
+          </span>
+          {saveErr && (
+            <span style={{ fontSize: 10.5, color: "var(--neg)" }}>
+              Saved on this device, but the account copy failed: {saveErr}
+            </span>
+          )}
           {token && (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={LABEL}>Fill alerts</span>

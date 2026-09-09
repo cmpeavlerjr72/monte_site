@@ -144,7 +144,28 @@ export default function NetworkFeed({
   );
 }
 
-/** One line: who, what they are on, at what price, and where it came from. */
+/** A size in units, in the words people use: "1u", "0.5u", "2.5u". Null is
+ *  rendered as nothing at all — never as a guessed 1u. */
+function unitsText(u: number | null): string | null {
+  if (u == null || !Number.isFinite(u) || u <= 0) return null;
+  const r = Math.round(u * 100) / 100;
+  return `${Number.isInteger(r) ? r : r.toFixed(2).replace(/0$/, "")}u`;
+}
+
+/** What a unit stake returns at this price, in units — derived from the two
+ *  public numbers (size in units, market price), so it discloses nothing the
+ *  row does not already show. */
+function toWinText(u: number | null, price: number | null): string | null {
+  if (u == null || price == null || !(price > 0 && price < 1)) return null;
+  const w = (u * (1 - price)) / price;
+  if (!Number.isFinite(w) || w <= 0) return null;
+  return `${w >= 10 ? w.toFixed(0) : w.toFixed(1)}u`;
+}
+
+/** One line: who, what they are on, at what price and in what size — IN
+ *  UNITS. There is deliberately no dollar figure anywhere on this row: the
+ *  view does not carry one (owner rule 2026-09-08), for anyone's rows,
+ *  including the viewer's own. */
 function FeedRow({ item }: { item: FeedItem }) {
   const posted = item.source === "posted";
   return (
@@ -159,11 +180,18 @@ function FeedRow({ item }: { item: FeedItem }) {
       <span style={{ fontSize: 11.5, minWidth: 0, flex: "1 1 120px" }}>
         {pickText(item)}
       </span>
-      {item.price != null && (
-        <span style={{ fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>
-          {Math.round(item.price * 100)}¢
-        </span>
-      )}
+      {(() => {
+        const size = unitsText(item.units);
+        const win = toWinText(item.units, item.price);
+        const px = item.price == null ? null : `${Math.round(item.price * 100)}¢`;
+        // "0.5u @ 61¢ to win 0.3u" — and each half simply drops out when the
+        // row does not carry it.
+        const words = [size, px && (size ? `@ ${px}` : px), win && `to win ${win}`]
+          .filter(Boolean).join(" ");
+        return words
+          ? <span style={{ fontSize: 11, fontWeight: 800, whiteSpace: "nowrap" }}>{words}</span>
+          : null;
+      })()}
       <span style={{
         fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase",
         color: "var(--muted)", border: "1px solid var(--border)",
@@ -240,6 +268,7 @@ function PostPick({ userId, season, week, slugTeams, onPosted }: {
   const [side, setSide] = useState("");
   const [line, setLine] = useState("");
   const [cents, setCents] = useState("");
+  const [units, setUnits] = useState("1");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -248,7 +277,12 @@ function PostPick({ userId, season, week, slugTeams, onPosted }: {
   const priceOk = cents === "" ||
     (Number.isInteger(centsNum) && centsNum >= 1 && centsNum <= 99);
   const lineOk = line === "" || Number.isFinite(Number(line));
-  const canPost = Boolean(slug) && side.trim().length > 0 && priceOk && lineOk && !busy;
+  // SIZE IS IN UNITS, always — the column is `not null` with a 1u default and
+  // the feed shows nothing else. Nobody's dollars are posted anywhere.
+  const unitsNum = Number(units);
+  const unitsOk = Number.isFinite(unitsNum) && unitsNum > 0 && unitsNum <= 100;
+  const canPost = Boolean(slug) && side.trim().length > 0 && priceOk && lineOk
+    && unitsOk && !busy;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -259,12 +293,13 @@ function PostPick({ userId, season, week, slugTeams, onPosted }: {
       side: side.trim().slice(0, 80),
       line: line === "" ? null : Number(line),
       price: cents === "" ? null : centsNum / 100,
+      units: Math.round(unitsNum * 100) / 100,
       note: note.trim() ? note.trim().slice(0, 140) : null,
       source: "posted",
     });
     setBusy(false);
     if (error) { setErr(error.message); return; }
-    setSide(""); setLine(""); setCents(""); setNote("");
+    setSide(""); setLine(""); setCents(""); setUnits("1"); setNote("");
     onPosted();
   };
 
@@ -306,7 +341,16 @@ function PostPick({ userId, season, week, slugTeams, onPosted }: {
                onChange={(e) => setCents(e.target.value)}
                placeholder="¢" aria-label="Price in cents"
                style={{ fontSize: 11.5, width: 56 }} />
+        <input className="ui-sel" value={units} inputMode="decimal"
+               onChange={(e) => setUnits(e.target.value)}
+               placeholder="1u" aria-label="Size in units"
+               style={{ fontSize: 11.5, width: 56 }} />
       </div>
+      <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+        Size is in UNITS of your own unit — 1u is a full unit, 0.5u is half.
+        Your friends see the units and the price; nobody ever sees your
+        dollars or your unit size.
+      </span>
       <input className="ui-sel" value={note} maxLength={140}
              onChange={(e) => setNote(e.target.value)}
              placeholder="why (optional, 140 characters)"
@@ -314,6 +358,11 @@ function PostPick({ userId, season, week, slugTeams, onPosted }: {
       {!priceOk && (
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
           Price is whole cents, 1–99. Leave it blank if you did not take a price.
+        </span>
+      )}
+      {!unitsOk && (
+        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+          Size is a number of units, more than 0 and at most 100.
         </span>
       )}
       {err && <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{err}</span>}
