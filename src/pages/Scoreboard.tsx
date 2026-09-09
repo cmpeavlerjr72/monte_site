@@ -1811,6 +1811,23 @@ function ScoreboardPage() {
   );
 
   /**
+   * The same board, as the INTEGERS the accounts tables want (`picks.season`
+   * / `picks.week` are `int not null`). Derived here, once, because `season`
+   * is a NAMESPACE string ("2026", "fcs-2026") and `weekId` a directory name
+   * ("week02") — parsing either inside a feed component would be a second
+   * copy of a page-level fact. A namespace with no year, or a week id with no
+   * digits, falls back rather than posting a NaN.
+   */
+  const feedSeason = useMemo(() => {
+    const m = String(season).match(/(\d{4})/);
+    return m ? Number(m[1]) : new Date().getFullYear();
+  }, [season]);
+  const feedWeek = useMemo(() => {
+    const m = String(weekId || selectedWeek).match(/(\d+)/);
+    return m ? Number(m[1]) : 0;
+  }, [weekId, selectedWeek]);
+
+  /**
    * Open/close market lines for the slate tally's betting-record panel, one
    * file per week (weeks/<weekId>/lines.json), one per DIVISION: the FBS
    * namespace carries sportsbook consensus (Bovada/DK/Pinnacle), the FCS
@@ -3231,6 +3248,8 @@ function ScoreboardPage() {
           slugTeams={slugTeams}
           codeToSlug={codeToSlug}
           portalYesP={portalYesP}
+          feedSeason={feedSeason}
+          feedWeek={feedWeek}
         >
           {/* The RANKED INDEX: which game, not which bet. It recomputes
               whenever the 45s Kalshi poll delivers, so it is live without a

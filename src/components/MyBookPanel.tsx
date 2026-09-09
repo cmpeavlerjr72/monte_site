@@ -15,7 +15,14 @@
 // owner feature is a row, not another button somewhere else on the page.
 
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import DryRunBadge from "./DryRunBadge";
+// ACCOUNTS (docs/ACCOUNTS_DESIGN.md). Both render nothing at all when
+// VITE_SUPABASE_URL/ANON_KEY are absent, so a build without them is the
+// console exactly as it was.
+import AuthPanel from "./AuthPanel";
+import NetworkFeed from "./NetworkFeed";
+import { supabaseEnabled } from "../lib/supabase";
 import { cancelAppOrders, placeErrorText, type PlaceResponse } from "../lib/placeOrders";
 import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
 import UnitModeControl from "./UnitModeControl";
@@ -430,7 +437,8 @@ function unitModeExample(unit: number, sizing: Sizing): string {
 export default function MyBookPanel({
   token, onToken, note, connected, ordersLive, accountLabel, unit, onUnit,
   sizing, onSizingMode, onMaxRiskMultiple,
-  totals, unmatched, record, slugTeams, codeToSlug, portalYesP, children,
+  totals, unmatched, record, slugTeams, codeToSlug, portalYesP,
+  feedSeason, feedWeek, children,
 }: {
   token: string;
   /** "" disconnects. Persisting is the caller's job (writePortalToken). */
@@ -469,6 +477,11 @@ export default function MyBookPanel({
    *  Feed's Join gate: a friend's bet is only joinable while the CURRENT
    *  price is still +EV against this fair, fees included. */
   portalYesP: (t: string) => number | null;
+  /** The board's season and week as INTEGERS — what `picks.season` /
+   *  `picks.week` are (`int not null`). The page derives them from its
+   *  namespace string and week id; the feed never parses either itself. */
+  feedSeason: number;
+  feedWeek: number;
   /** The Suggested bets card — rendered inside the console it belongs to. */
   children?: React.ReactNode;
 }) {
@@ -515,6 +528,26 @@ export default function MyBookPanel({
           </span>
         )}
       </div>
+
+      {/* THE ACCOUNT (Supabase), distinct from the Kalshi PORTAL account
+          below: signing in gets the network feed and posting picks; TRADING
+          still goes through the portal password (phase 1, by owner decision).
+          Renders nothing when accounts are not configured for this build. */}
+      {supabaseEnabled && (
+        <Row label="Profile" top>
+          <div style={{ display: "grid", gap: 6, flex: "1 1 220px", minWidth: 0 }}>
+            <AuthPanel
+              compact
+              prompt="Sign in to post picks and follow your friends' bets."
+            />
+            <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+              <Link to="/cfb/me">My account</Link>
+              {" · "}
+              <Link to="/cfb/friends">Friends</Link>
+            </span>
+          </div>
+        </Row>
+      )}
 
       <Row label="Account">
         {token ? (
@@ -624,6 +657,20 @@ export default function MyBookPanel({
         <FriendFeedRow token={token} unit={unit} sizing={sizing}
                        slugTeams={slugTeams} codeToSlug={codeToSlug}
                        yesP={portalYesP} />
+      )}
+
+      {/* THE NETWORK FEED — posted picks + app-placed orders from the people
+          the DATABASE says this viewer may see. It sits BESIDE the env-paired
+          Friend Feed above rather than replacing it: that one reads the
+          owner's Kalshi accounts through the server and keeps working through
+          the cutover (docs/ACCOUNTS_DESIGN.md). Not gated on `token` — this
+          is an account feature, not a portal one. */}
+      {supabaseEnabled && (
+        <Row label="Network" top>
+          <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <NetworkFeed season={feedSeason} week={feedWeek} slugTeams={slugTeams} />
+          </div>
+        </Row>
       )}
 
       {children && (
