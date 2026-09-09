@@ -45,6 +45,19 @@
      from a rail at a glance. */
   --info: #0284c7;
 
+  /* CHART MARK (the /cfb/record calibration + running line). Its own token
+     because a plotted data mark is none of the other four channels: not the
+     brand (a surface), not an edge sign (--pos/--neg), not an execution mode
+     (--mode-*), not news (--info). Both values were CHOSEN BY RUNNING the
+     dataviz palette validator against each theme's card surface rather than
+     by eye:
+       light #2a78d6 on #ffffff — L 0.55 in band, chroma 0.15, contrast 4.6:1
+       dark  #4d97e6 on #161b22 — L 0.66 in band, chroma 0.13, contrast 5.4:1
+     Both charts are SINGLE-series, so this is the only data hue on the page;
+     the de-emphasised (thin-bucket) dots are hollow --muted, which is shape
+     plus colour plus a printed n, never colour alone. */
+  --rec-mark: #2a78d6;
+
   /* Semantic result colours — themed so win/loss read on either background. */
   --pos: #15803d;
   --neg: #dc2626;
@@ -123,6 +136,7 @@
     --pos: #3fb950;
     --neg: #f85149;
     --info: #56c8e8;
+    --rec-mark: #4d97e6;
     --mode-rest: #a78bfa;
     --mode-rest-ink: #10151b;
     --mode-take: #fbbf24;
@@ -152,6 +166,7 @@
   --pos: #3fb950;
   --neg: #f85149;
   --info: #56c8e8;
+  --rec-mark: #4d97e6;
   --mode-rest: #a78bfa;
   --mode-rest-ink: #10151b;
   --mode-take: #fbbf24;
@@ -2037,4 +2052,272 @@ input:focus, select:focus, textarea:focus {
   .booktree__bar { flex-basis: 46px; }
   .booktree__money { flex-basis: 68px; }
   .booktree__sample { flex-basis: 38px; }
+}
+
+/* ============================================================================
+   THE 2026 RECORD (`src/pages/Record.tsx`, route /cfb/record)
+   ----------------------------------------------------------------------------
+   Same shape as the feed (.fd*) because it answers the same kind of question
+   with the same house rules: verdict first, ONE number, the arithmetic on tap,
+   and a row that is a 40px+ button rather than a table cell.
+
+     .rec__panel   one band of the page (verdict / calibration / rows)
+     .rec__hero    the verdict figure — the fee-inclusive ROI of the selection
+     .rec__tile    the supporting numbers, never competing with the hero
+     .rec__row     one ladder: bet + meta on the left (a button — the whole
+                   ladder is on tap), units or "pending" at the right
+     .rec__rung    one rung inside an opened ladder; the shown one is marked
+
+   Two layout rules are load-bearing. Every wide thing (both charts and the
+   calibration table) lives inside `.rec__scroll`, so the PAGE never scrolls
+   sideways on a phone — the wide thing does, in its own box. And `min-width:0`
+   sits on every grid/flex child that holds text, because a grid item's
+   automatic minimum size is min-content and a long school name would otherwise
+   push the units column off the card (the same bug the scoreboard header hit).
+   ========================================================================= */
+.rec { display: grid; gap: 14px; width: 100%; min-width: 0; }
+
+.rec__head {
+  display: flex; align-items: flex-start; gap: 10px;
+  justify-content: space-between; min-width: 0;
+}
+.rec__headWords { min-width: 0; display: grid; gap: 3px; }
+.rec__h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: -0.4px; }
+.rec__h2 { margin: 0; font-size: 15px; font-weight: 800; }
+.rec__sub { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.rec__help { flex: 0 0 auto; font-weight: 800; }
+
+.rec__defs {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  display: grid; gap: 8px;
+}
+.rec__defs p { margin: 0; }
+.rec__defs strong { color: var(--text); }
+
+/* ------------------------------ the filter row --------------------------- */
+/* ONE row above everything it scopes (never per-panel filters), wrapping into
+   a card-width grid so a phone stacks them two-up instead of scrolling. */
+.rec__filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 10px;
+}
+.rec__f { display: grid; gap: 3px; min-width: 0; }
+.rec__f > span {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--muted);
+}
+.rec__f .ui-sel { width: 100%; min-width: 0; min-height: 34px; }
+.rec__f--wide { grid-column: span 2; }
+
+/* -------------------------------- the panels ----------------------------- */
+.rec__panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 12px;
+  display: grid; gap: 10px;
+  min-width: 0;
+}
+.rec__panelHead {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px; min-width: 0;
+}
+.rec__mini { flex: 0 0 auto; font-size: 11.5px; padding: 4px 9px; }
+
+/* -------------------------------- the verdict ---------------------------- */
+.rec__heroWrap { display: grid; gap: 2px; min-width: 0; }
+.rec__heroLabel {
+  font-size: 11px; font-weight: 800; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--muted);
+}
+/* Proportional figures on purpose: tabular-nums makes a display-size number
+   read loose. The same sans as everything else — no display face. */
+.rec__hero {
+  font-size: 44px; font-weight: 900; line-height: 1.02; letter-spacing: -1.5px;
+}
+.rec__heroSub { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.rec__heroSub strong { color: var(--text); font-weight: 900; }
+
+.rec__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+}
+.rec__tile {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--fill);
+  padding: 7px 9px;
+  min-width: 0;
+}
+.rec__tileLabel {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.3px;
+  text-transform: uppercase; color: var(--muted);
+}
+.rec__tileValue {
+  font-size: 19px; font-weight: 900; letter-spacing: -0.4px; line-height: 1.2;
+}
+.rec__tileNote { font-size: 10.5px; color: var(--muted); }
+
+.rec__notes { display: grid; gap: 6px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.rec__notes strong { color: var(--text); }
+.rec__warn {
+  border-left: 3px solid var(--accent);
+  padding-left: 9px;
+}
+
+/* ------------------------------- charts + tables ------------------------- */
+/* The wide thing scrolls, the page does not. */
+.rec__scroll { overflow-x: auto; overflow-y: hidden; width: 100%; }
+/* The calibration chart is WIDER THAN A PHONE on purpose: ten buckets that
+   each carry their own n need the room, and shrinking them to fit would
+   collide the labels — the one thing marks-and-anatomy forbids outright. So
+   it scrolls inside its own box and `.rec__hint` says so where the box is
+   narrower than the chart. The week line has a handful of points and fits, so
+   it opts out of the minimum entirely rather than scrolling for no reason. */
+.rec__chart { min-width: 520px; height: 250px; }
+.rec__chart--short { height: 140px; min-width: 0; }
+.rec__caption { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.rec__hint { display: none; font-size: 11px; color: var(--muted); font-style: italic; }
+@media (max-width: 560px) { .rec__hint { display: block; } }
+
+.rec__table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 12px; }
+.rec__table th, .rec__table td {
+  padding: 5px 8px; text-align: right; white-space: nowrap;
+  border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums;
+}
+.rec__table th {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.3px;
+  text-transform: uppercase; color: var(--muted); text-align: right;
+}
+.rec__table th:first-child, .rec__table td:first-child { text-align: left; }
+.rec__thin td { color: var(--muted); }
+
+/* Recharts tooltip surface — the chart draws it, so it needs its own card. */
+.rec__tip {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px var(--shadow);
+  padding: 7px 9px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text);
+  max-width: 240px;
+}
+.rec__tipHead { font-weight: 800; }
+.rec__tipMuted { color: var(--muted); }
+
+/* --------------------------------- the rows ------------------------------ */
+.rec__rows { display: grid; }
+.rec__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  padding-left: 5px;
+  min-width: 0;
+}
+.rec__row:last-of-type { border-bottom: 0; }
+.rec__row--open { border-left-color: var(--brand); }
+
+/* THE WHOLE LEFT SIDE IS THE BUTTON — the ladder is on tap. 40px minimum so a
+   thumb lands on it, which is also why the two lines are 13px and 11.5px
+   rather than shrunk to fit more rows. */
+.rec__main {
+  display: grid; gap: 2px; min-width: 0;
+  min-height: 42px;
+  padding: 6px 2px;
+  background: none; border: 0; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.rec__main:hover, .rec__main[aria-expanded="true"] { color: var(--brand-text); }
+.rec__betLine {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: 13px; font-weight: 700; flex-wrap: wrap;
+}
+.rec__bet { min-width: 0; overflow-wrap: anywhere; }
+.rec__logos { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.rec__logos img { display: block; object-fit: contain; }
+.rec__noLogo {
+  font-size: 9px; font-weight: 800; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 3px;
+}
+.rec__star { color: var(--target-star); font-size: 13px; flex: 0 0 auto; }
+.rec__chip {
+  font-size: 10px; font-weight: 800; letter-spacing: 0.2px;
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0 6px; color: var(--muted); background: var(--fill);
+  flex: 0 0 auto;
+}
+.rec__chip--flag { border-style: dashed; }
+.rec__meta { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.rec__where { font-weight: 700; }
+.rec__dot { opacity: 0.6; padding: 0 3px; }
+.rec__muted { color: var(--muted); }
+
+.rec__edge { display: inline-flex; align-items: center; justify-content: flex-end; flex: 0 0 auto; }
+.rec__units { font-size: 14px; font-weight: 900; white-space: nowrap; letter-spacing: -0.2px; }
+.rec__result { font-size: 13px; font-weight: 800; color: var(--muted); }
+.rec__pending {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.3px;
+  text-transform: uppercase; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 999px; padding: 2px 7px;
+  white-space: nowrap;
+}
+
+/* ------------------------------ an open ladder --------------------------- */
+.rec__ladder {
+  grid-column: 1 / -1;
+  border-top: 1px dashed var(--border);
+  margin: 2px 0 8px;
+  padding-top: 7px;
+  display: grid; gap: 3px;
+  min-width: 0;
+}
+.rec__ladderHead { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+.rec__rung {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) auto;
+  gap: 6px; align-items: baseline;
+  font-size: 11.5px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  min-width: 0;
+}
+.rec__rung--shown { background: var(--fill); font-weight: 800; }
+.rec__rungLabel { min-width: 0; overflow-wrap: anywhere; }
+.rec__here { color: var(--brand-text); padding-right: 3px; }
+.rec__rungNums { color: var(--muted); min-width: 0; font-variant-numeric: tabular-nums; }
+.rec__rungResult { text-align: right; font-weight: 800; white-space: nowrap; color: var(--muted); }
+
+/* --------------------------------- states -------------------------------- */
+.rec__empty {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.rec__revealWrap { display: grid; gap: 6px; justify-items: start; padding-top: 4px; }
+
+@media (max-width: 520px) {
+  .rec__hero { font-size: 36px; }
+  .rec__f--wide { grid-column: 1 / -1; }
+  .rec__rung { grid-template-columns: minmax(0, 1fr) auto; }
+  .rec__rungNums { grid-column: 1 / -1; }
 }

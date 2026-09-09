@@ -124,6 +124,9 @@ export default function Header() {
               <NavLink to={`${basePath}/game`}>Detailed Player</NavLink>
               <NavLink to={`${basePath}/scoreboard`}>Scoreboard</NavLink>
               <NavLink to={`${basePath}/results`}>Results</NavLink>
+              {/* CFB ONLY: the 2026 record reads a dataset that exists for
+                  college football alone, so it is not offered under /cbb. */}
+              {basePath === "/cfb" && <NavLink to="/cfb/record">Record</NavLink>}
               <NavLink to={`${basePath}/trends-clv`}>Trends</NavLink>
               <NavLink to={`${basePath}/bracket`}>Bracket</NavLink>
             </>
@@ -175,6 +178,9 @@ export default function Header() {
                 <NavLink to={`${basePath}/game`} role="menuitem">Detailed Player</NavLink>
                 <NavLink to={`${basePath}/scoreboard`} role="menuitem">Scoreboard</NavLink>
                 <NavLink to={`${basePath}/results`} role="menuitem">Results</NavLink>
+                {basePath === "/cfb" && (
+                  <NavLink to="/cfb/record" role="menuitem">Record</NavLink>
+                )}
                 <NavLink to={`${basePath}/trends-clv`} role="menuitem">Trends</NavLink>
                 <NavLink to={`${basePath}/bracket`} role="menuitem">Bracket</NavLink>
               </>

@@ -252,6 +252,61 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
   null and silently leaves the layout at the desktop default — that was
   the actual bug.
 
+## The 2026 record (`/cfb/record`, `Record.tsx` + `recordData.ts`)
+
+`/cfb/results` is the 2025 page and stays as it was: one spread, one moneyline
+and one total per game. 2026 publishes THOUSANDS of priced rungs a week, so the
+record is a filtered view over a published ledger, not a table of everything
+(owner 2026-09-09: browsable "against the market in as many markets as
+possible", but never "the full board with every single bet listed").
+
+DATA (HF `mvpeav/cfb-sims-2026`, fetched through the same `dataUrl()` as every
+other week file — the `/api/data` allowlist is per-REPO and `cfb-sims-2026` is
+already on it, so these paths needed NO server change and no `server/dist`
+rebuild; verified upstream 404 forwards as 404, which is what "not published
+yet" is built on):
+
+- `2026/record_index.json` — `[{week, week_folder, publish_utc, settled, rows,
+  starred_rows, generated_utc}]`
+- `2026/weeks/<weekNN>/record.json` — `{season, week, week_folder,
+  generated_utc, engine_tag, publish_utc, settled, settled_rows,
+  unsettled_rows, families, rows[]}`, one row per priced rung
+  (`ladder_id`, `is_main`, `best_on_ladder`, `side`, `p_sim`, `price_publish`,
+  `price_close`, `ev_publish`, `starred`, `flags`, `result`,
+  `pnl_per_dollar`).
+
+Five contracts, each of which is a way to get the record WRONG:
+
+1. **A ladder is the unit, not a rung.** Main line (`is_main`, nearest 50¢) and
+   Best EV (`best_on_ladder`, highest fee-inclusive EV at publish) each select
+   exactly ONE row per ladder, so units are counted once; Best EV is the
+   default whenever the EV filter is +EV or ★. All rungs shows every price
+   behind a "show N rows" press AND prints that the rungs of one ladder are
+   correlated — n there is games, not independent bets.
+2. **`ladderKey` is `week:ladder_id`, never the bare id.** Nothing promises the
+   exporter re-keys "TCU team total" between weeks; grouping on the id alone
+   merged a season into one ladder (224 rows reported 84).
+3. **The frame is the publish price**, named on screen; the close is carried
+   per row so the move is visible, and is never the frame.
+4. **ROI is fee-inclusive** and comes from the exporter's `pnl_per_dollar`. A
+   settled row without one is counted UNSCORED and the page says how many —
+   never re-derived fee-blind into the same rate.
+5. **`p_sim`'s orientation is CHECKED, not assumed** (`orientationOf`): the
+   team-markets convention is P(YES) flipped on a NO row, but this is a
+   different exporter, so the loader tests both candidates against the EV
+   identity `(1 + ev) · price ≈ p` on the NO rows and keeps the convention only
+   as the fallback. Getting it wrong mirrors the calibration chart about 50% —
+   the one defect here a reader could not see.
+
+Both charts are SINGLE-series and wear `--rec-mark` (its own token; light and
+dark values chosen by running the dataviz palette validator against each
+theme's card surface). Thin calibration buckets (< 20 settled rows) are hollow
++ muted + labelled with their n — shape and words, never colour alone. The
+calibration chart is deliberately wider than a phone and scrolls inside
+`.rec__scroll` so the PAGE never scrolls sideways; "Show numbers" is its
+table-view twin. Player rows do not exist yet and the family renders an honest
+empty state rather than being hidden.
+
 ## The card market block (`MarketEdge.tsx`) — bar-test rules
 
 Every card's Kalshi block is VERDICT-FIRST (user, 2026-08-28, same bar as the

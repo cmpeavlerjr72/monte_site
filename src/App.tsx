@@ -11,6 +11,11 @@ import "./index.css";
 import Home from "./pages/Home";
 import Scoreboard from "./pages/Scoreboard";
 import Results from "./pages/Results";
+// The 2026 record. A SEPARATE page from Results (which is the 2025 season and
+// stays exactly as it was): 2026 publishes thousands of priced rungs a week
+// across Kalshi team markets and game lines, so its record is a filtered view
+// over a published ledger rather than one spread/ML/total per game.
+import RecordPage from "./pages/Record";
 import TrendsCLV from "./pages/Trends_CLV";
 import GameCenter from "./pages/GameCenter";
 import CLVPage from "./pages/CLV";
@@ -76,6 +81,7 @@ export default function App() {
           <Route path="/cfb" element={<Home />} />
           <Route path="/cfb/scoreboard" element={<Scoreboard />} />
           <Route path="/cfb/results" element={<Results />} />
+          <Route path="/cfb/record" element={<RecordPage />} />
           <Route path="/cfb/trends-clv" element={<TrendsCLV />} />
           <Route path="/cfb/game/*" element={<GameCenter />} />
           <Route path="/cfb/clv/*" element={<CLVPage />} />
