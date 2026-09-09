@@ -6,8 +6,10 @@
 //   signed out — "Log in / Sign up" opens the AuthPanel in a slide-down under
 //                the ribbon. Nothing else about the page changes; the
 //                scoreboard, Top Edges and props stay public.
-//   signed in  — the username, opening a small menu: My Book (the dashboard),
-//                Profile, Log out.
+//   signed in  — the username, opening a small menu: My Book, Feed, Profile,
+//                Log out. Those are the three account destinations (owner
+//                split 2026-09-08) and they are mounted at the TOP level,
+//                because an account is sport-agnostic.
 //
 // Rules:
 //
@@ -100,8 +102,12 @@ export default function AccountMenu() {
                   @{profile?.handle}
                 </div>
               </div>
-              <Link to="/cfb/mybook" className="acct-item" role="menuitem">My Book</Link>
-              <Link to="/cfb/me" className="acct-item" role="menuitem">Profile</Link>
+              {/* THREE DESTINATIONS, in the order a signed-in reader wants
+                  them: what I have riding, what my friends are on, who I am.
+                  Top-level paths — the account is sport-agnostic. */}
+              <Link to="/mybook" className="acct-item" role="menuitem">My Book</Link>
+              <Link to="/feed" className="acct-item" role="menuitem">Feed</Link>
+              <Link to="/me" className="acct-item" role="menuitem">Profile</Link>
               <button
                 type="button"
                 className="acct-item"

@@ -21,6 +21,7 @@ import Bracket from "./pages/CFB_Bracket"
 // register unconditionally.
 import Profile from "./pages/Profile";
 import BookDashboard from "./pages/BookDashboard";
+import FeedPage from "./pages/FeedPage";
 
 // CBB Pages
 
@@ -80,14 +81,26 @@ export default function App() {
           <Route path="/cfb/clv/*" element={<CLVPage />} />
           <Route path="/cfb/combo/*" element={<ComboTrend />} />
           <Route path="/cfb/bracket/*" element={<Bracket />} />
-          <Route path="/cfb/me" element={<Profile />} />
-          {/* THE DASHBOARD: positions, Kalshi linking, friends, feed,
-              settings — everything that is about the person rather than the
-              board (owner restructure 2026-09-08). /cfb/friends was its own
-              page until then and is now one of its sections, so the old link
-              redirects rather than 404s. */}
-          <Route path="/cfb/mybook" element={<BookDashboard />} />
-          <Route path="/cfb/friends" element={<Navigate to="/cfb/mybook" replace />} />
+          {/* THE ACCOUNT PAGES REDIRECT UP. They were under /cfb until
+              2026-09-08; an account is sport-agnostic (same login, same Kalshi
+              book, same friends when CBB arrives), so they now live at the
+              root and these keep every old link working. */}
+          <Route path="/cfb/me" element={<Navigate to="/me" replace />} />
+          <Route path="/cfb/mybook" element={<Navigate to="/mybook" replace />} />
+          <Route path="/cfb/feed" element={<Navigate to="/feed" replace />} />
+          <Route path="/cfb/friends" element={<Navigate to="/me" replace />} />
+
+          {/* THE ACCOUNT, SPORT-AGNOSTIC (owner 2026-09-08). Three
+              destinations answering three questions, mounted at the top level
+              because none of them is about college football in particular:
+                /mybook  what I have riding, resting and settled
+                /feed    what my friends are on
+                /me      who I am, who sees me, my friends, my sizing, my
+                         Kalshi link
+              The scoreboards stay under /cfb and /cbb. */}
+          <Route path="/mybook" element={<BookDashboard />} />
+          <Route path="/feed" element={<FeedPage />} />
+          <Route path="/me" element={<Profile />} />
 
           {/* Legacy redirects to preserve old links */}
           <Route path="/scoreboard" element={<Navigate to="/cfb/scoreboard" replace />} />

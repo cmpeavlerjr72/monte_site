@@ -204,7 +204,7 @@ export default function MyBookPanel({
       <Row label="Dashboard">
         <span style={{ fontSize: 10.5, color: "var(--muted)", minWidth: 0 }}>
           Your positions, friends, the feed, unit size and Kalshi linking live
-          on <Link to="/cfb/mybook">My Book</Link>.
+          on <Link to="/mybook">My Book</Link>.
         </span>
       </Row>
 

@@ -1,63 +1,45 @@
-// src/pages/BookDashboard.tsx  —  route /cfb/mybook
+// src/pages/BookDashboard.tsx  —  route /mybook
 //
-// THE MY BOOK DASHBOARD. One page for everything that is about the PERSON
-// rather than about the board (owner restructure 2026-09-08). The scoreboard
-// is a bets menu; this is the account behind it:
+// MY BOOK, AND ONLY MY BOOK (owner split 2026-09-08). What this account has
+// riding, what is resting, and what has settled. Nothing else: the social half
+// moved to /feed and everything about the person moved to /me, so the three
+// destinations answer three different questions and none of them is a
+// scroll past the other two.
 //
-//   Positions   held bets, resting orders, what has settled — and, when the
-//               server declares a pair, the legacy Kalshi friend books
-//   Kalshi      link your own Kalshi account so you trade your own money
-//   Friends     add by username, accept or block, unfriend
-//   Feed        what the network is on, every week, newest first
-//   Settings    unit size, how a unit is spent, and this device's fill alerts
+// TOP LEVEL, NOT UNDER /cfb. The account and its Kalshi book are
+// sport-agnostic — NCAAB lands on the same account next season — so this page
+// is mounted at the root and `/cfb/mybook` redirects here. The scoreboards
+// stay under /cfb and /cbb.
 //
-// THREE RULES:
+// THREE RULES, unchanged by the split:
 //
 //  1. SIGN-IN GATES THIS PAGE AND ONLY THIS PAGE. Scoreboard, Top Edges and
-//     props stay public; here a signed-out visitor gets the AuthPanel inline
-//     instead of the sections.
-//  2. NO NEW DATA FETCHES. Supabase and the portal payload the site already
-//     polls — nothing else. That is why the "post a pick" game list comes from
-//     the slate the scoreboard cached (src/lib/slateCache.ts) rather than from
-//     a week file this page would have to load.
+//     props stay public; here a signed-out visitor gets the AuthPanel inline.
+//  2. NO NEW DATA FETCHES. The portal payload the site already polls, and
+//     Supabase — nothing else.
 //  3. THE SIM PRICES NOTHING HERE. Portal bets are computed with EMPTY slate
 //     maps, so every row's KALSHI EV is live and real and its SIM EV is an
-//     honest "—". A dashboard that guessed at fair value would be inventing
-//     numbers the page has no data to support; the per-game Bets panel is
-//     where sim pricing lives.
+//     honest "—". A page that guessed at fair value would be inventing numbers
+//     it has no data to support; the per-game Bets panel is where sim pricing
+//     lives.
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AuthPanel from "../components/AuthPanel";
-import FriendsPanel from "../components/FriendsPanel";
-import NetworkFeed from "../components/NetworkFeed";
-import FriendBooks from "../components/FriendBooks";
-import FillAlertsRow from "../components/FillAlertsRow";
-import KalshiLinkCard from "../components/KalshiLinkCard";
 import MyBookStrip from "../components/MyBook";
-import UnitModeControl from "../components/UnitModeControl";
 import { supabaseEnabled, useProfile, useSession } from "../lib/supabase";
-import { clampUnit, UNIT_MAX, UNIT_MIN } from "../lib/ownerPrefs";
-import {
-  fetchMySettings, localSettings, saveMySettings, type UserSettings,
-} from "../lib/userSettings";
-import type { Sizing, UnitMode } from "../lib/suggestedBets";
 import {
   cheerLabel, computePortalBets, readPortalToken, usePortalBook,
   writePortalToken,
 } from "../lib/kalshiPortal";
-import type {
-  BetGameNames, PortalSettlement, SeedPair,
-} from "../lib/kalshiPortal";
+import type { PortalSettlement, SeedPair } from "../lib/kalshiPortal";
 import type { KalshiGame } from "../lib/kalshi";
-import { readSlateGames } from "../lib/slateCache";
 
 /** Module-level so the compute memo below is keyed on the payload alone —
  *  a fresh `new Map()` per render is the render-loop trap this file must not
  *  fall into (docs/AGENT_BRIEF.md rule 4). */
 const NO_KALSHI: Map<string, KalshiGame> = new Map();
 const NO_SEEDS: Map<string, SeedPair> = new Map();
-const NO_TEAMS: Map<string, BetGameNames> = new Map();
 
 export default function BookDashboard() {
   const { session, loading } = useSession();
@@ -76,57 +58,6 @@ export default function BookDashboard() {
     [portal.payload],
   );
 
-  /* ---- the sizing knobs, ON THE ACCOUNT ----
-   * They live on the profile now (owner rule 2026-09-08) because the feed
-   * prices every bet in UNITS of the poster's own unit, which the server has
-   * to be able to read. `userSettings` mirrors each read and write into this
-   * browser's prefs, so the scoreboard's synchronous read still works and a
-   * signed-out visitor is unaffected. The page starts from the local mirror so
-   * nothing flickers while the RPC lands. */
-  const [settings, setSettings] = useState<UserSettings>(() => localSettings());
-  const [unitText, setUnitText] = useState<string>(() => String(localSettings().unit));
-  const [saveErr, setSaveErr] = useState<string | null>(null);
-  const uid = session?.user?.id ?? "";
-  useEffect(() => {
-    if (!uid) return;
-    let alive = true;
-    void fetchMySettings().then((s) => {
-      if (!alive || !s) return;
-      setSettings(s);
-      setUnitText(String(s.unit));
-    });
-    return () => { alive = false; };
-  }, [uid]);
-
-  const persist = (next: UserSettings) => {
-    setSettings(next);
-    void saveMySettings(next).then((err) => setSaveErr(err));
-  };
-  const commitUnit = () => {
-    const v = clampUnit(unitText);
-    setUnitText(String(v));
-    persist({ ...settings, unit: v });
-  };
-  const onSizingMode = (v: UnitMode) => persist({ ...settings, mode: v });
-  const onMultiple = (v: number) => persist({ ...settings, multiple: v });
-  /** What the sizing kernel wants. `risk` cannot stretch, so its guard is 1 —
-   *  the same rule ownerPrefs.readSizing applies. */
-  const sizing: Sizing = {
-    mode: settings.mode,
-    maxRiskMultiple: settings.mode === "risk" ? 1 : settings.multiple,
-  };
-
-  /* ---- the games a pick can name (rule 2: cached, never fetched) ---- */
-  const slate = useMemo(() => readSlateGames(), []);
-  const slugTeams = useMemo(() => {
-    if (!slate) return NO_TEAMS;
-    // The cache stores the LABEL ("Away @ Home"); the feed wants the pair.
-    return new Map(slate.games.map((g) => {
-      const [away, home] = g.label.split(" @ ");
-      return [g.slug, { teamA: home ?? g.label, teamB: away ?? "" }] as const;
-    }));
-  }, [slate]);
-
   useEffect(() => { document.title = "My Book · MVPeav"; }, []);
 
   if (!supabaseEnabled) {
@@ -144,7 +75,7 @@ export default function BookDashboard() {
   if (!signedIn) {
     return (
       <Page>
-        <AuthPanel prompt="Log in to see your book, your friends and the feed." />
+        <AuthPanel prompt="Log in to see your book." />
       </Page>
     );
   }
@@ -164,99 +95,20 @@ export default function BookDashboard() {
           accountLabel={portal.payload?.account_label}
           ordersLive={portal.payload?.orders_live === true}
         />
-        {/* The env-paired Kalshi friend books, when the server declares a
-            pair. Renders nothing at all otherwise. */}
-        <FriendBooks token={token} unit={settings.unit} sizing={sizing}
-                     slugTeams={NO_TEAMS} codeToSlug={NO_CODES}
-                     yesP={NO_PRICE} />
       </Section>
 
       <Section
-        title="My Kalshi account"
-        note="Trade your own money from this site.">
-        <KalshiLinkCard />
-      </Section>
-
-      <Section title="Friends" note="Add someone by their exact username.">
-        <FriendsPanel />
-      </Section>
-
-      <Section title="What my network is on" note="Every week, newest first.">
-        <NetworkFeed
-          season={slate?.season ?? new Date().getFullYear()}
-          week={slate?.week ?? 0}
-          slugTeams={slugTeams}
-          allWeeks
-          startOpen
-        />
-      </Section>
-
-      <Section
-        title="Settings"
-        note="Per browser. The scoreboard sizes every suggestion off these.">
-        <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>$</span>
-              <input
-                type="number" inputMode="numeric"
-                min={UNIT_MIN} max={UNIT_MAX} step={1}
-                value={unitText}
-                onChange={(e) => setUnitText(e.target.value)}
-                onBlur={commitUnit}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commitUnit(); } }}
-                className="ui-sel"
-                aria-label="Unit size in dollars per ladder"
-                style={{ width: 76, fontSize: 13, fontWeight: 800, textAlign: "right" }}
-              />
-            </label>
-            <UnitModeControl
-              mode={settings.mode}
-              onMode={onSizingMode}
-              multiple={settings.multiple}
-              onMultiple={onMultiple}
-            />
-          </div>
-          <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-            Your unit is the dollars a suggestion spends (${UNIT_MIN}–${UNIT_MAX}),
-            and the switch beside it is HOW it spends them. They are saved to
-            your account and are what the scoreboard sizes with the next time it
-            loads.
-          </span>
-          <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-            {/* The privacy half of the same setting, said where it is set. */}
-            <b>Nobody else sees this number.</b> Your unit size is private to
-            your account — friends see your bets in <b>units</b> (“0.5u @ 61¢”)
-            and never in dollars.
-          </span>
-          {saveErr && (
-            <span style={{ fontSize: 10.5, color: "var(--neg)" }}>
-              Saved on this device, but the account copy failed: {saveErr}
-            </span>
-          )}
-          {token && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={LABEL}>Fill alerts</span>
-              <FillAlertsRow token={token} />
-            </div>
-          )}
-          <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-            Editing your display name, avatar and who can see your bets lives on{" "}
-            <Link to="/cfb/me">your profile</Link>.
-          </span>
-        </div>
+        title="Elsewhere"
+        note="The rest of the account lives on its own pages.">
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>
+          What your friends are on is on <Link to="/feed">the feed</Link>.
+          Your display name, flares, friends, unit size and Kalshi link are on{" "}
+          <Link to="/me">your profile</Link>.
+        </span>
       </Section>
     </Page>
   );
 }
-
-/** The legacy friend-books block wants a ticker→slug map and a sim pricer.
- *  This page has neither (rule 3), and both are optional in effect: an
- *  unmatched code just shows the ticker's own game code, and a null price
- *  means a bet is shown without a join button. Module-level so they are
- *  stable. */
-const NO_CODES: Map<string, string> = new Map();
-const NO_PRICE = (): number | null => null;
 
 /* ------------------------------- positions ------------------------------- */
 
@@ -283,8 +135,8 @@ function Positions({
           Trading is not enabled on this account.
         </span>
         <Muted>
-          Link your own Kalshi account below and your positions, resting orders
-          and settlements appear here.
+          Link your own Kalshi account on <Link to="/me">your profile</Link>{" "}
+          and your positions, resting orders and settlements appear here.
         </Muted>
       </div>
     );
@@ -304,8 +156,9 @@ function Positions({
           </span>
         )}
         <Muted>
-          No Kalshi account on this login yet. Link your own below — or, if you
-          have the site's portal password, connect with it.
+          No Kalshi account on this login yet. Link your own on{" "}
+          <Link to="/me">your profile</Link> — or, if you have the site's
+          portal password, connect with it.
         </Muted>
         <form
           style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
