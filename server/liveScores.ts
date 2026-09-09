@@ -3138,6 +3138,16 @@ function appOrdersRecord(
     season: w.season ?? null,
     week: w.week ?? null,
     game_slug: w.game_slug ?? null,
+    // WHAT THE FEED SAYS OUT LOUD (20260909_feed_detail.sql). The bet in the
+    // bettor's own confirmed words, the two teams so the row can wear their
+    // logos, and our sim's opinion as a probability and a rate per $1. Every
+    // one of them is nullable and already sanitised; the feed renders a blank
+    // rather than a guess.
+    title: w.title ?? null,
+    home_team: w.home_team ?? null,
+    away_team: w.away_team ?? null,
+    sim_p: w.sim_p ?? null,
+    ev_fee: w.ev_fee ?? null,
     ticker: w.ticker,
     side: w.side,
     mode: w.mode,
@@ -3373,7 +3383,36 @@ type WireOrder = {
   season?: number | null;
   week?: number | null;
   game_slug?: string | null;
+  /** THE SENTENCE THE FEED PRINTS, and the two sim numbers behind it. Same
+   *  rules as the three above: optional, sanitised to null, never on the wire
+   *  to Kalshi, never a reason to refuse an order. `title` is the bet in the
+   *  words the confirm slip showed ("Rutgers over 23.5 points"); `sim_p` is
+   *  our P(YES) and `ev_fee` our EV per $1 after the fee — a RATE, so neither
+   *  is a quantity of anyone's money. */
+  title?: string | null;
+  home_team?: string | null;
+  away_team?: string | null;
+  sim_p?: number | null;
+  ev_fee?: number | null;
 };
+
+/** An attribution string: trimmed, capped at 120 characters, null when empty
+ *  or absent. Never throws, never rejects — see the WireOrder note. */
+function attrText(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  return s.length > 120 ? s.slice(0, 120) : s;
+}
+
+/** An attribution number inside `[lo, hi]`, null when absent, not finite, or
+ *  out of range. A wrong number in a feed sentence is worse than a blank. */
+function attrNum(v: unknown, lo: number, hi: number): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < lo || n > hi) return null;
+  return Math.round(n * 1e6) / 1e6;
+}
 
 /** Reject a body that tries to dictate execution mechanics instead of intent.
  *  Returns an error string, or null when clean. */
@@ -3455,9 +3494,13 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
       // unknown-key rejection is the rail that keeps execution mechanics out
       // of a request and it must never be loosened accidentally. They are
       // read by `appOrdersRecord` and by nothing else.
+      // 2026-09-09: title / home_team / away_team / sim_p / ev_fee joined the
+      // list under the SAME contract — the automatic feed prints a sentence
+      // and the row has to carry it (supabase/migrations/20260909_feed_detail.sql).
       for (const k of Object.keys(o)) {
         if (!["ticker", "side", "mode", "price_dollars", "count_fp",
-              "season", "week", "game_slug"].includes(k)) {
+              "season", "week", "game_slug",
+              "title", "home_team", "away_team", "sim_p", "ev_fee"].includes(k)) {
           bad(400, { error: "unexpected_field", detail: `orders[${i}]: "${k}"` });
           return;
         }
@@ -3508,6 +3551,15 @@ app.post("/api/portfolio/cfb/orders", asyncRoute(async (req: Request, res: Respo
           ? seasonN : null,
         week: Number.isInteger(weekN) && weekN >= 0 && weekN <= 30 ? weekN : null,
         game_slug: /^[A-Za-z0-9_.:@+-]{1,120}$/.test(slugRaw) ? slugRaw : null,
+        // The feed sentence and its two sim numbers. Bounds are the honest
+        // ranges: a probability is in [0,1] and an EV per $1 outside +/-5 is
+        // arithmetic that went wrong, so both become null rather than being
+        // printed as a claim. Sanitised, like every attribution field.
+        title: attrText(o.title),
+        home_team: attrText(o.home_team),
+        away_team: attrText(o.away_team),
+        sim_p: attrNum(o.sim_p, 0, 1),
+        ev_fee: attrNum(o.ev_fee, -5, 5),
         client_order_id: `${ORDERS_TAG}${key}-${i}`,
         // `price` on this endpoint is ALWAYS the YES price: side "bid" buys
         // YES at it, side "ask" sells YES at it — which IS buying NO at 1−p.
