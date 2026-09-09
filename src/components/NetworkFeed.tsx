@@ -1,98 +1,59 @@
 // src/components/NetworkFeed.tsx
 //
-// "WHAT YOUR FRIENDS ARE ON" — the feed, and since 2026-09-09 it is
-// AUTOMATIC. There is no "post a pick" form any more and nothing here writes
-// to the database at all. Every order placed through the app is already
-// mirrored into `app_orders` server-side; that row IS the feed item, so a bet
-// reaches your friends by being placed, not by being typed twice.
+// "WHAT YOUR FRIENDS ARE ON" — the feed. AUTOMATIC since 2026-09-09: every
+// order placed through the app is mirrored into `app_orders` server-side and
+// that row IS the feed item. Nothing here writes to the database.
 //
 // ────────────────────────────────────────────────────────────────────────────
-// THE UNIT OF THE FEED IS THE GAME (owner 2026-09-09, ~12:55 AM)
+// ONE GAME, ONE CARD. INSIDE IT, ONE BUCKET PER FRIEND. (owner 2026-09-09 pm)
 //
-// It used to be a chronological list of rows under day headings. Nobody
-// watching football asks "what happened next"; they ask "who is on this game".
-// So the feed is a list of GAME BUCKETS, ordered by the time of the latest
-// action in each — a new bet on an old game bumps that game back to the top —
-// and each bucket answers both questions at once:
+// The first cut of the game-bucket feed showed every bet three times — in the
+// card header (rail + PLACED tag), again as a full "latest action" row (logos,
+// kind tag, clock), and a third time in a "who's on it" band — and the owner
+// called it "cluttered, confusing and hard to follow", and asked for "buckets
+// for each friend" rather than lines. This is the second cut. Its rules:
 //
-//   ▎🏈 [logo][logo] Rutgers at Ohio State                    TAIL · 2m
-//     ▎roth ᵃ   🏈 [logos] ↳ mvpeav  Rutgers o23.5 · 61¢ · 1u   TAIL 2m
-//     ── who's on it ─────────────────────────────────────────────────
-//     mvpeav ᵃᵇ  Rutgers o23.5    2.5u @ 39¢ avg  ↳1   4m   [Tail]
-//     roth       Rutgers o23.5    1u   @ 61¢          2m
-//     Show all 6
+//   ┌ [R][BC]  Rutgers at Boston College                    placed · 3h ┐
+//   │          FBS Football                                             │
+//   ├───────────────────────────────────────────────────────────────────┤
+//   │ mvpeav ᴬ                                                2 bets    │
+//   │   Rutgers 2+ rec TDs            1.22u at 53¢ · EV +0.35   [Tail]  │
+//   │   Rutgers 24+                   0.5u at 60¢ avg · 3 fills [Tail]  │
+//   ├───────────────────────────────────────────────────────────────────┤
+//   │ roth ᶜ                                                  −0.08u    │
+//   │   Florida State −5.5            0.08u at 29¢ · lost      −0.08u   │
+//   ├───────────────────────────────────────────────────────────────────┤
+//   │ 3 actions ▾                                                       │
+//   └───────────────────────────────────────────────────────────────────┘
 //
-// THE HEADER SAYS WHAT JUST HAPPENED — the kind rail and the kind tag are the
-// LATEST action's, not the bucket's — and the latest action is then repeated
-// underneath as its own full glanceable row, in the row style shipped
-// tonight. Everything else in the bucket is one press away ("Show all"), in
-// the same rows, chronologically.
+//   • EVERY FACT APPEARS ONCE. The header carries the matchup, the game's
+//     state (score + clock when a score update exists, else the league) and
+//     ONE clock — the latest action, with its kind as a word. The card's left
+//     edge is tinted by that kind only when the kind is news (a tail, a
+//     settlement, a score), so a wall of plain placements reads as a list.
+//   • THE BODY IS FRIEND BUCKETS: one block per poster, newest activity first,
+//     with the handle and flares as the block's header and a summary at its
+//     right edge (how many bets, or the net units once something settled).
+//     Inside, one line per POSITION (src/lib/feedBuckets.ts, shared with the
+//     game card's "friends on this game" strip): the bet, then size at the
+//     units-weighted average price, then the one thing to do or know at the
+//     right — Tail while it is open, the net units once it has settled.
+//   • The tail relation is WORDS ("tail of mvpeav", "2 tails"), not arrows;
+//     the sport is a word in the header, not an emoji on every row.
+//   • THE SENTENCE IS ON TAP: pressing a bet opens its fills, one plain line
+//     each, with the Tail button and the reason it is muted spelled out. That
+//     reason lives in the button's tooltip and here — never printed beside
+//     every button on the page.
+//   • History is a sentence list behind "N actions", newest first.
 //
-// A POSITION, NOT A FILL. The summary folds a poster's rows on one contract
-// into one line: total units, and the UNITS-WEIGHTED AVERAGE PRICE across them
-// (owner: "when there are multiple at different prices show the average"). A
-// ladder placed as two rungs, a partial fill chased at the next price and a
-// re-offer taken a cent higher are one bet in a bettor's head; the fold is in
-// src/lib/feedBuckets.ts, shared with the scoreboard's "friends on this game"
-// strip so the two surfaces can never tell different stories.
-//
-// ────────────────────────────────────────────────────────────────────────────
-// THE FACE OF A ROW IS GLYPHS AND NUMBERS. THE SENTENCE IS ON TAP.
-// (owner 2026-09-09, the "drunk at a bar" rule + the Team Stats v3 house style)
-//
-//   ▎mvpeav ᵃᵇ   🏈 [logo][logo] Rutgers o23.5 · 59¢ · 1.5u · EV +0.21  PLACED 4m
-//
-// FOUR RULES HOLD THE ROW TOGETHER:
-//
-//  1. HANGING INDENT. Two columns: a fixed overhang carrying ONLY the handle
-//     and its flares, and a content block that starts at the end of it and
-//     stays left-aligned to that edge on every wrapped line. A reader runs
-//     down one edge to read the bets. On a phone the overhang narrows and the
-//     bet wraps to a second line UNDER the logos, never back under the handle.
-//     (Geometry lives in theme.css `.feed__*`; the widths are a media query,
-//     which is why that part is CSS and not inline style like the rest.)
-//
-//  2. THE KIND IS A COLOUR RAIL PLUS A WORD. 4px at the far left edge —
-//     placed = --brand, tailed = --accent, score = --info, settled =
-//     --pos/--neg/--muted — and the same fact spelled as a one-word tag at the
-//     right edge of the content block (PLACED / TAIL / SCORE / WON / LOST /
-//     PUSH). Colour never carries an identity alone, the same rule the
-//     execution-mode chips follow.
-//
-//  3. THE SPORT IS AN EMOJI, THE LEAGUE IS ITS TOOLTIP (src/lib/leagues.ts).
-//     "FCS FOOTBALL" in small caps beside a bet out-shouts the bet.
-//
-//  4. A SETTLEMENT'S UNITS FIGURE IS THE BIGGEST THING ON ITS ROW. When a bet
-//     is done the answer is the money, so "+1.45u" in the result's colour
-//     outweighs everything else on the line it belongs to.
-//
-// THE ARROWS ARE READ AT ARM'S LENGTH (owner 2026-09-09). ↳ and ↑ ↓ → carry
-// the two facts a glance is FOR — this is a copy of someone's bet, this bet
-// just got better or worse — and at row size they were decoration. They are
-// 1.35× the row's font, heavy, coloured (tail = --accent, a move = --pos /
-// --neg / --muted), and each one carries its own one-line tooltip, because a
-// glyph that means something must be able to say what.
-//
-// HANDLES ARE BARE (owner 2026-09-09). No "@" anywhere on this surface: the
-// handle is the person's name here, not a mention, and the sigil was one more
-// mark to read on every single line.
-//
-// THE FILTERING IS THE DATABASE'S JOB, not this component's. `feed_items` is a
-// security_invoker view over RLS-protected tables, so what comes back is
-// already exactly what this viewer may see. There is no client-side "is this
-// mine / are we friends" test anywhere in this file, and adding one would be a
-// second, weaker copy of a rule the database already enforces.
-//
-// AND THERE ARE NO DOLLARS. The view carries UNITS of the poster's own unit
-// and the market price, for every row including the viewer's own (owner rule
-// 2026-09-08). Nothing on this surface can print a count, a cost or a fill,
-// because the query it reads does not select one.
-//
-// The tail link and the "tailed by N" count are resolved INSIDE the rows this
-// viewer already has: `tailed_from` is an order id and the parent, if the
-// viewer may see it at all, is in the same RLS-filtered result set. A parent
-// that is not there is not fetched behind the user's back — the row simply
-// says it tailed a bet and names nobody.
+// THE FILTERING IS THE DATABASE'S JOB. `feed_items` is a security_invoker view
+// over RLS-protected tables, so what comes back is exactly what this viewer may
+// see; there is no client-side "is this mine / are we friends" test here. AND
+// THERE ARE NO DOLLARS: the view carries UNITS of the poster's own unit and the
+// market price, for every row including the viewer's own (owner rule
+// 2026-09-08). The tail link and the "tailed by N" count are resolved INSIDE
+// the rows this viewer already has — a parent that is not there is not fetched
+// behind the user's back.
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import AuthPanel from "./AuthPanel";
@@ -102,17 +63,10 @@ import {
   supabase, supabaseEnabled, useProfile, useSession,
   type FeedItem, type FeedScorePayload,
 } from "../lib/supabase";
-// The same helper the Top Edges rows badge their teams with — one logo file,
-// one mapping, everywhere a school is drawn.
 import { getTeamLogo } from "../utils/teamLogo";
-// One map from a stored league id to what a reader sees: the emoji on the face
-// of the card, the words in its tooltip and in the popover (src/lib/leagues.ts).
-import { leagueEmoji, leagueLabel } from "../lib/leagues";
-// The grouping, the fold and the formatting — shared with the game card's
-// "friends on this game" strip (src/lib/feedBuckets.ts).
+import { leagueLabel } from "../lib/leagues";
 import {
-  ago, betText, bucketize, compactBet, matchupWords, orderSide, shortTeam,
-  unitsShort, unitsText,
+  ago, betText, bucketize, matchupWords, shortTeam, unitsShort, unitsText,
   type FeedBucket, type FeedPosition,
 } from "../lib/feedBuckets";
 
@@ -121,24 +75,19 @@ export type NetworkFeedProps = {
   season: number;
   /** Week number, for the single-week view. */
   week: number;
-  /** EVERY week, newest first (the dashboard reads the feed as a timeline).
+  /** EVERY week, newest first (the feed page reads the feed as a timeline).
    *  Without it the feed is scoped to `season`/`week` plus rows nobody could
    *  date, so an order never silently vanishes. */
   allWeeks?: boolean;
-  /** Start expanded. The dashboard's feed IS the section, so a press to see
-   *  anything would be a click for nothing. */
+  /** Start expanded. When true there is no Show/Hide toggle at all — the feed
+   *  IS the page, and a button to hide the page is a button for nothing. */
   startOpen?: boolean;
 };
 
-/** How often the feed re-reads itself when the live channel is NOT up. The
- *  realtime subscription is the fast path; this is the one that has to work
- *  on a locked-down network, a dropped socket, or a project with realtime
- *  switched off. */
+/** How often the feed re-reads itself when the live channel is NOT up. */
 const POLL_MS = 60_000;
 
-/** Buckets before the "older" divider, and how many more each press adds.
- *  Ten games is a slate's worth of what is happening now; everything past it
- *  is history and says so. */
+/** Cards before the "older" divider, and how many more each press adds. */
 const FIRST_BUCKETS = 10;
 
 export default function NetworkFeed({
@@ -149,18 +98,13 @@ export default function NetworkFeed({
   const [items, setItems] = useState<FeedItem[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(startOpen);
-  /** Whether the postgres_changes channel actually came up. Shown as two
-   *  words, because "live" and "checking every minute" are different promises
-   *  and the reader should know which one they have. */
   const [live, setLive] = useState(false);
   /** Re-render once a minute so "4m" is not a lie by the fifth. */
   const [, setTick] = useState(0);
-  /** Which row has its words open. ONE at a time: the popover is the reading
-   *  of one row, and two open at once is a paragraph again. */
+  /** Which position has its details open — ONE at a time. */
   const [pop, setPop] = useState<string | null>(null);
-  /** Which buckets are showing their whole history. */
+  /** Which cards are showing their history. */
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  /** How many buckets are rendered at all. */
   const [shown, setShown] = useState(FIRST_BUCKETS);
 
   const signedIn = Boolean(session && profile);
@@ -182,28 +126,11 @@ export default function NetworkFeed({
   useEffect(() => { void load(); }, [load]);
 
   /**
-   * LIVE. A friend places a bet and this feed shows it without a refresh.
-   *
-   * Two rules hold it together:
-   *  1. RLS APPLIES TO REALTIME. A subscriber is handed only rows its own
-   *     policies would return, so the broadcast is not a second, wider read
-   *     path — the same reason the query above needs no client-side filter.
-   *  2. THE EVENT IS A DOORBELL, NOT THE DATA. Every event triggers a REFETCH
-   *     of `feed_items`; nothing renders from the payload. The payload is a
-   *     raw `app_orders` row (it carries cost and count) and it has not been
-   *     through the view that strips them. Refetching keeps one path to the
-   *     screen and that path is the RLS-filtered, money-free one.
-   *
-   * If the channel does not come up — realtime off, a proxy eating the socket
-   * — the 60s poll below is the whole feature, a minute late.
-   *
-   * THREE SUBSCRIPTIONS, because there are three ways the feed changes:
-   * a bet is PLACED (app_orders INSERT — a tail is a placement like any
-   * other), a bet SETTLES (app_orders UPDATE, which rewrites a row that is
-   * already on screen), and a game MOVES (feed_events INSERT). All three are
-   * doorbells into the same refetch, and any of them can re-sort the buckets:
-   * a new action on an old game pulls that game to the top by itself, because
-   * the order is a function of the rows and not of a list this file keeps.
+   * LIVE. RLS applies to realtime, and the event is a DOORBELL, not the data:
+   * every event triggers a refetch of `feed_items`; nothing renders from the
+   * payload (a raw `app_orders` row carries cost and count and has not been
+   * through the view that strips them). Three subscriptions: a bet PLACED
+   * (insert), a bet SETTLED (update), a game MOVED (feed_events insert).
    */
   useEffect(() => {
     if (!supabase || !signedIn) return;
@@ -224,9 +151,7 @@ export default function NetworkFeed({
     return () => { alive = false; setLive(false); void supabase!.removeChannel(ch); };
   }, [signedIn, load]);
 
-  /** The fallback, and the clock. It runs whether or not the channel is up:
-   *  when it is, a minute-late re-read costs one small query and covers the
-   *  case where the socket died without saying so. */
+  /** The fallback, and the clock. */
   useEffect(() => {
     if (!signedIn) return;
     const id = window.setInterval(() => {
@@ -236,11 +161,8 @@ export default function NetworkFeed({
     return () => window.clearInterval(id);
   }, [signedIn, load]);
 
-  /** THE TAIL GRAPH, built from what is already loaded. `byOrderId` resolves
-   *  a tail to the bet it copied so the row can name the poster it followed;
-   *  `tailCounts` is how many of the loaded rows copied each bet. Both are
-   *  deliberately scoped to the visible rows — a count that reached past RLS
-   *  would be telling the viewer about bets they may not see. */
+  /** THE TAIL GRAPH, built from what is already loaded — scoped to the visible
+   *  rows so a count can never announce a bet the viewer may not see. */
   const byOrderId = useMemo(() => {
     const m = new Map<string, FeedItem>();
     for (const i of items) if (i.kind === "order" && i.order_id) m.set(i.order_id, i);
@@ -254,11 +176,10 @@ export default function NetworkFeed({
     return m;
   }, [items]);
 
-  /** ONE GAME PER BUCKET, latest action first (src/lib/feedBuckets.ts). */
+  /** ONE GAME PER CARD, latest action first (src/lib/feedBuckets.ts). */
   const buckets = useMemo(
     () => bucketize(items, tailCounts), [items, tailCounts]);
 
-  /** Bets, not rows: a score update is news about a bet, not another bet. */
   const betCount = useMemo(
     () => items.filter((i) => i.kind !== "score").length, [items]);
 
@@ -273,52 +194,45 @@ export default function NetworkFeed({
   }
 
   const visible = buckets.slice(0, shown);
+  const left = buckets.length - shown;
 
   return (
-    <div style={{ display: "grid", gap: 8, width: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <button type="button" className="ui-btn" onClick={() => setOpen((v) => !v)}
-                style={{ padding: "3px 10px", fontSize: 11 }}>
-          {open ? "Hide" : "Show"} feed
-        </button>
-        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+    <div className="fd">
+      <div className="fd__meta">
+        {!startOpen && (
+          <button type="button" className="ui-btn" onClick={() => setOpen((v) => !v)}
+                  style={{ padding: "3px 10px", fontSize: 11 }}>
+            {open ? "Hide" : "Show"} feed
+          </button>
+        )}
+        <span>
           {betCount === 0
-            ? "nothing yet"
+            ? "Nothing yet"
             : `${betCount} bet${betCount === 1 ? "" : "s"} on `
               + `${buckets.length} game${buckets.length === 1 ? "" : "s"}`}
-          {" · "}
-          {live ? "updating live" : "checking every minute"}
-          {" · "}
-          tap a row for the words
+        </span>
+        <span className="fd__dot" aria-hidden>·</span>
+        <span title={live
+          ? "New bets appear as they are placed."
+          : "The live channel is down; the feed re-reads itself every minute."}>
+          {live ? "live" : "refreshes every minute"}
         </span>
       </div>
 
-      {err && <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{err}</span>}
+      {err && <span style={{ fontSize: 12, color: "var(--neg)" }}>{err}</span>}
 
       {open && items.length === 0 && (
-        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
-          No bets from your friends yet — add friends by username above.
+        <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          No bets from your friends yet — add friends by username on your profile.
         </span>
       )}
 
       {open && visible.map((b, i) => (
         <Fragment key={b.key}>
-          {/* THE ONLY DIVIDER LEFT. Day headings are gone — every bucket wears
-              its own clock — but "this is where now stops" is still worth
-              one line. */}
-          {i === FIRST_BUCKETS && (
-            <div style={{
-              fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4,
-              textTransform: "uppercase", color: "var(--muted)",
-              borderTop: "1px solid var(--border)", paddingTop: 6, marginTop: 2,
-            }}>
-              Older
-            </div>
-          )}
-          <Bucket
+          {i === FIRST_BUCKETS && <div className="fd__older">Older</div>}
+          <GameCard
             bucket={b}
             byOrderId={byOrderId}
-            tailCounts={tailCounts}
             expanded={expanded.has(b.key)}
             onToggleExpand={() => setExpanded((s) => {
               const next = new Set(s);
@@ -331,252 +245,259 @@ export default function NetworkFeed({
         </Fragment>
       ))}
 
-      {open && shown < buckets.length && (
+      {open && left > 0 && (
         <button type="button" className="ui-btn"
                 onClick={() => setShown((n) => n + FIRST_BUCKETS)}
-                style={{ padding: "4px 12px", fontSize: 11, justifySelf: "start" }}>
-          Load more ({buckets.length - shown} more game
-          {buckets.length - shown === 1 ? "" : "s"})
+                style={{ padding: "5px 14px", fontSize: 12, justifySelf: "start" }}>
+          Show {Math.min(FIRST_BUCKETS, left)} more game
+          {Math.min(FIRST_BUCKETS, left) === 1 ? "" : "s"}
         </button>
       )}
     </div>
   );
 }
 
-/* -------------------------------- a bucket -------------------------------- */
+/* --------------------------------- a card --------------------------------- */
 
-/**
- * ONE GAME. Header (what just happened), the latest score line when there is
- * one, the latest action as a full row, who is on it, and the whole history on
- * demand.
- */
-function Bucket({
-  bucket, byOrderId, tailCounts, expanded, onToggleExpand, pop, onPop,
+/** One poster's bucket inside a game card: their positions, newest first. */
+type FriendBlock = {
+  user_id: string;
+  handle: string;
+  display_name: string;
+  flares: string[] | null;
+  positions: FeedPosition[];
+  /** Newest activity in the block — the sort key between blocks. */
+  lastMs: number;
+  /** Summed over the settled positions; null while none has settled. */
+  net: number | null;
+};
+
+/** Positions arrive newest first, so the first block seen is the freshest. */
+function friendBlocks(positions: FeedPosition[]): FriendBlock[] {
+  const by = new Map<string, FriendBlock>();
+  for (const p of positions) {
+    let b = by.get(p.user_id);
+    if (!b) {
+      b = {
+        user_id: p.user_id, handle: p.handle, display_name: p.display_name,
+        flares: p.flares, positions: [], lastMs: p.lastMs, net: null,
+      };
+      by.set(p.user_id, b);
+    }
+    b.positions.push(p);
+    b.lastMs = Math.max(b.lastMs, p.lastMs);
+    if (p.net != null) b.net = (b.net ?? 0) + p.net;
+  }
+  return [...by.values()].sort((a, b) => b.lastMs - a.lastMs);
+}
+
+function GameCard({
+  bucket, byOrderId, expanded, onToggleExpand, pop, onPop,
 }: {
   bucket: FeedBucket;
   byOrderId: Map<string, FeedItem>;
-  tailCounts: Map<string, number>;
   expanded: boolean;
   onToggleExpand: () => void;
   pop: string | null;
   onPop: (key: string) => void;
 }) {
   const k = kindOf(bucket.latest);
-  const rowsShown = expanded ? bucket.items : [bucket.latest];
-  // The score belongs in the header — UNLESS the score IS the latest action,
-  // in which case it is already about to be rendered as its own row.
-  const headScore = bucket.score && bucket.score !== bucket.latest
-    ? bucket.score : null;
+  const league = leagueLabel(bucket.sport);
+  const actions = bucket.items.length;
+  const blocks = friendBlocks(bucket.positions);
 
   return (
-    <section className="bkt">
-      <header className="bkt__head">
-        <span aria-hidden className="bkt__rail" style={{ background: k.tone }} />
-        <span className="bkt__title">
-          <SportChip sport={bucket.sport} />
-          <MatchupLogos home={bucket.home} away={bucket.away} on={null} />
-          <span className="bkt__words">{matchupWords(bucket)}</span>
-        </span>
-        <span className="bkt__when">
-          {/* THE NEWEST THING, AT A GLANCE: the tag and the rail above are the
-              LATEST action's kind, not a summary of the bucket. */}
-          <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: 0.5, color: k.tone }}>
-            {k.tag}
-          </span>
-          <span style={{ fontSize: 9.5, color: "var(--muted)" }}>{ago(bucket.atMs)}</span>
-        </span>
+    <section className="fdc" style={{ borderLeftColor: k.rail ?? "var(--border)" }}>
+      <header className="fdc__head">
+        <MatchupLogos home={bucket.home} away={bucket.away} size={22} />
+        <div className="fdc__title">
+          <div className="fdc__game">{matchupWords(bucket)}</div>
+          <div className="fdc__state">
+            {bucket.score
+              ? <ScoreLine item={bucket.score} />
+              : <span>{league ?? " "}</span>}
+          </div>
+        </div>
+        <div className="fdc__latest" title={sentenceOf(bucket.latest, byOrderId)}>
+          <span style={{ color: k.tone, fontWeight: 800 }}>{k.word}</span>
+          <span className="fd__dot" aria-hidden>·</span>
+          <span>{ago(bucket.atMs)}</span>
+        </div>
       </header>
 
-      {headScore && <ScoreStrip item={headScore} />}
+      {blocks.map((b) => (
+        <FriendBucket key={b.user_id} block={b} byOrderId={byOrderId}
+                      pop={pop} onPop={onPop} />
+      ))}
 
-      {rowsShown.map((it, i) => {
-        const key = `${it.kind}:${it.id}`;
-        return (
-          <FeedRow
-            key={key} item={it} rowKey={key}
-            tailOf={it.tailed_from ? byOrderId.get(it.tailed_from) : undefined}
-            tailedBy={it.order_id ? (tailCounts.get(it.order_id) ?? 0) : 0}
-            // A THREAD, not a repetition: the same person twice in a row
-            // inside one bucket keeps the overhang blank.
-            threaded={i > 0 && rowsShown[i - 1].user_id === it.user_id}
-            open={pop === key}
-            onToggle={() => onPop(key)}
-          />
-        );
-      })}
-
-      {bucket.positions.length > 0 && (
-        <div className="bkt__who">
-          <div className="bkt__whoLabel">who's on it</div>
-          {bucket.positions.map((p) => (
-            <PositionLine key={p.key} pos={p} />
-          ))}
-        </div>
-      )}
-
-      {bucket.items.length > 1 && (
-        <button type="button" className="bkt__more" onClick={onToggleExpand}
-                aria-expanded={expanded}>
-          {expanded
-            ? "Show less"
-            : `Show all ${bucket.items.length}`}
-        </button>
+      {actions > 1 && (
+        <>
+          <button type="button" className="fdc__more" onClick={onToggleExpand}
+                  aria-expanded={expanded}>
+            {expanded ? "Hide history" : `${actions} actions`}
+            <span aria-hidden style={{ marginLeft: 5, opacity: 0.7 }}>
+              {expanded ? "▴" : "▾"}
+            </span>
+          </button>
+          {expanded && (
+            <ol className="fdc__hist">
+              {bucket.items.map((it) => {
+                const kk = kindOf(it);
+                return (
+                  <li key={`${it.kind}:${it.id}`}>
+                    <span className="fdc__histDot" style={{ background: kk.tone }} aria-hidden />
+                    <span className="fdc__histWhen">{ago(it.at)}</span>
+                    <span>{sentenceOf(it, byOrderId)}</span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </>
       )}
     </section>
   );
 }
 
+/* ----------------------------- a friend bucket ---------------------------- */
+
 /**
- * ONE LINE PER (POSTER, POSITION) — the answer to "who is on this game".
- *
- * The price is the UNITS-WEIGHTED AVERAGE across every fill of that position,
- * and it says "avg" whenever there is more than one, because an average price
- * and a price paid are different claims and the reader must not have to guess
- * which one is on screen.
+ * ONE FRIEND ON ONE GAME. The handle and flares head the block; the right edge
+ * of that header is the block's summary — the net units once anything has
+ * settled, else how many bets are in it. Underneath, one line per position.
  */
-function PositionLine({ pos }: { pos: FeedPosition }) {
-  const u = unitsShort(pos.units);
-  const settled = pos.net != null;
+function FriendBucket({ block, byOrderId, pop, onPop }: {
+  block: FriendBlock;
+  byOrderId: Map<string, FeedItem>;
+  pop: string | null;
+  onPop: (key: string) => void;
+}) {
+  const n = block.positions.length;
+  const settledAll = block.positions.every((p) => p.net != null);
+  // ONE BET NEEDS NO SUMMARY: the row underneath already carries its number,
+  // and printing it twice was the first cut's mistake.
+  const summary = n === 1 ? null : block.net != null
+    ? (
+      <span className="fdf__net" style={{ color: toneOf(block.net) }}
+            title={settledAll
+              ? "Net units across this friend's settled bets on this game"
+              : "Net units so far — some of their bets are still open"}>
+        {sign(block.net)}{Math.abs(block.net).toFixed(2)}u{settledAll ? "" : " so far"}
+      </span>
+    )
+    : <span className="fdf__count">{n} bet{n === 1 ? "" : "s"}</span>;
+
   return (
-    <div className="bkt__pos">
-      <span className="bkt__posWho" title={pos.display_name || pos.handle}>
-        {pos.handle}
-        <Flares flares={pos.flares} raised />
-      </span>
-      <span className="bkt__posBet">{pos.label}</span>
-      {pos.avgPrice != null && (
-        <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}
-              title={pos.fills > 1
-                ? `${pos.fills} fills, averaged by units`
-                : "the price paid"}>
-          {Math.round(pos.avgPrice * 100)}¢{pos.fills > 1 ? " avg" : ""}
+    <div className="fdf">
+      <div className="fdf__head">
+        <span className="fdf__handle" title={block.display_name || block.handle}>
+          {block.handle}
         </span>
-      )}
-      {u && <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{u}</span>}
-      {pos.tails > 0 && (
-        <span style={{ whiteSpace: "nowrap" }}>
-          <Arrow glyph="↳" tone="var(--accent)"
-                 label={`Tailed by ${pos.tails} of the people you can see`} />
-          <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent)" }}>
-            {pos.tails}
-          </span>
-        </span>
-      )}
-      <span style={{ fontSize: 9.5, color: "var(--muted)", whiteSpace: "nowrap" }}
-            title="last update on this position">
-        {ago(pos.lastMs)}
-      </span>
-      {/* THE ANSWER, once there is one. Same rule as a settled row: when a bet
-          is done, the units are the loudest thing on its line. */}
-      {settled && (
-        <span style={{
-          fontWeight: 900, fontSize: 13, whiteSpace: "nowrap",
-          color: pos.net! > 0 ? "var(--pos)" : pos.net! < 0 ? "var(--neg)" : "var(--muted)",
-        }} title={pos.settledFills < pos.fills
-          ? `${pos.settledFills} of ${pos.fills} fills settled so far`
-          : "settled, net of fees, in their own units"}>
-          {pos.net! > 0 ? "+" : pos.net! < 0 ? "−" : "±"}{Math.abs(pos.net!).toFixed(2)}u
-        </span>
-      )}
-      <span className="bkt__posAct">
-        <TailButton
-          compact
-          target={{
-            ticker: pos.ticker, side: pos.side, orderId: pos.orderId,
-            userId: pos.user_id, units: pos.units,
-            title: pos.title, home_team: pos.home_team,
-            away_team: pos.away_team, sport: pos.sport,
-          }}
-        />
-      </span>
+        {/* Flares at rest here, not raised: a bucket header has the room, and
+            three superscript logos jammed against the handle read as noise. */}
+        <Flares flares={block.flares} size={14} />
+        {summary}
+      </div>
+      {block.positions.map((p) => (
+        <PositionRow key={p.key} pos={p} byOrderId={byOrderId}
+                     open={pop === p.key} onToggle={() => onPop(p.key)} />
+      ))}
     </div>
   );
 }
 
-/* --------------------------------- a row ---------------------------------- */
+/* ------------------------------- a position ------------------------------- */
 
 /**
- * ONE ROW: rail, overhang, content block, kind tag + clock at the right edge —
- * and, underneath when tapped, the sentence it used to be.
- *
- * There is deliberately no dollar figure anywhere: the view does not carry
- * one, for anyone's rows, including the viewer's own. `units_net` is the same
- * kind of number as `units` — a count of the poster's own unit — and the unit
- * itself is a private column no client role may select, so "+0.64u" is not a
- * dollar amount in disguise.
+ * ONE BET. The label on the first line with its tail words; the size at the
+ * average price, the fill count and the sim's EV on the second; and at the
+ * right edge the one thing to do or know: Tail while open, net units once
+ * settled. The whole left side is a button — the sentence is on tap.
  */
-function FeedRow({ item, rowKey, tailOf, tailedBy, threaded, open, onToggle }: {
-  item: FeedItem;
-  rowKey: string;
-  /** The bet this one copied, when it is among the loaded rows. */
-  tailOf?: FeedItem;
-  /** How many loaded rows copied THIS bet. */
-  tailedBy: number;
-  /** Previous row in this bucket is the same poster — blank the overhang. */
-  threaded: boolean;
+function PositionRow({ pos, byOrderId, open, onToggle }: {
+  pos: FeedPosition;
+  byOrderId: Map<string, FeedItem>;
   open: boolean;
   onToggle: () => void;
 }) {
-  const k = kindOf(item);
-  const lines = words(item, tailOf, tailedBy);
-  return (
-    <div className="feed__item">
-      <button type="button" className="feed__row" onClick={onToggle}
-              aria-expanded={open} aria-controls={`${rowKey}-words`}
-              // The sentence is the row's accessible name and its hover text,
-              // so the words are never further away than a pointer rest —
-              // the tap is for the phone.
-              aria-label={lines.join(" ")} title={lines.join("\n")}>
-        <span aria-hidden className="feed__rail" style={{ background: k.tone }} />
+  const settled = pos.net != null;
+  const partly = settled && pos.settledFills < pos.fills;
+  const latest = pos.items[0];
+  const tailOf = latest?.tailed_from ? byOrderId.get(latest.tailed_from) : undefined;
+  const isTail = Boolean(latest?.tailed_from);
+  const u = unitsShort(pos.units);
+  const price = pos.avgPrice != null ? `${Math.round(pos.avgPrice * 100)}¢` : null;
+  const resultWord = settled
+    ? (pos.net! > 0 ? "won" : pos.net! < 0 ? "lost" : "push") : null;
 
-        <span className="feed__hang">
-          {!threaded && (
-            <span className="feed__handle" title={item.display_name || item.handle}>
-              {item.handle}
-              <Flares flares={item.flares} raised />
+  const meta: string[] = [];
+  const avg = pos.fills > 1 ? " avg" : "";
+  if (u && price) meta.push(`${u} at ${price}${avg}`);
+  else if (u) meta.push(u);
+  else if (price) meta.push(`at ${price}${avg}`);
+  if (pos.fills > 1) meta.push(`${pos.fills} fills`);
+  if (resultWord) meta.push(partly ? `${resultWord} so far` : resultWord);
+
+  return (
+    <div className={`fdp${open ? " fdp--open" : ""}`}>
+      <button type="button" className="fdp__main" onClick={onToggle}
+              aria-expanded={open} title="Tap for the details">
+        <span className="fdp__bet">
+          <span>{pos.label}</span>
+          {isTail && (
+            <span className="fdp__chip"
+                  title={tailOf
+                    ? `A copy of ${tailOf.display_name || tailOf.handle}'s bet`
+                    : "A copy of a bet you cannot see"}>
+              tail of {tailOf ? tailOf.handle : "a friend"}
             </span>
           )}
-          {/* WHO FOLLOWED THIS ONE, counted over rows this viewer can already
-              see, so it can never announce a bet they may not. Gold, on the
-              rail side, because a tail is the gold channel. */}
-          {tailedBy > 0 && (
-            <span style={{ whiteSpace: "nowrap" }}>
-              <Arrow glyph="↳" tone="var(--accent)"
-                     label={`Tailed by ${tailedBy} of the people you can see`} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent)" }}>
-                {tailedBy}
-              </span>
+          {pos.tails > 0 && (
+            <span className="fdp__chip"
+                  title={`Tailed by ${pos.tails} of the people you can see`}>
+              {pos.tails} tail{pos.tails === 1 ? "" : "s"}
             </span>
           )}
         </span>
-
-        <span className="feed__body">
-          {item.kind === "score"
-            ? <ScoreFace item={item} />
-            : <BetFace item={item} tailOf={tailOf} tone={k.tone} />}
+        <span className="fdp__meta">
+          {meta.join(" · ")}
+          {pos.ev != null && !settled && (
+            <>
+              {meta.length > 0 && " · "}
+              <span style={{ color: toneOf(pos.ev), fontWeight: 700 }}
+                    title="The sim's edge per $1 staked, after the fee, at the price paid">
+                EV {sign(pos.ev)}{Math.abs(pos.ev).toFixed(2)}
+              </span>
+            </>
+          )}
         </span>
       </button>
 
+      <div className="fdp__edge">
+        {settled ? (
+          <span className="fdp__net" style={{ color: toneOf(pos.net!) }}
+                title={partly
+                  ? `${pos.settledFills} of ${pos.fills} fills settled so far`
+                  : "Settled, net of fees, in their own units"}>
+            {sign(pos.net!)}{Math.abs(pos.net!).toFixed(2)}u
+          </span>
+        ) : (
+          <TailButton compact quiet target={tailTarget(pos)} />
+        )}
+      </div>
+
       {open && (
-        <div id={`${rowKey}-words`} role="status" className="feed__pop">
-          {lines.map((l, i) => <div key={i}>{l}</div>)}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}>
-            {/* THE ACTION, where the words are: a reader who opened a row to
-                understand it is exactly the reader deciding whether to copy
-                it. Muted with its reason when the sim says no. */}
-            {item.kind !== "score" && (
-              <TailButton
-                target={{
-                  ticker: item.ticker, side: orderSide(item),
-                  orderId: item.order_id, userId: item.user_id,
-                  units: item.units, title: item.title,
-                  home_team: item.home_team, away_team: item.away_team,
-                  sport: item.sport,
-                }}
-              />
-            )}
+        <div className="fdp__pop" role="status">
+          {pos.items.map((it) => (
+            <div key={`${it.kind}:${it.id}`} className="fdp__fill">
+              {words(it, it.tailed_from ? byOrderId.get(it.tailed_from) : undefined)
+                .map((l, i) => <div key={i} className={i ? "fdp__popMuted" : undefined}>{l}</div>)}
+            </div>
+          ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            {!settled && <TailButton target={tailTarget(pos)} />}
             <button type="button" className="ui-btn" onClick={onToggle}
-                    style={{ padding: "2px 9px", fontSize: 10.5 }}>
+                    style={{ padding: "2px 9px", fontSize: 11 }}>
               Close
             </button>
           </div>
@@ -586,295 +507,109 @@ function FeedRow({ item, rowKey, tailOf, tailedBy, threaded, open, onToggle }: {
   );
 }
 
-/* -------------------------------- the faces -------------------------------- */
+const tailTarget = (pos: FeedPosition) => ({
+  ticker: pos.ticker, side: pos.side, orderId: pos.orderId,
+  userId: pos.user_id, units: pos.units,
+  title: pos.title, home_team: pos.home_team,
+  away_team: pos.away_team, sport: pos.sport,
+});
 
-/**
- * A PLACEMENT, A TAIL, OR A SETTLED BET — one line of glyphs and numbers.
- *
- * A settlement is not a new item, it is THIS item finished, so it is the same
- * face with the money added and made the loudest thing on it.
- */
-function BetFace({ item, tailOf, tone }: {
-  item: FeedItem; tailOf?: FeedItem; tone: string;
-}) {
-  const net = item.units_net != null && Number.isFinite(item.units_net)
-    ? item.units_net : null;
-  const u = unitsShort(item.units);
-  return (
-    <span className="feed__line" style={{ fontSize: 11.5, lineHeight: 1.4 }}>
-      <SportChip sport={item.sport} />
-      <MatchupLogos home={item.home_team} away={item.away_team}
-                    on={postedSide(item)} />
-      {/* A TAIL POINTS AT WHO IT FOLLOWED, when the parent is visible to this
-          viewer. The arrow is the whole verb, so it is drawn like one. */}
-      {item.tailed_from && (
-        <span style={{ whiteSpace: "nowrap" }}>
-          <Arrow glyph="↳" tone="var(--accent)"
-                 label={tailOf
-                   ? `A copy of ${tailOf.display_name || tailOf.handle}'s bet`
-                   : "A copy of a bet you cannot see"} />
-          <span style={{ color: "var(--muted)" }}>
-            {tailOf ? tailOf.handle : "a bet"}
-          </span>
-        </span>
-      )}
-      <span style={{ fontWeight: 700, minWidth: 0 }}>{compactBet(item)}</span>
-      {item.price != null && (
-        <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>
-          {Math.round(item.price * 100)}¢
-        </span>
-      )}
-      {u && <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>{u}</span>}
-      <EvChip ev={item.ev_fee} />
-      {/* THE ANSWER, when there is one. Bigger than everything else on the row
-          because a finished bet is about exactly one number. */}
-      {item.result && net != null && (
-        <span style={{
-          fontSize: 15, fontWeight: 900, color: tone, whiteSpace: "nowrap",
-          letterSpacing: -0.2,
-        }}>
-          {net > 0 ? "+" : net < 0 ? "−" : "±"}{Math.abs(net).toFixed(2)}u
-        </span>
-      )}
-      <RightEdge item={item} tone={tone} />
-    </span>
-  );
-}
+const sign = (v: number) => (v > 0 ? "+" : v < 0 ? "−" : "±");
+const toneOf = (v: number) =>
+  v > 0 ? "var(--pos)" : v < 0 ? "var(--neg)" : "var(--muted)";
 
-/**
- * A GAME MOVED AND IT MOVED SOMEBODY'S BET.
- *
- *   🏈 [logo][logo] SJS 10 – 14 EM · Q3 11:52 · 56% ↓32% · 0.95u    SCORE 2m
- *
- * The two probabilities are the LIVE probability of the side that was taken,
- * before and after the play, and the arrow between them is coloured by which
- * way it went FOR THE POSTER. They are rates about a public game, never a
- * quantity of anyone's money, which is the same test `sim_p` passes.
- *
- * The teams are their logos plus a derived three-letter abbreviation; the full
- * names sit in the logo tooltips and are spelled out in the popover. On a row
- * whose subject IS the scoreboard, the score has to be the legible thing.
- */
-function ScoreFace({ item }: { item: FeedItem }) {
+/* ------------------------------- the score -------------------------------- */
+
+/** The game's state, in the header: "SJS 24 – 21 EM · Q4 11:19", then which
+ *  way the poster's bet moved, as a number in the colour of the move. */
+function ScoreLine({ item }: { item: FeedItem }) {
   const p: FeedScorePayload = item.payload ?? {};
   const s = p.score ?? {};
-  const home = s.home_team ?? item.home_team;
-  const away = s.away_team ?? item.away_team;
+  const when = [p.period ? `Q${p.period}` : null, p.clock || null]
+    .filter(Boolean).join(" ");
   const before = typeof p.prob_before === "number" ? p.prob_before : null;
   const after = typeof p.prob_after === "number" ? p.prob_after : null;
-  const when = [p.period ? `Q${p.period}` : null, p.clock || null]
-    .filter(Boolean).join(" ");
-  const u = unitsShort(typeof p.units === "number" ? p.units : null);
-
   return (
-    <span className="feed__line" style={{ fontSize: 11.5, lineHeight: 1.4 }}>
-      <SportChip sport={item.sport} />
-      <MatchupLogos home={home} away={away} on={null} />
-      <span style={{ fontWeight: 800, whiteSpace: "nowrap" }}>
-        <span style={{ color: "var(--muted)" }} title={away ?? undefined}>
-          {shortTeam(away)}
-        </span>{" "}
-        {s.away ?? "–"} – {s.home ?? "–"}{" "}
-        <span style={{ color: "var(--muted)" }} title={home ?? undefined}>
-          {shortTeam(home)}
-        </span>
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+      <span style={{ fontWeight: 800, color: "var(--text)" }}>
+        {shortTeam(s.away_team ?? item.away_team)} {s.away ?? "–"} – {s.home ?? "–"} {shortTeam(s.home_team ?? item.home_team)}
       </span>
-      {when && (
-        <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{when}</span>
-      )}
-      <ProbMove before={before} after={after} side={p.side ?? null} />
-      {u && (
-        <span style={{ color: "var(--muted)", whiteSpace: "nowrap" }}>{u}</span>
-      )}
-      <RightEdge item={item} tone="var(--info)" />
+      {when && <span>{when}</span>}
+      {after !== null && <ProbMove before={before} after={after} side={p.side ?? null} />}
     </span>
   );
 }
 
-/** The bucket header's score line — the same face, without the row chrome, so
- *  a reader sees the state of the game before reading who is on it. */
-function ScoreStrip({ item }: { item: FeedItem }) {
-  const p: FeedScorePayload = item.payload ?? {};
-  const s = p.score ?? {};
-  const when = [p.period ? `Q${p.period}` : null, p.clock || null]
-    .filter(Boolean).join(" ");
-  return (
-    <div className="bkt__score">
-      <span style={{ fontWeight: 800 }}>
-        <span style={{ color: "var(--muted)" }}>{shortTeam(s.away_team ?? item.away_team)}</span>{" "}
-        {s.away ?? "–"} – {s.home ?? "–"}{" "}
-        <span style={{ color: "var(--muted)" }}>{shortTeam(s.home_team ?? item.home_team)}</span>
-      </span>
-      {when && <span style={{ color: "var(--muted)" }}>{when}</span>}
-      <ProbMove
-        before={typeof p.prob_before === "number" ? p.prob_before : null}
-        after={typeof p.prob_after === "number" ? p.prob_after : null}
-        side={p.side ?? null}
-      />
-      <span style={{ marginLeft: "auto", fontSize: 9.5, color: "var(--muted)" }}>
-        {ago(item.at)}
-      </span>
-    </div>
-  );
-}
-
-/**
- * WHICH WAY A BET JUST MOVED. The arrow is the fact — up, down, or nowhere —
- * so it is drawn at 1.35× the row and carries the whole sentence in its
- * tooltip. Colour follows the poster's interest, never the home team's.
- */
 function ProbMove({ before, after, side }: {
-  before: number | null; after: number | null; side: string | null;
+  before: number | null; after: number; side: string | null;
 }) {
-  if (after === null) return null;
   const moved = before === null ? null : after - before;
   const up = moved !== null && moved > 0.005;
   const down = moved !== null && moved < -0.005;
   const tone = up ? "var(--pos)" : down ? "var(--neg)" : "var(--muted)";
   const pct = (v: number) => `${Math.round(v * 100)}%`;
-  const what = side ? `"${side}"` : "this bet";
+  const what = side ? `"${side}"` : "the bet";
   const label = moved === null
     ? `${what} is ${pct(after)} right now`
-    : up
-      ? `${what} got better: ${pct(before!)} → ${pct(after)}`
-      : down
-        ? `${what} got worse: ${pct(before!)} → ${pct(after)}`
-        : `${what} is unchanged at ${pct(after)}`;
+    : up ? `${what} got better: ${pct(before!)} → ${pct(after)}`
+    : down ? `${what} got worse: ${pct(before!)} → ${pct(after)}`
+    : `${what} is unchanged at ${pct(after)}`;
   return (
-    <span style={{ whiteSpace: "nowrap" }} title={label}>
-      {before !== null && (
-        <span style={{ color: "var(--muted)" }}>{pct(before)} </span>
-      )}
-      <Arrow glyph={up ? "↑" : down ? "↓" : "→"} tone={tone} label={label} />
-      <span style={{ color: tone, fontWeight: 900 }}>{pct(after)}</span>
-    </span>
-  );
-}
-
-/**
- * AN ARROW THAT CAN BE READ ACROSS A BAR (owner 2026-09-09).
- *
- * 1.35× the row's 11.5px font, heavy, coloured by its meaning, and never
- * silent: the same sentence is its tooltip and its accessible label, because a
- * glyph carrying a fact has to be able to say the fact. Sized in px rather
- * than em on purpose — these sit inside spans as small as 9.5px, and the point
- * is that the arrow is bigger than its surroundings, not proportional to them.
- */
-function Arrow({ glyph, tone, label }: {
-  glyph: string; tone: string; label: string;
-}) {
-  return (
-    <span role="img" aria-label={label} title={label}
-          style={{
-            fontSize: 15.5, fontWeight: 900, color: tone, lineHeight: 1,
-            verticalAlign: "-0.09em", padding: "0 1px",
-          }}>
-      {glyph}
-    </span>
-  );
-}
-
-/** The kind, in one word, and the clock — pinned to the right edge of the
- *  CONTENT BLOCK by `marginLeft: auto`, so on a narrow screen it wraps with
- *  the block instead of escaping it. */
-function RightEdge({ item, tone }: { item: FeedItem; tone: string }) {
-  const k = kindOf(item);
-  return (
-    <span style={{
-      marginLeft: "auto", display: "inline-flex", alignItems: "baseline", gap: 5,
-      whiteSpace: "nowrap", paddingLeft: 6,
-    }}>
-      <span style={{ fontSize: 9, fontWeight: 900, letterSpacing: 0.5, color: tone }}>
-        {k.tag}
+    <span title={label} style={{ whiteSpace: "nowrap" }}>
+      {before !== null && <span>{pct(before)} → </span>}
+      <span style={{ color: tone, fontWeight: 800 }}>
+        {pct(after)}{up ? " ▲" : down ? " ▼" : ""}
       </span>
-      <span style={{ fontSize: 9.5, color: "var(--muted)" }}>{ago(item.at)}</span>
-    </span>
-  );
-}
-
-/** THE SIM'S VERDICT on the price, as a chip: green when it liked it, red when
- *  it did not. It is a rate per $1 staked after the fee — the popover says so
- *  in words, because "+0.21" on its own is not a claim anyone can check. */
-function EvChip({ ev }: { ev: number | null }) {
-  if (ev == null || !Number.isFinite(ev)) return null;
-  const tone = ev >= 0 ? "var(--pos)" : "var(--neg)";
-  return (
-    <span style={{
-      fontSize: 9.5, fontWeight: 800, whiteSpace: "nowrap", color: tone,
-      border: `1px solid ${tone}`, borderRadius: 5, padding: "0 4px",
-      lineHeight: 1.5,
-    }}>
-      EV {ev >= 0 ? "+" : "−"}{Math.abs(ev).toFixed(2)}
-    </span>
-  );
-}
-
-/** WHICH SPORT, as one glyph with the league in its tooltip. Absent on an
- *  unlabelled row rather than guessed — an old bet says nothing about its
- *  sport and this feed does not invent one for it. */
-function SportChip({ sport }: { sport: string | null }) {
-  const e = leagueEmoji(sport);
-  if (!e) return null;
-  const label = leagueLabel(sport) ?? undefined;
-  return (
-    <span role="img" aria-label={label} title={label}
-          style={{ fontSize: 12, lineHeight: 1, flex: "none" }}>
-      {e}
     </span>
   );
 }
 
 /* ------------------------------- the kinds -------------------------------- */
 
-type Kind = { tag: string; tone: string };
+type Kind = {
+  /** One word for the header's latest-action line and the history dots. */
+  word: string;
+  /** The colour that word is drawn in. */
+  tone: string;
+  /** The card's edge tint — only when the kind is news. Null = plain border. */
+  rail: string | null;
+};
 
-/**
- * WHAT KIND OF ROW THIS IS — the rail's colour and the right edge's word, from
- * ONE place so they can never disagree.
- *
- * On a settlement the colour follows the MONEY (`units_net`), not the word:
- * they agree in every ordinary case, and where they can differ — a win so thin
- * the fees ate it, which is exactly the case a bettor wants to see — the sign
- * is the truth and the word is the record. A push is neither, so it stays
- * muted.
- *
- * PLACED uses `--brand-text` rather than `--brand`: on dark the surface brand
- * is a mid blue that reads fine as a button fill and poorly as a 4px hairline.
- */
+/** On a settlement the colour follows the MONEY (`units_net`), not the word. */
 function kindOf(item: FeedItem): Kind {
-  if (item.kind === "score") return { tag: "SCORE", tone: "var(--info)" };
+  if (item.kind === "score") return { word: "score", tone: "var(--info)", rail: "var(--info)" };
   if (item.result) {
     const net = item.units_net != null && Number.isFinite(item.units_net)
       ? item.units_net : null;
     const tone = item.result === "push" || net === 0 || net == null
       ? "var(--muted)"
       : (net > 0 ? "var(--pos)" : "var(--neg)");
-    return { tag: item.result.toUpperCase(), tone };
+    return { word: item.result, tone, rail: tone };
   }
-  if (item.tailed_from) return { tag: "TAIL", tone: "var(--accent)" };
+  if (item.tailed_from) return { word: "tailed", tone: "var(--accent)", rail: "var(--accent)" };
   return {
-    tag: item.source === "posted" ? "POSTED" : "PLACED",
+    word: item.source === "posted" ? "posted" : "placed",
     tone: "var(--brand-text)",
+    rail: null,
   };
 }
 
-/** "tailed" for a copy, "placed" for an app order, "posted" for a legacy
- *  hand-typed pick. The form is gone; the rows people already wrote stay, and
- *  stay honest about which they are. */
+/* ------------------------------- the words -------------------------------- */
+
 const verb = (item: FeedItem) =>
   item.tailed_from ? "tailed" : (item.source === "posted" ? "posted" : "placed");
 
-/* ------------------------------- the words -------------------------------- */
+/** One sentence for one action — the history list and the header tooltip. */
+function sentenceOf(item: FeedItem, byOrderId: Map<string, FeedItem>): string {
+  return words(item, item.tailed_from ? byOrderId.get(item.tailed_from) : undefined)[0] ?? "";
+}
 
 /**
- * THE SENTENCE THE FACE REPLACED — one fact per line, the same register as My
- * Book's popover. Everything the face abbreviates is spelled out here, and
- * every number here is named, so the card can be all glyphs without any of
- * them being unexplained.
+ * THE SENTENCES — one fact per line, the same register as My Book's popover.
+ * Everything the line abbreviates is spelled out here.
  */
-function words(item: FeedItem, tailOf: FeedItem | undefined, tailedBy: number): string[] {
+function words(item: FeedItem, tailOf: FeedItem | undefined): string[] {
   const who = item.display_name || item.handle;
-  const league = leagueLabel(item.sport);
   const out: string[] = [];
 
   if (item.kind === "score") {
@@ -891,26 +626,19 @@ function words(item: FeedItem, tailOf: FeedItem | undefined, tailedBy: number): 
         + (typeof p.prob_before === "number"
             ? ` (was ${Math.round(p.prob_before * 100)}%).` : "."));
     }
-    const u = unitsText(typeof p.units === "number" ? p.units : null);
-    if (u) out.push(`${u} at risk, in ${who}'s own unit.`);
-    const tail = [league, ago(item.at)].filter(Boolean).join(" · ");
-    if (tail) out.push(tail);
     return out;
   }
 
   const u = unitsText(item.units);
   const at = item.price != null ? ` at ${Math.round(item.price * 100)}¢` : "";
   if (item.tailed_from) {
-    const parent = tailOf ? (tailOf.display_name || tailOf.handle) : "a bet";
+    const parent = tailOf ? (tailOf.display_name || tailOf.handle) : "a friend";
     out.push(`${who} tailed ${parent}${u ? ` for ${u}` : ""} on ${betText(item)}${at}.`);
   } else {
     out.push(`${who} ${verb(item)}${u ? ` ${u}` : ""} on ${betText(item)}${at}.`);
   }
-  if (item.home_team && item.away_team) {
-    out.push(`${item.away_team} at ${item.home_team}.`);
-  }
   if (item.ev_fee != null && Number.isFinite(item.ev_fee)) {
-    out.push(`Sim EV ${item.ev_fee >= 0 ? "+" : "−"}${Math.abs(item.ev_fee).toFixed(2)}`
+    out.push(`Sim EV ${sign(item.ev_fee)}${Math.abs(item.ev_fee).toFixed(2)}`
       + " per $1 staked, after the fee"
       + (item.sim_p != null && Number.isFinite(item.sim_p)
           ? `; the sim gives it ${Math.round(item.sim_p * 100)}%.` : "."));
@@ -923,62 +651,37 @@ function words(item: FeedItem, tailOf: FeedItem | undefined, tailedBy: number): 
     const word = item.result === "won" ? "Won"
       : item.result === "lost" ? "Lost" : "Push";
     out.push(net != null
-      ? `${word}: ${net > 0 ? "+" : net < 0 ? "−" : "±"}`
-        + `${Math.abs(net).toFixed(2)} units, net of fees.`
+      ? `${word}: ${sign(net)}${Math.abs(net).toFixed(2)} units, net of fees.`
       : `${word}.`);
   }
-  if (tailedBy > 0) out.push(`Tailed by ${tailedBy} of the people you can see.`);
   if (item.note) out.push(`“${item.note}”`);
-  const tail = [league, ago(item.at)].filter(Boolean).join(" · ");
+  const tail = [leagueLabel(item.sport), ago(item.at)].filter(Boolean).join(" · ");
   if (tail) out.push(tail);
   return out;
 }
 
-/* ------------------------------- formatting -------------------------------- */
+/* -------------------------------- the logos ------------------------------- */
 
-/** WHICH TEAM WAS BACKED, for the logo highlight — read off the bet's own
- *  words, because that is the only place the answer honestly lives (a total
- *  names neither team, and "yes"/"no" is about a contract, not a side). Null
- *  means light both equally rather than guess. */
-function postedSide(item: FeedItem): "home" | "away" | null {
-  const t = (item.title || "").toLowerCase();
-  if (!t) return null;
-  const home = (item.home_team || "").toLowerCase();
-  const away = (item.away_team || "").toLowerCase();
-  const inHome = home.length > 2 && t.includes(home);
-  const inAway = away.length > 2 && t.includes(away);
-  if (inHome === inAway) return null;
-  return inHome ? "home" : "away";
-}
-
-/** The two schools, away then home, the backed one at full strength and the
- *  other faded. A row with no matchup shows a fixed-width blank so every bet
- *  still starts on the same column. */
-function MatchupLogos({ home, away, on }: {
-  home: string | null; away: string | null; on: "home" | "away" | null;
+/** The two schools, away then home, at the head of a game card. */
+function MatchupLogos({ home, away, size = 16 }: {
+  home: string | null; away: string | null; size?: number;
 }) {
-  const size = 16;
-  const pair: { name: string; src: string | undefined; which: "home" | "away" }[] = [
-    { name: away ?? "", src: getTeamLogo(away), which: "away" },
-    { name: home ?? "", src: getTeamLogo(home), which: "home" },
-  ].filter((x) => x.src) as any;
+  const pair = [
+    { name: away ?? "", src: getTeamLogo(away), key: "away" },
+    { name: home ?? "", src: getTeamLogo(home), key: "home" },
+  ].filter((x) => x.src);
   if (!pair.length) {
-    return <span aria-hidden style={{ width: size * 2 + 2, flex: "none" }} />;
+    return <span aria-hidden style={{ width: size * 2 + 4, flex: "none" }} />;
   }
   return (
     <span style={{
-      display: "inline-flex", alignItems: "center", gap: 2, flex: "none",
-      width: size * 2 + 2, justifyContent: "flex-start",
+      display: "inline-flex", alignItems: "center", gap: 4, flex: "none",
+      width: size * 2 + 4, justifyContent: "flex-start",
     }}>
       {pair.map((p) => (
-        <img key={p.which} src={p.src} alt="" title={p.name}
+        <img key={p.key} src={p.src} alt="" title={p.name}
              width={size} height={size} loading="lazy"
-             style={{
-               objectFit: "contain",
-               // The backed side is the one the row is ABOUT; the other is
-               // context. Opacity says so without adding a word.
-               opacity: on === null || on === p.which ? 1 : 0.3,
-             }} />
+             style={{ objectFit: "contain" }} />
       ))}
     </span>
   );

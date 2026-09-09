@@ -106,7 +106,12 @@ export type TailTarget = {
  * scanning for it should find it in the same place, in the same shape.
  */
 export default function TailButton(
-  { target, compact = false }: { target: TailTarget; compact?: boolean },
+  { target, compact = false, quiet = false }: {
+    target: TailTarget; compact?: boolean;
+    /** Keep the reason in the tooltip and accessible name only — for a list
+     *  where the same sentence would otherwise print on every line. */
+    quiet?: boolean;
+  },
 ) {
   const ctx = useContext(Ctx);
   const [slip, setSlip] = useState<{ idem: string } | null>(null);
@@ -173,7 +178,7 @@ export default function TailButton(
       </button>
       {/* THE REASON IS WORDS, NOT A COLOUR. A disabled button with no sentence
           beside it is a dead end; this is the sentence. */}
-      {!ready && (
+      {!ready && !quiet && (
         <span style={{ fontSize: 9.5, color: "var(--muted)", whiteSpace: "nowrap" }}>
           {reason}
         </span>

@@ -73,6 +73,13 @@ export type FeedPosition = {
    *  none has. `settledFills` says how much of the position that covers. */
   net: number | null;
   settledFills: number;
+  /** The sim's verdict on the NEWEST fill: EV per $1 after the fee, and P(yes).
+   *  A position's opinion is its latest row's — the rows underneath are in
+   *  `items` for a reader who wants every fill. */
+  ev: number | null;
+  simP: number | null;
+  /** Every row folded into this position, newest first. */
+  items: FeedItem[];
   /** Attribution the tail's own order carries forward (same game, same words). */
   sport: string | null;
   home_team: string | null;
@@ -128,6 +135,7 @@ export function positionsOf(
         ticker: i.ticker, side: orderSide(i), orderId: i.order_id,
         avgPrice: null, units: null, fills: 0, tails: 0, lastMs: ms,
         net: null, settledFills: 0,
+        ev: null, simP: null, items: [],
         sport: i.sport, home_team: i.home_team, away_team: i.away_team,
         game_slug: i.game_slug, season: i.season, week: i.week, title: i.title,
         wSum: 0, pSum: 0,
@@ -135,6 +143,7 @@ export function positionsOf(
       by.set(key, p);
     }
     p.fills += 1;
+    p.items.push(i);
     if (units != null) p.units = (p.units ?? 0) + units;
     if (i.price != null && Number.isFinite(i.price)) {
       p.wSum += w;
@@ -148,15 +157,18 @@ export function positionsOf(
     // NEWEST WINS for everything that describes the position now: which order
     // a tail copies, the words, the attribution. The rows arrive newest first,
     // so the first row seen is the newest one.
-    if (ms > p.lastMs) {
+    if (ms > p.lastMs || p.fills === 1) {
       p.lastMs = ms;
       p.orderId = i.order_id;
       p.label = compactBet(i);
+      p.ev = i.ev_fee != null && Number.isFinite(i.ev_fee) ? i.ev_fee : null;
+      p.simP = i.sim_p != null && Number.isFinite(i.sim_p) ? i.sim_p : null;
     }
   }
   const out: FeedPosition[] = [];
   for (const p of by.values()) {
     p.avgPrice = p.wSum > 0 ? p.pSum / p.wSum : null;
+    p.items.sort((a, b) => msOf(b.at) - msOf(a.at));
     const { wSum: _w, pSum: _p, ...rest } = p;
     out.push(rest);
   }

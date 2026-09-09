@@ -141,3 +141,28 @@ rather than a phase: see below.
    redirect up. Ribbon menu: My Book · Feed · Profile · Log out. Scoreboards
    stay under `/cfb` and `/cbb`, and the scoreboard's slim book strip is
    unchanged.
+
+## Owner change 2026-09-09 (evening): the feed is game cards of friend buckets
+
+The first game-bucket cut (rail + tag header, a "latest action" row, a
+"who is on it" band) printed every bet three times and the owner called it
+cluttered, confusing and hard to follow, and asked for "buckets for each
+friend, not lines". Second cut (src/components/NetworkFeed.tsx, the `.fd*`
+block in theme.css):
+
+- ONE GAME, ONE CARD: logos, matchup, the game state (score + clock when a
+  score event exists, else the league) and ONE clock, the latest action as a
+  word ("placed / tailed / won / lost / score"). The left edge is tinted only
+  when that action is news; a plain placement keeps a plain border.
+- INSIDE, ONE BUCKET PER FRIEND: handle + flares at rest (not raised), and a
+  summary at the right only when the bucket holds more than one bet (count,
+  or net units once anything settled). Under it, one line per position: the
+  bet, then "1.22u at 53c avg - 2 fills - EV +0.35", then the one thing to do
+  or know at the right edge (Tail while open, net units once settled).
+- No emoji per row, no arrows, no 9-10px labels; the tail relation is words
+  ("tail of mvpeav", "2 tails"). The Tail reason is the button tooltip and the
+  tap-open detail, not text beside every button (`TailButton quiet`).
+- Tap a bet for its fills as sentences; "N actions" opens the card history.
+- `FeedPosition` gained `ev`, `simP` and `items` (feedBuckets.ts); the game
+  card strip (FriendsOnGame) keeps its `.bkt__*` rules untouched.
+

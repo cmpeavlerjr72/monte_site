@@ -1433,180 +1433,215 @@ input:focus, select:focus, textarea:focus {
 /* ============================================================================
    The feed (src/components/NetworkFeed.tsx)
    ----------------------------------------------------------------------------
-   A HANGING INDENT, the shape every timeline uses (owner 2026-09-09): a fixed
-   overhang column holds ONLY the handle and its flares, and everything the row
-   is actually about — logos, the bet, the score, the money — lives in one
-   content block that starts at the end of that column and stays left-aligned
-   to it on every wrapped line. Nothing ever flows back under the handle, so
-   the eye finds the bets by running down a single edge.
+   ONE GAME, ONE CARD; INSIDE IT, ONE BUCKET PER FRIEND; INSIDE THAT, ONE LINE
+   PER BET (owner 2026-09-09 pm: "buckets for each friend, not lines").
 
-   Two reasons this is CSS and not inline style, which is otherwise this app's
-   habit: the overhang narrows on a phone (a media query), and the row is a
-   button whose default chrome has to be reset in one place.
+     .fdc   the game card: header (logos, matchup, state, latest action) and
+            a left edge tinted only when the latest action is news
+     .fdf   a friend's bucket: handle + flares, summary at the right
+     .fdp   one position: label / meta on the left (a button; the sentence
+            is on tap), the Tail button or the net units at the right
 
-   The rail is the 4px first column. It is a KIND channel, always paired with
-   the one-word tag at the right edge — colour is never the only carrier.
+   Every size here is 12px or larger except the history clock. The earlier
+   cut's 9-10px labels, repeated tags and per-row logos are what the owner
+   called clutter, and they are gone rather than shrunk.
    ========================================================================= */
-.feed__item { display: block; --feed-hang: 104px; }
-
-.feed__row {
-  display: grid;
-  grid-template-columns: 4px var(--feed-hang) minmax(0, 1fr);
-  column-gap: 8px;
-  align-items: start;
-  width: 100%;
-  margin: 0;
-  padding: 7px 2px;
-  border: 0;
+.fd { display: grid; gap: 10px; width: 100%; min-width: 0; }
+.fd__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.fd__dot { opacity: 0.6; }
+.fd__older {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
   border-top: 1px solid var(--border);
-  border-radius: 0;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+/* ------------------------------- the card -------------------------------- */
+.fdc {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+.fdc__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 10px 12px;
+  background: var(--fill);
+  border-bottom: 1px solid var(--border);
+}
+.fdc__title { min-width: 0; display: grid; gap: 1px; }
+.fdc__game {
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fdc__state {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.3;
+  min-height: 1.3em;
+}
+.fdc__latest {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  align-self: start;
+}
+
+/* ---------------------------- a friend's bucket --------------------------- */
+.fdf {
+  display: grid;
+  gap: 0;
+  padding: 8px 12px 9px;
+  border-bottom: 1px solid var(--border);
+}
+.fdf:last-of-type { border-bottom: 0; }
+.fdf__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.fdf__handle {
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.3;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fdf__count { margin-left: auto; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.fdf__net { margin-left: auto; font-size: 13px; font-weight: 900; white-space: nowrap; }
+
+/* -------------------------------- a bet ---------------------------------- */
+.fdp {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  margin: 2px 0;
+}
+.fdp--open { border-left-color: var(--brand); }
+.fdp__main {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 0;
+  border: 0;
+  border-radius: 6px;
   background: none;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.feed__row:hover,
-.feed__row[aria-expanded="true"] { background: var(--fill); }
-
-/* The kind rail: full-height, its colour set inline per row. */
-.feed__rail {
-  align-self: stretch;
-  min-height: 18px;
-  border-radius: 2px;
-}
-
-/* The overhang. `min-width: 0` is what lets a long handle ellipsis instead of
-   widening the column and shoving the content block sideways. */
-.feed__hang {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-  justify-items: start;
-  padding-top: 1px;
-}
-.feed__handle {
-  /* `text-overflow` needs a BLOCK box; on the inline span it was declared on
-     it is silently inert and a long handle just clips. The grid's
-     `justify-items: start` keeps the block shrink-to-fit either way. */
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11.5px;
-  font-weight: 800;
-  line-height: 1.35;
-}
-
-/* The content block. Every line inside it wraps back to this same left edge. */
-.feed__body { min-width: 0; display: grid; gap: 2px; }
-.feed__line {
+.fdp__main:hover, .fdp__main[aria-expanded="true"] { color: var(--brand-text); }
+.fdp__bet {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
   flex-wrap: wrap;
-  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
 }
+.fdp__chip {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.fdp__meta { font-size: 11.5px; color: var(--muted); line-height: 1.3; }
+.fdp__edge { display: inline-flex; align-items: center; justify-content: flex-end; }
+.fdp__net { font-size: 14px; font-weight: 900; white-space: nowrap; letter-spacing: -0.2px; }
 
-/* The words, on tap. Same register as MyBook's popover: one fact per line,
-   a Close button, no document-level listener. */
-.feed__pop {
-  margin: 0 0 6px calc(4px + var(--feed-hang) + 16px);
+/* The sentence, on tap. Spans both columns under the bet it belongs to. */
+.fdp__pop {
+  grid-column: 1 / -1;
+  margin: 4px 0 6px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
   box-shadow: 0 6px 18px var(--shadow);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   display: grid;
-  gap: 3px;
+  gap: 6px;
   justify-items: start;
 }
+.fdp__fill { display: grid; gap: 1px; }
+.fdp__popMuted { color: var(--muted); }
+
+/* ------------------------------- history --------------------------------- */
+.fdc__more {
+  margin: 0;
+  padding: 6px 12px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+.fdc__more:hover { background: var(--fill); color: var(--text); }
+.fdc__hist {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px 8px;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.fdc__hist li { display: grid; grid-template-columns: 8px 28px minmax(0, 1fr); column-gap: 8px; align-items: baseline; }
+.fdc__histDot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; align-self: center; }
+.fdc__histWhen { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
 @media (max-width: 520px) {
-  .feed__item { --feed-hang: 84px; }
-  .feed__row { column-gap: 6px; }
-  .feed__pop { margin-left: 6px; }
+  .fdc__head { padding: 8px 10px; column-gap: 8px; }
+  .fdf { padding: 7px 10px 8px; }
+  .fdp { column-gap: 8px; padding-left: 8px; }
+  .fdc__latest { font-size: 11px; }
 }
 
 /* ============================================================================
-   The feed's GAME BUCKETS (src/components/NetworkFeed.tsx)
+   "Friends on this game" strip on a game card (src/components/FriendsOnGame.tsx)
    ----------------------------------------------------------------------------
-   One card per game, newest game first. The card has four bands and they are
-   deliberately different weights:
-
-     header   the matchup, and the KIND of the latest action (rail + tag)
-     score    the game state, when a score update has arrived
-     rows     the latest action as a full feed row (all of them when expanded)
-     who      one line per (poster, position) — the summary
-
-   The summary line is a WRAPPING FLEX ROW, not a grid: the pieces are of wildly
-   different widths (a handle, "Georgia Tech 20+", "62c avg", "1.3u", a Tail
-   button) and a grid would either clip the bet or leave a river of empty space on a
-   phone. The handle keeps a min-width so the lines still read as a column at
-   desktop widths.
+   The feed's position fold, read back on the Bets panel. A wrapping flex row,
+   not a grid: the pieces are of wildly different widths and a grid would clip
+   the bet or leave a river of empty space on a phone.
    ========================================================================= */
-.bkt {
-  display: grid;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--card);
-  overflow: hidden;
-}
-
-.bkt__head {
-  display: grid;
-  grid-template-columns: 4px minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 8px;
-  padding: 6px 8px 6px 0;
-  background: var(--fill);
-  border-bottom: 1px solid var(--border);
-}
-.bkt__rail { align-self: stretch; min-height: 20px; border-radius: 2px; }
-.bkt__title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding-left: 6px;
-}
-.bkt__words {
-  font-size: 12px;
-  font-weight: 900;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bkt__when {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-/* The game state, when there is one. Reads as a caption on the header. */
-.bkt__score {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  font-size: 11px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* The rows sit flush inside the card; their own top border is the separator
-   BETWEEN rows. The first one directly under the header would double that
-   header's bottom border, so it drops its own — but only there: after a score
-   strip the line is wanted. */
-.bkt__head + .feed__item .feed__row { border-top: 0; }
-.bkt .feed__row { padding-left: 6px; padding-right: 6px; }
-.bkt .feed__pop { margin-left: calc(10px + var(--feed-hang)); margin-right: 8px; }
-
 .bkt__who {
   display: grid;
   gap: 2px;
@@ -1639,28 +1674,12 @@ input:focus, select:focus, textarea:focus {
   font-weight: 800;
 }
 .bkt__posBet { font-weight: 700; min-width: 0; }
-/* The action floats to the end of the line, and wraps with it on a phone. */
 .bkt__posAct {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
 }
-
-.bkt__more {
-  margin: 0;
-  padding: 5px 8px;
-  border: 0;
-  border-top: 1px solid var(--border);
-  background: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 10.5px;
-  font-weight: 800;
-  text-align: left;
-  cursor: pointer;
-}
-.bkt__more:hover { background: var(--fill); color: var(--text); }
 
 @media (max-width: 520px) {
   .bkt__posWho { min-width: 0; max-width: 100%; }
