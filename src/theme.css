@@ -34,6 +34,17 @@
      the mark the owner already recognises (unchanged since 2026-08-30). */
   --target-star: #f0b429;
 
+  /* NEWS, not a verdict. A score update in the feed is a fact about a game —
+     it is neither an edge sign (--pos/--neg), nor an execution mode
+     (--mode-*), nor the brand. Its own token so the feed's four kinds stay
+     four disjoint channels: placed = --brand, tailed = --accent,
+     score = --info, settled = --pos/--neg/--muted. Every kind is ALSO
+     direct-labelled with a one-word tag, so identity is never colour-alone.
+     Deliberately brighter and cooler than --brand in BOTH themes, because in
+     dark --brand is itself a blue (#3178c6) and a rail must be told apart
+     from a rail at a glance. */
+  --info: #0284c7;
+
   /* Semantic result colours — themed so win/loss read on either background. */
   --pos: #15803d;
   --neg: #dc2626;
@@ -111,6 +122,7 @@
     --border: #2b3440;
     --pos: #3fb950;
     --neg: #f85149;
+    --info: #56c8e8;
     --mode-rest: #a78bfa;
     --mode-rest-ink: #10151b;
     --mode-take: #fbbf24;
@@ -139,6 +151,7 @@
   --border: #2b3440;
   --pos: #3fb950;
   --neg: #f85149;
+  --info: #56c8e8;
   --mode-rest: #a78bfa;
   --mode-rest-ink: #10151b;
   --mode-take: #fbbf24;
