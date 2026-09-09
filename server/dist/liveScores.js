@@ -2710,6 +2710,18 @@ function appOrdersRecord(acct, w, orderId, state, userId) {
                 .upsert(row, { onConflict: "order_id" });
             if (!error)
                 return;
+            // A TAIL'S PARENT IS A FOREIGN KEY (20260909_feed_kinds.sql:
+            // tailed_from -> app_orders.order_id). An id that is not an app_orders
+            // row rejects the WHOLE insert, which would lose the record of a
+            // placement the exchange has already accepted — attribution blocking
+            // the record, the one thing it must never do. So the retry drops it and
+            // the copy lands as an ordinary bet rather than as nothing.
+            if (row.tailed_from != null) {
+                console.warn("[accounts] app_orders write failed, retrying without"
+                    + " tailed_from:", error.message);
+                row.tailed_from = null;
+                continue;
+            }
             if (attempt === 1) {
                 console.warn("[accounts] app_orders write failed:", error.message);
             }
