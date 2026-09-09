@@ -16,6 +16,11 @@ import GameCenter from "./pages/GameCenter";
 import CLVPage from "./pages/CLV";
 import ComboTrend from "./pages/combo_trend";
 import Bracket from "./pages/CFB_Bracket"
+// Accounts (Supabase). Both pages render an "accounts are not configured"
+// line when VITE_SUPABASE_URL/ANON_KEY are absent, so the routes are safe to
+// register unconditionally.
+import Profile from "./pages/Profile";
+import Friends from "./pages/Friends";
 
 // CBB Pages
 
@@ -75,6 +80,8 @@ export default function App() {
           <Route path="/cfb/clv/*" element={<CLVPage />} />
           <Route path="/cfb/combo/*" element={<ComboTrend />} />
           <Route path="/cfb/bracket/*" element={<Bracket />} />
+          <Route path="/cfb/me" element={<Profile />} />
+          <Route path="/cfb/friends" element={<Friends />} />
 
           {/* Legacy redirects to preserve old links */}
           <Route path="/scoreboard" element={<Navigate to="/cfb/scoreboard" replace />} />
