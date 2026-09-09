@@ -29,6 +29,19 @@ full side + band×family grid at the foot of Top Edges. It labels, stars and
 filters nothing. Owner rule 2026-09-08: no hard rules on one week of a new
 engine; the regime scorecard grades it after settlement.
 
+## Partial-fill continuation depends on the ORDER READ-BACK (2026-09-08)
+
+A take is immediate-or-cancel; the slip's "Partial fill … Take N more @ next"
+block (SuggestedBets ConfirmSlip) needs `state.filled < count` from the
+server's read-back of the placed order. Live 2026-09-08 (RUTG24: 128 asked at
+59c, 10 filled, ledger says canceled/remaining 0) the block never appeared:
+the single read-back either raced the IOC cancel (transient remaining > 0) or
+failed. Now `ordersSubmitOne` polls the order up to 4× (0/250/600/1200 ms)
+until it is terminal, reports `state.read_tries`, and offers `next_ask` for
+any non-downgraded take that filled short regardless of a stale remainder;
+the client no longer gates the block on `!remaining` (the downgraded-TIF
+case keeps its own line). Server change = `server/dist` must be committed.
+
 ## Architecture
 
 React 19 + Vite + TS SPA (`src/`), Express data/live server (`server/

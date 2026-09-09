@@ -3129,11 +3129,34 @@ async function ordersSubmitOne(
     ordersSpend.push({ at: Date.now(), cost: w.cost, account: acct.id });
     // Read back: this endpoint has silently ignored a field before, so
     // what the exchange DID is reported, not what we asked for.
+    //
+    // RETRIED UNTIL TERMINAL (2026-09-08, owner: "did the app stop asking
+    // about taking the next book level?"). Live that night on RUTG24: 128
+    // asked at 59c, 10 filled, IOC remainder gone — the exchange's own
+    // ledger shows status canceled / remaining 0 — yet the slip never
+    // offered the continuation. The one read-back either raced the IOC
+    // cancel (a transient remaining > 0 hides the partial-fill block below)
+    // or failed outright (state null hides it too). So: poll the order a
+    // few times, short back-off, until its status is terminal or the
+    // remainder is zero; and say how many reads it took.
     let state: any = null;
+    let readTries = 0;
     try {
-      const back = await portalGet(acct, `/portfolio/orders/${encodeURIComponent(orderId)}`);
-      const ord = back?.order || back || {};
+      let ord: any = null;
+      for (const wait of [0, 250, 600, 1200]) {
+        if (wait) await new Promise((r) => setTimeout(r, wait));
+        readTries += 1;
+        const back = await portalGet(acct, `/portfolio/orders/${encodeURIComponent(orderId)}`);
+        ord = back?.order || back || {};
+        const st = String(ord.status || "").toLowerCase();
+        const rem = portalNum(ord.remaining_count_fp ?? ord.remaining_count);
+        const terminal = st === "executed" || st === "canceled" || st === "cancelled";
+        // A take that was NOT downgraded cannot rest, so a non-zero
+        // remainder on it is the pre-cancel snapshot — read again.
+        if (terminal || (w.mode === "take" && !tifDowngraded && rem === 0) || w.mode === "rest") break;
+      }
       state = {
+        read_tries: readTries,
         status: String(ord.status || ""),
         filled: portalNum(ord.fill_count_fp ?? ord.fill_count),
         remaining: portalNum(ord.remaining_count_fp ?? ord.remaining_count),
@@ -3154,8 +3177,12 @@ async function ordersSubmitOne(
     // takes with nothing left resting — a downgraded-TIF remainder RESTS, and
     // that story is the tif_downgraded line's, not this one's.
     let nextAsk: { next_ask: number | null; next_ask_size: number | null } | null = null;
+    // An IOC take that was not downgraded has NO resting remainder by
+    // construction; a stale remaining > 0 in the read-back is not a reason
+    // to withhold the offer (that was the 2026-09-08 miss).
+    const remainderRests = tifDowngraded && !!(state?.remaining && state.remaining > 0);
     if (w.mode === "take" && state && state.filled !== null &&
-        state.filled < w.count - 1e-9 && !(state.remaining && state.remaining > 0)) {
+        state.filled < w.count - 1e-9 && !remainderRests) {
       try {
         const bk = await ordersBook(w.ticker);
         nextAsk = w.side === "yes"

@@ -51,6 +51,9 @@ export type PlaceEcho = {
      *  ledger fields — an IOC take can fill BETTER than its limit, so
      *  price × filled would overstate the money. Absent on older servers. */
     fill_cost?: number; fill_fees?: number;
+    /** How many read-backs the server needed before the order was terminal
+     *  (2026-09-08: the IOC cancel can lag the placement response). */
+    read_tries?: number;
   } | null;
   /** PARTIAL TAKE only: the fresh ask on this order's OWN side after the IOC
    *  came back, and how many contracts sit there — what "continue at the next

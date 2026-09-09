@@ -1808,9 +1808,14 @@ function ConfirmSlip({
                         2026-08-31 (owner ask) the note carries the money that
                         actually filled, the fresh ask on this side, and a
                         one-press "keep taking" continuation — see `chase`. */}
-                    {p.mode === "take" && p.state?.filled !== null &&
+                    {/* 2026-09-08: the block used to ALSO require `!remaining`.
+                        An IOC take that was not downgraded cannot rest, so a
+                        transient remaining > 0 in the read-back only ever hid
+                        a real partial fill (RUTG24, 10 of 128 filled, no
+                        offer shown). The downgraded case has its own line. */}
+                    {p.mode === "take" && !p.tif_downgraded && p.state?.filled !== null &&
                       p.state?.filled !== undefined &&
-                      p.state.filled < p.count - 1e-9 && !p.state.remaining && (() => {
+                      p.state.filled < p.count - 1e-9 && (() => {
                       const filled = p.state!.filled!;
                       const spent = p.state!.fill_cost;
                       const spentFee = p.state!.fill_fees;
@@ -1842,6 +1847,11 @@ function ConfirmSlip({
                             rest was cancelled (immediate-or-cancel), nothing is
                             resting.
                           </div>
+                          {(p.state?.read_tries ?? 1) > 1 && (
+                            <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                              Fill read back after {p.state!.read_tries} tries.
+                            </div>
+                          )}
                           {nx !== null && remain >= 1 ? (
                             <div style={{
                               display: "flex", alignItems: "center", gap: 8,
