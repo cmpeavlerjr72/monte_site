@@ -306,6 +306,25 @@ function CredentialsForm({ prompt, compact, startMode }: {
             Forgot password?
           </button>
         )}
+        {/* GOOGLE (owner, 2026-09-08 10:05 PM): the provider is enabled in the
+            Supabase dashboard; this hands the browser to Google and comes back
+            to the same page. A Google account has a real email, so the
+            derived-address rule does not apply to it; a first-time Google
+            user lands on the handle form like everyone else (session, no
+            profile row). */}
+        <button type="button" className="ui-btn" disabled={busy}
+                style={{ ...BTN, opacity: 0.9 }}
+                onClick={async () => {
+                  if (!supabase) return;
+                  setError(null);
+                  const { error: gErr } = await supabase.auth.signInWithOAuth({
+                    provider: "google",
+                    options: { redirectTo: window.location.origin + window.location.pathname },
+                  });
+                  if (gErr) setError(gErr.message);
+                }}>
+          Continue with Google
+        </button>
       </div>
       {helpOpen && mode === "signin" && (
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
