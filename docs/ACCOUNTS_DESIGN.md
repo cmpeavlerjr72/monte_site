@@ -1,0 +1,91 @@
+# Accounts, profiles, friends — the Supabase design (2026-09-08)
+
+Owner decisions (2026-09-08 evening):
+
+1. **New Supabase project** for monte-site (not pickem's). Own identity, own data.
+2. **Phase 1 feed = app-placed orders + posted picks.** No user Kalshi keys are
+   stored. Each user sets who may see their book: nobody / friends / everyone.
+3. **Scoreboard public; features behind sign-in.** Sims, edges and props stay
+   readable by anyone; Bets, My Book, profile, friends and the feed require an
+   account. New accounts see the feed and can post picks at once; *trading* stays
+   with the owner-configured Kalshi accounts until phase 2.
+
+## Security posture
+
+- **Auth = Supabase Auth, email + password** (what pickem ships), with email
+  confirmation ON and a strong-password rule (>= 10 chars) in the sign-up form.
+  Magic-link and Google can be added in the dashboard later without code changes.
+- **The browser holds only the anon key + the user's JWT.** The service-role key
+  lives in Render env (`SUPABASE_SERVICE_ROLE_KEY`) and is used by the Express
+  server ONLY to (a) verify JWTs, (b) write `app_orders` rows after a placement,
+  (c) read allowlists. Never shipped to the client, never logged.
+- **Row-level security on every table.** Reads of another user's rows go through
+  `friendships` (accepted, either direction) AND that user's `share_book`
+  setting. There is no "public list of users": profile search is by exact handle
+  through a SECURITY DEFINER function that returns id + display name only.
+- **Trading authority is unchanged.** Orders are still placed by the server with
+  the owner's env-configured Kalshi accounts. A signed-in user may trade only if
+  their `auth.uid()` is named in `CFB_PORTAL_OWNERS` (`mp:<uuid>,roth:<uuid>`) —
+  the old password login keeps working for the owner during the cutover and is
+  removed once every trading user has an account.
+- **Server writes are attributable.** Every `app_orders` row carries `user_id`
+  and the portal account id; the JSONL audit stays as the on-box backup.
+- **Rate limits** on sign-in are Supabase's; the server keeps its own on
+  `/api/portfolio/*` (the existing 5-miss lockout applies per user id now).
+- **Deletion**: `delete_own_account()` RPC cascades profile, friendships, picks
+  and app_orders rows (Kalshi orders are the exchange's record and are untouched).
+
+## Schema (supabase/migrations/20260908_accounts.sql)
+
+| table | purpose | who can read |
+|---|---|---|
+| `profiles` | id = auth.users.id, `handle` (unique, 3–20 `[a-z0-9_]`), `display_name`, `avatar_emoji`, `share_book` enum('nobody','friends','everyone'), `is_trader` (server-set), timestamps | own row; friends (accepted); anyone by exact handle via `find_profile(handle)` |
+| `friendships` | `requester_id`, `addressee_id`, `status` enum('pending','accepted','blocked'), unique pair | either party |
+| `picks` | a posted pick: `user_id`, `game_slug`, `season`, `week`, `market` (spread/total/team_total/ml/prop), `side` text, `line` numeric, `price` numeric (cents as dollars), `note` (<=140), `source` enum('posted','app_order'), `ticker` nullable, `order_id` nullable, `created_at` | own; friends when share_book='friends'; all signed-in when 'everyone' |
+| `app_orders` | server-written mirror of every placed order: `user_id`, `account_id`, `ticker`, `side`, `mode`, `price`, `count`, `filled`, `cost`, `order_id`, `state jsonb`, `placed_at` | own; friends/everyone per share_book (via a view `feed_orders` that strips `state`) |
+
+Feed = `feed_items` view: UNION of visible `picks` and `app_orders` for the
+viewer, ordered by time, joined to `profiles` for handle/display name. One
+query, RLS-filtered.
+
+## Server (server/liveScores.ts)
+
+- `supabaseAuth` middleware: reads `Authorization: Bearer <jwt>`, verifies with
+  `@supabase/supabase-js` `auth.getUser(jwt)` (service client), sets `req.user`.
+  Cached 60 s per token hash so a busy page does not hammer Auth.
+- `/api/portfolio/cfb*` accepts EITHER the legacy `x-cfb-token` password (owner
+  cutover) OR a verified user whose uid is in `CFB_PORTAL_OWNERS` for that
+  account. Both resolve to the same `PortalAccount`.
+- After every successful placement, `ordersAudit` ALSO upserts an `app_orders`
+  row (service client). Failure to write Supabase never fails the placement —
+  logged, retried once, audit line still written.
+- New: `POST /api/me/picks` is NOT needed — picks are written by the client
+  directly to Supabase under RLS. The server only writes `app_orders`.
+
+## Client (src/)
+
+- `src/lib/supabase.ts` — anon client (env `VITE_SUPABASE_URL`,
+  `VITE_SUPABASE_ANON_KEY`), `useSession()` hook.
+- `src/components/AuthPanel.tsx` — sign in / sign up / reset; handle + display
+  name on first sign-in (profile row insert).
+- `src/pages/Profile.tsx` (`/me`) — edit profile, share_book, delete account.
+- `src/pages/Friends.tsx` (`/friends`) — search by handle, request, accept,
+  block; pending list.
+- `src/components/NetworkFeed.tsx` — "What your network is on": friends' picks
+  and app orders, grouped by game, newest first; a "Post a pick" form on every
+  game card (prefilled from the row the user is looking at).
+- Gating: Bets panel / My Book / feed render an AuthPanel prompt when signed
+  out; Scoreboard, Top Edges, props stay public.
+- The existing Friend Feed (env-paired Kalshi books) is retired once the owner's
+  accounts are linked to user ids — same UI slot, new source.
+
+## Env
+
+Render (server): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `CFB_PORTAL_OWNERS`.
+Build (client): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+
+## Phase 2 (not built now)
+
+Per-user Kalshi linking: key id + PEM encrypted with pgsodium / Vault, decrypted
+only by the server; per-user live flag and caps; the feed can then show a linked
+user's real book. Explicit opt-in, separate review.
