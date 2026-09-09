@@ -1510,13 +1510,65 @@ function ConfirmSlip({
     }
     return m;
   }, [resp]);
+
+  /**
+   * THE FEED'S ATTRIBUTION FOR ONE RUNG — from ONE place, so every route out
+   * of this slip files the same bet under the same words.
+   *
+   * A re-post (`chase`, `retake`) is the SAME BET as the press that opened
+   * this slip: same market, same side, same ladder rung. Until 2026-09-09 it
+   * went out bare — ticker, side, price, count and nothing else — so its
+   * `app_orders` row landed with a null title and the feed printed the raw
+   * exchange string ("KXNCAAFGAME-25SEP06RUTG-RUTG") where the bet should be.
+   * The rung is right here in `group.rungs`; there was never a reason for the
+   * second order to know less than the first.
+   *
+   * `ev_fee` is re-priced AT THE PRICE ACTUALLY BEING SENT, because it is
+   * defined as EV per $1 staked at that price: a chase into the next ask is a
+   * different price and therefore a different EV, and stamping the original
+   * one on it would put a number in the feed that was never true of that
+   * fill. Everything else — the words, the teams, the league, the sim's P(YES)
+   * — is a property of the market and copies across unchanged.
+   *
+   * Nothing here can refuse or resize an order: the server sanitises every one
+   * of these to null and places anyway (see WireOrder in server/liveScores.ts).
+   */
+  const attrFor = (
+    ticker: string, side: "yes" | "no", price: number, count: number, rest: boolean,
+  ): Partial<PlaceOrder> => {
+    const rung = group.rungs.find((x) => x.ticker === ticker && x.side === side)
+      ?? group.rungs.find((x) => x.ticker === ticker);
+    if (!rung) return {};
+    const fee = orderFee(price, count, rest, feeParams[rung.series]);
+    // NET edge at this price and this count — sim − price − fee/count, the
+    // same arithmetic that sized the row and that the re-offer card prints.
+    const edge = Number.isFinite(rung.simP) && count >= 1
+      ? rung.simP - price - fee / count
+      : NaN;
+    return {
+      game_slug: rung.slug,
+      title: rung.label,
+      home_team: homeTeam || undefined,
+      away_team: awayTeam || undefined,
+      sport: league,
+      sim_p: Number.isFinite(rung.simP) ? rung.simP : undefined,
+      ev_fee: price > 0 && Number.isFinite(edge)
+        ? Math.round((edge / price) * 1000) / 1000
+        : undefined,
+    };
+  };
+
   const chase = async (p: PlaceEcho, count: number, price: number) => {
     setBusy(true);
     try {
       setResp(await placeOrders(
         token,
         chaseIdems.get(p.order_id ?? "") ?? newIdempotencyKey(),
-        [{ ticker: p.ticker, side: p.side, mode: "take", price_dollars: price, count_fp: count }],
+        [{
+          ticker: p.ticker, side: p.side, mode: "take",
+          price_dollars: price, count_fp: count,
+          ...attrFor(p.ticker, p.side, price, count, false),
+        }],
       ));
     } catch {
       setResp({ status: 0, body: { error: "network", detail: "Request failed — nothing was sent." } });
@@ -1541,7 +1593,13 @@ function ConfirmSlip({
     try {
       setResp(await placeOrders(
         token, newIdempotencyKey(),
-        [{ ticker: r.ticker, side: r.side, mode: "take", price_dollars: price, count_fp: r.count }],
+        [{
+          ticker: r.ticker, side: r.side, mode: "take",
+          price_dollars: price, count_fp: r.count,
+          // Same words, same teams, same league, same sim — EV re-priced at
+          // the live ask the reader just pressed. See `attrFor`.
+          ...attrFor(r.ticker, r.side, price, r.count, false),
+        }],
       ));
     } catch {
       setResp({ status: 0, body: { error: "network", detail: "Request failed — nothing was sent." } });
@@ -1607,23 +1665,14 @@ function ConfirmSlip({
       mode: l.r.mode === "REST" ? "rest" : "take",
       price_dollars: l.r.price,
       count_fp: l.count,
-      // ACCOUNTS ATTRIBUTION ONLY — which game this bet came from, so the
-      // network feed can group it. Never sent to Kalshi, never a rail.
-      game_slug: l.r.slug,
-      // ...and WHAT the bet is, in the words this slip just showed, plus the
-      // matchup and the sim's opinion. The feed prints a sentence — "placed
-      // 1.5 units on Rutgers over 23.5 points at 59c · sim EV +0.21 per $1" —
-      // and `ticker` + `side` is not one. `ev_fee` is EV per $1 STAKED, net of
-      // the fee: the row's net edge over its price, the same arithmetic the
-      // browse rows print. Both sim numbers are rates, never money.
-      title: l.r.label,
-      home_team: homeTeam || undefined,
-      away_team: awayTeam || undefined,
-      sport: league,
-      sim_p: Number.isFinite(l.r.simP) ? l.r.simP : undefined,
-      ev_fee: l.r.price > 0 && Number.isFinite(l.r.edge)
-        ? Math.round((l.r.edge / l.r.price) * 1000) / 1000
-        : undefined,
+      // ACCOUNTS ATTRIBUTION ONLY — which game this bet came from, WHAT the
+      // bet is in the words this slip just showed, the matchup, the league and
+      // the sim's opinion. The feed prints a sentence — "placed 1.5 units on
+      // Rutgers over 23.5 points at 59c · sim EV +0.21 per $1" — and
+      // `ticker` + `side` is not one. Never sent to Kalshi, never a rail.
+      // ONE helper, shared with `chase` and `retake`, so a re-post of this
+      // rung files under exactly these words too.
+      ...attrFor(l.r.ticker, l.r.side, l.r.price, l.count, l.r.mode === "REST"),
     }));
     try {
       // The cap the slip just WARNED about is the cap it declares.

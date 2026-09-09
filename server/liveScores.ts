@@ -3127,6 +3127,46 @@ async function userUnitSize(uid: string): Promise<number | null> {
   return unit;
 }
 
+/** The columns a bare re-post may inherit from its own earlier order on the
+ *  same contract. All DISPLAY attribution: the bet in words, the matchup, the
+ *  league, which slate week it belongs to, and the sim's opinion. Nothing
+ *  here prices, sizes, routes or settles anything. */
+const ATTR_INHERIT = [
+  "title", "home_team", "away_team", "sport",
+  "season", "week", "game_slug", "sim_p", "ev_fee",
+] as const;
+
+/**
+ * Fill this row's NULL attribution columns from the most recent app_orders row
+ * with the same user, ticker and side. Mutates `row` in place; never throws.
+ * See the block comment at the call site for why this exists and why the match
+ * key is safe.
+ */
+async function backfillAttribution(row: Record<string, unknown>): Promise<void> {
+  if (!supa) return;
+  try {
+    const { data, error } = await supa
+      .from("app_orders")
+      .select(ATTR_INHERIT.join(","))
+      .eq("user_id", row.user_id as string)
+      .eq("ticker", row.ticker as string)
+      .eq("side", row.side as string)
+      .not("title", "is", null)
+      .order("placed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return;
+    for (const k of ATTR_INHERIT) {
+      if (row[k] == null && (data as any)[k] != null) row[k] = (data as any)[k];
+    }
+  } catch (err: any) {
+    // The row still goes in, bare. A blank is honest; a delayed or dropped
+    // placement record is not.
+    console.warn("[accounts] attribution backfill failed:", err?.message ?? err);
+  }
+}
+
 function appOrdersRecord(
   acct: PortalAccount, w: WireOrder, orderId: string, state: AppOrderState,
   userId: string | null,
@@ -3160,6 +3200,25 @@ function appOrdersRecord(
     state: state ?? null,
   };
   void (async () => {
+    // A BARE RE-POST INHERITS THE WORDS OF THE BET IT CONTINUES.
+    //
+    // Every route into this function is supposed to carry the confirm slip's
+    // attribution, and since 2026-09-09 the chase and the re-offer do (see
+    // `attrFor` in src/components/SuggestedBets.tsx). This is the SERVER's
+    // half of that fix and it is deliberately not a duplicate of it: any
+    // caller — a future surface, a script, an older client still deployed —
+    // that posts a bare {ticker, side, price, count} for a market this user
+    // has already bet gets the same title, teams, league, week and sim
+    // numbers as their last order on that exact contract, instead of a
+    // half-decoded row that shows the reader "KXNCAAFGAME-25SEP06RUTG-RUTG".
+    //
+    // SAME TICKER + SAME SIDE + SAME USER is the whole match: that pair IS
+    // one position ("Rutgers over 23.5 points"), so the words cannot be
+    // wrong. It never overwrites anything the caller sent — only null columns
+    // are filled — and it never blocks the write: a failed lookup logs and
+    // the row goes in exactly as it arrived, because attribution must never
+    // be why a placement that the exchange already accepted goes unrecorded.
+    if (row.title == null) await backfillAttribution(row);
     // UNITS, not dollars: what a friend is allowed to see. A unit size we
     // cannot read leaves the column NULL — a wrong "1u" would be worse than a
     // blank, and the feed renders a blank as no size at all.
