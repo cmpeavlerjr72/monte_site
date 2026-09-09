@@ -26,7 +26,7 @@ import type { TeamStats as TeamStatsDoc } from "./cfbJson";
 import type { KalshiGame } from "./kalshi";
 import type { PortalPayload } from "./kalshiPortal";
 import {
-  buildSuggestions, gameCandidates, groupLadders, heldCostByTicker,
+  buildSuggestions, gameCandidates, groupLadders, heldByTicker,
   statCandidates, pregameVerdict,
   SIZING_DEFAULT,
   type Candidate, type FeeParams, type LadderGroup, type PregameVerdict,
@@ -190,7 +190,8 @@ export function useSuggestions({
     rows, tailRows, tailMarkets, suppressed, browse, computedAt, pregameCount,
     blindCount, verdicts, candCounts, regimes,
   } = useMemo(() => {
-    const held = heldCostByTicker(portal?.positions, portal?.orders);
+    const heldBoth = heldByTicker(portal?.positions, portal?.orders);
+    const held = heldBoth.cost;
     const candidates: Candidate[] = [];
     // Games that are genuinely pregame, and games dropped for having NEITHER a
     // kickoff time nor a live state — the one refusal a reader could otherwise
@@ -280,7 +281,7 @@ export function useSuggestions({
     // ONE clock for the gate above and the timing bands inside: two Date.now()
     // reads a few ms apart can land on opposite sides of a band edge.
     const built = buildSuggestions(
-      candidates, feeParams, held, unit, nowMs, sizing);
+      candidates, feeParams, held, unit, nowMs, sizing, heldBoth.win);
     return {
       ...built, computedAt: new Date(),
       pregameCount: nPregame, blindCount: nBlind, verdicts: verdictBySlug,

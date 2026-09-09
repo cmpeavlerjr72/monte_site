@@ -696,9 +696,14 @@ export type Candidate = {
  */
 type Priced = Candidate & {
   mode: "REST" | "TAKE"; price: number; edgePer: number; timing: Timing;
-  /** Dollar budget REMAINING for this market when the account already holds
-   *  part of the unit there (unit − held cost). Absent = the full share. */
+  /** Budget REMAINING for this market when the account already holds part
+   *  of the unit there, ON THE AXIS THE ROW IS SIZED ON (2026-09-08):
+   *  risk mode: unit − held cost; to-win / book-above-50c: unit − the profit
+   *  the held position already stands to make. Absent = the full share. */
   budget?: number;
+  /** The stretch modes' OUTLAY ceiling remaining: unit × maxRiskMultiple −
+   *  held cost. Absent = the full share × multiple. */
+  ceilingBudget?: number;
 };
 
 /** What one compute produces. `rows` is the list; `tailRows` is the opt-in
@@ -767,9 +772,10 @@ function selectLadders(
       // that same number rather than multiplying it (owner rule 2026-08-30 —
       // exposure retires a market once it has consumed the unit).
       const headroom = p.budget ?? Infinity;
+      const ceilRoom = p.ceilingBudget ?? headroom;
       rows.push(sizeSuggestion(p, feeParams,
         Math.min(share, headroom), tail, sizing,
-        Math.min(share * sizing.maxRiskMultiple, headroom)));
+        Math.min(share * sizing.maxRiskMultiple, ceilRoom)));
     }
   }
   rows.sort((a, b) => b.edge - a.edge);
@@ -841,37 +847,54 @@ export function buildSuggestions(
    *  Defaults to `risk`, which is the arithmetic that shipped before
    *  2026-09-08. See THE UNIT SIZING MODE above. */
   sizing: Sizing = SIZING_DEFAULT,
+  /** Profit the account ALREADY stands to make per ticker (held contracts ×
+   *  (1 − cost basis) + resting), from `heldByTicker`. Only read by the
+   *  stretch modes; risk mode keeps the cost-axis headroom byte-for-byte. */
+  heldWin: Map<string, number> = new Map(),
 ): BuildResult {
   const suppressed: Suppressed[] = [];
   const priced: Priced[] = [];
 
   for (const c of candidates) {
-    // Exposure only retires a market once it has consumed the UNIT (owner
-    // rule 2026-08-30). Below that, the rung stays and its sizing budget is
-    // the headroom; at or past it, the old suppression, with the dollars in
-    // the reason so the reader sees the budget at work.
     const h = c.ticker ? (heldCost.get(c.ticker) ?? 0) : 0;
-    const headroom = unit - h;
-    // "Full" = cannot afford one more contract at the quoted ask (or the
-    // cost basis is unknowable — Infinity from the ledger).
-    if (h > 0 && headroom < Math.max(0.05, c.ask ?? 0.05)) {
+    const timing = timingFor(c.kickoffMs, now);
+    const r = priceOne(c.simP, c.bid, c.ask, feeParams[c.series], timing);
+    // HEADROOM ON THE ROW'S OWN AXIS (owner, 2026-09-08: "book" mode, $48
+    // already risked on RUTG24 at 61c, unit to win $50, and the app would only
+    // let another $1.50 through). The old rule measured the remainder in
+    // RISK dollars (unit − held cost) in every mode, so a to-win row could
+    // never be sized past one unit of risk in a market it already held. The
+    // remainder is now measured the way the row is sized: to-win rows get
+    // (unit − profit already held) to spend, under the outlay ceiling
+    // (unit × multiple − held cost). Risk mode is unchanged.
+    const applied = appliedMode(sizing.mode, "reason" in r ? (c.ask ?? 0) : r.price);
+    const hw = c.ticker ? (heldWin.get(c.ticker) ?? (h > 0 ? h : 0)) : 0;
+    const winRoom = unit - hw;
+    const riskRoom = unit * sizing.maxRiskMultiple - h;
+    const headroom = applied === "risk" ? unit - h : winRoom;
+    const minAsk = Math.max(0.05, c.ask ?? 0.05);
+    const blocked = h > 0 && (applied === "risk"
+      ? headroom < minAsk
+      : (winRoom < Math.max(0.05, 1 - minAsk) || riskRoom < minAsk));
+    if (blocked) {
       suppressed.push({
         label: c.label,
-        reason: Number.isFinite(h)
-          ? `already committed $${h.toFixed(2)} of the $${unit} unit`
-          : "already held or resting",
+        reason: !Number.isFinite(h)
+          ? "already held or resting"
+          : applied === "risk"
+            ? `already committed $${h.toFixed(2)} of the $${unit} unit`
+            : `already stands to win $${hw.toFixed(2)} of the $${unit} unit (risk $${h.toFixed(2)})`,
         ticker: c.ticker,
       });
       continue;
     }
-    const timing = timingFor(c.kickoffMs, now);
-    const r = priceOne(c.simP, c.bid, c.ask, feeParams[c.series], timing);
     if ("reason" in r) {
       suppressed.push({ label: c.label, reason: r.reason, ticker: c.ticker });
       continue;
     }
     priced.push({ ...c, ...r, timing,
-                  budget: h > 0 ? headroom : undefined });
+                  budget: h > 0 ? headroom : undefined,
+                  ceilingBudget: h > 0 && applied !== "risk" ? riskRoom : undefined });
   }
 
   // ONE CONTRACT PER MARKET — the pipeline's shape, and a correctness rule.
@@ -986,23 +1009,50 @@ export function heldCostByTicker(
     no_price?: number | null; remaining?: number | null;
   }[] | undefined,
 ): Map<string, number> {
-  const m = new Map<string, number>();
-  const add = (t: string, v: number) => m.set(t, (m.get(t) ?? 0) + v);
+  return heldByTicker(positions, orders).cost;
+}
+
+/**
+ * What the account already has in each market, on BOTH axes: `cost` (dollars
+ * risked: held contracts × cost basis + resting orders × their price) and
+ * `win` (the profit those contracts stand to make: held × (1 − cost basis) +
+ * resting × (1 − price), gross of fees). The stretch sizing modes measure
+ * headroom in `win`; risk mode in `cost`. Unknown prices poison the market
+ * (Infinity) exactly as before.
+ */
+export function heldByTicker(
+  positions: {
+    ticker: string; count: number; avg_price?: number | null;
+  }[] | undefined,
+  orders: {
+    ticker: string; side?: string; yes_price?: number | null;
+    no_price?: number | null; remaining?: number | null;
+  }[] | undefined,
+): { cost: Map<string, number>; win: Map<string, number> } {
+  const cost = new Map<string, number>();
+  const win = new Map<string, number>();
+  const add = (m: Map<string, number>, t: string, v: number) => m.set(t, (m.get(t) ?? 0) + v);
   for (const p of positions ?? []) {
     if (!p.count) continue;
-    add(p.ticker,
-      p.avg_price !== null && p.avg_price !== undefined
-        ? Math.abs(p.count) * p.avg_price
-        : Infinity);
+    const n = Math.abs(p.count);
+    if (p.avg_price !== null && p.avg_price !== undefined) {
+      add(cost, p.ticker, n * p.avg_price);
+      add(win, p.ticker, n * Math.max(0, 1 - p.avg_price));
+    } else {
+      add(cost, p.ticker, Infinity);
+      add(win, p.ticker, Infinity);
+    }
   }
   for (const o of orders ?? []) {
     const n = o.remaining;
-    if (n === null || n === undefined) { add(o.ticker, Infinity); continue; }
+    if (n === null || n === undefined) { add(cost, o.ticker, Infinity); add(win, o.ticker, Infinity); continue; }
     if (!n) continue;
     const px = o.side === "no" ? o.no_price : o.yes_price;
-    add(o.ticker, px === null || px === undefined ? Infinity : n * px);
+    if (px === null || px === undefined) { add(cost, o.ticker, Infinity); add(win, o.ticker, Infinity); continue; }
+    add(cost, o.ticker, n * px);
+    add(win, o.ticker, n * Math.max(0, 1 - px));
   }
-  return m;
+  return { cost, win };
 }
 
 /** Stat-quote candidates for one game, using the panel's own published rungs. */
