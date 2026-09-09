@@ -298,6 +298,39 @@ Five contracts, each of which is a way to get the record WRONG:
    as the fallback. Getting it wrong mirrors the calibration chart about 50% —
    the one defect here a reader could not see.
 
+**THE RUNNING-UNITS LINE (2026-09-09).** The two-point "units by week" line is
+gone; `RunningUnits` draws EVERY settled bet in the current selection on a real
+ET time axis (`betLine` in `recordData.ts`), `stepAfter`, week boundaries as
+hairlines and the day ticks as weekday-over-date. Four rules:
+
+- **It ends where the hero ends.** `betLine` walks exactly the rows
+  `summarize` counts into `units`, in the same sizing mode, and the component
+  `console.warn`s if the last point and `summarize(rows, mode).units` ever
+  part. The endpoint is direct-labelled with that figure so a reader can check
+  it by eye. (Proved by sabotage: +0.5 on the hero fires the warning.)
+- **Every settled row gets a time.** `settled_utc`, else kickoff + 4h (week 0's
+  file predates the field), else the last known time in its week —
+  `approxTime` says so in the tooltip. Dropping a timeless row would break the
+  rule above.
+- **`grid-template-columns: minmax(0, 1fr)` on `.rec__units` is load-bearing.**
+  A recharts `ResponsiveContainer` stamps a pixel width on its own `<svg>`,
+  an auto-sized grid column then grows to it, and the container re-measures
+  wider: measured 332px card holding a 1001px chart on a phone, clipped by an
+  ancestor. Same trap for any future chart in a grid.
+- **A custom `tick` still needs a `tickFormatter`** — recharts measures the
+  FORMATTED value to decide which ticks fit, so without one it sized a 13-digit
+  epoch and dropped every day but the first and last.
+
+**STAKE: RISK / TO WIN / BOOK (2026-09-09).** A selector, not a filter — it
+hides no row, it re-sizes every number (hero, ROI, tiles, the line, each row's
+units). The MODE is `suggestedBets.ts`'s (`UnitMode` + `appliedMode`, imported,
+never re-declared, so "book" cannot mean two things); the arithmetic here is a
+STAKE MULTIPLE on `pnl_per_dollar` (1, or p/(1−p) to win a unit), because the
+record has fee-inclusive P&L per dollar rather than contract counts. ROI is
+units ÷ units STAKED in all three (identical to the old number in risk mode).
+Deliberately uncapped, unlike the console's `maxRiskMultiple`: this page reports
+what the sizing would have done, and the default 10–90¢ band bounds it at 9u.
+
 Both charts are SINGLE-series and wear `--rec-mark` (its own token; light and
 dark values chosen by running the dataviz palette validator against each
 theme's card surface). Thin calibration buckets (< 20 settled rows) are hollow

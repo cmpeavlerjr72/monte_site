@@ -39,6 +39,8 @@
 // uses (our /api/data proxy first, direct Hub as fallback).
 
 import { dataUrl, type Season } from "./cfbData";
+// The sizing MODE is the order console's, not a second definition of it.
+import { appliedMode, type UnitMode } from "./suggestedBets";
 
 /* ------------------------------------------------------------------ types */
 
@@ -571,6 +573,51 @@ export const signed = (n: number, digits = 2): string =>
 export type RungMode = "main" | "best" | "all";
 export type EvMode = "all" | "pos" | "star";
 
+/* --------------------------------------------------------- how a unit is spent */
+/*
+ * The owner's three sizing habits (2026-09-09), and they are the SAME three
+ * the order console already offers — `UnitMode` and `appliedMode` are imported
+ * from `suggestedBets.ts` rather than re-declared, so "book" can never mean one
+ * thing on the slip and another on the record. What differs is the arithmetic
+ * underneath: the console solves a CONTRACT COUNT against real rounded fees,
+ * while the record only has `pnl_per_dollar` — P&L per dollar staked, fee
+ * already inside it — so here a mode is a STAKE MULTIPLE and the row's own
+ * fee-inclusive return scales with it.
+ *
+ * Note what that means for "to win": the stake p/(1−p) wins exactly one unit
+ * BEFORE fees, so a fee-inclusive winner lands a hair under 1u — the same fee
+ * the risk-mode number already carries, not a second one. And it is uncapped
+ * on purpose: the console's `maxRiskMultiple` guard is about what may be sent
+ * to an exchange, while this page reports what the sizing WOULD have done, and
+ * a silently capped 88¢ favourite would misreport it. The page's default price
+ * band (10–90¢, no tails) is what keeps that honest — a 90¢ row stakes 9u.
+ */
+export type { UnitMode } from "./suggestedBets";
+
+/** The stake this row carries, in units of "one unit risked". */
+export function stakeOf(row: RecordRow, mode: UnitMode): number {
+  if (appliedMode(mode, row.price_publish) === "risk") return 1;
+  const p = Math.min(Math.max(row.price_publish, 1e-6), 1 - 1e-6);
+  return p / (1 - p);
+}
+
+/** This row's units under a sizing mode — its fee-inclusive return, staked. */
+export function unitsOf(row: RecordRow, mode: UnitMode): number | null {
+  return row.pnl_per_dollar == null ? null : row.pnl_per_dollar * stakeOf(row, mode);
+}
+
+/** What the mode does, in the words every sentence on the page uses. */
+export const stakeWords = (mode: UnitMode): string =>
+  mode === "to-win" ? "sized to win 1 unit a bet"
+    : mode === "book" ? "book sizing: favourites to win 1u, dogs risking 1u"
+      : "1 unit risked a bet";
+
+export const STAKE_MODES: { key: UnitMode; label: string }[] = [
+  { key: "risk", label: "Risk" },
+  { key: "to-win", label: "To win" },
+  { key: "book", label: "Book" },
+];
+
 export type RecordSummary = {
   /** Rows in the current selection, settled and not. */
   n: number;
@@ -582,9 +629,11 @@ export type RecordSummary = {
   unscored: number;
   /** Rows that produced a unit number. */
   scored: number;
-  /** Net units at 1u per bet, fee-inclusive, struck at the publish price. */
+  /** Net units, fee-inclusive, struck at the publish price and sized by mode. */
   units: number;
-  /** units / scored — the fee-inclusive ROI at the publish price. */
+  /** Units STAKED across those rows — `scored` exactly, in risk mode. */
+  staked: number;
+  /** units / staked — the fee-inclusive ROI at the publish price. */
   roi: number | null;
   /** How many distinct ladders the selection touches. */
   ladders: number;
@@ -600,8 +649,9 @@ export type RecordSummary = {
  */
 export const ladderKey = (r: RecordRow): string => `${r.week}:${r.ladder_id}`;
 
-export function summarize(rows: RecordRow[]): RecordSummary {
-  let wins = 0, losses = 0, pushes = 0, pending = 0, unscored = 0, scored = 0, units = 0;
+export function summarize(rows: RecordRow[], mode: UnitMode = "risk"): RecordSummary {
+  let wins = 0, losses = 0, pushes = 0, pending = 0, unscored = 0, scored = 0;
+  let units = 0, staked = 0;
   const ladders = new Set<string>();
   for (const r of rows) {
     ladders.add(ladderKey(r));
@@ -611,13 +661,17 @@ export function summarize(rows: RecordRow[]): RecordSummary {
     else pushes++;
     if (r.pnl_per_dollar == null) { unscored++; continue; }
     scored++;
-    units += r.pnl_per_dollar;
+    const stake = stakeOf(r, mode);
+    staked += stake;
+    units += r.pnl_per_dollar * stake;
   }
   return {
     n: rows.length,
     wins, losses, pushes, pending, unscored, scored,
-    units,
-    roi: scored > 0 ? units / scored : null,
+    units, staked,
+    // Return on every unit STAKED. In risk mode staked === scored, so this is
+    // the same number the page has always shown.
+    roi: staked > 0 ? units / staked : null,
     ladders: ladders.size,
   };
 }
@@ -785,15 +839,19 @@ export function ladderOf(rows: RecordRow[], ladderId: string, week?: number): Re
     .sort((a, b) => (b.price_publish - a.price_publish) || a.rung_label.localeCompare(b.rung_label));
 }
 
-/** Per-week units + the running total, for the line across weeks. */
+/** Per-week units + the running total. Feeds the "week N" tile and the
+ *  per-week sentence under the running-units chart. */
 export type WeekPoint = { week: number; units: number; cum: number; scored: number; pending: number };
 
-export function weekLine(rows: RecordRow[]): WeekPoint[] {
+export function weekLine(rows: RecordRow[], mode: UnitMode = "risk"): WeekPoint[] {
   const by = new Map<number, { units: number; scored: number; pending: number }>();
   for (const r of rows) {
     const cell = by.get(r.week) ?? { units: 0, scored: 0, pending: 0 };
     if (r.result == null) cell.pending++;
-    else if (r.pnl_per_dollar != null) { cell.units += r.pnl_per_dollar; cell.scored++; }
+    else if (r.pnl_per_dollar != null) {
+      cell.units += r.pnl_per_dollar * stakeOf(r, mode);
+      cell.scored++;
+    }
     by.set(r.week, cell);
   }
   let cum = 0;
@@ -803,4 +861,156 @@ export function weekLine(rows: RecordRow[]): WeekPoint[] {
       cum += c.units;
       return { week, units: c.units, cum, scored: c.scored, pending: c.pending };
     });
+}
+
+/* ------------------------------------------- the line through the season */
+/*
+ * The owner's ask (2026-09-09) was "units accumulated over time as the games
+ * progressed, for all the bets in that filter" — so the x axis is REAL TIME,
+ * not a week index. The old two-point week line is the same thing sampled once
+ * a week; this is every bet, in the order the games actually settled them.
+ *
+ * Two rules the shapes below exist to keep:
+ *
+ *   • THE LINE ENDS WHERE THE HERO ENDS. Exactly the rows `summarize` counts
+ *     into `units` (settled AND carrying a fee-inclusive P&L) become points,
+ *     in a running sum over the same numbers AND the same sizing mode, so the
+ *     final `cum` is the hero's units figure by construction — in every mode.
+ *     `Record.tsx` asserts it at runtime.
+ *   • EVERY ONE OF THOSE ROWS GETS A TIME. `settled_utc` when the exporter
+ *     published one; kickoff + 4h otherwise (week 0's file predates the field,
+ *     and a college game runs about 3h20m); and if a row somehow carries
+ *     neither, the last known time in ITS week, flagged `approxTime` so the
+ *     tooltip says so. Dropping a timeless row would silently break the rule
+ *     above, which is the one thing this chart may not do.
+ */
+
+/** A game runs about 3h20m; settlement follows it. Fallback only. */
+const KICK_TO_SETTLE_MS = 4 * 60 * 60 * 1000;
+
+/** When this bet resolved, in epoch ms — or null if the row says nothing. */
+export function resolvedAt(row: RecordRow): number | null {
+  if (row.settled_utc) {
+    const t = Date.parse(row.settled_utc);
+    if (Number.isFinite(t)) return t;
+  }
+  if (row.kickoff_utc) {
+    const t = Date.parse(row.kickoff_utc);
+    if (Number.isFinite(t)) return t + KICK_TO_SETTLE_MS;
+  }
+  return null;
+}
+
+export type BetPoint = {
+  /** When the bet resolved, epoch ms. */
+  t: number;
+  /** Running units after this bet, under the selected sizing mode. */
+  cum: number;
+  /** This bet's units: its fee-inclusive return on the stake below. */
+  units: number;
+  /** Units staked on it — 1 in risk mode, p/(1−p) on a to-win row. */
+  stake: number;
+  week: number;
+  row: RecordRow;
+  /** True when `t` was INFERRED (kickoff + 4h, or the week's last known time)
+   *  rather than read off a published `settled_utc`. The tooltip says so. */
+  approxTime: boolean;
+};
+
+/**
+ * One point per settled, scored bet, in the order they resolved.
+ *
+ * `rows` is the CURRENT selection — the same array the hero summarizes and the
+ * calibration chart buckets — so the caller never re-filters.
+ */
+export function betLine(rows: RecordRow[], mode: UnitMode = "risk"): BetPoint[] {
+  const scored = rows.filter((r) => r.result != null && r.pnl_per_dollar != null);
+  if (scored.length === 0) return [];
+
+  // A row with no time of its own lands at the last known time in its week
+  // (and failing that, the last known time at all) rather than vanishing.
+  const known = new Map<number, number>();
+  let latest = 0;
+  for (const r of scored) {
+    const t = resolvedAt(r);
+    if (t == null) continue;
+    known.set(r.week, Math.max(known.get(r.week) ?? -Infinity, t));
+    latest = Math.max(latest, t);
+  }
+
+  const points = scored.map((row) => {
+    const own = resolvedAt(row);
+    const stake = stakeOf(row, mode);
+    return {
+      row,
+      week: row.week,
+      stake,
+      units: (row.pnl_per_dollar as number) * stake,
+      t: own ?? known.get(row.week) ?? latest,
+      approxTime: !row.settled_utc,
+    };
+  });
+
+  points.sort((a, b) =>
+    (a.t - b.t) || (a.week - b.week) || a.row.id.localeCompare(b.row.id));
+
+  let cum = 0;
+  return points.map((p) => {
+    cum += p.units;
+    return { ...p, cum };
+  });
+}
+
+/* ---- Eastern-time day boundaries (the axis reads as a football calendar) */
+
+const ET_ZONE = "America/New_York";
+const etParts = new Intl.DateTimeFormat("en-US", {
+  timeZone: ET_ZONE, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+});
+
+/**
+ * Midnight ET of the day an instant falls in, as epoch ms.
+ *
+ * The offset is MEASURED (the ET wall clock read back as if it were UTC, minus
+ * the instant) rather than assumed, because the season crosses the end of
+ * daylight time in early November — hardcoding −4 would slide every tick an
+ * hour for the last third of the schedule.
+ */
+export function etDayStart(ms: number): number {
+  const f = etParts.formatToParts(new Date(ms));
+  const g = (type: string) => Number(f.find((p) => p.type === type)?.value ?? "0");
+  const y = g("year"), mo = g("month"), d = g("day");
+  const asUtc = Date.UTC(y, mo - 1, d, g("hour"), g("minute"), g("second"));
+  const offset = asUtc - Math.floor(ms / 1000) * 1000;
+  return Date.UTC(y, mo - 1, d) - offset;
+}
+
+/** Every ET midnight in [from, to], inclusive of the day `from` sits in. */
+export function etDayTicks(from: number, to: number): number[] {
+  const out: number[] = [];
+  let t = etDayStart(from);
+  // 26h then snap: crosses a DST change without ever landing short of a day.
+  for (let guard = 0; t <= to && guard < 400; guard++) {
+    out.push(t);
+    t = etDayStart(t + 26 * 60 * 60 * 1000);
+  }
+  return out;
+}
+
+/** The chart's table-view twin: one row per game day. */
+export type DayPoint = { day: number; n: number; units: number; cum: number; weeks: number[] };
+
+export function betDays(points: BetPoint[]): DayPoint[] {
+  const by = new Map<number, DayPoint>();
+  for (const p of points) {
+    const day = etDayStart(p.t);
+    const cell = by.get(day) ?? { day, n: 0, units: 0, cum: 0, weeks: [] };
+    cell.n++;
+    cell.units += p.units;
+    cell.cum = p.cum;
+    if (!cell.weeks.includes(p.week)) cell.weeks.push(p.week);
+    by.set(day, cell);
+  }
+  return [...by.values()].sort((a, b) => a.day - b.day);
 }

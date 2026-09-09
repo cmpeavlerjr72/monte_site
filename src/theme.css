@@ -2227,6 +2227,27 @@ input:focus, select:focus, textarea:focus {
    it opts out of the minimum entirely rather than scrolling for no reason. */
 .rec__chart { min-width: 520px; height: 250px; }
 .rec__chart--short { height: 140px; min-width: 0; }
+/* The running-units line is RESPONSIVE, not wide: its x axis is time, so it
+   stretches or squeezes to whatever width it is given and the day ticks thin
+   themselves to fit. `min-width: 0` is what keeps a 390px phone from ever
+   scrolling — the chart is never wider than its column. The height carries
+   the plot AND the two-line day labels (34px of axis), so the card never
+   grows a nested vertical scrollbar around the axis band. */
+.rec__chart--units { height: 212px; min-width: 0; }
+/* `grid-template-columns: minmax(0, 1fr)` is LOAD-BEARING, not tidiness. A
+   grid's implicit column is auto-sized, a recharts <ResponsiveContainer>
+   stamps a pixel width on its own <svg>, and the two feed each other: the svg
+   widens the column, the column widens the container, the container re-measures
+   wider. Measured on a 390px phone before this line: a 332px card holding a
+   1001px chart, clipped by an ancestor (so the page LOOKED fine while three
+   quarters of the season was off-screen). Pinning the column to the container
+   breaks the loop. */
+.rec__run { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.rec__runHead {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; min-width: 0;
+}
+.rec__runTitle { font-size: 12.5px; font-weight: 800; min-width: 0; }
 .rec__caption { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 .rec__hint { display: none; font-size: 11px; color: var(--muted); font-style: italic; }
 @media (max-width: 560px) { .rec__hint { display: block; } }

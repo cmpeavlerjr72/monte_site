@@ -42,19 +42,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer,
+  CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
 } from "recharts";
 import { getTeamLogo } from "../utils/teamLogo";
 import { cfbNameKey } from "../../server/cfbNames";
 import { FBS_CONFERENCE } from "../lib/fbsConferences";
 import {
-  applyFilters, applyRung, baseMarket, betWords, calibration, calibrationMiss,
-  cents, frameSentence, frameWords, isPreFee, ladderOf, loadRecord, marketWords,
-  PERIOD_WORDS, periodOf, PREFEE_TIP, PRICE_BANDS, RecordNotPublished, signed,
-  summarize, UNDERPOWERED, venuesOf, venueWords, weekLine,
-  type CalibrationBucket, type EvMode, type RecordFilters, type RecordLoad,
-  type RecordRow, type RungMode,
+  applyFilters, applyRung, baseMarket, betDays, betLine, betWords, calibration,
+  calibrationMiss, cents, etDayStart, etDayTicks, frameSentence, frameWords,
+  isPreFee, ladderOf, loadRecord, marketWords, PERIOD_WORDS, periodOf, PREFEE_TIP,
+  PRICE_BANDS, RecordNotPublished, signed, STAKE_MODES, stakeOf, stakeWords,
+  summarize, UNDERPOWERED, unitsOf, venuesOf, venueWords, weekLine,
+  type BetPoint, type CalibrationBucket, type EvMode, type RecordFilters,
+  type RecordLoad, type RecordRow, type RungMode, type UnitMode,
 } from "../lib/recordData";
 
 const SEASON = "2026";
@@ -301,67 +302,280 @@ function Calibration({ rows, frame }: { rows: RecordRow[]; frame: string }) {
   );
 }
 
-/* ------------------------------------------------- the line across weeks */
+/* --------------------------------------- the line through the season */
+/*
+ * "A line graph showing units accumulated over time as the games progressed,
+ * for all the bets in that filter" (owner, 2026-09-09). It REPLACES the
+ * two-point week line that used to sit here — that line was this one sampled
+ * once a week, and a week is not when a bet resolves.
+ *
+ * Three things it is built to get right:
+ *
+ *   • THE LINE ENDS WHERE THE HERO ENDS. `betLine` walks exactly the rows
+ *     `summarize` counts into `units`, summing the same per-row numbers, so
+ *     the last point IS the hero's figure. That is asserted at runtime, not
+ *     trusted: a chart that disagrees with the number above it is worse than
+ *     no chart. The endpoint is direct-labelled with it so a reader can check
+ *     the same thing by eye.
+ *   • X IS REAL TIME, IN ET. An idle midweek is a flat stretch and a Saturday
+ *     is the near-vertical thing it actually is. Ticks are ET midnights, so
+ *     the axis reads as a football calendar (weekday over date), and each
+ *     week after the first is separated by a hairline.
+ *   • THE STEP IS AFTER THE BET. `stepAfter` holds the running total from the
+ *     bet that produced it until the next one resolves, which is what "units
+ *     over time" means; a straight interpolation would draw units accruing
+ *     during hours when nothing settled.
+ *
+ * Pending rows are not here at all — they are not results (the panel's own
+ * sentence counts them), and a settled row with no published P&L is UNSCORED
+ * and equally absent, exactly as it is from the hero.
+ */
 
-function WeekTip({ active, payload }: any) {
+/** Dots stop earning their place once settlements sit closer together than a
+ *  dot is wide — 237 bets across a 330px phone plot is 1.4px apart, which
+ *  draws a smear rather than marks. Under this many, each dot is one bet you
+ *  can actually aim at; over it, the line alone (the brief allows either up
+ *  to 300, and this is where the density argument puts the switch). */
+const DOTS_UPTO = 60;
+
+const ET_ZONE = "America/New_York";
+const etWeekday = (ms: number) =>
+  new Date(ms).toLocaleDateString("en-US", { timeZone: ET_ZONE, weekday: "short" });
+const etDayMonth = (ms: number) =>
+  new Date(ms).toLocaleDateString("en-US", { timeZone: ET_ZONE, month: "numeric", day: "numeric" });
+const etStamp = (ms: number) =>
+  new Date(ms).toLocaleString("en-US", {
+    timeZone: ET_ZONE, weekday: "short", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+
+/** Units on an axis: signed, and never a false decimal. */
+const axisUnits = (v: number): string => {
+  const a = Math.abs(v);
+  const s = a >= 10 || Number.isInteger(a) ? String(Math.round(a)) : a.toFixed(1);
+  return `${v > 0 ? "+" : v < 0 ? "−" : ""}${s}u`;
+};
+
+/** Weekday over date, two lines, so eight game days fit a phone. */
+function DayTick({ x, y, payload }: any) {
+  const ms = Number(payload?.value);
+  if (!Number.isFinite(ms)) return null;
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} dy={12} textAnchor="middle" fill="var(--muted)" fontSize={10.5}>
+        {etWeekday(ms)}
+      </text>
+      <text x={0} dy={24} textAnchor="middle" fill="var(--muted)" fontSize={10.5}>
+        {etDayMonth(ms)}
+      </text>
+    </g>
+  );
+}
+
+function BetTip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
-  const p = payload[0].payload;
+  const p = payload[0]?.payload as UnitPoint | undefined;
+  // The origin sits at zero before the first bet and has nothing to say.
+  if (!p?.row) return null;
   return (
     <div className="rec__tip">
-      <div className="rec__tipHead">Week {p.week}</div>
-      <div>{p.scored} settled · {signed(p.units)}u that week</div>
+      <div className="rec__tipHead">{betWords(p.row)}</div>
+      <div style={{ color: toneOf(p.units) }}>{signed(p.units)}u on this bet</div>
       <div style={{ color: toneOf(p.cum) }}>{signed(p.cum)}u running</div>
+      <div className="rec__tipMuted">
+        {/* A stake that is not one unit has to say so, or the number above it
+            reads as a 1u result. */}
+        {Math.abs(p.stake - 1) > 0.005
+          ? <>{p.stake.toFixed(2)}u staked at {cents(p.row.price_publish)} · </>
+          : null}
+        {etStamp(p.t)} ET{p.approxTime ? " (about — no settle time published)" : ""} · week {p.week}
+      </div>
     </div>
   );
 }
 
-function RunningLine({ rows, frame, fee }: { rows: RecordRow[]; frame: string; fee: string }) {
-  const points = useMemo(() => weekLine(rows).filter((p) => p.scored > 0), [rows]);
+/** The chart's own datum: a bet, or the origin (zero, before the first one). */
+type UnitPoint = Omit<BetPoint, "row"> & { row: RecordRow | null };
+
+function RunningUnits({ rows, frame, fee, mode }: {
+  rows: RecordRow[]; frame: string; fee: string; mode: UnitMode;
+}) {
+  const [numbers, setNumbers] = useState(false);
+  const points = useMemo(() => betLine(rows, mode), [rows, mode]);
+  const weeks = useMemo(() => weekLine(rows, mode).filter((p) => p.scored > 0), [rows, mode]);
+  const days = useMemo(() => betDays(points), [points]);
+  const heroUnits = useMemo(() => summarize(rows, mode).units, [rows, mode]);
+  const end = points.length ? points[points.length - 1].cum : 0;
+
+  /* THE ASSERTION. Same rows, same numbers, a different order of summing —
+     if these two ever part, the page is lying somewhere and says so here. */
+  useEffect(() => {
+    if (points.length && Math.abs(end - heroUnits) > 1e-6) {
+      console.warn(
+        `[record] the running-units line ends at ${end.toFixed(4)}u but the hero sums ` +
+        `${heroUnits.toFixed(4)}u over the same selection — they must agree.`,
+      );
+    }
+  }, [points.length, end, heroUnits]);
+
+  const chart = useMemo(() => {
+    if (points.length < 2) return null;
+    const from = etDayStart(points[0].t);
+    const to = points[points.length - 1].t;
+    // Start the line at zero on the first game day, so the reader sees where
+    // it began rather than a line that appears already ahead.
+    const origin: UnitPoint = {
+      t: from, cum: 0, units: 0, stake: 0, week: points[0].week,
+      row: null, approxTime: false,
+    };
+    const allTicks = etDayTicks(from, to);
+    // Thin evenly rather than letting two-line labels collide; recharts drops
+    // any that are still too close (minTickGap) on top of this.
+    const step = Math.max(1, Math.ceil(allTicks.length / 9));
+    const bounds: { week: number; t: number }[] = [];
+    const seen = new Set<number>();
+    for (const p of points) {
+      if (seen.has(p.week)) continue;
+      seen.add(p.week);
+      bounds.push({ week: p.week, t: etDayStart(p.t) });
+    }
+    // A week's name sits over the MIDDLE of its stretch, not on its boundary,
+    // where it would collide with the hairline and with the day beneath it.
+    const labels = bounds.map((b, i) => ({
+      week: b.week,
+      at: (b.t + (i + 1 < bounds.length ? bounds[i + 1].t : to)) / 2,
+    }));
+    return {
+      data: [origin, ...points] as UnitPoint[],
+      from, to, bounds, labels,
+      ticks: allTicks.filter((_, i) => i % step === 0),
+      last: points[points.length - 1],
+    };
+  }, [points]);
+
   if (points.length === 0) return null;
-  if (points.length === 1) {
-    const p = points[0];
+  if (!chart) {
+    const only = points[0];
     return (
       <div className="rec__caption">
-        Week {p.week} is the only settled week so far: {signed(p.units)} units on{" "}
-        {p.scored} bets, {frame}. The running line starts once a second week settles.
+        One bet in this selection has settled so far — {betWords(only.row)},{" "}
+        <strong style={{ color: toneOf(only.units) }}>{signed(only.units)}u</strong>, {fee},{" "}
+        {frame}. The line starts once a second bet settles.
       </div>
     );
   }
+
   return (
-    <>
-      <div className="rec__scroll">
-        <div className="rec__chart rec__chart--short">
-          <ResponsiveContainer width="100%" height={140}>
-            <LineChart data={points} margin={{ top: 8, right: 14, bottom: 6, left: 2 }}>
-              <CartesianGrid stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="week" tickFormatter={(w) => `wk${w}`}
-                     tick={{ fill: "var(--muted)", fontSize: 11 }}
-                     tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-              <YAxis width={38} tick={{ fill: "var(--muted)", fontSize: 11 }}
-                     tickLine={false} axisLine={false}
-                     tickFormatter={(v) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v)}u`} />
-              <ReferenceLine y={0} stroke="var(--muted)" strokeWidth={1} />
-              <Tooltip content={<WeekTip />} cursor={{ stroke: "var(--border)" }} />
-              <Line type="linear" dataKey="cum" stroke={MARK} strokeWidth={2}
-                    dot={{ r: 4, fill: MARK, stroke: "var(--card)", strokeWidth: 2 }}
-                    activeDot={{ r: 6, fill: MARK, stroke: "var(--card)", strokeWidth: 2 }}
-                    isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
+    <div className="rec__run">
+      <div className="rec__runHead">
+        <div className="rec__runTitle">Running units, bet by bet</div>
+        <button type="button" className="ui-btn rec__mini"
+                onClick={() => setNumbers((v) => !v)} aria-expanded={numbers}>
+          {numbers ? "Show chart" : "Show numbers"}
+        </button>
+      </div>
+
+      {numbers ? (
+        <div className="rec__scroll">
+          <table className="rec__table">
+            <thead>
+              <tr><th>Game day</th><th>Bets</th><th>Units</th><th>Running</th></tr>
+            </thead>
+            <tbody>
+              {days.map((d) => (
+                <tr key={d.day}>
+                  <td>
+                    {etWeekday(d.day)} {etDayMonth(d.day)}
+                    <span className="rec__tipMuted"> · wk {d.weeks.join(", ")}</span>
+                  </td>
+                  <td>{d.n.toLocaleString()}</td>
+                  <td style={{ color: toneOf(d.units) }}>{signed(d.units)}</td>
+                  <td style={{ color: toneOf(d.cum) }}>{signed(d.cum)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="rec__scroll">
+            <div className="rec__chart rec__chart--units">
+              <ResponsiveContainer width="100%" height={212}>
+                {/* The right margin is the endpoint label's room: it has to
+                    hold "−129.55u" without clipping at 390px. */}
+                <LineChart data={chart.data} margin={{ top: 18, right: 62, bottom: 2, left: 2 }}>
+                  <CartesianGrid stroke="var(--border)" vertical={false} />
+                  <XAxis
+                    type="number" dataKey="t" scale="time"
+                    domain={[chart.from, chart.to]} ticks={chart.ticks}
+                    tick={<DayTick />} interval="preserveStartEnd" minTickGap={10}
+                    /* The formatter is what recharts MEASURES when it decides
+                       which ticks fit (the custom tick above is what it draws).
+                       Without it, it sizes a raw epoch — 13 digits — and drops
+                       every day but the first and last on a phone. */
+                    tickFormatter={etDayMonth}
+                    tickLine={false} height={34}
+                    axisLine={{ stroke: "var(--border)" }}
+                  />
+                  <YAxis
+                    width={44} tick={{ fill: "var(--muted)", fontSize: 11 }}
+                    tickLine={false} axisLine={false}
+                    /* "auto" both ends so the ticks come out ROUND (pinning the
+                       domain to the data hands you "+9.1u" and "−5.9u"); zero
+                       is always inside it because the origin point is zero. */
+                    domain={["auto", "auto"]}
+                    tickFormatter={axisUnits}
+                  />
+                  {/* Week boundaries, lightly — the first one is the axis. */}
+                  {chart.bounds.slice(1).map((b) => (
+                    <ReferenceLine key={`b${b.week}`} x={b.t}
+                                   stroke="var(--border)" strokeWidth={1} />
+                  ))}
+                  {chart.labels.length <= 8 && chart.labels.map((l) => (
+                    <ReferenceLine key={`l${l.week}`} x={l.at} stroke="none"
+                      label={{ value: `wk ${l.week}`, position: "top",
+                               fill: "var(--muted)", fontSize: 10 }} />
+                  ))}
+                  <ReferenceLine y={0} stroke="var(--muted)" strokeWidth={1} />
+                  <Tooltip content={<BetTip />} cursor={{ stroke: "var(--border)" }} />
+                  <Line
+                    type="stepAfter" dataKey="cum" stroke={MARK} strokeWidth={2}
+                    dot={points.length <= DOTS_UPTO
+                      ? { r: 2.5, fill: MARK, stroke: "none", fillOpacity: 0.55 }
+                      : false}
+                    activeDot={{ r: 5, fill: MARK, stroke: "var(--card)", strokeWidth: 2 }}
+                    isAnimationActive={false}
+                  />
+                  {/* The one direct label: where the line ends is the hero. */}
+                  <ReferenceDot
+                    x={chart.last.t} y={chart.last.cum} r={3.5}
+                    fill={MARK} stroke="var(--card)" strokeWidth={2}
+                    label={{ value: `${signed(end)}u`, position: "right",
+                             fill: toneOf(end), fontSize: 11.5, fontWeight: 800 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="rec__hint">Drag across the chart to read each bet.</div>
+        </>
+      )}
+
       <div className="rec__caption">
-        Running units, 1 unit a bet, {fee}, {frame}:{" "}
-        {points.map((p) => `wk${p.week} ${signed(p.units)}u`).join(" · ")}.
+        Running units, {stakeWords(mode)}, {fee}, {frame}:{" "}
+        {weeks.map((p) => `wk${p.week} ${signed(p.units)}u`).join(" · ")}.
       </div>
-    </>
+    </div>
   );
 }
 
 /* ------------------------------------------------------------- one row */
 
-function LadderLine({ rung, shown }: { rung: RecordRow; shown: boolean }) {
+function LadderLine({ rung, shown, mode }: {
+  rung: RecordRow; shown: boolean; mode: UnitMode;
+}) {
   const move = rung.price_close != null ? rung.price_close - rung.price_publish : null;
+  const units = unitsOf(rung, mode);
   return (
     <div className={`rec__rung${shown ? " rec__rung--shown" : ""}`}>
       <span className="rec__rungLabel">
@@ -382,27 +596,30 @@ function LadderLine({ rung, shown }: { rung: RecordRow; shown: boolean }) {
             : ""}
         </span>
       </span>
-      <span className="rec__rungResult" style={rung.pnl_per_dollar != null ? { color: toneOf(rung.pnl_per_dollar) } : undefined}>
+      <span className="rec__rungResult" style={units != null ? { color: toneOf(units) } : undefined}>
         {rung.result == null
           ? "pending"
-          : rung.pnl_per_dollar == null
+          : units == null
             ? rung.result
-            : `${rung.result} ${signed(rung.pnl_per_dollar)}u`}
+            : `${rung.result} ${signed(units)}u`}
       </span>
     </div>
   );
 }
 
-function Row({ row, ladder, open, onToggle, showLadder }: {
+function Row({ row, ladder, open, onToggle, showLadder, mode }: {
   row: RecordRow;
   ladder: RecordRow[];
   open: boolean;
   onToggle: () => void;
   showLadder: boolean;
+  mode: UnitMode;
 }) {
   const move = row.price_close != null ? row.price_close - row.price_publish : null;
   const player = row.family === "player";
   const preFee = isPreFee(row);
+  const units = unitsOf(row, mode);
+  const staked = stakeOf(row, mode);
   const meta: string[] = [
     `we said ${(row.pShown * 100).toFixed(0)}%`,
     // The frame is the ROW's, never a constant: a DKeX prop was never posted
@@ -454,15 +671,15 @@ function Row({ row, ladder, open, onToggle, showLadder }: {
       <span className="rec__edge">
         {row.result == null ? (
           <span className="rec__pending" title="Not settled — excluded from the numbers above">pending</span>
-        ) : row.pnl_per_dollar == null ? (
+        ) : units == null ? (
           <span className="rec__result" title="Settled without a published fee-inclusive P&amp;L — not scored">
             {row.result}
           </span>
         ) : (
           <>
-            <span className="rec__units" style={{ color: toneOf(row.pnl_per_dollar) }}
-                  title={`${row.result} · 1 unit staked at ${cents(row.price_publish)} ${frameWords(row)}, ${preFee ? "before fees" : "fee-inclusive"}`}>
-              {signed(row.pnl_per_dollar)}u
+            <span className="rec__units" style={{ color: toneOf(units) }}
+                  title={`${row.result} · ${staked.toFixed(2)} unit${staked === 1 ? "" : "s"} staked at ${cents(row.price_publish)} ${frameWords(row)}, ${preFee ? "before fees" : "fee-inclusive"}`}>
+              {signed(units)}u
             </span>
             {preFee && (
               <span className="rec__prefee" title={PREFEE_TIP}>pre-fee</span>
@@ -479,7 +696,9 @@ function Row({ row, ladder, open, onToggle, showLadder }: {
             {row.away} at {row.home}. One opinion at several prices, so the record counts it once.
             {" "}Priced {frameWords(row)}.
           </div>
-          {ladder.map((r) => <LadderLine key={r.id} rung={r} shown={r.id === row.id} />)}
+          {ladder.map((r) => (
+            <LadderLine key={r.id} rung={r} shown={r.id === row.id} mode={mode} />
+          ))}
         </div>
       )}
     </div>
@@ -507,6 +726,10 @@ export default function Record() {
   const [conference, setConference] = useState("all");
   const [band, setBand] = useState("10-90");
   const [q, setQ] = useState("");
+  /* HOW A UNIT IS SPENT. Not a filter — it changes no row's presence, only the
+     size of the bet behind every number on the page. Default `risk` is what
+     the record has always shown. */
+  const [stake, setStake] = useState<UnitMode>("risk");
   /** Once the reader picks a rung mode by hand it stops following the EV
    *  selector. Until then, +EV and ★ default to Best EV (owner's rule). */
   const rungTouched = useRef(false);
@@ -595,7 +818,7 @@ export default function Record() {
     [selection],
   );
 
-  const sum = useMemo(() => summarize(selection), [selection]);
+  const sum = useMemo(() => summarize(selection, stake), [selection, stake]);
 
   /* THE FRAME OF THIS SELECTION, and — when it holds two — the split.
      A blended ROI over a Kalshi publish price and a DKeX in-week trade is one
@@ -606,10 +829,10 @@ export default function Record() {
     () => (venues.length > 1
       ? venues.map((v) => ({
           venue: v,
-          sum: summarize(selection.filter((r) => (r.venue ?? "kalshi") === v)),
+          sum: summarize(selection.filter((r) => (r.venue ?? "kalshi") === v), stake),
         }))
       : []),
-    [venues, selection],
+    [venues, selection, stake],
   );
 
   /* The exporter's own fine print for a family in play, shown verbatim. */
@@ -645,9 +868,9 @@ export default function Record() {
       : "fee-inclusive";
 
   const thisWeek = useMemo(() => {
-    const points = weekLine(selection).filter((p) => p.scored > 0);
+    const points = weekLine(selection, stake).filter((p) => p.scored > 0);
     return points.length ? points[points.length - 1] : null;
-  }, [selection]);
+  }, [selection, stake]);
 
   /* Reset the paging whenever the selection changes, so a narrowed filter
      never leaves a "show more" count describing the previous slice. */
@@ -721,12 +944,27 @@ export default function Record() {
             pre-kick price we captured in-week, and every row that says{" "}
             <em>at the early DKeX price</em> means exactly that. The close sits
             on every row so you can see how the market moved after.</p>
-          <p><strong>One unit a bet, fee-inclusive.</strong> Every bet stakes
-            one unit. A winner returns (1 − price) ÷ price units, less the
-            exchange fee; a loser returns −1. ROI is net units ÷ bets settled,
-            and the fee is always in it — <strong>except on DKeX</strong>, which
-            publishes no fee schedule, so those units are marked{" "}
+          <p><strong>One unit a bet, fee-inclusive.</strong> By default every
+            bet stakes one unit. A winner returns (1 − price) ÷ price units,
+            less the exchange fee; a loser returns −1. ROI is net units ÷ units
+            staked, and the fee is always in it — <strong>except on DKeX</strong>,
+            which publishes no fee schedule, so those units are marked{" "}
             <em>pre-fee</em>. A 2% fee would move that ROI about −2 points.</p>
+          <p><strong>Stake: risk, to win, or book.</strong> The same three the
+            order console offers, and the selector re-sizes every number on
+            this page — no row appears or disappears.{" "}
+            <em>Risk</em> stakes one unit on every bet, whatever the price
+            (the default, and what this record has always shown).{" "}
+            <em>To win</em> stakes price ÷ (1 − price), so a winner pays one
+            unit whether it was a 30¢ dog or an 85¢ favourite — the favourite
+            simply risks more to do it (at 85¢, 5.7 units to win 1).{" "}
+            <em>Book</em> is the sportsbook habit: a favourite (over 50¢,
+            negative American odds) is sized to win a unit, a dog (50¢ and
+            under) risks a unit — exactly how a −150 and a +150 offset on a
+            slip. ROI stays units ÷ units staked in all three, so the modes are
+            comparable; the units and the W-L are not the same number between
+            them, and the sentence under the headline always says which is
+            running.</p>
           <p><strong>Units are counted once per ladder.</strong> "17+", "21+"
             and "24+" points for the same team are three prices on ONE opinion.
             Main line and Best EV each show one row per ladder, so the record
@@ -834,6 +1072,16 @@ export default function Record() {
             {PRICE_BANDS.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
           </select>
         </label>
+        {/* NOT a filter: it hides no row, it re-sizes every bet. Sits at the
+            end of the row for that reason, and names the same three modes the
+            order console offers. */}
+        <label className="rec__f">
+          <span>Stake</span>
+          <select className="ui-sel" value={stake}
+                  onChange={(e) => setStake(e.target.value as UnitMode)}>
+            {STAKE_MODES.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </label>
         <label className="rec__f rec__f--wide">
           <span>Search</span>
           <input className="ui-sel" type="search" value={q} placeholder="team, market, strike…"
@@ -859,7 +1107,9 @@ export default function Record() {
               <div className="rec__heroSub">
                 {sum.scored
                   ? <><strong>{sum.wins}–{sum.losses}{sum.pushes ? `–${sum.pushes}` : ""}</strong>{" "}
-                      · {signed(sum.units)} units on {sum.scored.toLocaleString()} bets at 1 unit each,
+                      · {signed(sum.units)} units on {sum.scored.toLocaleString()} bets,{" "}
+                      {stakeWords(stake)}
+                      {stake === "risk" ? "" : ` (${sum.staked.toFixed(0)} units staked)`},
                       {" "}{feeWords}, {frame}</>
                   : <>No bet in this selection has settled yet.</>}
               </div>
@@ -894,11 +1144,12 @@ export default function Record() {
             <div className="rec__tiles">
               <Tile label="Units" value={sum.scored ? `${signed(sum.units)}u` : "—"}
                     tone={sum.scored ? toneOf(sum.units) : undefined}
-                    note={preFee.all
-                      ? "1 unit a bet · DKeX, pre-fee"
-                      : preFee.any
-                        ? "1 unit a bet · DKeX rows pre-fee"
-                        : "1 unit a bet, net of fees"} />
+                    note={`${stake === "risk" ? "1 unit a bet" : `${sum.staked.toFixed(0)}u staked`}${
+                      preFee.all
+                        ? " · DKeX, pre-fee"
+                        : preFee.any
+                          ? " · DKeX rows pre-fee"
+                          : ", net of fees"}`} />
               <Tile label={thisWeek ? `Week ${thisWeek.week}` : "Latest week"}
                     value={thisWeek ? `${signed(thisWeek.units)}u` : "—"}
                     tone={thisWeek ? toneOf(thisWeek.units) : undefined}
@@ -910,7 +1161,7 @@ export default function Record() {
                     note="not in these numbers" />
             </div>
 
-            <RunningLine rows={selection} frame={frame} fee={feeWords} />
+            <RunningUnits rows={selection} frame={frame} fee={feeWords} mode={stake} />
 
             <div className="rec__notes">
               {evDegenerate && (
@@ -992,7 +1243,7 @@ export default function Record() {
                     <Row key={`${r.week}:${r.id}`} row={r}
                          ladder={open === `${r.week}:${r.id}` ? ladderFor(r) : []}
                          open={open === `${r.week}:${r.id}`}
-                         showLadder={!allRungs}
+                         showLadder={!allRungs} mode={stake}
                          onToggle={() => setOpen((cur) => (cur === `${r.week}:${r.id}` ? null : `${r.week}:${r.id}`))} />
                   ))}
                 </div>

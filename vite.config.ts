@@ -47,4 +47,21 @@ export default defineConfig({
       }
     }
   },
+  // `vite preview` serves the production BUILD, which is what UI screenshots
+  // are taken against — and every data page reads through /api/data. Without
+  // this the fetch lands on the SPA fallback, comes back as index.html with a
+  // 200, and the page shows a JSON parse error instead of the record. Same
+  // env override and the SAME localhost default as the dev server: aiming it
+  // at production is a deliberate act (API_PROXY_TARGET=https://www.mvpeav.com
+  // npx vite preview) and never the default, because /api also carries the
+  // mutating order routes.
+  preview: {
+    proxy: {
+      '/api': {
+        target: process.env.API_PROXY_TARGET || 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true
+      }
+    }
+  },
 });
