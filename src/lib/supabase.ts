@@ -20,8 +20,17 @@
 import { useEffect, useState } from "react";
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// Read the env OBJECT rather than two static members. Vite inlines the whole
+// object at build, so the browser is unchanged — but node's type-stripping
+// runs this module with no `import.meta.env` at all, and the repo's guard
+// scripts (check_live_progress, check_fcs_*) import the real .ts files. A
+// static member read there is a TypeError that fails a gate for a reason that
+// has nothing to do with what the gate checks.
+const viteEnv =
+  ((import.meta as unknown as { env?: Record<string, string | undefined> }).env) ?? {};
+
+const url = viteEnv.VITE_SUPABASE_URL;
+const anonKey = viteEnv.VITE_SUPABASE_ANON_KEY;
 
 /** True only when BOTH env vars are present at build time. Every accounts
  *  component checks this first and renders null when false. */

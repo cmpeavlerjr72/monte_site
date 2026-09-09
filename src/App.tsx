@@ -20,7 +20,7 @@ import Bracket from "./pages/CFB_Bracket"
 // line when VITE_SUPABASE_URL/ANON_KEY are absent, so the routes are safe to
 // register unconditionally.
 import Profile from "./pages/Profile";
-import Friends from "./pages/Friends";
+import BookDashboard from "./pages/BookDashboard";
 
 // CBB Pages
 
@@ -81,7 +81,13 @@ export default function App() {
           <Route path="/cfb/combo/*" element={<ComboTrend />} />
           <Route path="/cfb/bracket/*" element={<Bracket />} />
           <Route path="/cfb/me" element={<Profile />} />
-          <Route path="/cfb/friends" element={<Friends />} />
+          {/* THE DASHBOARD: positions, Kalshi linking, friends, feed,
+              settings — everything that is about the person rather than the
+              board (owner restructure 2026-09-08). /cfb/friends was its own
+              page until then and is now one of its sections, so the old link
+              redirects rather than 404s. */}
+          <Route path="/cfb/mybook" element={<BookDashboard />} />
+          <Route path="/cfb/friends" element={<Navigate to="/cfb/mybook" replace />} />
 
           {/* Legacy redirects to preserve old links */}
           <Route path="/scoreboard" element={<Navigate to="/cfb/scoreboard" replace />} />

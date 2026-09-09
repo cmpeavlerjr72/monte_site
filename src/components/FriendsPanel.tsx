@@ -1,6 +1,9 @@
-// src/pages/Friends.tsx  —  route /cfb/friends
+// src/components/FriendsPanel.tsx  —  the FRIENDS section of /cfb/mybook
 //
 // The friend graph: find by EXACT handle, request, accept or block, unfriend.
+// It used to be the whole of /cfb/friends; since 2026-09-08 the dashboard owns
+// it as one section and that route redirects here, because "my people" and "my
+// money" are one page in the owner's head.
 //
 // THERE IS NO USER DIRECTORY, deliberately (docs/ACCOUNTS_DESIGN.md). The only
 // way to reach a stranger is `find_profile(handle)`, a SECURITY DEFINER RPC
@@ -8,7 +11,7 @@
 // else. A partial-match search would be a scrapeable list of everyone who bets
 // on this site; that is why it does not exist.
 //
-// Who may do what is the DATABASE's call, not this page's:
+// Who may do what is the DATABASE's call, not this panel's:
 //   * insert  — only with requester_id = me and status 'pending'
 //   * update  — only the ADDRESSEE, and only to 'accepted' or 'blocked'
 //   * delete  — either party (unfriend, or cancel a request you sent)
@@ -17,7 +20,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import AuthPanel from "../components/AuthPanel";
+import AuthPanel from "./AuthPanel";
 import {
   supabase, supabaseEnabled, useProfile, useSession, type FoundProfile,
 } from "../lib/supabase";
@@ -40,7 +43,7 @@ const SELECT =
   "requester:profiles!requester_id(id,handle,display_name,avatar_emoji)," +
   "addressee:profiles!addressee_id(id,handle,display_name,avatar_emoji)";
 
-export default function Friends() {
+export default function FriendsPanel() {
   const { session, loading } = useSession();
   const { profile, loading: profileLoading } = useProfile(session);
   const me = profile?.id ?? "";
@@ -111,7 +114,7 @@ export default function Friends() {
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             you are <strong style={{ color: "var(--text)" }}>@{profile.handle}</strong>
           </span>
-          <Link to="/cfb/me" style={{ marginLeft: "auto", fontSize: 11 }}>My account →</Link>
+          <Link to="/cfb/me" style={{ marginLeft: "auto", fontSize: 11 }}>Edit profile →</Link>
         </div>
 
         <AddFriend me={me} onSent={load} known={edges} />
@@ -275,11 +278,8 @@ function Group({ label, empty, children }: {
   );
 }
 
+/** A section of the dashboard, not a page: the heading above it is the
+ *  dashboard's, so this is only a box. */
 function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <section className="card" style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
-      <h1 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 900 }}>Friends</h1>
-      {children}
-    </section>
-  );
+  return <div style={{ display: "grid", gap: 10, minWidth: 0 }}>{children}</div>;
 }

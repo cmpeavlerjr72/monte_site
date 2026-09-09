@@ -46,14 +46,23 @@ export type NetworkFeedProps = {
   /** slug -> the card's real team names, for naming a game group and the
    *  post form's game picker. teamA is HOME (data contract). */
   slugTeams: Map<string, BetGameNames>;
+  /** EVERY week, newest first, instead of this board's week (the dashboard
+   *  reads the feed as a timeline, the scoreboard read it as "who else is on
+   *  these games"). `season`/`week` still say what a NEW pick is filed under. */
+  allWeeks?: boolean;
+  /** Start expanded. The dashboard's feed IS the section, so a "Show network"
+   *  press to see anything would be a click for nothing. */
+  startOpen?: boolean;
 };
 
-export default function NetworkFeed({ season, week, slugTeams }: NetworkFeedProps) {
+export default function NetworkFeed({
+  season, week, slugTeams, allWeeks = false, startOpen = false,
+}: NetworkFeedProps) {
   const { session, loading } = useSession();
   const { profile } = useProfile(session);
   const [items, setItems] = useState<FeedItem[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(startOpen);
   const [posting, setPosting] = useState(false);
 
   const signedIn = Boolean(session && profile);
@@ -61,17 +70,18 @@ export default function NetworkFeed({ season, week, slugTeams }: NetworkFeedProp
   const load = useCallback(async () => {
     if (!supabase || !signedIn) return;
     // Current week, plus rows the writer could not date (null week) so an
-    // order never silently vanishes from the feed.
-    const { data, error } = await supabase
-      .from("feed_items")
-      .select("*")
-      .or(`and(season.eq.${season},week.eq.${week}),week.is.null`)
-      .order("at", { ascending: false })
-      .limit(200);
+    // order never silently vanishes from the feed. In `allWeeks` the filter
+    // is simply absent — RLS still decides WHOSE rows come back, so a wider
+    // window is never a wider audience.
+    let q = supabase.from("feed_items").select("*");
+    if (!allWeeks) {
+      q = q.or(`and(season.eq.${season},week.eq.${week}),week.is.null`);
+    }
+    const { data, error } = await q.order("at", { ascending: false }).limit(200);
     if (error) { setErr(error.message); return; }
     setErr(null);
     setItems((data ?? []) as FeedItem[]);
-  }, [signedIn, season, week]);
+  }, [signedIn, season, week, allWeeks]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -96,7 +106,9 @@ export default function NetworkFeed({ season, week, slugTeams }: NetworkFeedProp
         </button>
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
           {items.length === 0
-            ? "nothing from your network on this week yet"
+            ? (allWeeks
+                ? "nothing from your network yet — add a friend, or post the first pick"
+                : "nothing from your network on this week yet")
             : `${items.length} from your network · ${groups.length} game${groups.length === 1 ? "" : "s"}`}
         </span>
         <button type="button" className="ui-btn" onClick={() => setPosting((v) => !v)}
@@ -261,6 +273,15 @@ function PostPick({ userId, season, week, slugTeams, onPosted }: {
       display: "grid", gap: 6, border: "1px solid var(--border)",
       borderRadius: 8, padding: 8, background: "var(--fill)",
     }}>
+      {games.length === 0 && (
+        // A pick belongs to a game (`picks.game_slug` is not null) and this
+        // browser has not seen a slate to choose from. Say where the games
+        // are rather than showing an empty picker.
+        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+          No games to choose from yet — open the scoreboard once and the
+          week's games become postable here.
+        </span>
+      )}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <select className="ui-sel" value={slug} onChange={(e) => setSlug(e.target.value)}
                 aria-label="Game" style={{ fontSize: 11.5, flex: "1 1 170px", minWidth: 0 }}>

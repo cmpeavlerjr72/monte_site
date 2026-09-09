@@ -40,6 +40,7 @@ import GameBetsPanel, {
 } from "../components/SuggestedBets";
 import SuggestedBetsIndex from "../components/SuggestedBetsIndex";
 import MyBookPanel from "../components/MyBookPanel";
+import { writeSlateGames } from "../lib/slateCache";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { useRestingReview } from "../lib/restingReview";
 import {
@@ -1856,6 +1857,9 @@ function ScoreboardPage() {
   const [portalToken, setPortalToken] = useState<string>(() => readPortalToken());
   const [portalUiOpen, setPortalUiOpen] = useState(false);
   const portal = usePortalBook(portalToken);
+  /** Resting orders still working — the one COUNT the slim console owes a
+   *  trader looking at the board. Derived from the same book the strip
+   *  already renders, never a second read. */
   /**
    * THE OWNER GATE, one definition. A live portal session — everything
    * owner-only reads this: the suggestions compute, the resting review, the
@@ -2452,6 +2456,24 @@ function ScoreboardPage() {
     () => new Map(baseCards.map((c) => [c.key, { teamA: c.teamA, teamB: c.teamB }])),
     [baseCards]
   );
+  /**
+   * THE SLATE, LEFT WHERE THE DASHBOARD CAN FIND IT. /cfb/mybook carries the
+   * "post a pick" form, a pick needs a game (`picks.game_slug` is not null),
+   * and that page loads no week file — the standing rule for this pass is no
+   * new data fetches. So the board leaves the map it has already built for
+   * this browser and the dashboard reads it (src/lib/slateCache.ts).
+   * WRITE-ONLY here, and it calls no setState, so it cannot drive a render
+   * loop whatever its deps do.
+   */
+  useEffect(() => {
+    writeSlateGames(
+      feedSeason, feedWeek,
+      [...slugTeams.entries()].map(([slug, n]) => ({
+        slug, label: `${n.teamB} @ ${n.teamA}`,
+      })),
+    );
+  }, [feedSeason, feedWeek, slugTeams]);
+
   /** ticker game-code -> slug, at panel scope: the Friend Feed groups a
    *  friend's bets by game and names them with the card's real teams. Same
    *  builder the record and seed joins use, just hoisted out of their memos. */
@@ -3221,10 +3243,11 @@ function ScoreboardPage() {
         </section>
       )}
 
-      {/* The owner console. Holds login, unit size, the order kill switch,
-          the cumulative book bar and the Suggested bets card — one block, so
-          the next owner feature is a row here rather than another button
-          scattered across the toolbar. */}
+      {/* The money STRIP (owner restructure 2026-09-08): login, what is open,
+          the kill switch, this board's settled record, and the Suggested-bets
+          index. Profile, friends, the network feed, unit size and Kalshi
+          linking moved to the My Book dashboard (/cfb/mybook) — they are about
+          the person, not about this board. */}
       {(portalToken || portalUiOpen) && (
         <MyBookPanel
           token={portalToken}
@@ -3237,19 +3260,11 @@ function ScoreboardPage() {
           connected={portal.status === "ok"}
           ordersLive={portal.payload?.orders_live === true}
           accountLabel={portal.payload?.account_label}
-          unit={unit}
-          onUnit={(v) => { setUnit(v); writeUnit(v); }}
-          sizing={sizing}
-          onSizingMode={onSizingMode}
-          onMaxRiskMultiple={onMaxRiskMultiple}
           totals={portalBook.totals}
           unmatched={portalBook.unmatched}
+          openOrders={portalBook.bets.filter((b) => b.kind === "order").length}
           record={portalRecord}
           slugTeams={slugTeams}
-          codeToSlug={codeToSlug}
-          portalYesP={portalYesP}
-          feedSeason={feedSeason}
-          feedWeek={feedWeek}
         >
           {/* The RANKED INDEX: which game, not which bet. It recomputes
               whenever the 45s Kalshi poll delivers, so it is live without a

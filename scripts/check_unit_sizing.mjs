@@ -299,13 +299,16 @@ const size = (p, mode, unit = UNIT, mult = MULT) => sizeContracts({
 {
   const read = (...p) => readFileSync(path.join(ROOT, ...p), "utf8");
 
-  const mb = read("src", "components", "MyBookPanel.tsx");
+  // The Friend Feed's Join button moved out of the console into its own
+  // component with the 2026-09-08 dashboard restructure; the rule it is
+  // guarded for did not move. ONE kernel sizes it, wherever it lives.
+  const mb = read("src", "components", "FriendBooks.tsx");
   if (/Math\.floor\(unit\s*\/\s*price\)/.test(mb)) {
     fail("the Friend Feed Join sizes through sizeContracts",
-      "MyBookPanel still has its own floor(unit / price)");
+      "FriendBooks still has its own floor(unit / price)");
   } else if (!/sizeContracts\(/.test(mb)) {
     fail("the Friend Feed Join sizes through sizeContracts",
-      "MyBookPanel does not call sizeContracts at all");
+      "FriendBooks does not call sizeContracts at all");
   } else ok("the Friend Feed Join sizes through sizeContracts");
 
   const sb = read("src", "lib", "suggestedBets.ts");
