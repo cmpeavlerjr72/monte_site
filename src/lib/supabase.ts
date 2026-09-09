@@ -55,6 +55,11 @@ export type Profile = {
    *  address from the handle (see `loginEmailFor`), nothing is sent here by
    *  the app, and it may be null forever. */
   email: string | null;
+  /** COSMETIC BADGES, at most 3 (the DB caps cardinality). Each entry is a
+   *  catalog id — `team:<school>` or `badge:<id>` — resolved for display by
+   *  src/lib/flares.ts. Public within the friend graph, like the handle: it
+   *  says something about taste, never about money. */
+  flares: string[];
 };
 
 /** One row of `feed_items` (the RLS-filtered UNION view). `kind` says which
@@ -71,6 +76,9 @@ export type FeedItem = {
   handle: string;
   display_name: string;
   avatar_emoji: string | null;
+  /** The poster's flares, joined in by the view (src/lib/flares.ts renders
+   *  them). Null on a row from a server that predates the column. */
+  flares: string[] | null;
   season: number | null;
   week: number | null;
   game_slug: string | null;
@@ -85,6 +93,23 @@ export type FeedItem = {
   note: string | null;
   source: string;
   ticker: string | null;
+  /** THE BET IN WORDS, as the bettor confirmed it ("Rutgers over 23.5
+   *  points"). Null on a pick row and on any order placed before the feed
+   *  started carrying it — the renderer then falls back to the ticker. */
+  title: string | null;
+  /** The matchup, so the row can wear the two teams' logos and highlight the
+   *  side that was taken. Either may be null. */
+  home_team: string | null;
+  away_team: string | null;
+  /** Our sim's P(YES) at placement, and its EV per $1 staked after the fee.
+   *  Both are RATES — the model's opinion of the market, never a quantity of
+   *  anyone's money, which is why they are publishable at all. */
+  sim_p: number | null;
+  ev_fee: number | null;
+  /** WHICH LEAGUE this bet is on — a league id from src/lib/leagues.ts
+   *  ("fbs" / "fcs" / "ncaab" / "ncaaw"). Null on every row placed before the
+   *  book went sport-agnostic; null means NO CHIP, never a guessed one. */
+  sport: string | null;
   at: string;
 };
 
@@ -95,6 +120,7 @@ export type FoundProfile = {
   display_name: string;
   avatar_emoji: string | null;
 };
+
 
 // --------------------------------------------------------------- hooks
 
@@ -150,7 +176,7 @@ export function useProfile(session: Session | null): {
     setLoading(true);
     supabase
       .from("profiles")
-      .select("id, handle, display_name, avatar_emoji, share_book, is_trader, email")
+      .select("id, handle, display_name, avatar_emoji, share_book, is_trader, email, flares")
       .eq("id", uid)
       .maybeSingle()
       .then(({ data }) => {

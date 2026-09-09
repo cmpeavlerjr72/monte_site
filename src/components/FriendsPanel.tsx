@@ -1,9 +1,9 @@
-// src/components/FriendsPanel.tsx  —  the FRIENDS section of /cfb/mybook
+// src/components/FriendsPanel.tsx  —  the FRIENDS section of /me
 //
 // The friend graph: find by EXACT handle, request, accept or block, unfriend.
-// It used to be the whole of /cfb/friends; since 2026-09-08 the dashboard owns
-// it as one section and that route redirects here, because "my people" and "my
-// money" are one page in the owner's head.
+// It used to be the whole of /cfb/friends; since the 2026-09-08 split the
+// PROFILE owns it as one section (and /cfb/friends redirects to /me), because
+// your people are part of your account, not part of your book.
 //
 // THERE IS NO USER DIRECTORY, deliberately (docs/ACCOUNTS_DESIGN.md). The only
 // way to reach a stranger is `find_profile(handle)`, a SECURITY DEFINER RPC
@@ -19,14 +19,17 @@
 // refuses and the error is shown rather than swallowed.
 
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import AuthPanel from "./AuthPanel";
+import Flares from "./Flares";
 import {
   supabase, supabaseEnabled, useProfile, useSession, type FoundProfile,
 } from "../lib/supabase";
 
 type Party = {
   id: string; handle: string; display_name: string; avatar_emoji: string | null;
+  /** Cosmetic school badges, shown beside the name here exactly as they are in
+   *  the feed — one person looks the same everywhere they appear. */
+  flares: string[] | null;
 };
 
 type Edge = {
@@ -40,8 +43,8 @@ type Edge = {
 
 const SELECT =
   "id, requester_id, addressee_id, status," +
-  "requester:profiles!requester_id(id,handle,display_name,avatar_emoji)," +
-  "addressee:profiles!addressee_id(id,handle,display_name,avatar_emoji)";
+  "requester:profiles!requester_id(id,handle,display_name,avatar_emoji,flares)," +
+  "addressee:profiles!addressee_id(id,handle,display_name,avatar_emoji,flares)";
 
 export default function FriendsPanel() {
   const { session, loading } = useSession();
@@ -114,7 +117,6 @@ export default function FriendsPanel() {
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             you are <strong style={{ color: "var(--text)" }}>@{profile.handle}</strong>
           </span>
-          <Link to="/cfb/me" style={{ marginLeft: "auto", fontSize: 11 }}>Edit profile →</Link>
         </div>
 
         <AddFriend me={me} onSent={load} known={edges} />
@@ -249,9 +251,13 @@ function PartyRow({ party, children }: { party: Party | null; children: React.Re
       padding: "4px 0", borderTop: "1px solid var(--border)",
     }}>
       <span aria-hidden style={{ fontSize: 15 }}>{party?.avatar_emoji || "🏈"}</span>
-      <span style={{ fontSize: 12, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+      <span style={{
+        fontSize: 12, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+        display: "inline-flex", alignItems: "center", gap: 5,
+      }}>
         <span style={{ fontWeight: 700 }}>{party?.display_name ?? "—"}</span>
-        <span style={{ color: "var(--muted)" }}> @{party?.handle ?? "…"}</span>
+        <Flares flares={party?.flares} size={15} />
+        <span style={{ color: "var(--muted)" }}>@{party?.handle ?? "…"}</span>
       </span>
       <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>{children}</span>
     </div>
@@ -278,8 +284,8 @@ function Group({ label, empty, children }: {
   );
 }
 
-/** A section of the dashboard, not a page: the heading above it is the
- *  dashboard's, so this is only a box. */
+/** A section of the profile page, not a page of its own: the heading above it
+ *  belongs to that page, so this is only a box. */
 function Shell({ children }: { children: React.ReactNode }) {
   return <div style={{ display: "grid", gap: 10, minWidth: 0 }}>{children}</div>;
 }
