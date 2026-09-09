@@ -1650,6 +1650,310 @@ app.use("/api/portfolio", supabaseAuth);
 function supaUserOf(req) {
     return req.supaUser ?? null;
 }
+// ============================================================================
+// USER-LINKED KALSHI ACCOUNTS — a signed-in user trading their OWN account
+//
+// Owner decision 2026-09-08. Until now the only traders were the env-declared
+// PORTAL_ACCOUNTS (a password, or a uid named in CFB_PORTAL_OWNERS). A user
+// may now link their own Kalshi API key from the dashboard, and every rail in
+// this file then applies to them unchanged, keyed by the account id
+// `u:<uid>`.
+//
+// FIVE rules, each of which is a way to lose someone else's money if it is
+// wrong:
+//
+//  1. THE PEM IS ENCRYPTED AT REST AND NEVER LEAVES THE SERVER. AES-256-GCM
+//     under KALSHI_CRED_SECRET (base64, 32 bytes), a fresh 12-byte IV per
+//     write. No route returns it, in any form, to anyone — not even its
+//     owner. The key id is returned MASKED (last 4).
+//  2. NO SECRET, NO FEATURE. Without KALSHI_CRED_SECRET (or without Supabase)
+//     the linking endpoints answer 503 and NOTHING else in this file changes:
+//     no dynamic accounts exist, so the portal is exactly the env-declared
+//     one it has always been.
+//  3. A LINK IS PROVEN BEFORE IT IS STORED. The PEM must parse, and the pair
+//     must fetch that account's own Kalshi balance. An unproven key would
+//     otherwise sit in the database looking linked and fail at the worst
+//     possible moment — the first order.
+//  4. EVERY LINKED USER IS DRY-RUN until the owner flips ONE env switch
+//     (CFB_ORDERS_LIVE_USERS=1), exactly like a new suffixed account waits on
+//     its own CFB_ORDERS_LIVE_<SFX>. Staging is never inherited by accident.
+//  5. CFB_PORTAL_OWNERS STILL WINS. A uid named there resolves to that
+//     env-declared account and its credentials, whatever else it may have
+//     linked — the owner's book must never be reachable through a row in a
+//     table.
+//
+// The KeyObject is cached in memory per uid for 10 minutes. The PEM TEXT is
+// never cached: it exists as a string for the few lines between decryption
+// and crypto.createPrivateKey, and nowhere else.
+// ============================================================================
+const CRED_SECRET = (() => {
+    const raw = (process.env.KALSHI_CRED_SECRET || "").trim();
+    if (!raw)
+        return null;
+    let b;
+    try {
+        b = Buffer.from(raw, "base64");
+    }
+    catch {
+        b = Buffer.alloc(0);
+    }
+    if (b.length !== 32) {
+        console.error("[link] KALSHI_CRED_SECRET is not 32 base64 bytes — " +
+            "user Kalshi linking stays DISABLED");
+        return null;
+    }
+    return b;
+})();
+/** Linking is only possible with BOTH halves: a place to put the row and a
+ *  key to encrypt it with. */
+const LINK_ENABLED = Boolean(supa && CRED_SECRET);
+if (supa) {
+    console.log("[link] user Kalshi linking:", LINK_ENABLED
+        ? `enabled (${process.env.CFB_ORDERS_LIVE_USERS === "1" ? "orders LIVE" : "staged"})`
+        : "disabled (no KALSHI_CRED_SECRET)");
+}
+function credEncrypt(plain) {
+    const iv = crypto.randomBytes(12);
+    const c = crypto.createCipheriv("aes-256-gcm", CRED_SECRET, iv);
+    const ct = Buffer.concat([c.update(plain, "utf8"), c.final()]);
+    return {
+        pem_ct: ct.toString("base64"),
+        iv: iv.toString("base64"),
+        tag: c.getAuthTag().toString("base64"),
+    };
+}
+/** Throws on a wrong secret or a tampered row — GCM authenticates, so a
+ *  silent wrong answer is not one of the outcomes. */
+function credDecrypt(row) {
+    const d = crypto.createDecipheriv("aes-256-gcm", CRED_SECRET, Buffer.from(row.iv, "base64"));
+    d.setAuthTag(Buffer.from(row.tag, "base64"));
+    return Buffer.concat([
+        d.update(Buffer.from(row.pem_ct, "base64")), d.final(),
+    ]).toString("utf8");
+}
+/** Last 4 of the key id, and nothing else, ever. */
+const maskKeyId = (k) => (k.length <= 4 ? "…" : "…" + k.slice(-4));
+const LINK_CACHE_TTL_MS = 10 * 60_000;
+/** uid -> the resolved account (KeyObject in memory), "unreadable" when the
+ *  row will not decrypt, or null for "no link". */
+const linkedCache = new Map();
+const linkedCacheDrop = (uid) => { linkedCache.delete(uid); };
+async function linkedAccountFor(uid) {
+    if (!LINK_ENABLED || !uid)
+        return null;
+    const hit = linkedCache.get(uid);
+    if (hit && Date.now() - hit.at < LINK_CACHE_TTL_MS)
+        return hit.acct;
+    let acct = null;
+    try {
+        const { data, error } = await supa
+            .from("kalshi_credentials")
+            .select("key_id, pem_ct, iv, tag, created_at")
+            .eq("user_id", uid)
+            .maybeSingle();
+        if (error)
+            throw new Error(error.message);
+        const row = data;
+        if (row) {
+            let key = null;
+            try {
+                // The PEM lives as a string for exactly this one expression.
+                key = crypto.createPrivateKey(credDecrypt(row));
+            }
+            catch (err) {
+                console.error("[link] credential unreadable for", uid, "-", err?.message ?? err);
+                key = null;
+            }
+            if (!key) {
+                acct = "unreadable";
+            }
+            else {
+                let label = "";
+                try {
+                    const { data: prof } = await supa
+                        .from("profiles").select("handle").eq("id", uid).maybeSingle();
+                    label = String(prof?.handle || "");
+                }
+                catch { /* a missing label is cosmetic */ }
+                acct = {
+                    // NOT in PORTAL_ACCOUNTS and never password-reachable: the gate's
+                    // timing-safe loop only walks that array, and this account's
+                    // password is "" — which nothing can send as a header and match.
+                    id: `u:${uid}`,
+                    label: label || `user ${uid.slice(0, 8)}`,
+                    password: "",
+                    keyId: row.key_id,
+                    pemInline: "", pemPath: "",
+                    key,
+                    ordersLive: process.env.CFB_ORDERS_LIVE_USERS === "1",
+                };
+            }
+        }
+    }
+    catch (err) {
+        // A lookup OUTAGE is not "no link": do not cache it, so the next request
+        // retries instead of telling a linked trader for ten minutes that they
+        // have no account.
+        console.warn("[link] credential lookup failed:", err?.message ?? err);
+        return null;
+    }
+    linkedCache.set(uid, { at: Date.now(), acct });
+    return acct;
+}
+/**
+ * Resolves the request's linked account BEFORE `portalGate` runs, because the
+ * gate is synchronous and this read is not. Owners are skipped entirely: a uid
+ * in CFB_PORTAL_OWNERS is that env account and nothing else (rule 5).
+ */
+async function portalLinkedUser(req, _res, next) {
+    if (!LINK_ENABLED) {
+        next();
+        return;
+    }
+    const uid = supaUserOf(req)?.id;
+    if (uid && !PORTAL_OWNER_UIDS.has(uid)) {
+        try {
+            req.portalLinked = await linkedAccountFor(uid);
+        }
+        catch { /* never block a request on the accounts layer */ }
+    }
+    next();
+}
+app.use("/api/portfolio", portalLinkedUser);
+function portalLinkedOf(req) {
+    return req.portalLinked ?? null;
+}
+/* --------------------------- the linking endpoints ------------------------ */
+// All three require a VERIFIED Supabase user and touch only that user's own
+// row. They are mounted on /api/me, which gets the same JWT middleware the
+// portal family does.
+app.use("/api/me", supabaseAuth);
+/** 503 / 401 in one place, so no linking route can forget either. */
+function linkGate(req, res) {
+    res.set("Cache-Control", "no-store");
+    if (!LINK_ENABLED) {
+        res.status(503).json({ error: "linking_not_configured" });
+        return null;
+    }
+    const user = supaUserOf(req);
+    if (!user) {
+        res.status(401).json({ error: "sign_in_required" });
+        return null;
+    }
+    return user;
+}
+app.get("/api/me/kalshi", asyncRoute(async (req, res) => {
+    const user = linkGate(req, res);
+    if (!user)
+        return;
+    const { data, error } = await supa
+        .from("kalshi_credentials")
+        .select("key_id, created_at")
+        .eq("user_id", user.id)
+        .maybeSingle();
+    if (error) {
+        res.status(500).json({ error: "lookup_failed" });
+        return;
+    }
+    const row = data;
+    res.json({
+        linked: Boolean(row),
+        key_id_masked: row ? maskKeyId(row.key_id) : null,
+        linked_at: row?.created_at ?? null,
+        orders_live: process.env.CFB_ORDERS_LIVE_USERS === "1",
+    });
+}));
+/** A PEM is a couple of kilobytes. Anything materially larger is not a key. */
+const LINK_MAX_PEM = 16_000;
+app.post("/api/me/kalshi", asyncRoute(async (req, res) => {
+    const user = linkGate(req, res);
+    if (!user)
+        return;
+    // The body parser is mounted app-wide at 128kb, so the small limit this
+    // route wants is enforced here rather than by a second parser that would
+    // find the body already read.
+    const len = Number(req.header("content-length") || 0);
+    if (len > 64_000) {
+        res.status(413).json({ error: "too_large" });
+        return;
+    }
+    const body = (req.body ?? {});
+    const keyId = String(body.key_id ?? "").trim();
+    const pem = String(body.pem ?? "");
+    const label = body.label == null ? null : String(body.label).slice(0, 60);
+    if (!keyId || keyId.length > 120) {
+        res.status(400).json({ error: "bad_key_id" });
+        return;
+    }
+    if (!pem || pem.length > LINK_MAX_PEM || !pem.includes("BEGIN")) {
+        res.status(400).json({ error: "bad_pem" });
+        return;
+    }
+    // 1. It has to BE a private key.
+    let key;
+    try {
+        key = crypto.createPrivateKey(pem);
+    }
+    catch {
+        res.status(400).json({ error: "bad_pem" });
+        return;
+    }
+    // 2. THE PAIR HAS TO WORK. One signed read of this account's own balance,
+    //    through the same portalGet every other signed read uses — an unproven
+    //    key would otherwise fail for the first time on an order.
+    const probe = {
+        id: `u:${user.id}`, label: "probe", password: "",
+        keyId, pemInline: "", pemPath: "", key,
+        ordersLive: false,
+    };
+    try {
+        await portalGet(probe, "/portfolio/balance");
+    }
+    catch (err) {
+        console.warn("[link] balance probe rejected for", user.id, "-", err?.message ?? err);
+        res.status(400).json({ error: "kalshi_rejected" });
+        return;
+    }
+    // 3. Only now does anything get stored.
+    const enc = credEncrypt(pem);
+    const { error } = await supa.from("kalshi_credentials").upsert({
+        user_id: user.id, key_id: keyId, label,
+        pem_ct: enc.pem_ct, iv: enc.iv, tag: enc.tag,
+        updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+    if (error) {
+        console.error("[link] store failed:", error.message);
+        res.status(500).json({ error: "store_failed" });
+        return;
+    }
+    // is_trader is SERVER-set by design (the profiles trigger refuses a client
+    // write), and this is the server saying so.
+    const { error: tErr } = await supa
+        .from("profiles").update({ is_trader: true }).eq("id", user.id);
+    if (tErr)
+        console.warn("[link] is_trader update failed:", tErr.message);
+    linkedCacheDrop(user.id);
+    console.log(`[link] user ${user.id} linked key ${maskKeyId(keyId)}`);
+    res.json({ linked: true, key_id_masked: maskKeyId(keyId), balance_ok: true });
+}));
+app.delete("/api/me/kalshi", asyncRoute(async (req, res) => {
+    const user = linkGate(req, res);
+    if (!user)
+        return;
+    const { error } = await supa
+        .from("kalshi_credentials").delete().eq("user_id", user.id);
+    if (error) {
+        res.status(500).json({ error: "unlink_failed" });
+        return;
+    }
+    const { error: tErr } = await supa
+        .from("profiles").update({ is_trader: false }).eq("id", user.id);
+    if (tErr)
+        console.warn("[link] is_trader update failed:", tErr.message);
+    linkedCacheDrop(user.id);
+    console.log(`[link] user ${user.id} unlinked`);
+    res.json({ linked: false });
+}));
 const PORTAL_MAX_FAILS = 5;
 const PORTAL_LOCK_MS = 60_000;
 let portalFails = 0;
@@ -1958,7 +2262,18 @@ const portalSettleCaches = new Map();
 function portalGate(req, res) {
     // Personal financial data: never cacheable by intermediaries.
     res.set("Cache-Control", "no-store");
-    if (!PORTAL_ACCOUNTS.length) {
+    // A user who linked their OWN Kalshi key (resolved by portalLinkedUser
+    // before this gate, because that lookup is async and this is not). A row
+    // that will not decrypt is its own answer: telling someone who IS linked
+    // that they are "not a trader" would send them hunting the wrong problem.
+    const linked = portalLinkedOf(req);
+    if (linked === "unreadable") {
+        res.status(403).json({ error: "credentials_unreadable" });
+        return null;
+    }
+    // A deployment with no env accounts is still a working portal for a linked
+    // user — "not configured" is only true when there is no way in at all.
+    if (!PORTAL_ACCOUNTS.length && !linked) {
         res.status(503).json({ error: "portal_not_configured" });
         return null;
     }
@@ -1985,6 +2300,10 @@ function portalGate(req, res) {
         const acctId = uid ? PORTAL_OWNER_UIDS.get(uid) : undefined;
         if (acctId)
             hit = PORTAL_ACCOUNTS.find((a) => a.id === acctId) ?? null;
+        // ...and only then their OWN linked account. CFB_PORTAL_OWNERS wins, so
+        // the owner's book can never be reached through a row in a table.
+        if (!hit && linked)
+            hit = linked;
         if (!hit && uid) {
             // Signed in, but a trader on no account. Say so plainly and DO NOT
             // touch the lockout counter: a signed-in stranger polling this route
