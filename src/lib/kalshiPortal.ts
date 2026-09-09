@@ -14,6 +14,7 @@
 // string split, not a name parse (the ONE name join stays in cfbNames).
 
 import { useEffect, useRef, useState } from "react";
+import { getAccessToken } from "./supabase";
 import type { KalshiGame } from "./kalshi";
 // The ONE name join (same import path TopEdges uses; served to the client
 // by Vite exactly like any src module).
@@ -775,25 +776,46 @@ export type PortalState = {
    *  read lands (or if that read fails — a settlements outage must never take
    *  the live book down with it, so it is tracked separately). */
   settlements: PortalSettlement[] | null;
-  /** "idle" = no password stored; "error" covers network/500;
-   *  "unauthorized" = wrong password (offer re-login); "locked" = too many
-   *  failed attempts, server cooling down; "unconfigured" = server has no
-   *  CFB_PORTAL_PASSWORD env yet. */
-  status: "idle" | "loading" | "ok" | "unauthorized" | "locked" | "unconfigured" | "error";
+  /** "idle" = no way in stored (no password AND nobody signed in); "error"
+   *  covers network/500; "unauthorized" = wrong password (offer re-login);
+   *  "locked" = too many failed attempts, server cooling down;
+   *  "unconfigured" = server has no CFB_PORTAL_PASSWORD env yet;
+   *  "forbidden" = signed in, but this account may not trade — either no
+   *  Kalshi account is linked to it, or the stored credential will not
+   *  decrypt. It is NOT a login failure and must never be offered a
+   *  password box. */
+  status: "idle" | "loading" | "ok" | "unauthorized" | "locked" | "unconfigured" | "forbidden" | "error";
 };
 
 /**
- * Poll the portal while a token is present. The effect depends only on the
- * token string (render-loop rule 1: primitives only in deps).
+ * THE TWO WAYS IN, in one place. The legacy portal password (`x-cfb-token`)
+ * and the signed-in user's JWT are BOTH sent when both exist: the server's
+ * `portalGate` runs its timing-safe password loop first and only then looks at
+ * the verified uid, so sending both can never change which account answers —
+ * it is what lets the owner keep the password through the cutover while a
+ * linked user gets in on the bearer alone.
  */
-export function usePortalBook(token: string): PortalState {
+async function portalHeaders(token: string): Promise<Record<string, string>> {
+  const h: Record<string, string> = {};
+  if (token) h["x-cfb-token"] = token;
+  const jwt = await getAccessToken();
+  if (jwt) h.authorization = `Bearer ${jwt}`;
+  return h;
+}
+
+/**
+ * Poll the portal while there is a way in: a stored password, or a signed-in
+ * user (whose uid may be an owner's, or may have a linked Kalshi account of
+ * their own). The effect depends only on PRIMITIVES (render-loop rule 1).
+ */
+export function usePortalBook(token: string, signedIn = false): PortalState {
   const [state, setState] = useState<PortalState>({
-    payload: null, settlements: null, status: token ? "loading" : "idle",
+    payload: null, settlements: null, status: token || signedIn ? "loading" : "idle",
   });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (!token) {
+    if (!token && !signedIn) {
       setState({ payload: null, settlements: null, status: "idle" });
       return;
     }
@@ -803,12 +825,15 @@ export function usePortalBook(token: string): PortalState {
     const pull = async () => {
       try {
         const r = await fetch("/api/portfolio/cfb", {
-          headers: { "x-cfb-token": token },
+          headers: await portalHeaders(token),
           cache: "no-store",
           signal: ac.signal,
         });
         if (!alive) return;
         if (r.status === 401) { setState({ payload: null, settlements: null, status: "unauthorized" }); return; }
+        // Signed in and refused: not a trader on any account, or a credential
+        // that will not decrypt. A password box would be the wrong offer.
+        if (r.status === 403) { setState({ payload: null, settlements: null, status: "forbidden" }); return; }
         if (r.status === 429) { setState((s) => ({ ...s, status: "locked" })); return; }
         if (r.status === 503) { setState({ payload: null, settlements: null, status: "unconfigured" }); return; }
         if (!r.ok) { setState((s) => ({ ...s, status: "error" })); return; }
@@ -827,7 +852,7 @@ export function usePortalBook(token: string): PortalState {
       // the live portal going down.
       try {
         const rs = await fetch("/api/portfolio/cfb/settlements", {
-          headers: { "x-cfb-token": token },
+          headers: await portalHeaders(token),
           cache: "no-store",
           signal: ac.signal,
         });
@@ -848,7 +873,7 @@ export function usePortalBook(token: string): PortalState {
       ac.abort();
       if (timer.current) clearInterval(timer.current);
     };
-  }, [token]);
+  }, [token, signedIn]);
 
   return state;
 }
@@ -872,18 +897,18 @@ const FRIEND_POLL_MS = 60_000;
  * keeps the last good list — the friend row going stale must never look
  * like the portal going down. Deps: the token primitive only.
  */
-export function useFriendBooks(token: string): FriendBook[] {
+export function useFriendBooks(token: string, signedIn = false): FriendBook[] {
   const [friends, setFriends] = useState<FriendBook[]>([]);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (!token) { setFriends([]); return; }
+    if (!token && !signedIn) { setFriends([]); return; }
     let alive = true;
     const ac = new AbortController();
     const pull = async () => {
       try {
         const r = await fetch("/api/portfolio/cfb/friends", {
-          headers: { "x-cfb-token": token },
+          headers: await portalHeaders(token),
           cache: "no-store",
           signal: ac.signal,
         });
@@ -901,7 +926,7 @@ export function useFriendBooks(token: string): FriendBook[] {
       ac.abort();
       if (timer.current) clearInterval(timer.current);
     };
-  }, [token]);
+  }, [token, signedIn]);
 
   return friends;
 }
