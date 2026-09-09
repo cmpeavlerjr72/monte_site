@@ -18,7 +18,7 @@ alter table public.profiles
     check (cardinality(flares) <= 3);
 
 comment on column public.profiles.flares is
-  'Cosmetic badge ids, max 3. `team:<school>` or `badge:<id>`; resolved for display by src/lib/flares.ts.';
+  'Cosmetic school flares, max 3, each `team:<school>` (FBS or FCS); resolved for display by src/lib/flares.ts.';
 
 -- The units migration revoked the table-level SELECT and re-granted column by
 -- column, so a NEW column is unreadable to clients until it is named here.
