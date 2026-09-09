@@ -70,6 +70,10 @@ export const KALSHI_TEAM_ALIASES = {
     // there the same day, commit f566d2d).
     umass: "massachusetts",
     louisianamonroe: "ulmonroe",
+    // Live 2026-09-08, wk2 (user: "no markets for the App State game"): Kalshi
+    // writes "Appalachian St." where the slate says "App State". Same miss in
+    // the sim repo's TEAM_ALIAS, fixed the same night.
+    appalachianstate: "appstate",
     // Live 2026-08-30, FCS wk1 (user caught two cards without bet buttons):
     // mascot-suffixed titles on exactly these events ("Chicago State
     // Cougars", "West Florida Argonauts") — Kalshi appends mascots on SOME
