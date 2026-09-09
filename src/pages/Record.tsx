@@ -4,7 +4,7 @@
 //
 // 2025's /cfb/results tracked one spread, one moneyline and one total per game
 // and that page is untouched. 2026 publishes THOUSANDS of priced rungs a week
-// across Kalshi team markets and game lines (player props follow in week 3),
+// across Kalshi team markets, game lines and (since week 1) DKeX player props,
 // and the owner's brief was exactly this: a record people can browse "against
 // the market in as many markets as possible" WITHOUT "the full board with
 // every single bet listed — that would get out of hand".
@@ -26,8 +26,15 @@
 //     row per ladder (`applyRung`), so 17+/21+/24+ for the same team is one
 //     bet in the record, not three. "All rungs" shows every price and the page
 //     PRINTS that those rows are correlated and n is games, not bets.
-//   • THE FRAME IS NAMED ON SCREEN. Every price, EV and unit is struck at the
-//     publish price; the close sits on each row so the move is visible.
+//   • THE FRAME IS NAMED ON SCREEN AND COMES FROM THE ROW. Kalshi rows are
+//     struck "at publish"; DKeX props at "the early DKeX price" (the first
+//     pre-kick trade captured in-week — those were never shown as picks).
+//     `frameWords` / `frameSentence` in recordData.ts own every one of those
+//     sentences; nothing here types a frame in by hand. A selection holding
+//     BOTH venues names both AND shows the per-venue split beside the blended
+//     headline, so one ROI over two frames is never the only number. DKeX
+//     publishes no fee schedule, so its units carry a "pre-fee" mark.
+//     The close sits on each row so the move is visible.
 //   • PENDING IS NOT A RESULT. Unsettled rows render with a pending word and
 //     are excluded from every number above them, and the page says how many.
 //
@@ -43,8 +50,9 @@ import { cfbNameKey } from "../../server/cfbNames";
 import { FBS_CONFERENCE } from "../lib/fbsConferences";
 import {
   applyFilters, applyRung, baseMarket, betWords, calibration, calibrationMiss,
-  cents, ladderOf, loadRecord, marketWords, PERIOD_WORDS, periodOf, PRICE_BANDS,
-  RecordNotPublished, signed, summarize, UNDERPOWERED, weekLine,
+  cents, frameSentence, frameWords, isPreFee, ladderOf, loadRecord, marketWords,
+  PERIOD_WORDS, periodOf, PREFEE_TIP, PRICE_BANDS, RecordNotPublished, signed,
+  summarize, UNDERPOWERED, venuesOf, venueWords, weekLine,
   type CalibrationBucket, type EvMode, type RecordFilters, type RecordLoad,
   type RecordRow, type RungMode,
 } from "../lib/recordData";
@@ -97,6 +105,22 @@ function Tile({ label, value, tone, note }: {
       <div className="rec__tileValue" style={tone ? { color: tone } : undefined}>{value}</div>
       {note && <div className="rec__tileNote">{note}</div>}
     </div>
+  );
+}
+
+/** A player row is about ONE school, so it badges that school rather than the
+ *  matchup. Falls back to the matchup when the name does not resolve to a
+ *  logo — a missing asset must not cost the row its context. */
+function SubjectLogo({ team, subject, size = 20 }: {
+  team: string; subject: string; size?: number;
+}) {
+  const src = getTeamLogo(team);
+  if (!src) return null;
+  const label = `${subject} · ${team}`;
+  return (
+    <span className="rec__logos" title={label} aria-label={label} role="img">
+      <img src={src} alt="" width={size} height={size} />
+    </span>
   );
 }
 
@@ -163,7 +187,7 @@ function CalTip({ active, payload }: any) {
   );
 }
 
-function Calibration({ rows }: { rows: RecordRow[] }) {
+function Calibration({ rows, frame }: { rows: RecordRow[]; frame: string }) {
   const [numbers, setNumbers] = useState(false);
   const buckets = useMemo<CalPoint[]>(
     () => calibration(rows).map((b) => ({ ...b, hitPowered: b.underpowered ? null : b.hit })),
@@ -223,6 +247,7 @@ function Calibration({ rows }: { rows: RecordRow[] }) {
               ))}
             </tbody>
           </table>
+          <div className="rec__caption">These bets are priced {frame}.</div>
         </div>
       ) : (
         <>
@@ -267,7 +292,8 @@ function Calibration({ rows }: { rows: RecordRow[] }) {
             The straight line is perfect: a dot above it means we won more often
             than we said, below it means we said too much. {powered === 0
               ? <>No bucket has reached {UNDERPOWERED} settled bets yet, so every dot here is hollow — noise, not a finding.</>
-              : <>Hollow dots are buckets under {UNDERPOWERED} settled bets: noise, not a finding, and the line skips them.</>}
+              : <>Hollow dots are buckets under {UNDERPOWERED} settled bets: noise, not a finding, and the line skips them.</>}{" "}
+            These bets are priced {frame}.
           </div>
         </>
       )}
@@ -289,7 +315,7 @@ function WeekTip({ active, payload }: any) {
   );
 }
 
-function RunningLine({ rows }: { rows: RecordRow[] }) {
+function RunningLine({ rows, frame, fee }: { rows: RecordRow[]; frame: string; fee: string }) {
   const points = useMemo(() => weekLine(rows).filter((p) => p.scored > 0), [rows]);
   if (points.length === 0) return null;
   if (points.length === 1) {
@@ -297,7 +323,7 @@ function RunningLine({ rows }: { rows: RecordRow[] }) {
     return (
       <div className="rec__caption">
         Week {p.week} is the only settled week so far: {signed(p.units)} units on{" "}
-        {p.scored} bets. The running line starts once a second week settles.
+        {p.scored} bets, {frame}. The running line starts once a second week settles.
       </div>
     );
   }
@@ -325,7 +351,7 @@ function RunningLine({ rows }: { rows: RecordRow[] }) {
         </div>
       </div>
       <div className="rec__caption">
-        Running units, 1 unit a bet, fee-inclusive at the publish price:{" "}
+        Running units, 1 unit a bet, {fee}, {frame}:{" "}
         {points.map((p) => `wk${p.week} ${signed(p.units)}u`).join(" · ")}.
       </div>
     </>
@@ -345,7 +371,9 @@ function LadderLine({ rung, shown }: { rung: RecordRow; shown: boolean }) {
       <span className="rec__rungNums">
         <span title="Our simulated probability of this side">{(rung.pShown * 100).toFixed(0)}%</span>
         <span className="rec__dot" aria-hidden>·</span>
-        <span title="The price when we published it">{cents(rung.price_publish)}</span>
+        <span title={`The price this rung is graded at — ${frameWords(rung)}`}>
+          {cents(rung.price_publish)}
+        </span>
         <span className="rec__dot" aria-hidden>·</span>
         <span title="The price at the close" className="rec__muted">
           close {cents(rung.price_close)}
@@ -373,9 +401,13 @@ function Row({ row, ladder, open, onToggle, showLadder }: {
   showLadder: boolean;
 }) {
   const move = row.price_close != null ? row.price_close - row.price_publish : null;
+  const player = row.family === "player";
+  const preFee = isPreFee(row);
   const meta: string[] = [
     `we said ${(row.pShown * 100).toFixed(0)}%`,
-    `${cents(row.price_publish)} at publish`,
+    // The frame is the ROW's, never a constant: a DKeX prop was never posted
+    // at a publish price and must not be described as if it were.
+    `${cents(row.price_publish)} ${frameWords(row)}`,
   ];
   if (row.price_close != null) {
     meta.push(`close ${cents(row.price_close)}${
@@ -390,13 +422,24 @@ function Row({ row, ladder, open, onToggle, showLadder }: {
               aria-expanded={showLadder ? open : undefined}
               title={showLadder ? "Tap to open the whole ladder" : `${row.away} at ${row.home}`}>
         <span className="rec__betLine">
-          <MatchupLogos home={row.home} away={row.away} />
+          {player && row.subject_team && getTeamLogo(row.subject_team)
+            ? <SubjectLogo team={row.subject_team} subject={row.subject ?? row.subject_team} />
+            : <MatchupLogos home={row.home} away={row.away} />}
           <span className="rec__bet">{betWords(row)}</span>
           {row.starred && (
-            <span className="rec__star" title="Published as a pick" aria-label="published pick">★</span>
+            <span className="rec__star"
+                  title={row.published === false
+                    ? "Would have been a ★ pick by the same rule; not shown on the site that week"
+                    : "Published as a pick"}
+                  aria-label={row.published === false ? "would have been a published pick" : "published pick"}>
+              ★
+            </span>
           )}
           {(row.ev_publish ?? -1) > 0 && !row.starred && (
-            <span className="rec__chip" title="Positive fee-inclusive EV at the publish price">+EV</span>
+            <span className="rec__chip"
+                  title={preFee
+                    ? `Positive edge ${frameWords(row)}, before any fee`
+                    : `Positive fee-inclusive EV ${frameWords(row)}`}>+EV</span>
           )}
           {row.flags.map((f) => (
             <span key={f} className="rec__chip rec__chip--flag" title="Flagged by the publisher">{f}</span>
@@ -416,10 +459,15 @@ function Row({ row, ladder, open, onToggle, showLadder }: {
             {row.result}
           </span>
         ) : (
-          <span className="rec__units" style={{ color: toneOf(row.pnl_per_dollar) }}
-                title={`${row.result} · 1 unit staked at ${cents(row.price_publish)}, fee-inclusive`}>
-            {signed(row.pnl_per_dollar)}u
-          </span>
+          <>
+            <span className="rec__units" style={{ color: toneOf(row.pnl_per_dollar) }}
+                  title={`${row.result} · 1 unit staked at ${cents(row.price_publish)} ${frameWords(row)}, ${preFee ? "before fees" : "fee-inclusive"}`}>
+              {signed(row.pnl_per_dollar)}u
+            </span>
+            {preFee && (
+              <span className="rec__prefee" title={PREFEE_TIP}>pre-fee</span>
+            )}
+          </>
         )}
       </span>
 
@@ -429,6 +477,7 @@ function Row({ row, ladder, open, onToggle, showLadder }: {
             The whole ladder — {ladder.length} priced rung{ladder.length === 1 ? "" : "s"} on{" "}
             {row.subject ? `${row.subject} ` : ""}{marketWords(row.market).toLowerCase()},{" "}
             {row.away} at {row.home}. One opinion at several prices, so the record counts it once.
+            {" "}Priced {frameWords(row)}.
           </div>
           {ladder.map((r) => <LadderLine key={r.id} rung={r} shown={r.id === row.id} />)}
         </div>
@@ -547,6 +596,54 @@ export default function Record() {
   );
 
   const sum = useMemo(() => summarize(selection), [selection]);
+
+  /* THE FRAME OF THIS SELECTION, and — when it holds two — the split.
+     A blended ROI over a Kalshi publish price and a DKeX in-week trade is one
+     number describing two frames, so the headline never stands alone. */
+  const venues = useMemo(() => venuesOf(selection), [selection]);
+  const frame = useMemo(() => frameSentence(venues), [venues]);
+  const venueSplit = useMemo(
+    () => (venues.length > 1
+      ? venues.map((v) => ({
+          venue: v,
+          sum: summarize(selection.filter((r) => (r.venue ?? "kalshi") === v)),
+        }))
+      : []),
+    [venues, selection],
+  );
+
+  /* The exporter's own fine print for a family in play, shown verbatim. */
+  const familyNotes = useMemo(() => {
+    const fams = new Set(selection.map((r) => r.family));
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const w of load?.weeks ?? []) {
+      for (const [fam, note] of Object.entries(w.families_note ?? {})) {
+        if (!fams.has(fam as RecordRow["family"]) || !note || seen.has(note)) continue;
+        seen.add(note);
+        out.push(note);
+      }
+    }
+    return out;
+  }, [load, selection]);
+
+  /* A venue with ONE traded price makes the better side +EV by construction,
+     so "+EV only" is not a filter there — it is nearly the whole book. */
+  const evDegenerate = ev === "pos" && venues.length === 1 && venues[0] === "dkex";
+
+  /* Units are fee-inclusive except where the venue publishes no fee schedule,
+     and the sentence has to say which of the three cases this selection is. */
+  const preFee = useMemo(() => {
+    const scored = selection.filter((r) => r.pnl_per_dollar != null);
+    const n = scored.filter((r) => isPreFee(r)).length;
+    return { any: n > 0, all: n > 0 && n === scored.length };
+  }, [selection]);
+  const feeWords = preFee.all
+    ? "before fees"
+    : preFee.any
+      ? "fee-inclusive where the venue publishes a schedule"
+      : "fee-inclusive";
+
   const thisWeek = useMemo(() => {
     const points = weekLine(selection).filter((p) => p.scored > 0);
     return points.length ? points[points.length - 1] : null;
@@ -604,8 +701,8 @@ export default function Record() {
         <div className="rec__headWords">
           <h1 className="rec__h1">{SEASON} record</h1>
           <div className="rec__sub">
-            Every bet we published, priced against the market and graded{" "}
-            <strong>at the publish price</strong>
+            Every bet we priced against the market, graded{" "}
+            <strong>{frame}</strong>
             {latestWeek?.publish_utc ? <> · through week {latestWeek.week}, published {fmtDate(latestWeek.publish_utc)}</> : null}
             {load?.weeks[0]?.engine_tag ? <> · engine {load.weeks[load.weeks.length - 1].engine_tag}</> : null}
           </div>
@@ -617,26 +714,33 @@ export default function Record() {
 
       {help && (
         <div className="rec__defs" role="region" aria-label="Definitions">
-          <p><strong>At the publish price.</strong> Every price, edge and unit
-            here is struck at the price when we published the bet — bets go in
-            early in the week, so that is the number we are graded on. The
-            close sits on every row so you can see how the market moved after.</p>
+          <p><strong>The price frame, and it is on every row.</strong> A Kalshi
+            row is struck at the price when we published the bet — bets go in
+            early in the week, so that is the number we are graded on. A DKeX
+            player prop was never posted as a pick: it is struck at the first
+            pre-kick price we captured in-week, and every row that says{" "}
+            <em>at the early DKeX price</em> means exactly that. The close sits
+            on every row so you can see how the market moved after.</p>
           <p><strong>One unit a bet, fee-inclusive.</strong> Every bet stakes
             one unit. A winner returns (1 − price) ÷ price units, less the
             exchange fee; a loser returns −1. ROI is net units ÷ bets settled,
-            and the fee is always in it.</p>
+            and the fee is always in it — <strong>except on DKeX</strong>, which
+            publishes no fee schedule, so those units are marked{" "}
+            <em>pre-fee</em>. A 2% fee would move that ROI about −2 points.</p>
           <p><strong>Units are counted once per ladder.</strong> "17+", "21+"
             and "24+" points for the same team are three prices on ONE opinion.
             Main line and Best EV each show one row per ladder, so the record
             counts it once. All rungs shows every price — those rows are
             correlated, and the n there is games, not independent bets.</p>
           <p><strong>Main line, Best EV.</strong> Main line is the rung priced
-            nearest 50¢. Best EV is the rung with the highest fee-inclusive
-            edge at the publish price, and it is the default whenever you filter
-            to +EV or ★.</p>
-          <p><strong>+EV and ★.</strong> +EV is any rung whose fee-inclusive
-            edge at the publish price was above zero. ★ is the smaller set we
-            actually published as picks.</p>
+            nearest 50¢. Best EV is the rung with the highest edge in its own
+            price frame, and it is the default whenever you filter to +EV or ★.</p>
+          <p><strong>+EV and ★.</strong> +EV is any rung whose edge in its own
+            frame was above zero — on DKeX, where one traded price prices both
+            sides, that is true of the better side by construction, so it is
+            barely a filter there. ★ is the smaller set the same rule picked as
+            bets; on the week-1 props it marks what <em>would</em> have been a
+            pick, since those were not shown on the site that week.</p>
           <p><strong>Thin buckets.</strong> A calibration bucket under{" "}
             {UNDERPOWERED} settled bets is drawn hollow and labelled: it is
             noise, not a finding.</p>
@@ -651,7 +755,14 @@ export default function Record() {
         <label className="rec__f">
           <span>Family</span>
           <select className="ui-sel" value={family}
-                  onChange={(e) => { setFamily(e.target.value as RecordFilters["family"]); setMarket("all"); setPeriod("all"); }}>
+                  onChange={(e) => {
+                    setFamily(e.target.value as RecordFilters["family"]);
+                    setMarket("all");
+                    // Back to the page default (Full game), not "all periods":
+                    // player props carry no period prefix, so "" is the only
+                    // period they have and it must stay selected for them.
+                    setPeriod("");
+                  }}>
             <option value="all">All</option>
             <option value="team">Team</option>
             <option value="game">Game</option>
@@ -681,7 +792,7 @@ export default function Record() {
           <select className="ui-sel" value={ev} onChange={(e) => setEvMode(e.target.value as EvMode)}>
             <option value="all">All bets</option>
             <option value="pos">+EV only</option>
-            <option value="star">★ published picks</option>
+            <option value="star">★ picks</option>
           </select>
         </label>
         <label className="rec__f">
@@ -730,17 +841,13 @@ export default function Record() {
         </label>
       </div>
 
-      {family === "player" ? (
-        <section className="rec__panel">
-          <div className="rec__empty">
-            The props record starts week 3. Player props are priced but not yet
-            published as a graded ledger, so there is nothing honest to show
-            here — team and game markets are above.
-          </div>
-        </section>
-      ) : (
-        <>
-          {/* -------------------------------- THE VERDICT -------------------- */}
+      {/* The exporter's own fine print for a family in play, verbatim and
+          muted, directly under the selectors that put it there. */}
+      {familyNotes.map((note) => (
+        <div key={note} className="rec__famNote">{note}</div>
+      ))}
+
+      {/* -------------------------------- THE VERDICT -------------------- */}
           <section className="rec__panel rec__verdict">
             <div className="rec__heroWrap">
               <div className="rec__heroLabel">
@@ -753,15 +860,45 @@ export default function Record() {
                 {sum.scored
                   ? <><strong>{sum.wins}–{sum.losses}{sum.pushes ? `–${sum.pushes}` : ""}</strong>{" "}
                       · {signed(sum.units)} units on {sum.scored.toLocaleString()} bets at 1 unit each,
-                      fee-inclusive, at the publish price</>
+                      {" "}{feeWords}, {frame}</>
                   : <>No bet in this selection has settled yet.</>}
               </div>
             </div>
 
+            {/* TWO FRAMES, TWO NUMBERS. The blended headline above is honest
+                arithmetic but it is not one book: these tiles keep the reader
+                from ever seeing it as the only number. */}
+            {venueSplit.length > 1 && (
+              <div className="rec__split">
+                {venueSplit.map(({ venue, sum: s }) => (
+                  <div key={venue} className="rec__splitTile">
+                    <span className="rec__splitName">
+                      {venueWords(venue)}
+                      {venue === "dkex" ? " · early price" : " · at publish"}
+                    </span>
+                    <span className="rec__splitRoi"
+                          style={{ color: s.roi == null ? "var(--muted)" : toneOf(s.roi) }}>
+                      {s.roi == null
+                        ? "—"
+                        : `${s.roi > 0 ? "+" : s.roi < 0 ? "−" : ""}${Math.abs(s.roi * 100).toFixed(1)}%`}
+                    </span>
+                    <span className="rec__splitN">
+                      {s.scored.toLocaleString()} settled · {signed(s.units)}u
+                      {venue === "dkex" ? " · pre-fee" : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="rec__tiles">
               <Tile label="Units" value={sum.scored ? `${signed(sum.units)}u` : "—"}
                     tone={sum.scored ? toneOf(sum.units) : undefined}
-                    note="1 unit a bet, net of fees" />
+                    note={preFee.all
+                      ? "1 unit a bet · DKeX, pre-fee"
+                      : preFee.any
+                        ? "1 unit a bet · DKeX rows pre-fee"
+                        : "1 unit a bet, net of fees"} />
               <Tile label={thisWeek ? `Week ${thisWeek.week}` : "Latest week"}
                     value={thisWeek ? `${signed(thisWeek.units)}u` : "—"}
                     tone={thisWeek ? toneOf(thisWeek.units) : undefined}
@@ -773,9 +910,18 @@ export default function Record() {
                     note="not in these numbers" />
             </div>
 
-            <RunningLine rows={selection} />
+            <RunningLine rows={selection} frame={frame} fee={feeWords} />
 
             <div className="rec__notes">
+              {evDegenerate && (
+                <div className="rec__warn">
+                  <strong>+EV is not much of a filter on DKeX.</strong> One traded
+                  price prices both sides there, so whichever side our number
+                  prefers is +EV by construction. Nothing is hidden — read this
+                  selection as the whole book, not as a screened one. The ★ set
+                  is the screened one.
+                </div>
+              )}
               {allRungs && (
                 <div className="rec__warn">
                   All rungs is showing every priced rung. <strong>The rungs of one
@@ -809,7 +955,7 @@ export default function Record() {
           </section>
 
           {/* ---------------------------- THE CALIBRATION -------------------- */}
-          <Calibration rows={selection} />
+          <Calibration rows={selection} frame={frame} />
 
           {/* --------------------------------- THE ROWS ---------------------- */}
           <section className="rec__panel">
@@ -861,9 +1007,7 @@ export default function Record() {
                 )}
               </>
             )}
-          </section>
-        </>
-      )}
+      </section>
     </div>
   );
 }

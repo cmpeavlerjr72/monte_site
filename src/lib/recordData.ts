@@ -18,9 +18,13 @@
 //      "Best EV" each select exactly ONE row per ladder and the units are
 //      counted once; "All rungs" shows every priced rung and the page has to
 //      SAY that n is games, not bets.
-//   2. THE PRICE FRAME IS THE PUBLISH PRICE. Every EV, unit and ROI on the
-//      page is struck at `price_publish` (the standing rule: bets go in
-//      Mon/Tue/Wed, so the number we publish is the number we are graded on).
+//   2. THE PRICE FRAME IS NAMED, AND IT COMES FROM THE ROW. Every EV, unit and
+//      ROI is struck at `price_publish` (the standing rule: bets go in
+//      Mon/Tue/Wed, so the number we publish is the number we are graded on) —
+//      but WHAT that price is differs by venue: a Kalshi row's is the publish
+//      price, a DKeX prop's is the first pre-kick trade captured in-week
+//      (`price_frame: "early"`). `frameWords`/`frameSentence` below own the
+//      wording; nothing on the page may type a frame in by hand.
 //      `price_close` is carried per row so a reader can see the move; it is
 //      never the frame.
 //   3. ROI IS FEE-INCLUSIVE (standing rule 2026-08-28). The exporter's
@@ -52,8 +56,10 @@ export type RecordRow = {
   home: string;
   away: string;
   kickoff_utc?: string | null;
-  /** The team a team-family row is about; null on game lines. */
+  /** The team a team-family row is about, the PLAYER on a player row; null on game lines. */
   subject?: string | null;
+  /** The school a player row's subject plays for. Player family only. */
+  subject_team?: string | null;
   ladder_id: string;
   strike?: number | null;
   rung_label: string;
@@ -74,8 +80,20 @@ export type RecordRow = {
   result: RecordResult | null;
   pnl_per_dollar?: number | null;
   settled_utc?: string | null;
+  /** "publish" (Kalshi) | "early" (DKeX, captured in-week). NEVER a constant on screen. */
   price_frame?: string;
+  /** "kalshi" | "dkex". The venue OWNS the frame words — see `frameWords`. */
   venue?: string;
+  /**
+   * Was this row shown as a pick on the site that week? Team/game rows were;
+   * the week-1 DKeX props were priced but never displayed, so the ★ on those
+   * rows means "would have been a pick by the same rule", not "we posted it".
+   * Absent in files written before the flag existed = published.
+   */
+  published?: boolean;
+  /** "none_published_prefee" = the venue publishes no fee schedule, so the
+   *  row's `pnl_per_dollar` is PRE-FEE and has to say so wherever it shows. */
+  fee_model?: string | null;
   /* ---- filled in by the loader, never by the exporter ---- */
   /** Week number this row was published in. */
   week: number;
@@ -94,6 +112,8 @@ export type RecordWeek = {
   settled_rows: number;
   unsettled_rows: number;
   families?: { team?: number; game?: number; player?: number };
+  /** Per-family fine print the exporter wants on screen, keyed by family. */
+  families_note?: Partial<Record<RecordFamily, string>>;
   rows: RecordRow[];
 };
 
@@ -186,6 +206,8 @@ function parseRow(raw: any, week: number, orient: "flip" | "asis"): RecordRow | 
     away: String(raw.away ?? ""),
     kickoff_utc: raw.kickoff_utc ?? null,
     subject: raw.subject == null || raw.subject === "" ? null : String(raw.subject),
+    subject_team:
+      raw.subject_team == null || raw.subject_team === "" ? null : String(raw.subject_team),
     ladder_id,
     strike: num(raw.strike),
     rung_label: String(raw.rung_label ?? raw.strike ?? "").trim(),
@@ -206,7 +228,10 @@ function parseRow(raw: any, week: number, orient: "flip" | "asis"): RecordRow | 
     pnl_per_dollar: num(raw.pnl_per_dollar),
     settled_utc: raw.settled_utc ?? null,
     price_frame: raw.price_frame ? String(raw.price_frame) : "publish",
-    venue: raw.venue ? String(raw.venue) : "kalshi",
+    venue: raw.venue ? String(raw.venue).toLowerCase() : "kalshi",
+    // A file written before the flag existed is the published board.
+    published: raw.published === undefined || raw.published === null ? true : Boolean(raw.published),
+    fee_model: raw.fee_model == null || raw.fee_model === "" ? null : String(raw.fee_model),
     week,
     pShown: side === "no" && orient === "flip" ? 1 - p_sim : p_sim,
   };
@@ -300,8 +325,20 @@ export async function loadRecordWeek(
     settled_rows: num(json?.settled_rows) ?? rows.filter((r) => r.result != null).length,
     unsettled_rows: num(json?.unsettled_rows) ?? rows.filter((r) => r.result == null).length,
     families: json?.families,
+    families_note: parseFamiliesNote(json?.families_note),
     rows,
   };
+}
+
+/** Family fine print, kept as strings and never interpreted. */
+function parseFamiliesNote(raw: any): Partial<Record<RecordFamily, string>> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Partial<Record<RecordFamily, string>> = {};
+  for (const fam of ["team", "game", "player"] as RecordFamily[]) {
+    const v = raw[fam];
+    if (typeof v === "string" && v.trim()) out[fam] = v.trim();
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /**
@@ -399,22 +436,126 @@ const WORD_FOR: Record<string, string> = {
   pts: "points",
 };
 
+/**
+ * Player-prop keys read badly through the prettifier ("anytime_td" -> "Anytime
+ * TDs", which is a different bet), so the families the props exporter writes
+ * get their words spelled out. Anything not here still falls through to the
+ * prettifier — a new key reads sensibly instead of rendering blank.
+ */
+const MARKET_WORDS: Record<string, string> = {
+  pass_yds: "Passing yards",
+  rush_yds: "Rushing yards",
+  rec_yds: "Receiving yards",
+  receptions: "Receptions",
+  pass_tds: "Passing TDs",
+  rush_tds: "Rushing TDs",
+  rec_tds: "Receiving TDs",
+  anytime_td: "Anytime TD",
+  pass_att: "Passing attempts",
+  pass_comp: "Completions",
+  rush_att: "Rushing attempts",
+  pass_ints: "Interceptions thrown",
+  longest_reception: "Longest reception",
+  longest_rush: "Longest rush",
+};
+
 export function marketWords(market: string): string {
   const base = baseMarket(market);
+  const exact = MARKET_WORDS[base.toLowerCase()];
   const words = base
     .split(/[_\s]+/)
     .filter(Boolean)
     .map((w) => WORD_FOR[w.toLowerCase()] ?? w.replace(/^./, (c) => c.toUpperCase()));
   const period = periodOf(market);
-  const label = words.join(" ").replace(/^./, (c) => c.toUpperCase());
+  const label = exact ?? words.join(" ").replace(/^./, (c) => c.toUpperCase());
   return period ? `${PERIOD_WORDS[period] ?? period.toUpperCase()} ${label.toLowerCase()}` : label;
 }
 
-/** The bet in words: what the rung label already says, with the side spelled out. */
+/**
+ * The bet in words.
+ *
+ * `rung_label` is ALREADY written for the SHOWN side — that is the exporter's
+ * contract, and it is checkable against the number printed beside it: the NO
+ * row labelled "Rutgers under 30.5 points" carries `p_sim` 0.191, which is
+ * P(under), not P(31+). Measured across the whole of week 1, every one of the
+ * 5,292 NO rows names the NO side in its own label: team and player rows say
+ * "under …" / "not to score …" (853/853 and 1,316/1,316), game rows either
+ * say "NOT (…)" (1,600) or name the dog side of a home-perspective spread
+ * ("Massachusetts +10.5 (1H)", 1,523).
+ *
+ * So the old `NO ${label}` prefix double-negated every NO row on the page —
+ * printing "NO Ben Black under 39.5 receiving yards" over "we said 74%", which
+ * is the opposite bet at a probability that belongs to the other one.
+ *
+ * The prefix survives only for a label that carries no words at all (a bare
+ * strike), where the side genuinely is not spelled out anywhere.
+ */
 export function betWords(row: RecordRow): string {
-  const label = row.rung_label || marketWords(row.market);
-  return row.side === "no" ? `NO ${label}` : label;
+  const label = row.rung_label;
+  if (label && /[a-z]/i.test(label)) return label;
+  const words = label ? `${marketWords(row.market)} ${label}` : marketWords(row.market);
+  return row.side === "no" ? `NO ${words}` : words;
 }
+
+/* ------------------------------------------------------------ price frames */
+
+/**
+ * THE FRAME COMES FROM THE ROW, NEVER FROM A CONSTANT.
+ *
+ * Until week 1 every row on this page was a Kalshi contract struck at the
+ * price we published it at, so "at the publish price" could be — and was —
+ * typed into nine places in the view. Week 1 added 1,662 DKeX player props
+ * priced at the first pre-kick trade we captured in-week (`price_frame:
+ * "early"`), which is NOT a publish price and was never posted as a pick.
+ * Printing the old sentence over those units would be the page lying about
+ * the one thing the owner's standing rule says it must always name.
+ *
+ * So: `frameWords` for a ROW (goes beside that row's price), `frameSentence`
+ * for a SELECTION (goes in the hero and the calibration caption). A selection
+ * holding both venues gets BOTH named plus the per-venue split beside the
+ * blended headline, because one ROI over two frames is not one number.
+ */
+export const VENUE_WORDS: Record<string, string> = { kalshi: "Kalshi", dkex: "DKeX" };
+
+export const venueWords = (venue?: string | null): string => {
+  const v = String(venue ?? "").toLowerCase();
+  return VENUE_WORDS[v] ?? (v ? v.toUpperCase() : "the venue");
+};
+
+/** The frame of ONE row, in the words that sit beside its price. */
+export const frameWords = (row: RecordRow): string =>
+  String(row.venue ?? "").toLowerCase() === "dkex"
+    ? "at the early DKeX price"
+    : "at publish";
+
+/** Distinct venues in a selection, Kalshi first so the wording is stable. */
+export function venuesOf(rows: RecordRow[]): string[] {
+  const set = new Set<string>();
+  for (const r of rows) set.add(String(r.venue ?? "kalshi").toLowerCase());
+  return [...set].sort((a, b) => (a === "kalshi" ? -1 : b === "kalshi" ? 1 : a.localeCompare(b)));
+}
+
+/** The frame of a SELECTION — the hero and the calibration caption. */
+export function frameSentence(venues: string[]): string {
+  if (venues.length <= 1) {
+    return (venues[0] ?? "kalshi") === "dkex"
+      ? "at the early DKeX price"
+      : "at the publish price";
+  }
+  const parts = venues.map((v) =>
+    v === "dkex" ? "DKeX at the early price" : `${venueWords(v)} at publish`);
+  return `at each bet's publish-frame price (${parts.join(", ")})`;
+}
+
+/**
+ * A venue that publishes no fee schedule cannot have its P&L struck net of
+ * one, so those units are PRE-FEE and every place they show has to say so.
+ */
+export const PREFEE_TIP =
+  "DKeX publishes no fee schedule; a 2% fee would move ROI about −2 points.";
+
+export const isPreFee = (row: RecordRow): boolean =>
+  String(row.fee_model ?? "") === "none_published_prefee";
 
 export const cents = (p: number | null | undefined): string =>
   p == null ? "—" : `${Math.round(p * 100)}¢`;
@@ -588,13 +729,19 @@ export function applyFilters(rows: RecordRow[], f: RecordFilters, confOf: (team:
     if (f.ev === "pos" && !((r.ev_publish ?? -1) > 0)) return false;
     if (f.ev === "star" && !r.starred) return false;
     if (band && !(r.price_publish >= band.lo && r.price_publish < band.hi)) return false;
-    if (f.team !== "all" && r.home !== f.team && r.away !== f.team && r.subject !== f.team) return false;
+    if (f.team !== "all" && r.home !== f.team && r.away !== f.team
+        && r.subject !== f.team && r.subject_team !== f.team) return false;
     if (f.conference !== "all") {
-      const teams = r.subject ? [r.subject] : [r.home, r.away];
+      // A player row's `subject` is a PERSON, so it never resolves to a
+      // conference — the school is `subject_team`. Reading `subject` here
+      // dropped every prop from a conference-filtered selection.
+      const teams = r.family === "player"
+        ? (r.subject_team ? [r.subject_team] : [r.home, r.away])
+        : (r.subject ? [r.subject] : [r.home, r.away]);
       if (!teams.some((t) => confOf(t) === f.conference)) return false;
     }
     if (q) {
-      const hay = `${r.rung_label} ${r.home} ${r.away} ${r.subject ?? ""} ${marketWords(r.market)}`.toLowerCase();
+      const hay = `${r.rung_label} ${r.home} ${r.away} ${r.subject ?? ""} ${r.subject_team ?? ""} ${marketWords(r.market)}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;

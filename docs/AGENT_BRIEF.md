@@ -304,8 +304,52 @@ theme's card surface). Thin calibration buckets (< 20 settled rows) are hollow
 + muted + labelled with their n — shape and words, never colour alone. The
 calibration chart is deliberately wider than a phone and scrolls inside
 `.rec__scroll` so the PAGE never scrolls sideways; "Show numbers" is its
-table-view twin. Player rows do not exist yet and the family renders an honest
-empty state rather than being hidden.
+table-view twin.
+
+**THE PLAYER FAMILY, AND TWO PRICE FRAMES (2026-09-09).** Week 1's record
+carries 1,662 DKeX player props beside the Kalshi board (`venue: "dkex"`,
+`price_frame: "early"`, `published: false`, `fee_model:
+"none_published_prefee"`, plus `subject` = the player and `subject_team` = the
+school). They render like any other family — the hard "props start week 3"
+block is gone — and four rules came in with them:
+
+- **The frame is the ROW's, never a constant.** `frameWords(row)` gives "at
+  publish" (Kalshi) or "at the early DKeX price" (the first pre-kick trade
+  captured in-week); `frameSentence(venues)` gives the selection's, and a
+  selection holding BOTH says "at each bet's publish-frame price (Kalshi at
+  publish, DKeX at the early price)" AND draws the per-venue split (`.rec__split`,
+  n + ROI each) under the hero, because one blended ROI over two frames must
+  never be the only number. Nothing in `Record.tsx` may type a frame in by hand
+  — that was nine hardcoded copies of "at the publish price" before this change.
+- **DKeX publishes no fee schedule**, so its `pnl_per_dollar` is PRE-FEE:
+  `isPreFee(row)` marks those units (`.rec__prefee`, tooltip = `PREFEE_TIP`),
+  and the units sentence switches between "fee-inclusive", "before fees" and
+  "fee-inclusive where the venue publishes a schedule" by what the selection
+  holds. A 2% fee is about −2 ROI points.
+- **`published: false` is not `starred: false`.** Those props were priced by
+  the same ★ rule but never shown on the site, so the ★ tooltip says "would
+  have been a ★ pick … not shown on the site that week", the Edge option is
+  "★ picks" (not "★ published picks"), and `families_note.player` from the
+  published file renders verbatim under the selectors.
+- **"+EV" is degenerate on DKeX** — one traded price makes the better side +EV
+  by construction — so a player-only +EV selection prints a note saying so.
+  Rows are never hidden for it.
+
+`marketWords` has an exact-key map for the prop families (`anytime_td` ->
+"Anytime TD", not "Anytime TDs"). Props carry NO period prefix, so `periodOf`
+is "" (Full game) and the Period selector simply does not render for a
+player-only selection; changing Family resets Period to "" (the page default),
+never to "all". The conference filter reads `subject_team` on player rows —
+`subject` there is a person and resolved to no conference at all.
+
+**`betWords` does NOT prefix "NO" (fixed 2026-09-09).** `rung_label` is already
+written for the SHOWN side, and it is checkable against the number beside it:
+the NO row labelled "Rutgers under 30.5 points" carries `p_sim` 0.191, i.e.
+P(under). Measured over all of week 1, 5,292/5,292 NO rows name the NO side in
+their own label — team/player as "under …" / "not to score …", game rows as
+"NOT (…)" or the dog side of a home-perspective spread ("Massachusetts +10.5
+(1H)"). The old prefix double-negated every one of them. The prefix survives
+only for a label with no words at all (a bare strike).
 
 ## The card market block (`MarketEdge.tsx`) — bar-test rules
 
