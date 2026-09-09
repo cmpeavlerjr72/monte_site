@@ -309,9 +309,11 @@ function GameCard({
   return (
     <section className="fdc" style={{ borderLeftColor: k.rail ?? "var(--border)" }}>
       <header className="fdc__head">
-        <MatchupLogos home={bucket.home} away={bucket.away} size={22} />
+        {/* NO TEAM NAMES (owner 2026-09-09): the two logos ARE the matchup,
+            away at home, and the words are the tooltip / accessible name. */}
+        <MatchupLogos home={bucket.home} away={bucket.away} size={28} at
+                      label={matchupWords(bucket)} />
         <div className="fdc__title">
-          <div className="fdc__game">{matchupWords(bucket)}</div>
           <div className="fdc__state">
             {bucket.score
               ? <ScoreLine item={bucket.score} />
@@ -443,7 +445,7 @@ function PositionRow({ pos, byOrderId, open, onToggle }: {
       <button type="button" className="fdp__main" onClick={onToggle}
               aria-expanded={open} title="Tap for the details">
         <span className="fdp__bet">
-          <span>{pos.label}</span>
+          <BetLabel pos={pos} />
           {isTail && (
             <span className="fdp__chip"
                   title={tailOf
@@ -505,6 +507,35 @@ function PositionRow({ pos, byOrderId, open, onToggle }: {
       )}
     </div>
   );
+}
+
+/**
+ * THE BET WITHOUT THE TEAM NAME (owner 2026-09-09: "we really don't need
+ * team names, that can be replaced with logos"). When the label starts with
+ * one of the game's two schools, that prefix becomes the school's logo and
+ * the rest of the label follows it: "Rutgers 24+" is [R] 24+, "Memphis +7.5"
+ * is [M] +7.5. A total ("u55.5") names no team and is left alone; a label
+ * whose team has no logo file keeps its words rather than losing them.
+ */
+function BetLabel({ pos }: { pos: FeedPosition }) {
+  const label = pos.label;
+  const low = label.toLowerCase();
+  for (const team of [pos.home_team, pos.away_team]) {
+    if (!team || team.length < 3) continue;
+    const t = team.toLowerCase();
+    if (!low.startsWith(t)) continue;
+    const src = getTeamLogo(team);
+    if (!src) break;
+    const rest = label.slice(team.length).trim();
+    return (
+      <span className="fdp__label" title={label}>
+        <img src={src} alt={team} width={18} height={18} loading="lazy"
+             style={{ objectFit: "contain" }} />
+        {rest && <span>{rest}</span>}
+      </span>
+    );
+  }
+  return <span title={label}>{label}</span>;
 }
 
 const tailTarget = (pos: FeedPosition) => ({
@@ -662,26 +693,34 @@ function words(item: FeedItem, tailOf: FeedItem | undefined): string[] {
 
 /* -------------------------------- the logos ------------------------------- */
 
-/** The two schools, away then home, at the head of a game card. */
-function MatchupLogos({ home, away, size = 16 }: {
-  home: string | null; away: string | null; size?: number;
+/** The two schools, away then home, at the head of a game card. With `at`
+ *  a small "at" sits between them so the pair reads as a matchup; `label` is
+ *  the words (tooltip + accessible name) the logos replaced. A school with no
+ *  logo file falls back to its short name in text rather than vanishing. */
+function MatchupLogos({ home, away, size = 16, at = false, label }: {
+  home: string | null; away: string | null; size?: number; at?: boolean;
+  label?: string;
 }) {
   const pair = [
     { name: away ?? "", src: getTeamLogo(away), key: "away" },
     { name: home ?? "", src: getTeamLogo(home), key: "home" },
-  ].filter((x) => x.src);
+  ].filter((x) => x.name);
   if (!pair.length) {
     return <span aria-hidden style={{ width: size * 2 + 4, flex: "none" }} />;
   }
   return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 4, flex: "none",
-      width: size * 2 + 4, justifyContent: "flex-start",
-    }}>
-      {pair.map((p) => (
-        <img key={p.key} src={p.src} alt="" title={p.name}
-             width={size} height={size} loading="lazy"
-             style={{ objectFit: "contain" }} />
+    <span role="img" aria-label={label} title={label}
+          style={{ display: "inline-flex", alignItems: "center", gap: at ? 5 : 4, flex: "none" }}>
+      {pair.map((p, i) => (
+        <Fragment key={p.key}>
+          {at && i === 1 && (
+            <span aria-hidden style={{ fontSize: 10.5, fontWeight: 800, color: "var(--muted)" }}>at</span>
+          )}
+          {p.src
+            ? <img src={p.src} alt="" width={size} height={size} loading="lazy"
+                   style={{ objectFit: "contain" }} />
+            : <span style={{ fontSize: 12, fontWeight: 800 }}>{shortTeam(p.name)}</span>}
+        </Fragment>
       ))}
     </span>
   );
