@@ -1,4 +1,4 @@
-/* =====================================================================
+/* ============================================================================
    Design tokens
    ----------------------------------------------------------------------------
    Every surface colour in the app resolves through these tokens, which is what
@@ -942,17 +942,6 @@ input:focus, select:focus, textarea:focus {
   color: color-mix(in oklab, var(--neg) 82%, var(--text));
   background: color-mix(in oklab, var(--neg) 12%, var(--card));
 }
-/* "no sim" — the game is not on a published week at all, which is a
-   different silence from the dash (published, but nothing maps to the
-   market). It is a WORD, not a verdict, so it drops to the dim ink and to a
-   size that fits the 60px chip without widening the money column. */
-.mybook__nosim {
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-  color: var(--mybook-dim);
-  text-transform: none;
-}
 
 /* ------------------------------------------------------------------------
    LIVE PROGRESS — where a held per-team stat bet stands right now
@@ -1542,6 +1531,153 @@ input:focus, select:focus, textarea:focus {
   .feed__pop { margin-left: 6px; }
 }
 
+/* ============================================================================
+   The feed's GAME BUCKETS (src/components/NetworkFeed.tsx)
+   ----------------------------------------------------------------------------
+   One card per game, newest game first. The card has four bands and they are
+   deliberately different weights:
+
+     header   the matchup, and the KIND of the latest action (rail + tag)
+     score    the game state, when a score update has arrived
+     rows     the latest action as a full feed row (all of them when expanded)
+     who      one line per (poster, position) — the summary
+
+   The summary line is a WRAPPING FLEX ROW, not a grid: the pieces are of wildly
+   different widths (a handle, "Georgia Tech 20+", "62c avg", "1.3u", a Tail
+   button) and a grid would either clip the bet or leave a river of empty space on a
+   phone. The handle keeps a min-width so the lines still read as a column at
+   desktop widths.
+   ========================================================================= */
+.bkt {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.bkt__head {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 6px 8px 6px 0;
+  background: var(--fill);
+  border-bottom: 1px solid var(--border);
+}
+.bkt__rail { align-self: stretch; min-height: 20px; border-radius: 2px; }
+.bkt__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 6px;
+}
+.bkt__words {
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bkt__when {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* The game state, when there is one. Reads as a caption on the header. */
+.bkt__score {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The rows sit flush inside the card; their own top border is the separator
+   BETWEEN rows. The first one directly under the header would double that
+   header's bottom border, so it drops its own — but only there: after a score
+   strip the line is wanted. */
+.bkt__head + .feed__item .feed__row { border-top: 0; }
+.bkt .feed__row { padding-left: 6px; padding-right: 6px; }
+.bkt .feed__pop { margin-left: calc(10px + var(--feed-hang)); margin-right: 8px; }
+
+.bkt__who {
+  display: grid;
+  gap: 2px;
+  padding: 5px 8px 6px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklab, var(--fill) 55%, transparent);
+}
+.bkt__whoLabel {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bkt__pos {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.bkt__posWho {
+  min-width: 84px;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+.bkt__posBet { font-weight: 700; min-width: 0; }
+/* The action floats to the end of the line, and wraps with it on a phone. */
+.bkt__posAct {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.bkt__more {
+  margin: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+.bkt__more:hover { background: var(--fill); color: var(--text); }
+
+@media (max-width: 520px) {
+  .bkt__posWho { min-width: 0; max-width: 100%; }
+  .bkt__pos { gap: 6px; }
+}
+/* "no sim" — the game is not on a published week at all, which is a
+   different silence from the dash (published, but nothing maps to the
+   market). It is a WORD, not a verdict, so it drops to the dim ink and to a
+   size that fits the 60px chip without widening the money column. */
+.mybook__nosim {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--mybook-dim);
+  text-transform: none;
+}
+
 /* ------------------------------------------------------------------------
    THE SETTLED TREE (src/components/BookTree.tsx, route /mybook)
 
@@ -1884,139 +2020,4 @@ input:focus, select:focus, textarea:focus {
   .booktree__bar { flex-basis: 46px; }
   .booktree__money { flex-basis: 68px; }
   .booktree__sample { flex-basis: 38px; }
-=======
-/* ============================================================================
-   The feed's GAME BUCKETS (src/components/NetworkFeed.tsx)
-   ----------------------------------------------------------------------------
-   One card per game, newest game first. The card has four bands and they are
-   deliberately different weights:
-
-     header   the matchup, and the KIND of the latest action (rail + tag)
-     score    the game state, when a score update has arrived
-     rows     the latest action as a full feed row (all of them when expanded)
-     who      one line per (poster, position) — the summary
-
-   The summary line is a WRAPPING FLEX ROW, not a grid: the pieces are of wildly
-   different widths (a handle, "Georgia Tech 20+", "62c avg", "1.3u", a Tail
-   button) and a grid would either clip the bet or leave a river of empty space on a
-   phone. The handle keeps a min-width so the lines still read as a column at
-   desktop widths.
-   ========================================================================= */
-.bkt {
-  display: grid;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--card);
-  overflow: hidden;
-}
-
-.bkt__head {
-  display: grid;
-  grid-template-columns: 4px minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 8px;
-  padding: 6px 8px 6px 0;
-  background: var(--fill);
-  border-bottom: 1px solid var(--border);
-}
-.bkt__rail { align-self: stretch; min-height: 20px; border-radius: 2px; }
-.bkt__title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding-left: 6px;
-}
-.bkt__words {
-  font-size: 12px;
-  font-weight: 900;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bkt__when {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-/* The game state, when there is one. Reads as a caption on the header. */
-.bkt__score {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  font-size: 11px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* The rows sit flush inside the card; their own top border is the separator
-   BETWEEN rows. The first one directly under the header would double that
-   header's bottom border, so it drops its own — but only there: after a score
-   strip the line is wanted. */
-.bkt__head + .feed__item .feed__row { border-top: 0; }
-.bkt .feed__row { padding-left: 6px; padding-right: 6px; }
-.bkt .feed__pop { margin-left: calc(10px + var(--feed-hang)); margin-right: 8px; }
-
-.bkt__who {
-  display: grid;
-  gap: 2px;
-  padding: 5px 8px 6px;
-  border-top: 1px solid var(--border);
-  background: color-mix(in oklab, var(--fill) 55%, transparent);
-}
-.bkt__whoLabel {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.bkt__pos {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-.bkt__posWho {
-  min-width: 84px;
-  max-width: 40%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 800;
-}
-.bkt__posBet { font-weight: 700; min-width: 0; }
-/* The action floats to the end of the line, and wraps with it on a phone. */
-.bkt__posAct {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.bkt__more {
-  margin: 0;
-  padding: 5px 8px;
-  border: 0;
-  border-top: 1px solid var(--border);
-  background: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 10.5px;
-  font-weight: 800;
-  text-align: left;
-  cursor: pointer;
-}
-.bkt__more:hover { background: var(--fill); color: var(--text); }
-
-@media (max-width: 520px) {
-  .bkt__posWho { min-width: 0; max-width: 100%; }
-  .bkt__pos { gap: 6px; }
 }
