@@ -111,7 +111,7 @@ function SignedInLine({ handle, displayName, emoji, onSignedOut }: {
       <span style={{ fontSize: 12 }}>
         <span aria-hidden style={{ marginRight: 5 }}>{emoji || "🏈"}</span>
         <span style={{ fontWeight: 700 }}>{displayName}</span>
-        <span style={{ color: "var(--muted)" }}> @{handle}</span>
+        <span style={{ color: "var(--muted)" }}> {handle}</span>
       </span>
       <button type="button" className="ui-btn" onClick={onSignedOut}
               style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 11 }}>
@@ -160,7 +160,7 @@ function CredentialsForm({ prompt, compact, startMode }: {
       .rpc("find_profile", { p_handle: uname });
     if (findErr) { setError(findErr.message); return; }
     const taken = Array.isArray(found) ? found.length > 0 : Boolean(found);
-    if (taken) { setError(`@${uname} is taken — pick another username.`); return; }
+    if (taken) { setError(`${} is taken — pick another username.`); return; }
 
     // 2. The auth user, at the DERIVED address. A taken handle is a taken
     //    address, so this is also the race-proof version of the check above.
@@ -169,7 +169,7 @@ function CredentialsForm({ prompt, compact, startMode }: {
     });
     if (err) {
       setError(/already registered|already been registered/i.test(err.message)
-        ? `@${uname} is taken — pick another username.`
+        ? `${} is taken — pick another username.`
         : err.message);
       return;
     }
@@ -188,7 +188,7 @@ function CredentialsForm({ prompt, compact, startMode }: {
     });
     if (pErr) {
       setError(pErr.code === "23505"
-        ? `@${uname} is taken — pick another username.`
+        ? `${} is taken — pick another username.`
         : pErr.message);
     }
     // Either way the session now exists, so the panel re-renders: with a
@@ -356,7 +356,7 @@ function ProfileForm({ userId, onDone }: { userId: string; onDone: () => void })
     setBusy(false);
     if (err) {
       setError(err.code === "23505"
-        ? `@${h} is taken — pick another username.`
+        ? `${} is taken — pick another username.`
         : err.message);
       return;
     }

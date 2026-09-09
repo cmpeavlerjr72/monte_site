@@ -186,7 +186,7 @@ export default function Profile() {
       <div style={{ display: "grid", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span aria-hidden style={{ fontSize: 16 }}>{emoji || "🏈"}</span>
-          <span style={{ fontSize: 13, fontWeight: 800 }}>@{profile.handle}</span>
+          <span style={{ fontSize: 13, fontWeight: 800 }}>{profile.handle}</span>
           <Flares flares={validFlares(flares)} />
           <span style={{ fontSize: 11, color: "var(--muted)", flexBasis: "100%" }}>
             your username is permanent — it is what you log in with, and what
