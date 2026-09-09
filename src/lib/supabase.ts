@@ -42,6 +42,10 @@ export type Profile = {
   avatar_emoji: string | null;
   share_book: ShareScope;
   is_trader: boolean;
+  /** OPTIONAL real contact address. Never a credential: sign-in derives its
+   *  address from the handle (see `loginEmailFor`), nothing is sent here by
+   *  the app, and it may be null forever. */
+  email: string | null;
 };
 
 /** One row of `feed_items` (the RLS-filtered UNION view). `kind` says which
@@ -128,7 +132,7 @@ export function useProfile(session: Session | null): {
     setLoading(true);
     supabase
       .from("profiles")
-      .select("id, handle, display_name, avatar_emoji, share_book, is_trader")
+      .select("id, handle, display_name, avatar_emoji, share_book, is_trader, email")
       .eq("id", uid)
       .maybeSingle()
       .then(({ data }) => {
@@ -168,3 +172,33 @@ export const HANDLE_RE = /^[a-z0-9_]{3,20}$/;
 
 /** Sign-up password floor (docs/ACCOUNTS_DESIGN.md: >= 10 chars). */
 export const MIN_PASSWORD = 10;
+
+/* ------------------------- THE DERIVED LOGIN ADDRESS ---------------------- */
+/**
+ * LOGIN IS BY USERNAME (owner decision 2026-09-08). Supabase Auth insists on
+ * an email address, so the address is DERIVED from the username and never
+ * typed by anyone:
+ *
+ *     `${handle.toLowerCase()}@users.mvpeav.com`
+ *
+ * It is a routing artefact, not a mailbox — this project has no SMTP sender,
+ * email confirmation is OFF, and no mail is ever sent to it. A user's REAL
+ * address, if they choose to leave one, lives on `profiles.email` and is only
+ * so the owner can reach them.
+ *
+ * ONE FUNCTION, both directions of the flow: sign-up creates the account at
+ * this address and sign-in re-derives the same one, so the two can never
+ * disagree about who a username is.
+ *
+ * THE ONE EXCEPTION, for the cutover: an input that already contains "@" is
+ * taken VERBATIM. Accounts created before this change were made with a real
+ * address, and deriving one for them would lock them out of their own
+ * account. A handle can never contain "@" (HANDLE_RE), so the two cases
+ * cannot collide.
+ */
+export const AUTH_EMAIL_DOMAIN = "users.mvpeav.com";
+
+export function loginEmailFor(username: string): string {
+  const u = username.trim().toLowerCase();
+  return u.includes("@") ? u : `${u}@${AUTH_EMAIL_DOMAIN}`;
+}

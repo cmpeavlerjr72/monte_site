@@ -1,33 +1,41 @@
 // src/components/AuthPanel.tsx
 //
-// SIGN IN / SIGN UP / RESET, plus the first-sign-in profile row. The one
+// SIGN IN / SIGN UP by USERNAME, plus the first-sign-in profile row. The one
 // place in the app that touches Supabase Auth (docs/ACCOUNTS_DESIGN.md).
 //
-// Three rules it is built around:
+// FOUR rules it is built around:
 //
 //   1. FEATURE FLAG FIRST. `supabaseEnabled` false => this renders null, so a
 //      build without VITE_SUPABASE_URL/ANON_KEY is the app exactly as it was.
-//   2. Email confirmation is OFF in the project (owner 2026-09-08: no SMTP
-//      sender to maintain), so sign-up normally returns a session and lands on
-//      the handle form at once. If the dashboard setting is ever flipped on, a
-//      sign-up that returns no session is SUCCESS, not an error — say so
-//      plainly ("check your email")
-//      rather than leaving a spinner and a form that looks like it failed.
-//   3. A PROFILE IS REQUIRED before any accounts feature works: `picks`,
-//      `friendships` and `app_orders` all have a foreign key to profiles.id.
-//      So a session with no profile row lands on the handle form, and nothing
-//      else is offered until it is filled.
+//   2. THE LOGIN IS A USERNAME (owner decision 2026-09-08). Supabase Auth
+//      wants an address, so one is DERIVED — `loginEmailFor(handle)`, i.e.
+//      `<handle>@users.mvpeav.com` — by BOTH sign-up and sign-in, so the two
+//      can never disagree about who a username is. Nobody types an address to
+//      get in. A REAL address is optional, goes on `profiles.email`, and
+//      exists only so the owner can reach a user.
+//   3. NO EMAIL RESET UI. There is no SMTP sender on this project, so a
+//      "reset link" button would be a button that does nothing. The form says
+//      to ask the owner instead — an honest dead end beats a silent one.
+//   4. THE USERNAME IS CLAIMED BEFORE THE AUTH USER EXISTS. Sign-up asks
+//      `find_profile` first, so a taken name fails while nothing has been
+//      created. The derived address is a second, race-proof guard: a taken
+//      handle is a taken auth address, and Auth refuses it on its own.
 //
-// Passwords: >= 10 characters (owner decision). The rule is stated on the
-// form, not just enforced, because a silent disable is the worst version of a
-// password rule.
+// Email confirmation is OFF in the project (owner 2026-09-08), so a sign-up
+// normally returns a session immediately. If that dashboard setting is ever
+// flipped on, a sign-up returning no session is SUCCESS, not an error, and it
+// says so rather than leaving a form that looks like it failed.
+//
+// Passwords: >= 10 characters. The rule is stated on the form, not just
+// enforced, because a silent disable is the worst version of a password rule.
 
 import { useState, type FormEvent } from "react";
 import {
-  HANDLE_RE, MIN_PASSWORD, supabase, supabaseEnabled, useProfile, useSession,
+  HANDLE_RE, MIN_PASSWORD, loginEmailFor, supabase, supabaseEnabled,
+  useProfile, useSession,
 } from "../lib/supabase";
 
-type Mode = "signin" | "signup" | "reset";
+type Mode = "signin" | "signup";
 
 export type AuthPanelProps = {
   /** One line above the form saying WHAT signing in unlocks here. */
@@ -38,9 +46,16 @@ export type AuthPanelProps = {
   compact?: boolean;
   /** Called once a session AND a profile exist. */
   onReady?: () => void;
+  /** Open on "Create account" instead of "Sign in" (the ribbon's Sign up). */
+  startMode?: Mode;
+  /** Hide the signed-in line — for hosts that render their own (the ribbon
+   *  menu shows the username itself, so the panel would say it twice). */
+  hideSignedIn?: boolean;
 };
 
-export default function AuthPanel({ prompt, compact = false, onReady }: AuthPanelProps) {
+export default function AuthPanel({
+  prompt, compact = false, onReady, startMode = "signin", hideSignedIn = false,
+}: AuthPanelProps) {
   const { session, loading } = useSession();
   const { profile, loading: profileLoading, reload } = useProfile(session);
   const [open, setOpen] = useState(!compact);
@@ -51,6 +66,7 @@ export default function AuthPanel({ prompt, compact = false, onReady }: AuthPane
   if (loading) return null;
 
   if (session && profile) {
+    if (hideSignedIn) return null;
     return (
       <SignedInLine
         handle={profile.handle}
@@ -80,7 +96,7 @@ export default function AuthPanel({ prompt, compact = false, onReady }: AuthPane
     );
   }
 
-  return <CredentialsForm prompt={prompt} compact={compact} />;
+  return <CredentialsForm prompt={prompt} compact={compact} startMode={startMode} />;
 }
 
 const ROW: React.CSSProperties = {
@@ -106,52 +122,93 @@ function SignedInLine({ handle, displayName, emoji, onSignedOut }: {
 }
 
 /**
- * Email + password, with the reset flow beside it. Sign-up and reset both end
- * in an email, and both say so in words instead of appearing to hang.
+ * USERNAME + PASSWORD, and on sign-up an OPTIONAL real email.
+ *
+ * The sign-up order is deliberate: check the name, then create the auth user,
+ * then write the profile row. Every step that can fail says which one did, in
+ * the words of the thing the user typed ("that username is taken"), never as
+ * a database error about a unique constraint.
  */
-function CredentialsForm({ prompt, compact }: { prompt?: string; compact: boolean }) {
-  const [mode, setMode] = useState<Mode>("signin");
-  const [email, setEmail] = useState("");
+function CredentialsForm({ prompt, compact, startMode }: {
+  prompt?: string; compact: boolean; startMode: Mode;
+}) {
+  const [mode, setMode] = useState<Mode>(startMode);
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [contact, setContact] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState<"confirm" | "reset" | null>(null);
+  const [sent, setSent] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
-  const emailOk = /\S+@\S+\.\S+/.test(email.trim());
+  const uname = username.trim().toLowerCase();
+  // A sign-IN also accepts a legacy real address verbatim (see loginEmailFor):
+  // accounts made before usernames existed must still be able to get in.
+  const nameOk = mode === "signup"
+    ? HANDLE_RE.test(uname)
+    : uname.length >= 3;
   const passOk = password.length >= MIN_PASSWORD;
-  const canSubmit = mode === "reset" ? emailOk : emailOk && passOk;
+  const contactOk = contact.trim() === "" || /\S+@\S+\.\S+/.test(contact.trim());
+  const canSubmit = nameOk && passOk && (mode === "signin" || contactOk);
+
+  const signUp = async () => {
+    if (!supabase) return;
+    // 1. Claim the NAME first, so a taken one fails before anything exists.
+    const { data: found, error: findErr } = await supabase
+      .rpc("find_profile", { p_handle: uname });
+    if (findErr) { setError(findErr.message); return; }
+    const taken = Array.isArray(found) ? found.length > 0 : Boolean(found);
+    if (taken) { setError(`@${uname} is taken — pick another username.`); return; }
+
+    // 2. The auth user, at the DERIVED address. A taken handle is a taken
+    //    address, so this is also the race-proof version of the check above.
+    const { data, error: err } = await supabase.auth.signUp({
+      email: loginEmailFor(uname), password,
+    });
+    if (err) {
+      setError(/already registered|already been registered/i.test(err.message)
+        ? `@${uname} is taken — pick another username.`
+        : err.message);
+      return;
+    }
+    if (!data.session) {
+      // Email confirmation got turned back on in the dashboard. Nothing here
+      // can complete the profile row until they are signed in.
+      setSent(true);
+      return;
+    }
+    // 3. The profile row. Its handle IS the username, which is what makes the
+    //    two identities one thing.
+    const uid = data.session.user.id;
+    const { error: pErr } = await supabase.from("profiles").insert({
+      id: uid, handle: uname, display_name: uname,
+      email: contact.trim() || null,
+    });
+    if (pErr) {
+      setError(pErr.code === "23505"
+        ? `@${uname} is taken — pick another username.`
+        : pErr.message);
+    }
+    // Either way the session now exists, so the panel re-renders: with a
+    // profile it shows the signed-in line, without one the handle form.
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit || busy || !supabase) return;
-    setBusy(true); setError(null); setSent(null);
+    setBusy(true); setError(null);
     try {
       if (mode === "signin") {
         const { error: err } = await supabase.auth.signInWithPassword({
-          email: email.trim(), password,
+          email: loginEmailFor(uname), password,
         });
         if (err) {
           setError(err.message.includes("Invalid login credentials")
-            ? "Wrong email or password."
+            ? "Wrong username or password."
             : err.message);
-        }
-      } else if (mode === "signup") {
-        const { data, error: err } = await supabase.auth.signUp({
-          email: email.trim(), password,
-        });
-        if (err) {
-          setError(err.message.includes("already registered")
-            ? "That email already has an account — sign in instead."
-            : err.message);
-        } else if (!data.session) {
-          // Email confirmation is ON: no session yet is the happy path.
-          setSent("confirm");
         }
       } else {
-        const { error: err } = await supabase.auth.resetPasswordForEmail(
-          email.trim(), { redirectTo: window.location.origin + "/cfb/me" });
-        if (err) setError(err.message);
-        else setSent("reset");
+        await signUp();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -163,16 +220,13 @@ function CredentialsForm({ prompt, compact }: { prompt?: string; compact: boolea
   if (sent) {
     return (
       <div style={{ display: "grid", gap: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 700 }}>
-          {sent === "confirm" ? "Check your email" : "Reset link sent"}
-        </span>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Account created</span>
         <span style={{ fontSize: 11, color: "var(--muted)" }}>
-          {sent === "confirm"
-            ? "We sent a confirmation link. Open it, then come back and sign in."
-            : "Open the link, choose a new password, and you'll land back here signed in."}
+          This project has confirmation switched on right now, so the account
+          is not live until the owner confirms it. Ask him, then sign in.
         </span>
         <button type="button" className="ui-btn" style={BTN}
-                onClick={() => { setSent(null); setMode("signin"); }}>
+                onClick={() => { setSent(false); setMode("signin"); }}>
           Back to sign in
         </button>
       </div>
@@ -190,28 +244,53 @@ function CredentialsForm({ prompt, compact }: { prompt?: string; compact: boolea
                   data-on={mode === m ? "true" : "false"}
                   onClick={() => { setMode(m); setError(null); }}
                   style={BTN}>
-            {m === "signin" ? "Sign in" : "Create account"}
+            {m === "signin" ? "Log in" : "Sign up"}
           </button>
         ))}
       </div>
       <input
-        className="ui-sel" type="email" name="email" autoComplete="email"
-        placeholder="you@example.com" value={email}
-        onChange={(e) => setEmail(e.target.value)}
+        className="ui-sel" type="text" name="username" autoComplete="username"
+        placeholder="username" value={username} maxLength={64}
+        onChange={(e) => setUsername(e.target.value)}
+        autoCapitalize="none" autoCorrect="off" spellCheck={false}
         style={{ fontSize: 12 }}
       />
-      {mode !== "reset" && (
-        <input
-          className="ui-sel" type="password" name="password"
-          autoComplete={mode === "signin" ? "current-password" : "new-password"}
-          placeholder={mode === "signin" ? "Password" : `Password (${MIN_PASSWORD}+ characters)`}
-          value={password} onChange={(e) => setPassword(e.target.value)}
-          style={{ fontSize: 12 }}
-        />
+      <input
+        className="ui-sel" type="password" name="password"
+        autoComplete={mode === "signin" ? "current-password" : "new-password"}
+        placeholder={mode === "signin" ? "Password" : `Password (${MIN_PASSWORD}+ characters)`}
+        value={password} onChange={(e) => setPassword(e.target.value)}
+        style={{ fontSize: 12 }}
+      />
+      {mode === "signup" && (
+        <>
+          <input
+            className="ui-sel" type="email" name="email" autoComplete="email"
+            placeholder="email (optional)" value={contact}
+            onChange={(e) => setContact(e.target.value)}
+            style={{ fontSize: 12 }}
+          />
+          <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+            Your username is how you log in and how friends find you: 3–20
+            characters, lower-case letters, numbers and underscores. The email
+            is optional and only so the owner can reach you — we never send
+            anything to it.
+          </span>
+        </>
+      )}
+      {mode === "signup" && username.length > 0 && !nameOk && (
+        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+          Usernames are 3–20 of a–z, 0–9 and _ .
+        </span>
       )}
       {mode === "signup" && !passOk && password.length > 0 && (
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
           At least {MIN_PASSWORD} characters.
+        </span>
+      )}
+      {mode === "signup" && !contactOk && (
+        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+          That does not look like an email address — or leave it blank.
         </span>
       )}
       {error && (
@@ -219,20 +298,28 @@ function CredentialsForm({ prompt, compact }: { prompt?: string; compact: boolea
       )}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         <button type="submit" className="ui-btn" disabled={!canSubmit || busy} style={BTN}>
-          {busy ? "One sec…"
-            : mode === "signin" ? "Sign in"
-            : mode === "signup" ? "Create account"
-            : "Send reset link"}
+          {busy ? "One sec…" : mode === "signin" ? "Log in" : "Sign up"}
         </button>
-        <button type="button" className="ui-btn" style={{ ...BTN, opacity: 0.85 }}
-                onClick={() => { setMode(mode === "reset" ? "signin" : "reset"); setError(null); }}>
-          {mode === "reset" ? "Back" : "Forgot password?"}
-        </button>
+        {mode === "signin" && (
+          <button type="button" className="ui-btn" style={{ ...BTN, opacity: 0.85 }}
+                  onClick={() => setHelpOpen((v) => !v)}>
+            Forgot password?
+          </button>
+        )}
       </div>
-      {mode === "signup" && (
+      {helpOpen && mode === "signin" && (
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-          We send a confirmation link before the account works.
-          {compact ? "" : " Trading stays with the owner's Kalshi accounts for now — an account gets you the feed and posting picks."}
+          {/* No SMTP sender on this project, so there is no reset email to
+              send. Say that plainly rather than shipping a button that
+              silently does nothing. */}
+          There is no automatic reset — the site sends no email. Message the
+          owner and he will set a new password on your account.
+        </span>
+      )}
+      {mode === "signup" && !compact && (
+        <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+          An account gets you the feed, posting picks and your own dashboard.
+          You can link your own Kalshi account from the dashboard afterwards.
         </span>
       )}
     </form>
@@ -242,33 +329,32 @@ function CredentialsForm({ prompt, compact }: { prompt?: string; compact: boolea
 const BTN: React.CSSProperties = { padding: "3px 10px", fontSize: 11 };
 
 /**
- * FIRST SIGN-IN. The handle is the permanent public identity (it is what a
- * friend types to find you), so it is validated against the same regex the
- * database CHECK uses and lower-cased on the way in. A taken handle comes
- * back as a unique-violation and is reported as such, not as "something
- * went wrong".
+ * A SESSION WITH NO PROFILE ROW. Normally unreachable now — sign-up writes the
+ * row itself — but it is the recovery path for an account made before
+ * usernames existed, and for the rare case where step 3 of sign-up failed
+ * after the auth user was created. The handle is validated against the same
+ * regex the database CHECK uses; a taken one comes back as a unique violation
+ * and is reported as such, not as "something went wrong".
  */
 function ProfileForm({ userId, onDone }: { userId: string; onDone: () => void }) {
   const [handle, setHandle] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const h = handle.trim().toLowerCase();
   const handleOk = HANDLE_RE.test(h);
-  const nameOk = displayName.trim().length >= 1 && displayName.trim().length <= 40;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!handleOk || !nameOk || busy || !supabase) return;
+    if (!handleOk || busy || !supabase) return;
     setBusy(true); setError(null);
     const { error: err } = await supabase.from("profiles").insert({
-      id: userId, handle: h, display_name: displayName.trim(),
+      id: userId, handle: h, display_name: h,
     });
     setBusy(false);
     if (err) {
       setError(err.code === "23505"
-        ? `@${h} is taken — pick another handle.`
+        ? `@${h} is taken — pick another username.`
         : err.message);
       return;
     }
@@ -277,27 +363,23 @@ function ProfileForm({ userId, onDone }: { userId: string; onDone: () => void })
 
   return (
     <form onSubmit={submit} style={{ display: "grid", gap: 6, maxWidth: 340 }}>
-      <span style={{ fontSize: 12, fontWeight: 700 }}>Pick a handle</span>
+      <span style={{ fontSize: 12, fontWeight: 700 }}>Pick a username</span>
       <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
         Friends find you by typing it exactly. 3–20 characters, lower-case
         letters, numbers and underscores.
       </span>
       <input
-        className="ui-sel" placeholder="handle" value={handle} maxLength={20}
+        className="ui-sel" placeholder="username" value={handle} maxLength={20}
         onChange={(e) => setHandle(e.target.value)} style={{ fontSize: 12 }}
         autoCapitalize="none" autoCorrect="off" spellCheck={false}
       />
-      <input
-        className="ui-sel" placeholder="Display name" value={displayName} maxLength={40}
-        onChange={(e) => setDisplayName(e.target.value)} style={{ fontSize: 12 }}
-      />
       {handle.length > 0 && !handleOk && (
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-          Handles are 3–20 of a–z, 0–9 and _ .
+          Usernames are 3–20 of a–z, 0–9 and _ .
         </span>
       )}
       {error && <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{error}</span>}
-      <button type="submit" className="ui-btn" disabled={!handleOk || !nameOk || busy} style={BTN}>
+      <button type="submit" className="ui-btn" disabled={!handleOk || busy} style={BTN}>
         {busy ? "Saving…" : "Continue"}
       </button>
     </form>

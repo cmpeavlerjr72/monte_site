@@ -36,6 +36,7 @@ export default function Profile() {
 
   const [displayName, setDisplayName] = useState("");
   const [emoji, setEmoji] = useState("");
+  const [email, setEmail] = useState("");
   const [share, setShare] = useState<ShareScope>("friends");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export default function Profile() {
     if (!profile) return;
     setDisplayName(profile.display_name);
     setEmoji(profile.avatar_emoji ?? "");
+    setEmail(profile.email ?? "");
     setShare(profile.share_book);
   }, [profile]);
 
@@ -79,6 +81,7 @@ export default function Profile() {
       .update({
         display_name: displayName.trim(),
         avatar_emoji: emoji.trim() || null,
+        email: email.trim() || null,
         share_book: share,
       })
       .eq("id", profile.id);
@@ -96,9 +99,11 @@ export default function Profile() {
     setDeleting(false);
   };
 
+  const emailOk = email.trim() === "" || /\S+@\S+\.\S+/.test(email.trim());
   const dirty =
     displayName.trim() !== profile.display_name ||
     (emoji.trim() || null) !== (profile.avatar_emoji ?? null) ||
+    (email.trim() || null) !== (profile.email ?? null) ||
     share !== profile.share_book;
 
   return (
@@ -107,7 +112,8 @@ export default function Profile() {
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, fontWeight: 800 }}>@{profile.handle}</span>
           <span style={{ fontSize: 11, color: "var(--muted)" }}>
-            your handle is permanent — it is what friends type to find you
+            your username is permanent — it is what you log in with, and what
+            friends type to find you
           </span>
           <Link to="/cfb/friends" style={{ marginLeft: "auto", fontSize: 11 }}>
             Friends →
@@ -131,6 +137,21 @@ export default function Profile() {
           </span>
         </Field>
 
+        {/* OPTIONAL, and not a credential: you log in with the username
+            above, never with this. It exists so the owner can reach you (a
+            password reset is a message to him — the site sends no email). */}
+        <Field label="Email">
+          <input className="ui-sel" value={email} maxLength={254} type="email"
+                 onChange={(e) => setEmail(e.target.value)}
+                 placeholder="optional"
+                 style={{ fontSize: 13, width: "100%", maxWidth: 280 }} />
+          <span style={{ fontSize: 10.5, color: "var(--muted)", flexBasis: "100%" }}>
+            {emailOk
+              ? "Optional. You log in with your username, never this — it is only so the owner can reach you. Nothing is ever sent to it."
+              : "That does not look like an email address — fix it or clear the box."}
+          </span>
+        </Field>
+
         <Field label="Who sees my bets">
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {(Object.keys(SHARE_WORDS) as ShareScope[]).map((s) => (
@@ -148,7 +169,7 @@ export default function Profile() {
         </Field>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button type="button" className="ui-btn" disabled={!dirty || busy}
+          <button type="button" className="ui-btn" disabled={!dirty || busy || !emailOk}
                   onClick={save} style={{ padding: "5px 14px", fontSize: 12, fontWeight: 700 }}>
             {busy ? "Saving…" : "Save"}
           </button>
