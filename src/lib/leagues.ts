@@ -25,6 +25,27 @@ const LEAGUE_LABEL: Record<LeagueId, string> = {
   ncaaw: "NCAAW",
 };
 
+// THE SPORT IS A GLYPH, THE LEAGUE IS THE TOOLTIP (owner 2026-09-09). On a
+// feed row the reader is glancing, and "FCS FOOTBALL" spelled out beside a bet
+// out-shouts the bet. So the chip is one emoji — the SPORT — and the league is
+// the title text a hover or a long-press reveals. Two football leagues share
+// one ball and two basketball leagues share one hoop precisely because the
+// distinction is a word, not a picture, and words are for the tap.
+const LEAGUE_EMOJI: Record<LeagueId, string> = {
+  fbs: "\u{1F3C8}",
+  fcs: "\u{1F3C8}",
+  ncaab: "\u{1F3C0}",
+  ncaaw: "\u{1F3C0}",
+};
+
+/** The one-glyph chip for a stored id, or null when there is nothing honest to
+ *  show. Always render it with `leagueLabel(id)` as the tooltip: the emoji
+ *  alone cannot tell FBS from FCS, and it is not meant to. */
+export function leagueEmoji(id: string | null | undefined): string | null {
+  if (!id) return null;
+  return LEAGUE_EMOJI[id as LeagueId] ?? null;
+}
+
 /** The display string for a stored id, or null when there is nothing honest to
  *  print (absent, empty, or an id this build does not know). */
 export function leagueLabel(id: string | null | undefined): string | null {
