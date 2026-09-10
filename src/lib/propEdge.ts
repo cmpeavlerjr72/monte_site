@@ -78,7 +78,27 @@ export type PropEdge = {
    *  (player, stat). `undefined` when the payload predates the field, in
    *  which case `rankProps` falls back to a local best-EV dedupe. */
   topRung?: boolean;
+  /**
+   * Tails exclusion (owner rule 2026-09-09, round 3): true when this row's
+   * sim P(over) sits inside the band the "Top prop overs" list is allowed to
+   * show — a longshot TD or a near-lock yardage line is information, not a
+   * bet worth surfacing. Resolved here (never left to the caller): prefers
+   * the publisher's own `in_band`; falls back to sim P(over) in [0.30, 0.85]
+   * — the SAME sim number this row's `side` and `simP` were computed from,
+   * not the raw (possibly stale) `row.sim_over` field — when the payload
+   * predates the field.
+   */
+  inBand: boolean;
 };
+
+/** [min, max] sim P(over) a row must sit inside to not be a tail — the
+ *  fallback band, used whenever a row (or a ladder rung) predates the
+ *  publisher's own `in_band` field. Same literal bounds the publisher's
+ *  band is documented to use, so an old payload excludes tails the same way
+ *  a new one does. */
+const FALLBACK_BAND: readonly [number, number] = [0.30, 0.85];
+
+const inFallbackBand = (p: number): boolean => p >= FALLBACK_BAND[0] && p <= FALLBACK_BAND[1];
 
 /** Profit per $1 staked at an American price. */
 export function profitPerDollar(american: number): number | null {
@@ -142,6 +162,18 @@ export function propEdge(
   const profit = best ? profitPerDollar(best.price) : null;
   const localEv = profit === null ? undefined : simP * profit - (1 - simP);
 
+  // Tails exclusion. `simOver` here is THIS row's own sim P(over) — the PMF
+  // count when one exists, not the possibly-stale `row.sim_over` field — so
+  // the fallback band check is exact even when the publisher's `in_band`
+  // predates the field.
+  const inBand = row.in_band !== undefined ? row.in_band : inFallbackBand(simOver);
+  // Ladder rungs, tails dropped. The publisher is expected to have already
+  // excluded out-of-band rungs at the source; this is the site's own
+  // belt-and-braces filter for a payload that has not caught up yet.
+  const ladderRungs = row.ladder_detail?.filter(
+    (r) => (r.in_band !== undefined ? r.in_band : inFallbackBand(r.sim_over))
+  );
+
   return {
     slug: ctx.slug,
     teamA: ctx.teamA,
@@ -174,10 +206,11 @@ export function propEdge(
     nTrades: row.n_trades,
     priceCents: row.px_cents,
     ladder: row.ladder_candidate === true,
-    ladderRungs: row.ladder_detail,
+    ladderRungs,
     ladderCombinedEv: row.ladder_ev_combined,
     ladderBoardAdjacent: row.ladder_board_adjacent,
     topRung: row.top_rung,
+    inBand,
   };
 }
 

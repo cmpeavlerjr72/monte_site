@@ -1398,6 +1398,36 @@ input:focus, select:focus, textarea:focus {
   }
 }
 
+/* Prop row, round 2 (owner rule 2026-09-09 night): line 1 is the player name
+   ALONE (bold), line 2 is the bet — stat + strike, then price + trade count.
+   The strike is the thing the owner places money on, so .edge-row__t2--prop
+   drops the base .edge-row__t2 single-line ellipsis and wraps by FLEXBOX
+   instead: at any width, if "stat + strike · price · trades" does not fit on
+   one line, the price/trade tail (nowrap as its own unit) drops to its own
+   line — the stat+strike unit (also nowrap internally) never breaks or gets
+   cut, at 400px or at desktop width. No media query needed: flex-wrap only
+   engages once the content actually overflows the row. */
+.edge-row__t1--prop { font-weight: 700; }
+.edge-row__t2--prop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 1px;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+}
+.edge-row__propbet {
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.edge-row__propmeta {
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 /* Documented over-projection caveat on high-usage overs (INV-69). */
 .edge-flag {
   flex-shrink: 0;
@@ -2448,7 +2478,10 @@ input:focus, select:focus, textarea:focus {
 
 .prop-rung {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 46px;
+  /* Label column sizes to its content (min 48px, up to the "stat short o###"
+     text's own width) so the strike is never clipped — the axis column gives
+     up the space instead, down to 0 in the extreme. */
+  grid-template-columns: minmax(48px, auto) minmax(0, 1fr) 46px;
   align-items: center;
   gap: 8px;
 }
@@ -2458,6 +2491,7 @@ input:focus, select:focus, textarea:focus {
   font-weight: 700;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .prop-rung__axis {
@@ -2497,7 +2531,7 @@ input:focus, select:focus, textarea:focus {
 .prop-rung__ev[data-sign="neg"] { color: var(--neg); }
 
 @media (max-width: 520px) {
-  .prop-rung { grid-template-columns: 42px minmax(0, 1fr) 42px; }
+  .prop-rung { grid-template-columns: minmax(42px, auto) minmax(0, 1fr) 42px; }
 }
 
 /* The "+" quick-add's grid cell, held open when the row has no addable leg so

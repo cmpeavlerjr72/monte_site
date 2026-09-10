@@ -741,6 +741,12 @@ export type PropLadderRung = {
   sim_over: number;
   ev_fee2: number;
   n_trades?: number;
+  /** Tails-exclusion flag (owner rule 2026-09-09, round 3): false when this
+   *  rung's sim P(over) sits outside the publisher's band. Absent on a
+   *  payload published before the field existed -- callers fall back to the
+   *  same sim_over in [0.30, 0.85] check `propEdge.ts` uses for the parent
+   *  row, so an old payload still excludes tails, just locally. */
+  in_band?: boolean;
 };
 
 export type PropOddsRow = {
@@ -797,6 +803,13 @@ export type PropOddsRow = {
    *  published before this field existed -- callers must fall back to a
    *  local best-EV dedupe in that case, never assume `true`. */
   top_rung?: boolean;
+  /** Tails-exclusion flag (owner rule 2026-09-09, round 3): true when this
+   *  row's sim P(over) sits inside the publisher's band (see `PropsOdds.band`
+   *  for the bounds it used) -- a longshot TD or a near-lock yardage line is
+   *  information, not a bet the "Top prop overs" list should surface. Absent
+   *  on a payload published before the field existed -- callers fall back to
+   *  sim P(over) in [0.30, 0.85] in that case (`propEdge.ts`'s `inFallbackBand`). */
+  in_band?: boolean;
 };
 
 export type PropsOdds = {
@@ -809,6 +822,11 @@ export type PropsOdds = {
   /** "over" when the venue lists only one side of every market. */
   sideOnly: "over" | null;
   feeModel: string | null;
+  /** The publisher's own tails-exclusion bounds on sim P(over), for display
+   *  only -- the fallback band `propEdge.ts` uses when a row predates
+   *  `in_band` is the fixed [0.30, 0.85] literal, not this field, so an old
+   *  payload with no `band` block still excludes tails the same way. */
+  band: { minFair: number; maxFair: number } | null;
   byGame: Map<string, PropOddsRow[]>;
 };
 
@@ -883,6 +901,7 @@ export async function getPropsOdds(
               line: num(r?.line), px_cents: num(r?.px_cents),
               sim_over: num(r?.sim_over), ev_fee2: num(r?.ev_fee2),
               n_trades: num(r?.n_trades),
+              in_band: r?.in_band === true ? true : r?.in_band === false ? false : undefined,
             }))
             .filter((r) => r.line !== undefined && r.ev_fee2 !== undefined)
         : undefined;
@@ -916,10 +935,14 @@ export async function getPropsOdds(
         ladder_detail: rungs?.length ? (rungs as PropLadderRung[]) : undefined,
         top_rung: p?.top_rung === true ? true
           : p?.top_rung === false ? false : undefined,
+        in_band: p?.in_band === true ? true : p?.in_band === false ? false : undefined,
       });
     }
     if (rows.length) byGame.set(slug, rows);
   }
+
+  const bandMin = num(raw?.band?.min_fair);
+  const bandMax = num(raw?.band?.max_fair);
 
   return {
     updated: raw?.updated != null ? String(raw.updated) : null,
@@ -928,6 +951,7 @@ export async function getPropsOdds(
     venue: raw?.venue != null ? String(raw.venue) : null,
     sideOnly: raw?.side_only === "over" ? "over" : null,
     feeModel: raw?.fee_model != null ? String(raw.fee_model) : null,
+    band: bandMin !== undefined && bandMax !== undefined ? { minFair: bandMin, maxFair: bandMax } : null,
     byGame,
   };
 }

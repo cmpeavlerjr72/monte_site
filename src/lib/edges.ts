@@ -356,7 +356,13 @@ export function pricedRowCount(edges: Map<string, GameEdges>): { priced: number;
  * `scan.props` and every row is in the publisher's parquet.
  */
 export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
-  const keep = dedupeTopRung(props.filter((p) => !p.overOnly || (p.evFee ?? -1) > 0));
+  // Tails excluded before anything else (owner rule 2026-09-09, round 3):
+  // `p.inBand` is already fully resolved in propEdge() (publisher's own
+  // `in_band`, or the [0.30, 0.85] sim P(over) fallback), so this is a
+  // straight AND with the existing positive-EV requirement.
+  const keep = dedupeTopRung(
+    props.filter((p) => p.inBand && (!p.overOnly || (p.evFee ?? -1) > 0))
+  );
   return keep
     .sort((a, b) => {
       const ea = a.overOnly ? (a.evFee ?? -Infinity) : NaN;
@@ -375,14 +381,19 @@ export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
  * rung's detail regardless of which one this function keeps.
  *
  * Prefers the publisher's own `topRung` flag (props_edge_dkex.py decides the
- * best-EV rung once, at the source). Falls back to a local best-EV pick —
- * by `evFee` for one-sided rows, `edge` otherwise — only when NONE of the
- * rows carry the field at all, so a props payload published before
- * `top_rung` existed still dedupes instead of repeating a player-stat.
+ * best-EV rung once, at the source, now recomputed WITHIN the band — owner
+ * rule 2026-09-09, round 3 — so a row can lose `topRung` to a different rung
+ * of the same player+stat purely because this one is a tail). Requires it
+ * STRICTLY `=== true` when the field is present at all: "Top prop overs"
+ * renders only the publisher's chosen rung, never one it marked false or
+ * left ambiguous. Falls back to a local best-EV pick — by `evFee` for
+ * one-sided rows, `edge` otherwise — only when NONE of the rows carry the
+ * field at all, so a props payload published before `top_rung` existed
+ * still dedupes instead of repeating a player-stat.
  */
 function dedupeTopRung(props: PropEdge[]): PropEdge[] {
   if (props.some((p) => p.topRung !== undefined)) {
-    return props.filter((p) => p.topRung !== false);
+    return props.filter((p) => p.topRung === true);
   }
   const bestScore = (p: PropEdge) => (p.overOnly ? (p.evFee ?? -Infinity) : p.edge);
   const best = new Map<string, PropEdge>();

@@ -365,7 +365,13 @@ function LadderRungs({ p }: { p: PropEdge }) {
         const px = Math.max(0, Math.min(1, r.px_cents / 100));
         return (
           <div className="prop-rung" key={r.line}>
-            <span className="prop-rung__k">{r.line}+</span>
+            {/* Same "stat short + strike" grammar as the row above it (owner
+                rule 2026-09-09 night, round 2) — a bare "249.5+" reads fine
+                alone but not once the row it belongs to only says the player's
+                name; every rung repeats the bet it prices. */}
+            <span className="prop-rung__k">
+              {p.statShort} {p.side === "over" ? "o" : "u"}{r.line}
+            </span>
             <span className="prop-rung__axis" aria-hidden="true">
               <span className="prop-rung__fill" style={{ width: `${sim * 100}%` }} />
               <span className="prop-rung__tick" style={{ left: `${px * 100}%` }} />
@@ -409,9 +415,30 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
         <span className="edge-row__rank">{rank}</span>
         <Logos teams={[p.playerTeam]} />
         <span className="edge-row__main">
+          {/* Line 1: the player, and nothing else — the strike is the thing
+              the owner bets, so it never shares a line (and its truncation
+              budget) with the name (owner rule 2026-09-09, round 2). */}
           <span className="edge-row__t1 edge-row__t1--prop">
-            {shortPlayer(p.player)} · <span title={p.statFull}>{p.statShort}</span>
-            {!hasNoLine(p) && ` ${p.side === "over" ? "o" : "u"}${p.line}`}
+            {shortPlayer(p.player)}
+          </span>
+          {/* Line 2: stat + strike first (bold — the bet itself), then price
+              + trade count (muted — the context). Wraps to a third line
+              rather than ellipsis-cutting the strike at any width; see
+              .edge-row__t2--prop. */}
+          <span className="edge-row__t2 edge-row__t2--prop">
+            <span className="edge-row__propbet" title={p.statFull}>
+              {p.statShort}
+              {!hasNoLine(p) && ` ${p.side === "over" ? "o" : "u"}${p.line}`}
+            </span>
+            <span className="edge-row__propmeta">
+              {" · "}
+              {/* The venue is named once in the column footer, not per row. */}
+              {p.priceCents !== undefined
+                ? `${p.priceCents}¢${p.nTrades !== undefined ? ` · ${p.nTrades} trade${p.nTrades === 1 ? "" : "s"}` : ""}`
+                : p.price !== undefined
+                  ? `${p.price > 0 ? "+" : ""}${p.price}`
+                  : shortTeam(p.playerTeam)}
+            </span>
             {p.ladder && (
               <button
                 type="button"
@@ -433,14 +460,6 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
                 T3
               </span>
             )}
-          </span>
-          <span className="edge-row__t2">
-            {/* The venue is named once in the column footer, not per row. */}
-            {p.priceCents !== undefined
-              ? `${p.priceCents}¢${p.nTrades !== undefined ? ` · ${p.nTrades} trade${p.nTrades === 1 ? "" : "s"}` : ""}`
-              : p.price !== undefined
-                ? `${p.price > 0 ? "+" : ""}${p.price}`
-                : shortTeam(p.playerTeam)}
           </span>
         </span>
         <span className="edge-row__num">
