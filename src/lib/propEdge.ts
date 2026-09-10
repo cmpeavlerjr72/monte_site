@@ -25,6 +25,14 @@ export type PropEdge = {
   playerTeam: string;
   stat: string;
   statLabel: string;
+  /** Compact display label ("Pass Yds", "Any TD") for narrow columns/rows —
+   *  owner rule 2026-09-09 night. Prefers the publisher's `stat_short`;
+   *  falls back to the local STAT_SHORT_LABELS map so a payload published
+   *  before the field existed still renders compactly. */
+  statShort: string;
+  /** Full stat name, for a hover/title on the compact label — never shown
+   *  inline, so it can stay as long as it needs to be. */
+  statFull: string;
   line: number;
   side: PropSide;
   /** Sim probability of the chosen side. */
@@ -65,6 +73,11 @@ export type PropEdge = {
   /** False when the rungs are not neighbours on the venue's full listed
    *  ladder — the shape claim is then interpolated across unpriced strikes. */
   ladderBoardAdjacent?: boolean;
+  /** True on the single best-EV rung of this (player, stat) — owner rule
+   *  2026-09-09 night: the ranked "Top overs" list shows at most one row per
+   *  (player, stat). `undefined` when the payload predates the field, in
+   *  which case `rankProps` falls back to a local best-EV dedupe. */
+  topRung?: boolean;
 };
 
 /** Profit per $1 staked at an American price. */
@@ -137,6 +150,10 @@ export function propEdge(
     playerTeam: ctx.playerTeam,
     stat: row.stat,
     statLabel: EXTRA_STAT_LABELS[row.stat] ?? statLabel(row.stat),
+    statShort: row.stat_short ?? STAT_SHORT_LABELS[row.stat]
+      ?? EXTRA_STAT_LABELS[row.stat] ?? statLabel(row.stat),
+    statFull: STAT_FULL_LABELS[row.stat] ?? EXTRA_STAT_LABELS[row.stat]
+      ?? statLabel(row.stat),
     line: row.line,
     side,
     simP,
@@ -160,6 +177,7 @@ export function propEdge(
     ladderRungs: row.ladder_detail,
     ladderCombinedEv: row.ladder_ev_combined,
     ladderBoardAdjacent: row.ladder_board_adjacent,
+    topRung: row.top_rung,
   };
 }
 
@@ -176,9 +194,42 @@ const EXTRA_STAT_LABELS: Record<string, string> = {
   anytime_td: "Anytime TD",
 };
 
+/**
+ * Compact stat labels, one place in the site (owner rule 2026-09-09 night:
+ * full stat names truncate at phone width). This is the FALLBACK used when
+ * a props payload predates `stat_short` — `propEdge()` prefers the
+ * publisher's own field whenever it is present, so this map only has to
+ * agree with `scripts/props_edge_dkex.py`'s STAT_SHORT, not stay in lockstep
+ * with it.
+ */
+const STAT_SHORT_LABELS: Record<string, string> = {
+  pass_yds: "Pass Yds",
+  rush_yds: "Rush Yds",
+  rec_yds: "Rec Yds",
+  pass_td: "Pass TD",
+  anytime_td: "Any TD",
+};
+
+/** Full stat names, for the hover/title on a compact label — never shown
+ *  inline. Keys not listed here fall back to `statLabel`/EXTRA_STAT_LABELS,
+ *  which are already short enough to double as their own full name. */
+const STAT_FULL_LABELS: Record<string, string> = {
+  pass_yds: "Passing Yards",
+  rush_yds: "Rushing Yards",
+  rec_yds: "Receiving Yards",
+  pass_td: "Passing Touchdowns",
+  anytime_td: "Anytime Touchdown",
+};
+
 /** True when the parlay slip cannot price this stat from seeds.json. */
 export function isSlipPriceable(e: PropEdge): boolean {
   return !(e.stat in EXTRA_STAT_LABELS);
+}
+
+/** True for a yes/no market with no numeric line (e.g. anytime TD) — the
+ *  row prints the stat alone, never "stat oNN". */
+export function hasNoLine(e: PropEdge): boolean {
+  return e.stat in EXTRA_STAT_LABELS;
 }
 
 /** "J. Craig" — surnames stay whole so two Craigs stay distinguishable. */

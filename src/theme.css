@@ -1381,6 +1381,23 @@ input:focus, select:focus, textarea:focus {
   overflow: hidden;
 }
 
+/* Prop rows (owner rule 2026-09-09 night): the stat label is compact
+   ("Pass Yds", "Any TD") so a normal player name fits on one line at desktop
+   width. A long player name can still overrun the narrow single-column
+   layout below 480px -- there the row wraps to a second line instead of
+   ellipsis-cutting the stat or the line off. Text-overflow stays the
+   single-line desktop default; this is the "last resort is wrap, not cut"
+   fallback, scoped to width, not applied globally. */
+@media (max-width: 480px) {
+  .edge-row__t1--prop {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+}
+
 /* Documented over-projection caveat on high-usage overs (INV-69). */
 .edge-flag {
   flex-shrink: 0;

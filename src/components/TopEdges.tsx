@@ -23,7 +23,7 @@ import {
   type SlateScan, type EdgeEntry,
 } from "../lib/edges";
 import { americanOdds, pctText, type MarketRow } from "../lib/marketEdge";
-import { isSlipPriceable, propLabel, type PropEdge } from "../lib/propEdge";
+import { isSlipPriceable, hasNoLine, propLabel, shortPlayer, type PropEdge } from "../lib/propEdge";
 import { snapHalf, type LegSpec, type TeamRef } from "../lib/parlay";
 import type { TeamMarketRow } from "../lib/cfbJson";
 import { getTeamLogo } from "../utils/teamLogo";
@@ -409,8 +409,9 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
         <span className="edge-row__rank">{rank}</span>
         <Logos teams={[p.playerTeam]} />
         <span className="edge-row__main">
-          <span className="edge-row__t1">
-            {propLabel(p)}
+          <span className="edge-row__t1 edge-row__t1--prop">
+            {shortPlayer(p.player)} · <span title={p.statFull}>{p.statShort}</span>
+            {!hasNoLine(p) && ` ${p.side === "over" ? "o" : "u"}${p.line}`}
             {p.ladder && (
               <button
                 type="button"

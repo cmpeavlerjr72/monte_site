@@ -746,6 +746,11 @@ export type PropLadderRung = {
 export type PropOddsRow = {
   player: string;
   stat: string;
+  /** Compact display label ("Pass Yds", "Any TD") -- owner rule 2026-09-09
+   *  night: full stat names truncate at phone width. Absent on a payload
+   *  published before this field existed; callers fall back to a local
+   *  short-label helper (`propEdge.ts`'s STAT_SHORT_LABELS) in that case. */
+  stat_short?: string;
   line: number;
   /**
    * P(over) implied by the market. For a two-sided book this is the de-vigged
@@ -785,6 +790,13 @@ export type PropOddsRow = {
   ladder_ev_combined?: number;
   ladder_board_adjacent?: boolean;
   ladder_detail?: PropLadderRung[];
+  /** True on the single best-EV rung of this (player, stat) -- owner rule
+   *  2026-09-09 night: the ranked "Top overs" list may show at most one row
+   *  per (player, stat); every other rung still carries its own record here
+   *  (ladders need them) with `top_rung: false`. Absent on a payload
+   *  published before this field existed -- callers must fall back to a
+   *  local best-EV dedupe in that case, never assume `true`. */
+  top_rung?: boolean;
 };
 
 export type PropsOdds = {
@@ -876,6 +888,7 @@ export async function getPropsOdds(
         : undefined;
       rows.push({
         player, stat, line,
+        stat_short: p?.stat_short != null ? String(p.stat_short) : undefined,
         fair_over: fair,
         fair_source: p?.fair_source != null ? String(p.fair_source) : undefined,
         n_books: num(p?.n_books),
@@ -901,6 +914,8 @@ export async function getPropsOdds(
         ladder_ev_combined: num(p?.ladder_ev_combined),
         ladder_board_adjacent: p?.ladder_board_adjacent === true,
         ladder_detail: rungs?.length ? (rungs as PropLadderRung[]) : undefined,
+        top_rung: p?.top_rung === true ? true
+          : p?.top_rung === false ? false : undefined,
       });
     }
     if (rows.length) byGame.set(slug, rows);

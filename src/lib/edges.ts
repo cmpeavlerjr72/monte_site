@@ -356,7 +356,7 @@ export function pricedRowCount(edges: Map<string, GameEdges>): { priced: number;
  * `scan.props` and every row is in the publisher's parquet.
  */
 export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
-  const keep = props.filter((p) => !p.overOnly || (p.evFee ?? -1) > 0);
+  const keep = dedupeTopRung(props.filter((p) => !p.overOnly || (p.evFee ?? -1) > 0));
   return keep
     .sort((a, b) => {
       const ea = a.overOnly ? (a.evFee ?? -Infinity) : NaN;
@@ -365,6 +365,33 @@ export function rankProps(props: PropEdge[], limit = 10): PropEdge[] {
       return b.edge - a.edge;
     })
     .slice(0, limit);
+}
+
+/**
+ * At most one row per (player, stat) in the ranked list (owner rule
+ * 2026-09-09 night) — Mateer pass yds must not occupy three rungs of the
+ * "Top overs" table. The ladder rung list is untouched: it reads
+ * `ladderRungs` off the single surviving row, which still carries every
+ * rung's detail regardless of which one this function keeps.
+ *
+ * Prefers the publisher's own `topRung` flag (props_edge_dkex.py decides the
+ * best-EV rung once, at the source). Falls back to a local best-EV pick —
+ * by `evFee` for one-sided rows, `edge` otherwise — only when NONE of the
+ * rows carry the field at all, so a props payload published before
+ * `top_rung` existed still dedupes instead of repeating a player-stat.
+ */
+function dedupeTopRung(props: PropEdge[]): PropEdge[] {
+  if (props.some((p) => p.topRung !== undefined)) {
+    return props.filter((p) => p.topRung !== false);
+  }
+  const bestScore = (p: PropEdge) => (p.overOnly ? (p.evFee ?? -Infinity) : p.edge);
+  const best = new Map<string, PropEdge>();
+  for (const p of props) {
+    const key = `${p.player}|${p.stat}`;
+    const cur = best.get(key);
+    if (!cur || bestScore(p) > bestScore(cur)) best.set(key, p);
+  }
+  return [...best.values()];
 }
 
 /** How many over-only rows the venue priced but the ranking excluded. */
