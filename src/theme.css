@@ -2537,3 +2537,15 @@ input:focus, select:focus, textarea:focus {
 /* The "+" quick-add's grid cell, held open when the row has no addable leg so
    the columns stay aligned down the list. */
 .edge-row__add-gap { display: block; width: 100%; }
+
+/* ---------------- a handle is a door (/u/:handle, 2026-09-10) ------------- */
+/* The feed's bucket handle and the friends-list name are links to the
+   person's own page. They keep their type colour at rest — the row already
+   reads as a name — and take the brand on hover/focus like every other link. */
+a.fdf__handle, a.fr-person { color: inherit; text-decoration: none; }
+a.fdf__handle:hover, a.fdf__handle:focus-visible,
+a.fr-person:hover, a.fr-person:focus-visible {
+  color: var(--brand-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

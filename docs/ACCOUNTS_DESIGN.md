@@ -209,3 +209,30 @@ existed and could not reach a reader.
   money" and "how did it end" are two questions and both get answered. The
   friend-bucket net summary is unchanged; `.bkt__*` (FriendsOnGame) untouched.
   One new rule, `.fdp__flip`, in the `.fd*` block of theme.css.
+
+## Owner change 2026-09-10: a handle is a door — /u/:handle
+
+Owner: "click on my friend's handle (either in the feed or on my friends
+list) and see all their open positions and tail directly from there instead
+of having to go through the feed to find everything."
+
+* **Route** `/u/:handle` → `src/pages/FriendPage.tsx`. Header = emoji, display
+  name, flares, then `N open · W–L[–P] [· k flips] · ±x.xxu` (settled
+  positions, net of fees, in THEIR units). Body = **Open** positions as the
+  feed's own game cards (`FeedCards solo` — no friend header inside the card,
+  the page title already says whose they are) with the same Tail button under
+  the same `TailProvider`; **Settled · N** folded underneath.
+* **Doors**: the handle in every feed bucket header (`a.fdf__handle`) and the
+  name in every friends-list row on /me (`a.fr-person`) link to
+  `handlePath(handle)`.
+* **Reuse, not a copy**: `useFeedItems({handle})` and `FeedCards` were split
+  out of `NetworkFeed.tsx`; `useTailCtx` (src/lib/useTailCtx.ts) is the tail
+  gate wiring lifted out of FeedPage so both pages price from one path.
+* **Visibility is RLS's**: `feed_items … eq(handle)` returns only what this
+  viewer may read; the header reads `profiles` (own / friends / pending /
+  book-visible) and falls back to the exact-handle RPC for the name, so a real
+  handle behind a private book reads "you are not friends, or their book is
+  private", a typo reads "no account with that handle". Tail counts and
+  "tail of X" resolve inside the one person's rows only, so on this page a
+  tail reads as a tail without naming its parent.
+

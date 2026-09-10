@@ -57,6 +57,12 @@
 //     follows the money: "did it make money" and "how did it end" are two
 //     questions and the feed answers both.
 //
+// TWO EXPORTS BESIDES THE FEED (2026-09-10): `useFeedItems` (the rows, live,
+// optionally one poster's) and `FeedCards` (the cards over rows in hand), so
+// a person's page (src/pages/FriendPage.tsx, /u/:handle) is the same feed
+// filtered to one handle and not a second rendering of it. Every handle
+// printed in a bucket header links there (`handlePath`).
+//
 // THE FILTERING IS THE DATABASE'S JOB. `feed_items` is a security_invoker view
 // over RLS-protected tables, so what comes back is exactly what this viewer may
 // see; there is no client-side "is this mine / are we friends" test here. AND
@@ -67,6 +73,7 @@
 // behind the user's back.
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import AuthPanel from "./AuthPanel";
 import Flares from "./Flares";
 import TailButton from "./TailButton";
@@ -102,54 +109,62 @@ const POLL_MS = 60_000;
 /** Cards before the "older" divider, and how many more each press adds. */
 const FIRST_BUCKETS = 10;
 
-export default function NetworkFeed({
-  season, week, allWeeks = false, startOpen = true,
-}: NetworkFeedProps) {
-  const { session, loading } = useSession();
-  const { profile } = useProfile(session);
+/** Where a handle goes when tapped: that person's page (src/pages/FriendPage). */
+export const handlePath = (handle: string) => `/u/${encodeURIComponent(handle)}`;
+
+/* ------------------------------- the rows --------------------------------- */
+
+/**
+ * THE FEED'S ROWS, live. One hook for every surface that reads `feed_items`:
+ * the feed (every poster) and a person's page (`handle` set — ONE poster,
+ * every week). RLS still decides WHOSE rows come back, so a wider window or a
+ * handle filter is never a wider audience — only a longer or narrower one.
+ *
+ * LIVE. RLS applies to realtime, and the event is a DOORBELL, not the data:
+ * every event triggers a refetch of `feed_items`; nothing renders from the
+ * payload (a raw `app_orders` row carries cost and count and has not been
+ * through the view that strips them). Three subscriptions: a bet PLACED
+ * (insert), a bet SETTLED (update), a game MOVED (feed_events insert). When
+ * the channel is down the rows re-read themselves once a minute, and the
+ * same tick re-renders the clocks so "4m" is not a lie by the fifth.
+ */
+export function useFeedItems({ signedIn, season, week, allWeeks, handle, limit = 200 }: {
+  signedIn: boolean;
+  season?: number;
+  week?: number;
+  allWeeks?: boolean;
+  /** One poster only, by handle (the view's own column). */
+  handle?: string;
+  limit?: number;
+}): { items: FeedItem[]; err: string | null; live: boolean; loaded: boolean } {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [open, setOpen] = useState(startOpen);
   const [live, setLive] = useState(false);
-  /** Re-render once a minute so "4m" is not a lie by the fifth. */
+  const [loaded, setLoaded] = useState(false);
   const [, setTick] = useState(0);
-  /** Which position has its details open — ONE at a time. */
-  const [pop, setPop] = useState<string | null>(null);
-  /** Which cards are showing their history. */
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const [shown, setShown] = useState(FIRST_BUCKETS);
-
-  const signedIn = Boolean(session && profile);
 
   const load = useCallback(async () => {
     if (!supabase || !signedIn) return;
     let q = supabase.from("feed_items").select("*");
-    if (!allWeeks) {
-      // RLS still decides WHOSE rows come back, so a wider window is never a
-      // wider audience — only a longer one.
+    if (handle) q = q.eq("handle", handle);
+    if (!allWeeks && season != null && week != null) {
       q = q.or(`and(season.eq.${season},week.eq.${week}),week.is.null`);
     }
-    const { data, error } = await q.order("at", { ascending: false }).limit(200);
-    if (error) { setErr(error.message); return; }
+    const { data, error } = await q.order("at", { ascending: false }).limit(limit);
+    if (error) { setErr(error.message); setLoaded(true); return; }
     setErr(null);
     setItems((data ?? []) as FeedItem[]);
-  }, [signedIn, season, week, allWeeks]);
+    setLoaded(true);
+  }, [signedIn, season, week, allWeeks, handle, limit]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setLoaded(false); void load(); }, [load]);
 
-  /**
-   * LIVE. RLS applies to realtime, and the event is a DOORBELL, not the data:
-   * every event triggers a refetch of `feed_items`; nothing renders from the
-   * payload (a raw `app_orders` row carries cost and count and has not been
-   * through the view that strips them). Three subscriptions: a bet PLACED
-   * (insert), a bet SETTLED (update), a game MOVED (feed_events insert).
-   */
   useEffect(() => {
     if (!supabase || !signedIn) return;
     let alive = true;
     const ring = () => { if (alive) void load(); };
     const ch = supabase
-      .channel("feed-app-orders")
+      .channel(`feed-app-orders:${handle ?? "*"}`)
       .on("postgres_changes",
           { event: "INSERT", schema: "public", table: "app_orders" }, ring)
       .on("postgres_changes",
@@ -161,9 +176,8 @@ export default function NetworkFeed({
         setLive(status === "SUBSCRIBED");
       });
     return () => { alive = false; setLive(false); void supabase!.removeChannel(ch); };
-  }, [signedIn, load]);
+  }, [signedIn, load, handle]);
 
-  /** The fallback, and the clock. */
   useEffect(() => {
     if (!signedIn) return;
     const id = window.setInterval(() => {
@@ -173,8 +187,96 @@ export default function NetworkFeed({
     return () => window.clearInterval(id);
   }, [signedIn, load]);
 
-  /** THE TAIL GRAPH, built from what is already loaded — scoped to the visible
-   *  rows so a count can never announce a bet the viewer may not see. */
+  return { items, err, live, loaded };
+}
+
+/* -------------------------------- the feed -------------------------------- */
+
+export default function NetworkFeed({
+  season, week, allWeeks = false, startOpen = true,
+}: NetworkFeedProps) {
+  const { session, loading } = useSession();
+  const { profile } = useProfile(session);
+  const [open, setOpen] = useState(startOpen);
+  const signedIn = Boolean(session && profile);
+
+  const { items, err, live } = useFeedItems({ signedIn, season, week, allWeeks });
+
+  const betCount = useMemo(
+    () => items.filter((i) => i.kind !== "score").length, [items]);
+  const gameCount = useMemo(
+    () => bucketize(items).length, [items]);
+
+  if (!supabaseEnabled) return null;
+  if (loading) return null;
+
+  if (!signedIn) {
+    return (
+      <AuthPanel compact
+                 prompt="Sign in to see what your friends are on." />
+    );
+  }
+
+  return (
+    <div className="fd">
+      <div className="fd__meta">
+        {!startOpen && (
+          <button type="button" className="ui-btn" onClick={() => setOpen((v) => !v)}
+                  style={{ padding: "3px 10px", fontSize: 11 }}>
+            {open ? "Hide" : "Show"} feed
+          </button>
+        )}
+        <span>
+          {betCount === 0
+            ? "Nothing yet"
+            : `${betCount} bet${betCount === 1 ? "" : "s"} on `
+              + `${gameCount} game${gameCount === 1 ? "" : "s"}`}
+        </span>
+        <span className="fd__dot" aria-hidden>·</span>
+        <span title={live
+          ? "New bets appear as they are placed."
+          : "The live channel is down; the feed re-reads itself every minute."}>
+          {live ? "live" : "refreshes every minute"}
+        </span>
+      </div>
+
+      {err && <span style={{ fontSize: 12, color: "var(--neg)" }}>{err}</span>}
+
+      {open && (
+        <FeedCards
+          items={items}
+          empty="No bets from your friends yet — add friends by username on your profile."
+        />
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------- the cards ------------------------------- */
+
+/**
+ * THE CARDS, from rows already in hand. Pure rendering over `items`: one game
+ * per card, one bucket per friend inside it, Tail on every open position
+ * (given a TailProvider above). The tail graph — who copied whom, "tailed by
+ * N" — is resolved INSIDE these rows, so a count can never announce a bet the
+ * viewer may not see, and on a one-person page it simply reads as a tail
+ * without naming the parent.
+ *
+ * `solo`: every row is the same poster's (a person's page), so the friend
+ * header inside each card would repeat the page's own title — it is dropped.
+ */
+export function FeedCards({ items, solo = false, empty }: {
+  items: FeedItem[];
+  solo?: boolean;
+  /** What to say when there is nothing. Omit to render nothing at all. */
+  empty?: string;
+}) {
+  /** Which position has its details open — ONE at a time. */
+  const [pop, setPop] = useState<string | null>(null);
+  /** Which cards are showing their history. */
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [shown, setShown] = useState(FIRST_BUCKETS);
+
   const byOrderId = useMemo(() => {
     const m = new Map<string, FeedItem>();
     for (const i of items) if (i.kind === "order" && i.order_id) m.set(i.order_id, i);
@@ -192,59 +294,24 @@ export default function NetworkFeed({
   const buckets = useMemo(
     () => bucketize(items, tailCounts), [items, tailCounts]);
 
-  const betCount = useMemo(
-    () => items.filter((i) => i.kind !== "score").length, [items]);
-
-  if (!supabaseEnabled) return null;
-  if (loading) return null;
-
-  if (!signedIn) {
-    return (
-      <AuthPanel compact
-                 prompt="Sign in to see what your friends are on." />
-    );
+  if (items.length === 0) {
+    return empty
+      ? <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{empty}</span>
+      : null;
   }
 
   const visible = buckets.slice(0, shown);
   const left = buckets.length - shown;
 
   return (
-    <div className="fd">
-      <div className="fd__meta">
-        {!startOpen && (
-          <button type="button" className="ui-btn" onClick={() => setOpen((v) => !v)}
-                  style={{ padding: "3px 10px", fontSize: 11 }}>
-            {open ? "Hide" : "Show"} feed
-          </button>
-        )}
-        <span>
-          {betCount === 0
-            ? "Nothing yet"
-            : `${betCount} bet${betCount === 1 ? "" : "s"} on `
-              + `${buckets.length} game${buckets.length === 1 ? "" : "s"}`}
-        </span>
-        <span className="fd__dot" aria-hidden>·</span>
-        <span title={live
-          ? "New bets appear as they are placed."
-          : "The live channel is down; the feed re-reads itself every minute."}>
-          {live ? "live" : "refreshes every minute"}
-        </span>
-      </div>
-
-      {err && <span style={{ fontSize: 12, color: "var(--neg)" }}>{err}</span>}
-
-      {open && items.length === 0 && (
-        <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
-          No bets from your friends yet — add friends by username on your profile.
-        </span>
-      )}
-
-      {open && visible.map((b, i) => (
+    <>
+      {visible.map((b, i) => (
         <Fragment key={b.key}>
           {i === FIRST_BUCKETS && <div className="fd__older">Older</div>}
           <GameCard
             bucket={b}
             byOrderId={byOrderId}
+            solo={solo}
             expanded={expanded.has(b.key)}
             onToggleExpand={() => setExpanded((s) => {
               const next = new Set(s);
@@ -257,7 +324,7 @@ export default function NetworkFeed({
         </Fragment>
       ))}
 
-      {open && left > 0 && (
+      {left > 0 && (
         <button type="button" className="ui-btn"
                 onClick={() => setShown((n) => n + FIRST_BUCKETS)}
                 style={{ padding: "5px 14px", fontSize: 12, justifySelf: "start" }}>
@@ -265,7 +332,7 @@ export default function NetworkFeed({
           {Math.min(FIRST_BUCKETS, left) === 1 ? "" : "s"}
         </button>
       )}
-    </div>
+    </>
   );
 }
 
@@ -304,10 +371,11 @@ function friendBlocks(positions: FeedPosition[]): FriendBlock[] {
 }
 
 function GameCard({
-  bucket, byOrderId, expanded, onToggleExpand, pop, onPop,
+  bucket, byOrderId, solo, expanded, onToggleExpand, pop, onPop,
 }: {
   bucket: FeedBucket;
   byOrderId: Map<string, FeedItem>;
+  solo: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
   pop: string | null;
@@ -341,7 +409,7 @@ function GameCard({
 
       {blocks.map((b) => (
         <FriendBucket key={b.user_id} block={b} byOrderId={byOrderId}
-                      pop={pop} onPop={onPop} />
+                      solo={solo} pop={pop} onPop={onPop} />
       ))}
 
       {actions > 1 && (
@@ -380,9 +448,11 @@ function GameCard({
  * of that header is the block's summary — the net units once anything has
  * settled, else how many bets are in it. Underneath, one line per position.
  */
-function FriendBucket({ block, byOrderId, pop, onPop }: {
+function FriendBucket({ block, byOrderId, solo, pop, onPop }: {
   block: FriendBlock;
   byOrderId: Map<string, FeedItem>;
+  /** The page is already this one person's: no header, the rows stand alone. */
+  solo: boolean;
   pop: string | null;
   onPop: (key: string) => void;
 }) {
@@ -403,15 +473,21 @@ function FriendBucket({ block, byOrderId, pop, onPop }: {
 
   return (
     <div className="fdf">
-      <div className="fdf__head">
-        <span className="fdf__handle" title={block.display_name || block.handle}>
-          {block.handle}
-        </span>
-        {/* Flares at rest here, not raised: a bucket header has the room, and
-            three superscript logos jammed against the handle read as noise. */}
-        <Flares flares={block.flares} size={14} />
-        {summary}
-      </div>
+      {!solo && (
+        <div className="fdf__head">
+          {/* THE HANDLE IS A DOOR (owner 2026-09-10): tap it for everything
+              this person is on, with Tail on each — instead of hunting for
+              their rows game by game down the feed. */}
+          <Link to={handlePath(block.handle)} className="fdf__handle"
+                title={`Everything ${block.display_name || block.handle} is on`}>
+            {block.handle}
+          </Link>
+          {/* Flares at rest here, not raised: a bucket header has the room, and
+              three superscript logos jammed against the handle read as noise. */}
+          <Flares flares={block.flares} size={14} />
+          {summary}
+        </div>
+      )}
       {block.positions.map((p) => (
         <PositionRow key={p.key} pos={p} byOrderId={byOrderId}
                      open={pop === p.key} onToggle={() => onPop(p.key)} />

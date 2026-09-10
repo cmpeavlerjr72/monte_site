@@ -27,6 +27,7 @@ import Bracket from "./pages/CFB_Bracket"
 import Profile from "./pages/Profile";
 import BookDashboard from "./pages/BookDashboard";
 import FeedPage from "./pages/FeedPage";
+import FriendPage from "./pages/FriendPage";
 
 // CBB Pages
 
@@ -106,6 +107,8 @@ export default function App() {
               The scoreboards stay under /cfb and /cbb. */}
           <Route path="/mybook" element={<BookDashboard />} />
           <Route path="/feed" element={<FeedPage />} />
+          {/* One person, everything they are on — reached from any handle. */}
+          <Route path="/u/:handle" element={<FriendPage />} />
           <Route path="/me" element={<Profile />} />
 
           {/* Legacy redirects to preserve old links */}

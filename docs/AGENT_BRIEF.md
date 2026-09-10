@@ -4,6 +4,15 @@ Read this before touching the scoreboard. It replaces inheriting a prior
 agent's transcript. Keep it current: if you change a contract below, update
 this file in the same commit.
 
+## A handle is a door (2026-09-10)
+
+`/u/:handle` (src/pages/FriendPage.tsx) = one person's open positions with
+Tail + settled folded; reached from every printed handle (feed bucket header,
+/me friends list) via `handlePath()`. It reuses `useFeedItems` / `FeedCards`
+exported from NetworkFeed.tsx and `useTailCtx` (src/lib/useTailCtx.ts) — do
+not build a second feed renderer or a second tail gate. Design note:
+docs/ACCOUNTS_DESIGN.md (2026-09-10 section).
+
 ## Decision layer is ENGINE-KEYED (2026-09-08)
 
 The week-1 decision rules (`src/lib/edgeRules.ts`: mismatch dog-side /

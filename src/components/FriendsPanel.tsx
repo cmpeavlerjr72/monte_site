@@ -19,8 +19,10 @@
 // refuses and the error is shown rather than swallowed.
 
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import AuthPanel from "./AuthPanel";
 import Flares from "./Flares";
+import { handlePath } from "./NetworkFeed";
 import {
   supabase, supabaseEnabled, useProfile, useSession, type FoundProfile,
 } from "../lib/supabase";
@@ -244,21 +246,32 @@ function AddFriend({ me, onSent, known }: {
   );
 }
 
+/** A person in a row. THE NAME IS A DOOR (owner 2026-09-10): it opens
+ *  /u/<handle> — everything they are on, with Tail on each open position —
+ *  the same page a handle in the feed opens. A row without a handle yet (a
+ *  lookup still resolving) prints as text. */
 function PartyRow({ party, children }: { party: Party | null; children: React.ReactNode }) {
+  const inner = (
+    <>
+      <span style={{ fontWeight: 700 }}>{party?.display_name ?? "—"}</span>
+      <Flares flares={party?.flares} size={15} />
+      <span style={{ color: "var(--muted)" }}>{party?.handle ?? "…"}</span>
+    </>
+  );
+  const nameStyle: React.CSSProperties = {
+    fontSize: 12, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+    display: "inline-flex", alignItems: "center", gap: 5,
+  };
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 8, minHeight: 40,
       padding: "4px 0", borderTop: "1px solid var(--border)",
     }}>
       <span aria-hidden style={{ fontSize: 15 }}>{party?.avatar_emoji || "🏈"}</span>
-      <span style={{
-        fontSize: 12, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
-        display: "inline-flex", alignItems: "center", gap: 5,
-      }}>
-        <span style={{ fontWeight: 700 }}>{party?.display_name ?? "—"}</span>
-        <Flares flares={party?.flares} size={15} />
-        <span style={{ color: "var(--muted)" }}>{party?.handle ?? "…"}</span>
-      </span>
+      {party?.handle
+        ? <Link to={handlePath(party.handle)} className="fr-person" style={nameStyle}
+                title={`Everything ${party.display_name || party.handle} is on`}>{inner}</Link>
+        : <span style={nameStyle}>{inner}</span>}
       <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>{children}</span>
     </div>
   );

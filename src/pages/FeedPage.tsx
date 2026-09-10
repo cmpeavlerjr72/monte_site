@@ -14,28 +14,21 @@
 // env-paired Kalshi friend books read the portal route they always did, and
 // render nothing at all when the server declares no pair.
 //
-// THE ONE EXCEPTION IS THE TAIL GATE (owner 2026-09-09). A Tail button may
-// only offer a bet the sim still likes AT THE CURRENT ASK, and that is a
-// judgement no Supabase row carries: it needs this week's published
-// probabilities and the live Kalshi book. So this page loads the same three
-// week files the scoreboard does and runs the same compute over them
-// (src/lib/tailQuotes.ts) — one pricing path for the whole app, never a
-// second opinion living on the social surface. None of it is fetched for a
-// reader who cannot trade anyway.
+// THE ONE EXCEPTION IS THE TAIL GATE (owner 2026-09-09), and since 2026-09-10
+// it is shared: `useTailCtx` (src/lib/useTailCtx.ts) is the one wiring of
+// week files + live book + the viewer's own account that every page hosting
+// a Tail button uses — this one and a friend's page (/u/:handle). A handle
+// anywhere in the feed is a link to that page.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import AuthPanel from "../components/AuthPanel";
 import NetworkFeed from "../components/NetworkFeed";
 import FriendBooks from "../components/FriendBooks";
 import { supabaseEnabled, useProfile, useSession } from "../lib/supabase";
-import { localSettings } from "../lib/userSettings";
-import type { Sizing } from "../lib/suggestedBets";
-import { readPortalToken, usePortalBook } from "../lib/kalshiPortal";
 import type { BetGameNames } from "../lib/kalshiPortal";
-import { readSlateGames } from "../lib/slateCache";
-import { TailProvider, type TailCtx } from "../components/TailButton";
-import { useTailQuotes } from "../lib/tailQuotes";
+import { TailProvider } from "../components/TailButton";
+import { useTailCtx } from "../lib/useTailCtx";
 
 /** Module-level so a memo keyed on them is stable — a fresh `new Map()` per
  *  render is the render-loop trap (docs/AGENT_BRIEF.md rule 4). */
@@ -48,63 +41,12 @@ export default function FeedPage() {
   const { profile, loading: profileLoading } = useProfile(session);
   const signedIn = Boolean(session && profile);
 
-  const token = useMemo(() => readPortalToken(), []);
-  const settings = useMemo(() => localSettings(), []);
-  const sizing: Sizing = {
-    mode: settings.mode,
-    maxRiskMultiple: settings.mode === "risk" ? 1 : settings.multiple,
-  };
   /** Only for the single-week fallback inside NetworkFeed; this page reads the
    *  feed as a timeline (`allWeeks`), so it is a default, not a filter. */
-  const slate = useMemo(() => readSlateGames(), []);
+  const { tailCtx, token, settings, sizing, season, week } =
+    useTailCtx(session, signedIn);
 
   useEffect(() => { document.title = "Feed · MVPeav"; }, []);
-
-  /* ----------------------------- the Tail gate ---------------------------- */
-
-  /** The viewer's own book: whether they may place at all, and whether their
-   *  account is live or staged. `usePortalBook` takes the signed-in path when
-   *  this browser holds no portal password, which is the ordinary case for
-   *  everyone but the owner. */
-  const portal = usePortalBook(token, signedIn);
-  /** WHY a Tail button is muted, in the words it shows. Null = go. */
-  const blocked =
-    !signedIn ? "sign in to tail"
-    : portal.status === "loading" ? "checking your book"
-    : portal.status === "ok" ? null
-    : portal.status === "forbidden" || portal.status === "idle"
-      || portal.status === "unauthorized" ? "link a Kalshi key to tail"
-    : "your book is unreachable";
-
-  /** The dataset week directory. The scoreboard leaves it in the slate cache;
-   *  a slate written before it did falls back to the naming convention, which
-   *  is a guess that resolves to an empty quote map if it is wrong (every
-   *  button then says "no sim for this market" rather than lying). */
-  const season = slate?.season ?? new Date().getFullYear();
-  const weekId = slate?.weekId
-    ?? `week${String(slate?.week ?? 0).padStart(2, "0")}`;
-  const tail = useTailQuotes({
-    season, weekId, unit: settings.unit, sizing,
-    // Not a byte is fetched for a reader who could not place the bet.
-    enabled: signedIn && blocked !== "sign in to tail",
-  });
-
-  const tailCtx: TailCtx = useMemo(() => ({
-    quotes: tail.quotes,
-    feeParams: tail.feeParams,
-    unit: settings.unit,
-    sizing,
-    token,
-    ordersLive: portal.payload?.orders_live === true,
-    viewerId: session?.user?.id ?? null,
-    blocked,
-    quotedAt: tail.quotedAt,
-    // `sizing` is rebuilt every render from primitives; depending on its
-    // identity would hand a new context down on every render for nothing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [tail.quotes, tail.feeParams, tail.quotedAt, settings.unit,
-       sizing.mode, sizing.maxRiskMultiple, token,
-       portal.payload?.orders_live, session?.user?.id, blocked]);
 
   if (!supabaseEnabled) {
     return (
@@ -131,14 +73,14 @@ export default function FeedPage() {
       <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
         <span style={{ fontSize: 11, color: "var(--muted)" }}>
           Every bet your friends place through this site lands here as they
-          place it. Add friends by username on{" "}
-          <Link to="/me">your profile</Link>.
+          place it. Tap a handle for everything that person is on. Add friends
+          by username on <Link to="/me">your profile</Link>.
         </span>
 
         <TailProvider value={tailCtx}>
           <NetworkFeed
             season={season}
-            week={slate?.week ?? 0}
+            week={week}
             allWeeks
             startOpen
           />
