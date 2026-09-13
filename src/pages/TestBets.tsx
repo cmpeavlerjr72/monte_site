@@ -41,13 +41,14 @@ import { useSearchParams } from "react-router-dom";
 import GameBetsPanel from "../components/SuggestedBets";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { getJsonWeekIndex, getJsonWeekGames, getTeamStats,
-  type TeamStats } from "../lib/cfbJson";
+  getWeekEngineCached,
+  type TeamStats, type WeekEngine } from "../lib/cfbJson";
 import type { KalshiGame, KalshiRung, KalshiStatQuote } from "../lib/kalshi";
 import {
   sizeContracts, MAX_RISK_MULTIPLE_DEFAULT,
   type FeeParams, type Sizing, type UnitMode,
 } from "../lib/suggestedBets";
-import { regimeWords } from "../lib/edgeRules";
+import { regimeWords, rulesApplyFor, regimeFor } from "../lib/edgeRules";
 import UnitModeControl from "../components/UnitModeControl";
 
 /** Ball State @ Ohio State is the mismatch (open −50.5, P4 host v MAC — the
@@ -292,12 +293,26 @@ export default function TestBets() {
   const skew = Number(params.get("skew") ?? 0.16);
 
   const [data, setData] = useState<Loaded | null>(null);
+  /**
+   * THE WEEK'S REAL ENGINE BLOCK — the rulebook gate and the owner's
+   * market-eligibility policy both hang off it (src/lib/edgeRules.ts).
+   *
+   * The harness's whole claim is "if a label is wrong here it is wrong in
+   * production", and a panel rendered with no engine block silently asserts
+   * the legacy week-1 engine and no decision policy — which was true when
+   * this page was written and is not any more. It is read from the same
+   * published index.json as everything else on the page; nothing synthetic.
+   */
+  const [engine, setEngine] = useState<WeekEngine | null | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let dead = false;
     (async () => {
       try {
+        getWeekEngineCached(SEASON, weekId)
+          .then(setEngine)
+          .catch(() => setEngine(null));
         const index = await getJsonWeekIndex(weekId, SEASON);
         if (!index) throw new Error(`no index for ${weekId}`);
         const wanted = index.filter((r) => slugs.includes(r.slug));
@@ -380,7 +395,13 @@ export default function TestBets() {
     typeFilter: "all",
     showTails: true,
     sort: "edge",
-    edgeRules: rulesOn,
+    // THE SAME TWO-PART GATE PRODUCTION USES (Scoreboard.tsx): the URL switch
+    // AND the engine the week-1 labels were measured on. Passing the raw
+    // switch made the harness label rows "not a target" on an engine whose
+    // own header line said no rulebook describes it — a contradiction
+    // production never shows, on the one page whose promise is that it does.
+    edgeRules: rulesOn && rulesApplyFor(engine),
+    engine: engine ?? null,
   });
 
   return (
@@ -442,7 +463,15 @@ export default function TestBets() {
       <SizingTable unit={30} multiple={sizing.maxRiskMultiple} />
 
       {(data?.games ?? []).map((g) => {
-        const regime = suggestions.regimeBySlug.get(g.key);
+        // Computed HERE rather than read off the compute, because the compute
+        // only builds a regime when the labels are actually live. The regime
+        // is information in its own right (it is the scorecard's cut), so the
+        // harness prints it either way and says separately whether anything
+        // is keying off it.
+        const regime = regimeFor({
+          openSpread: g.openSpread, homeTeam: g.teamA, awayTeam: g.teamB,
+          division: g.division,
+        });
         return (
           <section key={g.key} style={{
             border: "1px solid var(--border)", borderRadius: 10, padding: 10,
@@ -451,11 +480,15 @@ export default function TestBets() {
             <div style={{ display: "grid", gap: 2 }}>
               <b style={{ fontSize: 14 }}>{g.teamB} @ {g.teamA}</b>
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                {/* With the rules OFF no regime is computed at all, so print
-                    the switch state rather than an "unknown regime" sentence
-                    that would read as a data problem. */}
-                {!rulesOn ? "week-2 rules OFF — the pre-2026-09-07 star"
-                  : regime ? regimeWords(regime) : "regime not computed"}
+                {/* The regime always; then WHY it is or is not biting. The
+                    two-part gate is the switch AND the engine, exactly as on
+                    the live board. */}
+                {regimeWords(regime)}
+                {!rulesOn
+                  ? " · week-2 rules OFF — the pre-2026-09-07 star"
+                  : !rulesApplyFor(engine)
+                    ? " · no rulebook measured on this week's engine — regime is information only"
+                    : ""}
               </span>
             </div>
             <GameBetsPanel
@@ -475,6 +508,7 @@ export default function TestBets() {
               typeFilter="all" onTypeFilter={() => {}}
               showTails onShowTails={() => {}}
               regime={regime}
+              engine={engine}
               edgeRules={rulesOn}
               onEdgeRules={() => {}}
               onProject={() => {}}

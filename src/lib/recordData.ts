@@ -77,6 +77,16 @@ export type RecordRow = {
   ev_publish?: number | null;
   ev_close?: number | null;
   starred: boolean;
+  /**
+   * The week's MARKET-ELIGIBILITY policy said this family is REFERENCE, not a
+   * pick (owner 2026-09-13; index.json engine.decision, src/lib/edgeRules.ts).
+   * The exporter also sets `starred:false` and adds a "DISPLAY_ONLY" flag on
+   * these rows from week 3, so the ★ filter already excludes them — this
+   * field is what lets the row wear ONE clean "ref" chip instead of a raw
+   * flag token, and what keeps a +EV chip off a row that was never a pick.
+   * Absent on every week written before the policy.
+   */
+  display_only?: boolean;
   flags: string[];
   withheld?: boolean;
   result: RecordResult | null;
@@ -224,6 +234,11 @@ function parseRow(raw: any, week: number, orient: "flip" | "asis"): RecordRow | 
     ev_publish: num(raw.ev_publish),
     ev_close: num(raw.ev_close),
     starred: Boolean(raw.starred),
+    // Either channel counts: the explicit field, or the publisher's flag. A
+    // file that carries only one of the two still reads correctly.
+    display_only: raw.display_only === true
+      || (Array.isArray(raw.flags)
+          && raw.flags.some((f: any) => String(f).toUpperCase() === "DISPLAY_ONLY")),
     flags: Array.isArray(raw.flags) ? raw.flags.map((f: any) => String(f)) : [],
     withheld: Boolean(raw.withheld),
     result,

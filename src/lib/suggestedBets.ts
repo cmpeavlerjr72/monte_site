@@ -596,6 +596,15 @@ export type Suggestion = {
   star: boolean;
   /** How hard the rules bit on this row (board reached, or kill switch off). */
   ruleMode: RuleMode;
+  /**
+   * The week's MARKET-ELIGIBILITY policy (index.json engine.decision, read by
+   * `displayOnly` in edgeRules.ts and attached by the caller alongside the
+   * rule labels). True = shown for reference: fully priced, fully placeable,
+   * but never starred, never +EV-badged, and never one of the site's own
+   * PICKS. Which is why `selectLadders` keeps these rungs out of `rows` and
+   * leaves them in `browse` — the list PICKS, the browse SHOWS.
+   */
+  displayOnly: boolean;
 };
 
 export type Suppressed = {
@@ -687,6 +696,9 @@ export type Candidate = {
   abstainReasons?: AbstainReason[];
   cell?: CellName | null;
   ruleMode?: RuleMode;
+  /** See `Suggestion.displayOnly`. Attached by the same caller, off the week's
+   *  engine.decision block. Absent = no policy on this week = false. */
+  displayOnly?: boolean;
 };
 
 /**
@@ -825,8 +837,10 @@ function sizeSuggestion(
     tail,
     timing: p.timing,
     abstain, abstainReasons: p.abstainReasons ?? [], cell, ruleMode,
+    displayOnly: p.displayOnly === true,
     star: starFor(
-      { cell, abstain, tail, price: p.price, edge: p.edgePer, series: p.series },
+      { cell, abstain, tail, price: p.price, edge: p.edgePer, series: p.series,
+        displayOnly: p.displayOnly === true },
       ruleMode,
     ),
   };
@@ -1025,9 +1039,32 @@ export function buildSuggestions(
   // better side first would let the untrusted half of a market bury a
   // perfectly good in-band bet on the other half. The pipeline drops tail
   // contracts before it prices sides; this does the same.
-  const core: Priced[] = [], tails: Priced[] = [];
+  //
+  // THE REFERENCE PARTITION happens first, and before the tail one.
+  //
+  // A display-only family (the week's engine.decision policy — owner
+  // 2026-09-13, spreads and moneylines) is not a pick the SITE makes. It is
+  // still priced, still sized and still placeable: it goes to `browse` below,
+  // which is the list that SHOWS rather than the list that PICKS, and every
+  // browse rung carries a live Place button. What it must never do is take a
+  // ladder slot in `rows` or appear in the tail reveal, because both of those
+  // are the site putting a bet forward.
+  //
+  // It is reported in `suppressed` so the panel footer says how many markets
+  // are being held back and why — a suppression the reader cannot see is how
+  // a filter turns into a mystery (the standing rule this whole module obeys).
+  const core: Priced[] = [], tails: Priced[] = [], reference: Priced[] = [];
   for (const p of priced) {
+    if (p.displayOnly) { reference.push(p); continue; }
     (isTail(p.simP, p.ask ?? 1) ? tails : core).push(p);
+  }
+  for (const p of reference) {
+    suppressed.push({
+      label: p.label,
+      reason: "reference only this week — priced and placeable under "
+        + "\u201cBrowse all rungs\u201d, but not a suggested pick",
+      ticker: p.ticker,
+    });
   }
 
   // ONE CONTRACT PER MARKET — the pipeline's shape, and a correctness rule.
@@ -1082,7 +1119,8 @@ export function buildSuggestions(
   // Full-ladder browse (see BuildResult). isTail is re-derived per rung —
   // the core/tails split above is per-list, and a browse row must carry its
   // OWN flag so the table can mute exactly the untrusted rungs.
-  const browse = bestPerMarket([...core, ...tails])
+  // Reference rows belong HERE and only here: browse SHOWS, the list PICKS.
+  const browse = bestPerMarket([...core, ...tails, ...reference])
     .map((p) => sizeSuggestion(p, feeParams,
       Math.min(unit, p.budget ?? Infinity), isTail(p.simP, p.ask ?? 1), sizing,
       Math.min(unit * sizing.maxRiskMultiple, p.budget ?? Infinity)))
@@ -1450,6 +1488,10 @@ export type LadderGroup = {
   /** The BEST rung's ★ verdict. The headline star and the headline edge are
    *  the same rung, always. */
   star: boolean;
+  /** EVERY rung is display-only (they always are together: the policy keys off
+   *  the family and a ladder never mixes families). Drives the "reference"
+   *  tag and the suppressed +EV badge. See `Suggestion.displayOnly`. */
+  displayOnly: boolean;
 };
 
 export function groupLadders(
@@ -1495,6 +1537,7 @@ export function groupLadders(
       abstainAll: rungs.every((r) => r.abstain !== null),
       cell: best.cell,
       star: best.star,
+      displayOnly: rungs.every((r) => r.displayOnly),
     });
   }
   groups.sort((a, b) => b.bestEdge - a.bestEdge);

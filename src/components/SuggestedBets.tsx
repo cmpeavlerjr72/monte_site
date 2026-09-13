@@ -128,6 +128,7 @@ import type { SuggestSection } from "../lib/useSuggestions";
 import {
   ABSTAIN_WORDS, CELL_TAG, abstainTag, regimeWords, starWords,
   STAR_ASK_HI, STAR_ASK_LO, engineWords, rulesApplyFor,
+  decisionNote, decisionReason,
   type AbstainReason, type CellName, type GameRegime,
 } from "../lib/edgeRules";
 import type { WeekEngine, RegimeTrend } from "../lib/cfbJson";
@@ -269,6 +270,30 @@ export function AbstainTag({ reason }: { reason: AbstainReason | null | undefine
       }}
     >
       NOT A TARGET<span className="rule-tag__why"> · {abstainTag(reason)}</span>
+    </span>
+  );
+}
+
+/**
+ * "REFERENCE" — the owner's market-eligibility policy, on a browsed rung.
+ *
+ * Same colourless channel and the same shape as `AbstainTag` above, and the
+ * same contract: it takes NOTHING off the row. A reference rung keeps its sim
+ * price, its mode chip, its edge in cents and its Place button. What it does
+ * not do is appear in the picked list above — it lives here, in the browse,
+ * which is the list that SHOWS rather than the list that PICKS.
+ */
+export function RefTag({ reason }: { reason: string | null }) {
+  return (
+    <span
+      title={reason ?? "Shown for reference only — not one of this week's picks."}
+      style={{
+        fontSize: 9, fontWeight: 900, letterSpacing: 0.3, whiteSpace: "nowrap",
+        padding: "0 4px", borderRadius: 4, color: "var(--muted)",
+        border: "1px dotted var(--border)", flex: "none",
+      }}
+    >
+      REFERENCE
     </span>
   );
 }
@@ -727,9 +752,10 @@ const WHEEL_ITEM_W = 58;
  * Place button. Opens centred on the best non-tail edge, so the wheel's
  * resting position is already the most interesting strike.
  */
-function RungWheel({ rungs, onPlace }: {
+function RungWheel({ rungs, onPlace, refReason }: {
   rungs: Suggestion[];
   onPlace: (r: Suggestion) => void;
+  refReason?: string | null;
 }) {
   const bestIdx = useMemo(() => {
     // The wheel's resting position is the best rung we would actually stand
@@ -809,10 +835,10 @@ function RungWheel({ rungs, onPlace }: {
                 the model does not stand behind. */}
             <span aria-hidden="true" style={{
               width: 18, height: 3, borderRadius: 2,
-              background: x.tail || x.abstain
+              background: x.tail || x.abstain || x.displayOnly
                 ? "var(--muted)"
                 : x.edge > 0 ? "var(--pos)" : "var(--neg)",
-              opacity: x.tail || x.abstain
+              opacity: x.tail || x.abstain || x.displayOnly
                 ? 0.5 : Math.min(1, 0.35 + Math.abs(x.edge) * 3),
             }} />
           </button>
@@ -831,10 +857,11 @@ function RungWheel({ rungs, onPlace }: {
           <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
           {r.tail && <TailBadge inline />}
           <AbstainTag reason={r.abstain} />
+          {r.displayOnly && <RefTag reason={refReason ?? null} />}
           {r.star && <CellTag cell={r.cell} />}
           <span style={{
             fontWeight: 800, fontVariantNumeric: "tabular-nums",
-            color: r.tail || r.abstain
+            color: r.tail || r.abstain || r.displayOnly
               ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
           }}>
             {r.star && <TargetStar cell={r.cell} />}
@@ -919,7 +946,9 @@ function wheelFace(x: Suggestion, mag: boolean): string {
 
 /** One rung as a single flat line — the ≤2-rung rendering (a winner market,
  *  a two-rung stat ladder). A wheel with one or two faces is not a wheel. */
-function CompactRung({ r, onPlace }: { r: Suggestion; onPlace: (r: Suggestion) => void }) {
+function CompactRung({ r, onPlace, refReason }: {
+  r: Suggestion; onPlace: (r: Suggestion) => void; refReason?: string | null;
+}) {
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
@@ -930,10 +959,14 @@ function CompactRung({ r, onPlace }: { r: Suggestion; onPlace: (r: Suggestion) =
       <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
       {r.tail && <TailBadge inline />}
       <AbstainTag reason={r.abstain} />
+      {r.displayOnly && <RefTag reason={refReason ?? null} />}
       {r.star && <CellTag cell={r.cell} />}
       <span style={{
         marginLeft: "auto", fontWeight: 800, fontVariantNumeric: "tabular-nums",
-        color: r.tail || r.abstain
+        // The number and its sign always render; only the green/red — the
+        // part that reads as an endorsement — drops out on a row the site is
+        // not pitching (tail, abstained, or reference-only).
+        color: r.tail || r.abstain || r.displayOnly
           ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
       }}>
         {r.star && <TargetStar cell={r.cell} />}
@@ -1023,6 +1056,12 @@ export default function GameBetsPanel({
   /** The full-ladder browse, collapsed by default — the picked rows stay the
    *  headline; this is the walk-the-ladder view behind one press. */
   const [showBrowse, setShowBrowse] = useState(false);
+  /* THE WEEK'S MARKET-ELIGIBILITY POLICY (index.json engine.decision). Null on
+     every week published before it existed, and then nothing below draws. */
+  const refNote = decisionNote(engine);
+  const refReason = decisionReason(engine);
+  /** The note's own words popover — one line at rest, evidence on tap. */
+  const [refOpen, setRefOpen] = useState(false);
 
   const groups = section?.groups ?? [];
   const tailGroups = section?.tailGroups ?? [];
@@ -1129,6 +1168,39 @@ export default function GameBetsPanel({
           </span>
         )}
       </div>
+
+      {/* THE MARKET-ELIGIBILITY POLICY. Verdict first, evidence on tap — and
+          it says the second half out loud, because "reference" alone reads as
+          "withdrawn": these rungs live under "Browse all rungs" below, priced
+          and placeable, they are simply not suggested. */}
+      {refNote && (
+        <div style={{ fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5 }}>
+          <button
+            type="button"
+            onClick={() => setRefOpen((v) => !v)}
+            aria-expanded={refOpen}
+            style={{
+              display: "block", width: "100%", textAlign: "left", border: "none",
+              background: "transparent", padding: 0, font: "inherit",
+              color: "inherit", cursor: "pointer",
+            }}
+          >
+            {refNote} Find them under “Browse all rungs”.{" "}
+            <span style={{ textDecoration: "underline dotted", textUnderlineOffset: 2 }}>
+              {refOpen ? "Hide why" : "Why"}
+            </span>
+          </button>
+          {refOpen && refReason && (
+            <div role="status" style={{
+              marginTop: 4, padding: "6px 8px", borderRadius: 7,
+              border: "1px solid var(--border)", background: "var(--fill)",
+              fontSize: 11, lineHeight: 1.5, color: "var(--text)",
+            }}>
+              {refReason}
+            </div>
+          )}
+        </div>
+      )}
 
       {nothing ? (
         <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5, display: "grid", gap: 6 }}>
@@ -1244,8 +1316,10 @@ export default function GameBetsPanel({
                   {ladderHeadline(rungs)}
                 </div>
                 {rungs.length <= 2
-                  ? rungs.map((r) => <CompactRung key={r.key} r={r} onPlace={place} />)
-                  : <RungWheel rungs={rungs} onPlace={place} />}
+                  ? rungs.map((r) => (
+                      <CompactRung key={r.key} r={r} onPlace={place} refReason={refReason} />
+                    ))
+                  : <RungWheel rungs={rungs} onPlace={place} refReason={refReason} />}
               </div>
             );
           })}

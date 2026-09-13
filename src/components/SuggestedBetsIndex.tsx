@@ -202,6 +202,17 @@ export default function SuggestedBetsIndex({
     sections, shownCount, hiddenByFilter, tailMarkets, suppressed,
     computedAt, pregameCount, blindCount,
   } = suggestions;
+  /**
+   * REFERENCE-ONLY markets are held out of this list by the week's
+   * market-eligibility policy (edgeRules.ts `displayOnly`), not by a book or a
+   * ladder cap — so they get their own sentence, and one that says where they
+   * went. Rolling them into "thin or one-sided book" would be a number the
+   * reader cannot act on, which is the failure the footer exists to avoid.
+   */
+  const refSuppressed = suppressed.filter(
+    (s) => s.reason.startsWith("reference only")
+  ).length;
+  const otherSuppressed = suppressed.length - refSuppressed;
 
   return (
     <section style={{
@@ -380,10 +391,18 @@ export default function SuggestedBetsIndex({
             </div>
           )}
 
-          {suppressed.length > 0 && (
+          {otherSuppressed > 0 && (
             <div style={{ fontSize: 10, color: "var(--muted)" }}>
-              {suppressed.length} candidate{suppressed.length === 1 ? "" : "s"} suppressed
+              {otherSuppressed} candidate{otherSuppressed === 1 ? "" : "s"} suppressed
               (thin or one-sided book, ladder cap, penny quote, or already held).
+            </div>
+          )}
+
+          {refSuppressed > 0 && (
+            <div style={{ fontSize: 10, color: "var(--muted)" }}>
+              {refSuppressed} reference-only market{refSuppressed === 1 ? "" : "s"} priced
+              but not suggested this week. They are still placeable — open a game
+              and press “Browse all rungs”.
             </div>
           )}
         </>

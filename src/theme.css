@@ -2714,3 +2714,52 @@ a.fr-person:hover, a.fr-person:focus-visible {
 /* The derivation, on tap — the same surface as the page's own definitions
    panel, indented under the chart it explains. */
 .rec__clvWords { border-left: 3px solid var(--border); border-radius: 0 12px 12px 0; }
+
+/* ==================== REFERENCE-ONLY MARKETS (2026-09-13) ==================
+   Owner decision: from week 3 the families named in a week's
+   index.json engine.decision block (spread, ml) are shown for REFERENCE —
+   fully priced and fully placeable, but never starred and never a site pick.
+   Every token below is defined on :root and the theme blocks above, so this
+   block reads correctly in light, dark and system. */
+
+/* One muted line above a Top Edges column's rows. */
+.edge-col__note {
+  padding: 6px 10px 0;
+  border-bottom: 1px dashed var(--border);
+  padding-bottom: 6px;
+}
+.edge-col__notebtn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--muted);
+  cursor: pointer;
+}
+.edge-col__notewhy {
+  margin-top: 5px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--fill);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* The record page's reference chip — same shape as a flag chip, said in a
+   word so a scan of the column reads "ref" and not another number. */
+.rec__chip--ref {
+  border-style: dashed;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+/* A reference-only row keeps its edge NUMBER and loses the endorsement fill —
+   see EdgePill in src/components/TopEdges.tsx. */
+.top-edges__edge[data-sign="ref"] { color: var(--muted); background: var(--fill); }

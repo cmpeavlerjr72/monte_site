@@ -215,7 +215,58 @@ export type WeekEngine = {
   seeds: number | null;
   rulebook: string | null;
   note: string | null;
+  /** The owner's market-eligibility policy for this week, or null when the
+   *  week predates it (weeks 00-02) — see `WeekDecision`. */
+  decision: WeekDecision | null;
 };
+
+/* --------------------------- the decision block ---------------------------
+ * weeks/<id>/index.json -> engine.decision (exporter contract, 2026-09-13):
+ *
+ *   "decision": {
+ *     "display_only_families": ["spread", "ml"],
+ *     "reason": "<one sentence of evidence>",
+ *     "decided": "2026-09-13",
+ *     "policy_version": 1
+ *   }
+ *
+ * A MARKET-ELIGIBILITY policy, decided by the owner off the 2025 backtest —
+ * NOT a rulebook fitted to an engine's errors (that is `rulebook` above, and
+ * the two are independent gates). A family named here is shown, priced and
+ * placeable exactly as before; it simply never earns a ★, never wears a +EV
+ * badge, and is never one of the site's OWN picks.
+ *
+ * A week whose index carries no `decision` key keeps today's behaviour
+ * exactly — see `displayOnly` in src/lib/edgeRules.ts, which is the only
+ * thing that reads this.
+ */
+export type WeekDecision = {
+  /** BASE market keys (period prefix stripped), e.g. ["spread", "ml"]. */
+  display_only_families: string[];
+  /** The evidence sentence the UI prints on tap. */
+  reason: string | null;
+  /** ISO date the owner decided. */
+  decided: string | null;
+  policy_version: number | null;
+};
+
+function parseWeekDecision(raw: any): WeekDecision | null {
+  if (!raw || typeof raw !== "object") return null;
+  const fams = Array.isArray(raw.display_only_families)
+    ? raw.display_only_families
+        .map((f: any) => String(f ?? "").trim().toLowerCase())
+        .filter((f: string) => f.length > 0)
+    : [];
+  // An empty list is a REAL policy ("nothing is display-only this week"), not
+  // an absent one: the block's presence is what the site reads. Only a
+  // missing/!object `decision` returns null above.
+  return {
+    display_only_families: fams,
+    reason: raw.reason == null ? null : String(raw.reason),
+    decided: raw.decided == null ? null : String(raw.decided),
+    policy_version: num(raw.policy_version) ?? null,
+  };
+}
 
 function parseWeekEngine(raw: any): WeekEngine | null {
   if (!raw || typeof raw !== "object") return null;
@@ -225,6 +276,7 @@ function parseWeekEngine(raw: any): WeekEngine | null {
     seeds: num(raw.seeds) ?? null,
     rulebook: raw.rulebook == null ? null : String(raw.rulebook),
     note: str(raw.note),
+    decision: parseWeekDecision(raw.decision),
   };
 }
 

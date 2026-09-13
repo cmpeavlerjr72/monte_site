@@ -938,13 +938,25 @@ function Row({ row, ladder, open, onToggle, showLadder, mode }: {
               ★
             </span>
           )}
-          {(row.ev_publish ?? -1) > 0 && !row.starred && (
+          {/* A reference row was never a pick, so it never wears the +EV
+              chip — the owner's decision is about the MARKET, and a green
+              chip on it would be the page re-recommending what the board
+              deliberately did not. Its own number is still in the row. */}
+          {(row.ev_publish ?? -1) > 0 && !row.starred && !row.display_only && (
             <span className="rec__chip"
                   title={preFee
                     ? `Positive edge ${frameWords(row)}, before any fee`
                     : `Positive fee-inclusive EV ${frameWords(row)}`}>+EV</span>
           )}
-          {row.flags.map((f) => (
+          {row.display_only && (
+            <span className="rec__chip rec__chip--ref"
+                  title={"Shown for reference: this market family was not one of "
+                    + "the site's picks that week, so the row was never starred. "
+                    + "It is graded here all the same."}>ref</span>
+          )}
+          {/* The raw DISPLAY_ONLY token would be a second chip saying what the
+              "ref" chip above already says, in the publisher's shouting case. */}
+          {row.flags.filter((f) => f.toUpperCase() !== "DISPLAY_ONLY").map((f) => (
             <span key={f} className="rec__chip rec__chip--flag" title="Flagged by the publisher">{f}</span>
           ))}
         </span>

@@ -90,7 +90,7 @@
 
 import { cfbNameKey } from "../../server/cfbNames";
 import { FBS_CONFERENCE, FBS_SCHOOLS } from "./fbsConferences";
-import type { WeekEngine } from "./cfbJson";
+import type { WeekEngine, WeekDecision } from "./cfbJson";
 
 /* ------------------------------ the rulebook ------------------------------ */
 /**
@@ -136,6 +136,179 @@ export function engineWords(engine: WeekEngine | null | undefined): string {
     + "engine: ★ is the plain bar (net edge ≥ 10¢ after fees, not a tail), "
     + "nothing is labelled 'not a target', and the regime shown is information "
     + "only — the regime scorecard grades it after settlement.";
+}
+
+/* ==================== DISPLAY-ONLY FAMILIES (2026-09-13) ===================
+ *
+ * THE SECOND GATE, and a different KIND of gate from the rulebook above.
+ *
+ * `rulebook` asks "were these labels measured on the engine that produced
+ * this week?". This asks "does the owner take this MARKET FAMILY as a pick at
+ * all?". They are independent: a week can carry a measured rulebook and still
+ * have families the owner will not be pitched.
+ *
+ * OWNER DECISION, 2026-09-13, from week 3 on: the full-game SPREAD and
+ * MONEYLINE families are DISPLAY-ONLY. The 2025 backtest of this engine found
+ * no edge on sides (spread cover 51% +/- 2, below breakeven) and a real one on
+ * totals (56%).
+ *
+ * WHAT DISPLAY-ONLY IS NOT (owner clarification, same day): it is NOT a
+ * suppression and NOT a filter. A display-only contract keeps its sim
+ * probability, its fair line, its price and its edge IN CENTS, stays fully
+ * takeable by hand, and can still be added to a parlay by hand. What it loses
+ * is exactly three things:
+ *
+ *   1. the STAR,
+ *   2. the +EV BADGE (the chip, never the number), and
+ *   3. its place in any list the SITE puts forward as its own pick --
+ *      suggested bets, an auto-filled parlay, a pre-checked order row.
+ *
+ * THE CONTRACT. The week's index.json `engine` block carries
+ *
+ *   "decision": {"display_only_families": ["spread","ml"],
+ *                "reason": "...", "decided": "2026-09-13", "policy_version": 1}
+ *
+ * and a market is display-only when its BASE key -- the market key with any
+ * period prefix (1h_/2h_/1q_/2q_/3q_/4q_/ot_) stripped -- is in that list.
+ * A week whose index has NO `decision` block (weeks 00-02) keeps today's
+ * behaviour exactly: `displayOnly` returns false for everything.
+ *
+ * Note the period rule cuts the other way from the half-market rule below:
+ * HALF_SERIES kills the star on a period family whatever its base is; this
+ * kills it on a named base family in EVERY period. Both can fire; neither
+ * needs the other.
+ */
+
+/** Period prefixes the exporter uses on a game-line market key. */
+const PERIOD_PREFIX_RE = /^(1h|2h|1q|2q|3q|4q|ot)_/;
+
+/**
+ * A market key with its period prefix removed ("1h_spread" -> "spread").
+ *
+ * Deliberately a second, tiny copy of `baseMarket` in recordData.ts rather
+ * than an import: that module is the RECORD page's parser and pulls the whole
+ * record-data layer with it, and this one is read by the live board. They are
+ * the same three lines and the same regex; if they ever disagree, this file
+ * is the one the board obeys.
+ */
+export function baseMarketKey(market: string): string {
+  const k = String(market ?? "").trim().toLowerCase();
+  const m = PERIOD_PREFIX_RE.exec(k);
+  return m ? k.slice(m[1].length + 1) : k;
+}
+
+/**
+ * The exporter's market key for a Kalshi series ticker.
+ *
+ * The site names one contract three different ways depending on the surface:
+ * the exporter's market key ("spread", "1h_total"), Kalshi's series ticker
+ * ("KXNCAAFSPREAD"), and the card's own row key ("win"/"spread"/"total").
+ * `marketKeyOf` below accepts all three so no caller has to know which it
+ * holds; this is the series half of it.
+ *
+ * Generic on purpose -- a family Kalshi adds next month must RESOLVE rather
+ * than fall through as "not display-only", which is the failure that would
+ * silently star a market the owner excluded. Per-TEAM families return null:
+ * they are stat markets, never a side.
+ */
+export function marketKeyForSeries(series: string): string | null {
+  const rest = String(series ?? "").trim().toUpperCase().replace(/^KXNCAAF/, "");
+  if (!rest) return null;
+  if (rest.startsWith("TEAM")) return null;
+  const pm = /^(1H|2H|1Q|2Q|3Q|4Q|OT)/.exec(rest);
+  const period = pm ? pm[1].toLowerCase() : "";
+  const tail = pm ? rest.slice(pm[1].length) : rest;
+  // "" (KXNCAAF1H), "GAME" (KXNCAAFGAME) and "FT" (KXNCAAF1HFT) are all the
+  // winner market of their period.
+  const base = tail === "" || tail === "GAME" || tail === "FT" ? "ml"
+    : tail === "SPREAD" ? "spread"
+      : tail === "TOTAL" ? "total"
+        : tail.toLowerCase();
+  return period ? `${period}_${base}` : base;
+}
+
+/**
+ * The exporter's market key for whatever a caller holds: a market key, a
+ * Kalshi series ticker, or the card's own row key. Null when it names no
+ * game-line family (a per-team stat market, or an empty string).
+ */
+export function marketKeyOf(market: string): string | null {
+  const raw = String(market ?? "").trim();
+  if (!raw) return null;
+  if (/^KXNCAAF/i.test(raw)) return marketKeyForSeries(raw);
+  const k = raw.toLowerCase();
+  // The card's own row keys (src/lib/marketEdge.ts `buildMarketRows`).
+  if (k === "win" || k === "moneyline") return "ml";
+  return k;
+}
+
+/** The week's decision policy, or null when the week carries none. */
+export function decisionOf(engine: WeekEngine | null | undefined): WeekDecision | null {
+  return engine?.decision ?? null;
+}
+
+/** Does this week carry a market-eligibility policy at all? False for every
+ *  week published before 2026-09-13, which is what keeps weeks 00-02 exactly
+ *  as they are. */
+export function hasDecisionPolicy(engine: WeekEngine | null | undefined): boolean {
+  return decisionOf(engine) !== null;
+}
+
+/**
+ * THE ONE GATE. True when this market is shown for REFERENCE only: priced,
+ * placeable, but never starred, never +EV-badged, and never one of the site's
+ * own picks.
+ *
+ * `market` may be a market key, a Kalshi series ticker, or a card row key.
+ */
+export function displayOnly(
+  market: string,
+  engine: WeekEngine | null | undefined,
+): boolean {
+  const d = decisionOf(engine);
+  if (!d || !d.display_only_families.length) return false;
+  const key = marketKeyOf(market);
+  if (!key) return false;
+  return d.display_only_families.includes(baseMarketKey(key));
+}
+
+/** The evidence sentence, for the popover and the section note. Null when the
+ *  week carries no policy -- callers then draw nothing at all. */
+export function decisionReason(engine: WeekEngine | null | undefined): string | null {
+  const d = decisionOf(engine);
+  if (!d) return null;
+  if (d.reason && d.reason.trim()) return d.reason.trim();
+  // The exporter always sends one; this is the never-blank fallback, so a tap
+  // can never open an empty popover.
+  return "Shown for reference only: this market family is not one of the "
+    + "site's picks this week.";
+}
+
+/** The families, in the words a note prints them: "Spreads and moneylines". */
+export function decisionFamilyWords(engine: WeekEngine | null | undefined): string | null {
+  const d = decisionOf(engine);
+  if (!d || !d.display_only_families.length) return null;
+  const WORD: Record<string, string> = {
+    ml: "moneylines", spread: "spreads", total: "totals", tt: "team totals",
+  };
+  const names = d.display_only_families.map((f) => WORD[f] ?? `${f} markets`);
+  const said = names.length === 1 ? names[0]
+    : names.length === 2 ? `${names[0]} and ${names[1]}`
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return said.charAt(0).toUpperCase() + said.slice(1);
+}
+
+/**
+ * The one-line muted note at the top of a game-lines section, or null.
+ *
+ * Says BOTH halves of the owner's decision, because half of it reads as a
+ * suppression: these are reference, AND they can still be taken.
+ */
+export function decisionNote(engine: WeekEngine | null | undefined): string | null {
+  const fams = decisionFamilyWords(engine);
+  if (!fams) return null;
+  return `${fams} are shown for reference this week — still priced and still `
+    + "placeable by hand, just not starred.";
 }
 
 /* ------------------------------- constants -------------------------------- */
@@ -443,7 +616,14 @@ export function starFor(row: {
   price: number;
   edge: number;
   series?: string;
+  /** The week's market-eligibility policy, already resolved by the caller
+   *  (`displayOnly` above). A display-only family is never a pick, so it
+   *  never wears the star -- and unlike everything else here that is true
+   *  even under the kill switch, because it is the OWNER'S decision about a
+   *  market, not a rulebook fitted to an engine. */
+  displayOnly?: boolean;
 }, mode: RuleMode = "measured"): boolean {
+  if (row.displayOnly) return false;
   if (row.tail) return false;
   if (mode === "off") return row.edge >= TARGET_EDGE;
   if (row.abstain) return false;

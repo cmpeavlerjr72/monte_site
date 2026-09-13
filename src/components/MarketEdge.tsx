@@ -23,7 +23,13 @@
 // (sideTeam / line / side), never by re-parsing its string.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getCompactCached, type CompactJson, type JsonWeekRow } from "../lib/cfbJson";
+import {
+  getCompactCached, type CompactJson, type JsonWeekRow, type WeekEngine,
+} from "../lib/cfbJson";
+// The week's MARKET-ELIGIBILITY policy. Reference-only families keep every
+// number on this block — the sim price, the fair odds, the edge in cents —
+// and lose only the claim that the site is recommending them.
+import { displayOnly, decisionNote, decisionReason } from "../lib/edgeRules";
 import { type KalshiGame } from "../lib/kalshi";
 import {
   buildMarketRows, makeSeedCounts, americanOdds, pctText, signedNum,
@@ -45,6 +51,9 @@ type Props = {
   simTotal?: number;
   pHome?: number;             // sim P(home wins), exact from summary
   kalshi?: KalshiGame;
+  /** The week's engine block, for its `decision` policy alone. Null on every
+   *  week published before the policy existed, which draws nothing new. */
+  engine?: WeekEngine | null;
 };
 
 /* Geometry. Rows are a FIXED height so the popover can be placed by index
@@ -111,10 +120,15 @@ function verdictText(r: MarketRow, edge: number | null, home: string): string {
 
 export default function MarketEdge({
   row, season, teamA, teamB, bookSpread, bookTotal, simMargin, simTotal, pHome, kalshi,
+  engine = null,
 }: Props) {
   const [compact, setCompact] = useState<CompactJson | null>(null);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  /** The reference-note's own words popover. Separate from `open` because the
+   *  note sits ABOVE the rows and the row popover is positioned by row index —
+   *  one absolute-arithmetic surface is enough. */
+  const [noteOpen, setNoteOpen] = useState(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [inView, setInView] = useState(false);
 
@@ -153,6 +167,17 @@ export default function MarketEdge({
   const openIdx = rows.findIndex((r) => r.key === open);
   const openRow = openIdx >= 0 ? rows[openIdx] : null;
 
+  /* THE WEEK'S MARKET-ELIGIBILITY POLICY.
+     `refKeys` is computed off the rows actually on screen, so the note only
+     appears on a card that HAS a reference-only line — a total-only card is
+     not told about a policy it cannot see the effect of. */
+  const refKeys = useMemo(
+    () => new Set(rows.filter((r) => displayOnly(r.key, engine)).map((r) => r.key)),
+    [rows, engine]
+  );
+  const note = refKeys.size ? decisionNote(engine) : null;
+  const noteReason = decisionReason(engine);
+
   return (
     <div
       ref={hostRef}
@@ -179,6 +204,38 @@ export default function MarketEdge({
             <span style={{ fontWeight: 700 }}>Edge vs Kalshi</span>
           </div>
 
+          {/* ONE muted line, verdict first: what these rows are, and that they
+              are still live. The evidence sits behind the tap. */}
+          {note && (
+            <div style={{ padding: "0 7px 5px" }}>
+              <button
+                type="button"
+                onClick={() => setNoteOpen((v) => !v)}
+                aria-expanded={noteOpen}
+                style={{
+                  display: "block", width: "100%", textAlign: "left",
+                  border: "none", background: "transparent", padding: 0,
+                  font: "inherit", fontSize: 10.5, lineHeight: 1.45,
+                  color: "var(--muted)", cursor: "pointer",
+                }}
+              >
+                {note}{" "}
+                <span style={{ textDecoration: "underline dotted", textUnderlineOffset: 2 }}>
+                  {noteOpen ? "Hide why" : "Why"}
+                </span>
+              </button>
+              {noteOpen && noteReason && (
+                <div role="status" style={{
+                  marginTop: 4, padding: "6px 8px", borderRadius: 7,
+                  border: "1px solid var(--border)", background: "var(--fill)",
+                  fontSize: 11, lineHeight: 1.5, color: "var(--text)",
+                }}>
+                  {noteReason}
+                </div>
+              )}
+            </div>
+          )}
+
           {rows.map((r) => (
             <BetRow
               key={r.key}
@@ -186,6 +243,7 @@ export default function MarketEdge({
               home={teamA}
               on={r.key === open}
               onToggle={() => setOpen((k) => (k === r.key ? null : r.key))}
+              refOnly={refKeys.has(r.key)}
             />
           ))}
 
@@ -207,6 +265,12 @@ export default function MarketEdge({
               }}
             >
               {verdictText(openRow, rowEdgeOf(openRow), teamA)}
+              {refKeys.has(openRow.key) && noteReason && (
+                <div style={{ marginTop: 5, color: "var(--muted)" }}>
+                  Shown for reference — not one of this week&apos;s picks.
+                  {" "}{noteReason}
+                </div>
+              )}
               <button
                 type="button" className="ui-btn" onClick={() => setOpen(null)}
                 style={{ marginLeft: 8, padding: "1px 7px", fontSize: 10.5 }}
@@ -225,11 +289,33 @@ const rowEdgeOf = (r: MarketRow): number | null =>
   r.simP !== null && r.mktP !== null ? r.simP - r.mktP : null;
 
 /**
+ * The muted mark a REFERENCE-ONLY row wears (owner policy 2026-09-13).
+ *
+ * A word, not a number: the row's one number is still its edge, and the bar
+ * test's rule is one number at rest. It says what the row IS, and the reason
+ * rides in the row's own tap popover — no second affordance to discover.
+ */
+function RefTag() {
+  return (
+    <span style={{
+      flex: "0 0 auto", fontSize: 9, fontWeight: 800, letterSpacing: 0.4,
+      textTransform: "uppercase", color: "var(--muted)",
+      border: "1px solid var(--border)", borderRadius: 4, padding: "0 4px",
+      lineHeight: "13px",
+    }}>
+      ref
+    </span>
+  );
+}
+
+/**
  * One bet, at rest: the words, a signed bar on the shared zero line, and the
  * edge in cents. Three elements, one number.
  */
-function BetRow({ row, home, on, onToggle }: {
+function BetRow({ row, home, on, onToggle, refOnly }: {
   row: MarketRow; home: string; on: boolean; onToggle: () => void;
+  /** Shown for reference this week — see `RefTag`. Never changes a number. */
+  refOnly?: boolean;
 }) {
   const edge = rowEdgeOf(row);
   const { name, tag } = betWords(row);
@@ -249,7 +335,11 @@ function BetRow({ row, home, on, onToggle }: {
       type="button"
       onClick={onToggle}
       aria-expanded={on}
-      aria-label={verdictText(row, edge, home)}
+      aria-label={
+        refOnly
+          ? `${verdictText(row, edge, home)} Shown for reference only.`
+          : verdictText(row, edge, home)
+      }
       style={{
         display: "flex", alignItems: "center", gap: 8,
         width: "100%", height: ROW_H, padding: "0 6px",
@@ -280,6 +370,7 @@ function BetRow({ row, home, on, onToggle }: {
             {tag}
           </span>
         )}
+        {refOnly && <RefTag />}
       </span>
 
       {/* The shape: one shared zero line, ±20¢, so magnitude is preattentive

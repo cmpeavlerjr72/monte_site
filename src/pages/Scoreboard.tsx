@@ -2799,6 +2799,9 @@ function ScoreboardPage() {
     // The kill switch AND the engine gate: the week-1 labels only reach a
     // board whose engine they were measured on.
     edgeRules: rulesApply,
+    // The week's MARKET-ELIGIBILITY policy (engine.decision). Separate from
+    // the kill switch above on purpose — see useSuggestions' `engine` field.
+    engine: weekEngine ?? null,
   });
 
   /**
@@ -2961,6 +2964,9 @@ function ScoreboardPage() {
             onAddLeg={() => togglePanel(c.key, "picker")}
             flash={flashKey === c.key}
             bets={bets}
+            // The week's market-eligibility policy, for the card's lines
+            // block. Read-only: it changes no number on the card.
+            engine={weekEngine ?? null}
           />
           {openPanel && idx === rowEnd && openCard && (
             <div style={{ gridColumn: "1 / -1" }}>
@@ -3580,7 +3586,7 @@ function KickWeatherChip({
 export function GameCard({
   card, gdata, useMean = false, kalshi, book, bookToken = "", parlayOpen,
   openKind, onToggle, weekLabel, condensed = false, onAddLeg, season,
-  flash = false, bets,
+  flash = false, bets, engine = null,
 }: {
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
@@ -3612,6 +3618,13 @@ export function GameCard({
    * everyone else, which is what keeps the Bets tab off a viewer's card.
    */
   bets?: { n: number; nTail: number; nCand: number };
+  /**
+   * The week's engine block, for its `decision` policy alone (edgeRules.ts
+   * `displayOnly`). Passed down so the card's lines block can mark the
+   * families the owner takes as REFERENCE this week. Null on every week
+   * published before the block existed, which draws nothing new.
+   */
+  engine?: WeekEngine | null;
 }) {
   const jsonRow = card.jsonRow;
   const csvCard = !jsonRow;
@@ -3963,6 +3976,7 @@ export function GameCard({
           simTotal={useMean ? card.simMeanTotal : card.simMedTotal}
           pHome={card.pHome}
           kalshi={kalshi}
+          engine={engine}
         />
       ) : (
         <SimVsKalshi card={card} kalshi={kalshi} useMean={useMean} />

@@ -16,7 +16,7 @@
 // alone; a total is a bet on the game, so it shows both. Anything else would
 // imply a side the row does not take.
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   rankEdges, rankProps, propOversBelowEv, rankTeamMarkets, isTradeableTeamMarket,
   pricedRowCount, hoursSince,
@@ -41,6 +41,7 @@ import { RegimeTrendBlock } from "./RegimeTrend";
 import {
   ABSTAIN_WORDS, CELL_TAG, abstainTag, labelFor, starWords, starFor,
   UNKNOWN_REGIME, NO_LABEL, engineWords,
+  displayOnly, decisionNote, decisionReason,
   type AbstainReason, type CellName, type GameRegime,
 } from "../lib/edgeRules";
 
@@ -190,9 +191,20 @@ function DivisionTag({ division }: { division?: string }) {
  * $1 staked (there is no other side to compare a gap against, and EV is what
  * decides the bet). Same pill, same sign colouring, one hover that names it.
  */
-function EdgePill({ edge, title }: { edge: number; title?: string }) {
+function EdgePill({ edge, title, refOnly }: {
+  edge: number; title?: string;
+  /**
+   * A REFERENCE-ONLY row (owner policy 2026-09-13). The NUMBER and its sign
+   * stay exactly as they are — the owner was explicit that the edge stays
+   * visible. What goes is the pill's green/red FILL, which is the only thing
+   * on this row that reads as "the site is pitching this". Same number, no
+   * endorsement.
+   */
+  refOnly?: boolean;
+}) {
   return (
-    <span className="top-edges__edge" data-sign={edge >= 0 ? "pos" : "neg"}
+    <span className="top-edges__edge"
+      data-sign={refOnly ? "ref" : edge >= 0 ? "pos" : "neg"}
       title={title ?? "sim probability minus market, in points"}>
       {edge >= 0 ? "+" : ""}{(edge * 100).toFixed(1)}
     </span>
@@ -200,9 +212,12 @@ function EdgePill({ edge, title }: { edge: number; title?: string }) {
 }
 
 function Column({
-  title, count, loading, footer, children,
+  title, count, loading, note, footer, children,
 }: {
   title: string; count?: string; loading: boolean;
+  /** One muted line ABOVE the rows — what this column's rows are, before the
+   *  reader reads any of them. Drawn only when there is something to say. */
+  note?: React.ReactNode;
   footer?: React.ReactNode; children?: React.ReactNode;
 }) {
   return (
@@ -211,6 +226,7 @@ function Column({
         <span className="edge-col__title">{title}</span>
         {count && <span className="parlay-chip" style={{ fontSize: 10 }}>{count}</span>}
       </header>
+      {note && <div className="edge-col__note">{note}</div>}
       <div className="edge-col__body">
         {loading
           ? <div style={{ display: "grid", gap: 5 }}>
@@ -254,6 +270,50 @@ function RuleMark({ abstain, cell, starred }: {
 }
 
 /**
+ * The column's one-line reference note: verdict first, evidence behind a tap.
+ * Says BOTH halves of the owner's decision, because "reference" on its own
+ * reads as "withdrawn" — these rows are still priced and still placeable.
+ */
+function RefNote({ note, reason }: { note: string; reason: string | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="edge-col__notebtn"
+      >
+        {note}{" "}
+        <span style={{ textDecoration: "underline dotted", textUnderlineOffset: 2 }}>
+          {open ? "Hide why" : "Why"}
+        </span>
+      </button>
+      {open && reason && (
+        <div role="status" className="edge-col__notewhy">{reason}</div>
+      )}
+    </>
+  );
+}
+
+/**
+ * REFERENCE-ONLY mark (owner policy 2026-09-13, index.json engine.decision).
+ *
+ * Same colourless channel as `RuleMark` above and the same rule: a word, the
+ * evidence on hover/tap, and NOTHING taken off the row. These rows keep their
+ * rank, their sim price, their market price, their edge number and their "+"
+ * quick-add — they lose the ★ and the claim that the site is pitching them.
+ */
+function RefMark({ reason }: { reason: string | null }) {
+  return (
+    <span className="edge-flag" style={{ marginLeft: 5 }}
+          title={reason ?? "Shown for reference only — not one of this week's picks."}>
+      ref
+    </span>
+  );
+}
+
+/**
  * The team a published team-market row's YES event NAMES, off Kalshi's own
  * sentence. Only the team-total wording is parsed, because that is the ONLY
  * family in team_markets.json an R1 rule can bite: full-game SPREAD is not
@@ -270,11 +330,14 @@ function teamTotalTeam(title: string): string | undefined {
 }
 
 /* ------------------------------- game rows -------------------------------- */
-function GameRow({ e, rank, regime, rulesApply, onPick, onAddLeg }: {
+function GameRow({ e, rank, regime, rulesApply, refOnly, refReason, onPick, onAddLeg }: {
   e: EdgeEntry; rank: number; regime: GameRegime;
   /** Do the week-1 labels describe this week's ENGINE? False = no label at
    *  all (edgeRules.ts `rulesApplyFor`). */
   rulesApply: boolean;
+  /** Is this row's FAMILY reference-only this week (engine.decision)? */
+  refOnly: boolean;
+  refReason: string | null;
   onPick: (slug: string) => void;
   onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
@@ -314,6 +377,7 @@ function GameRow({ e, rank, regime, rulesApply, onPick, onAddLeg }: {
         <span className="edge-row__t1">
           {e.row.market}
           <RuleMark abstain={rule.abstain} cell={rule.cell} starred={false} />
+          {refOnly && <RefMark reason={refReason} />}
         </span>
         <span className="edge-row__t2">
           <DivisionTag division={e.division} />
@@ -327,7 +391,7 @@ function GameRow({ e, rank, regime, rulesApply, onPick, onAddLeg }: {
       <span className="edge-row__num">
         <b>{pctText(e.row.mktP!)}</b><i>{americanOdds(e.row.mktP!)}</i>
       </span>
-      <EdgePill edge={e.edge} />
+      <EdgePill edge={e.edge} refOnly={refOnly} />
       {spec
         ? <AddLegButton label={`${e.row.market} (${e.teamB} @ ${e.teamA})`} onAdd={() => onAddLeg(e.slug, spec)} />
         : <span aria-hidden />}
@@ -575,7 +639,8 @@ function orderedSeries(present: Iterable<string>): string[] {
   return [...known, ...unknown];
 }
 
-function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, rulesApply, onPick, onAddLeg }: {
+function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, rulesApply,
+                     refOnly, refReason, onPick, onAddLeg }: {
   r: TeamMarketRow; teamA: string; teamB: string; rank: number;
   /** This game's week-2 regime, for the rows the publisher did not label. */
   regime: GameRegime;
@@ -584,6 +649,9 @@ function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, rulesApply,
   /** Do the week-1 labels describe this week's ENGINE? False = no label,
    *  and the star is the plain bar (edgeRules.ts `rulesApplyFor`). */
   rulesApply: boolean;
+  /** Is this row's FAMILY reference-only this week (engine.decision)? */
+  refOnly: boolean;
+  refReason: string | null;
   onPick: (slug: string) => void;
   onAddLeg: (slug: string, spec: LegSpec) => void;
 }) {
@@ -617,9 +685,11 @@ function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, rulesApply,
   // R3+R4 on top of the publisher's own `target`. `ask` is in cents; the
   // rules band is in dollars. Flagged rows never reach this component, so
   // `tail` is already false by construction (site rule, edges.ts).
+  // `displayOnly` rides INSIDE starFor rather than beside it, so there is one
+  // place a star can be decided and no surface can forget this gate.
   const starred = r.target === true && starFor(
     { cell: rule.cell, abstain: rule.abstain, tail: false,
-      price: ask / 100, edge: r.ev_fee, series: r.series },
+      price: ask / 100, edge: r.ev_fee, series: r.series, displayOnly: refOnly },
     rulesApply ? regime.axis : "off",
   );
   return (
@@ -646,6 +716,7 @@ function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, rulesApply,
           ) : null}
           {shortTeamMarketTitle(r, teamA, teamB)}
           <RuleMark abstain={rule.abstain} cell={rule.cell} starred={starred} />
+          {refOnly && <RefMark reason={refReason} />}
         </span>
         <span className="edge-row__t2">
           <span className="division-badge">{r.side}</span>
@@ -658,7 +729,7 @@ function TeamMktRow({ r, teamA, teamB, rank, regime, publisherRules, rulesApply,
       <span className="edge-row__num">
         <b>{ask}¢</b><i>bid {bid}¢</i>
       </span>
-      <EdgePill edge={r.ev_fee} />
+      <EdgePill edge={r.ev_fee} refOnly={refOnly} />
       {spec
         ? <AddLegButton label={r.title} onAdd={() => onAddLeg(r.slug, spec)} />
         : <span aria-hidden />}
@@ -745,6 +816,16 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
   const engineFooter = scan && !scan.rulesApply ? engineWords(scan.engine) : null;
   const gamesFooter = [gamesFooterCount, engineFooter].filter(Boolean).join(" · ") || null;
 
+  /* THE WEEK'S MARKET-ELIGIBILITY POLICY (index.json engine.decision).
+     One read for both tables; null on every week published before it existed,
+     and then nothing below draws anything new. */
+  const refReason = decisionReason(scan?.engine);
+  const refNote = decisionNote(scan?.engine);
+  const isRefRow = useCallback(
+    (market: string) => displayOnly(market, scan?.engine),
+    [scan?.engine]
+  );
+
   /** Team-markets footer: source note, staleness, and how many the toolkit
    *  withheld outright (book too thin to price at all). */
   const teamMktsFooter = useMemo(() => {
@@ -793,13 +874,18 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
 
       <div className="edge-cols">
         <Column title="Game lines" count={games.length ? `${games.length}` : undefined}
-          loading={loading} footer={gamesFooter}>
+          loading={loading} footer={gamesFooter}
+          note={refNote && games.some((e) => isRefRow(e.row.key))
+            ? <RefNote note={refNote} reason={refReason} />
+            : undefined}>
           {games.length
             ? games.map((e, i) => (
                 <GameRow
                   key={`${e.slug}:${e.row.key}`} e={e} rank={i + 1}
                   regime={scan?.regimeBySlug.get(e.slug) ?? UNKNOWN_REGIME}
                   rulesApply={scan?.rulesApply ?? false}
+                  refOnly={isRefRow(e.row.key)}
+                  refReason={refReason}
                   onPick={onPick} onAddLeg={onAddLeg}
                 />
               ))
@@ -807,7 +893,13 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
         </Column>
 
         <Column title="Team & game props" count={teamMkts.length ? `${teamMkts.length}` : undefined}
-          loading={loading} footer={teamMktsFooter}>
+          loading={loading} footer={teamMktsFooter}
+          // The period families (1H winner, 1H spread) share a BASE key with
+          // the full-game ones, so the policy reaches this column too. Without
+          // the note their "ref" marks would be an unexplained mark.
+          note={refNote && teamMkts.some(({ r }) => isRefRow(r.series))
+            ? <RefNote note={refNote} reason={refReason} />
+            : undefined}>
           {seriesChips.length > 1 && (
             <div className="edge-serieschips" aria-label="Market family">
               <button type="button" className="ui-btn"
@@ -834,6 +926,8 @@ export default function TopEdges({ scan, loading, onPick, onClose, onAddLeg }: P
                   regime={scan?.regimeBySlug.get(r.slug) ?? UNKNOWN_REGIME}
                   publisherRules={scan?.teamMarketsRules ?? null}
                   rulesApply={scan?.rulesApply ?? false}
+                  refOnly={isRefRow(r.series)}
+                  refReason={refReason}
                   onPick={onPick} onAddLeg={onAddLeg}
                 />
               ))

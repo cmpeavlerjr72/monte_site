@@ -22,7 +22,7 @@
 // 45s Kalshi poll, the portal poll, the one page-level team_stats loader.
 
 import { useMemo } from "react";
-import type { TeamStats as TeamStatsDoc } from "./cfbJson";
+import type { TeamStats as TeamStatsDoc, WeekEngine } from "./cfbJson";
 import type { KalshiGame } from "./kalshi";
 import type { PortalPayload } from "./kalshiPortal";
 import {
@@ -43,7 +43,7 @@ import type { Season } from "./cfbData";
 // a time and `buildSuggestions` sees a flat list. Nothing below changes a
 // price, an edge or which rows exist.
 import {
-  labelFor, regimeFor, UNKNOWN_REGIME, type GameRegime,
+  labelFor, regimeFor, UNKNOWN_REGIME, displayOnly, type GameRegime,
 } from "./edgeRules";
 
 /** Bet-slip wording, not column headings. */
@@ -185,11 +185,24 @@ export type SuggestionsInput = {
    *  ownerPrefs `readEdgeRules`). Off restores the pre-2026-09-07 star and
    *  emits no abstentions. */
   edgeRules: boolean;
+  /**
+   * The week's engine block (index.json `engine`), read here for ONE thing:
+   * its `decision` policy, which names the market families the owner takes as
+   * REFERENCE rather than as picks (edgeRules.ts `displayOnly`).
+   *
+   * Deliberately NOT behind the `edgeRules` kill switch. That switch turns off
+   * a RULEBOOK measured on an engine; this is the owner's decision about a
+   * market family, and a kill switch for a label must not quietly put a bet
+   * back on the site's own pick list. A week with no `decision` block (weeks
+   * 00-02) makes every call below false, which is exactly today's behaviour.
+   */
+  engine?: WeekEngine | null;
 };
 
 export function useSuggestions({
   games, kalshiBySlug, feeParams, portal, docs, unit, sizing = SIZING_DEFAULT,
   nowMs, nonce, modeFilter, typeFilter, showTails, sort, edgeRules,
+  engine = null,
 }: SuggestionsInput): Suggestions {
   const {
     rows, tailRows, tailMarkets, suppressed, browse, computedAt, pregameCount,
@@ -278,6 +291,10 @@ export function useSuggestions({
         c.abstainReasons = lab.abstainReasons;
         c.cell = lab.cell;
         c.ruleMode = mode;
+        // THE MARKET-ELIGIBILITY POLICY, on the same pass and off the same
+        // candidate's own series. Independent of `edgeRules` above — see the
+        // `engine` field on SuggestionsInput for why.
+        c.displayOnly = displayOnly(c.series, engine);
       }
       // Quote×rung pairs this game produced, before any gate (see the
       // BuildResult doc above). A game that `continue`d out has no entry -> 0.
@@ -325,7 +342,7 @@ export function useSuggestions({
     // (hard-won rule 4 — the render-loop guard).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [games, kalshiBySlug, feeParams, portal, docs, unit, nonce, nowMs,
-      edgeRules, sizing.mode, sizing.maxRiskMultiple]);
+      edgeRules, engine, sizing.mode, sizing.maxRiskMultiple]);
 
   // Card key -> game, so a same-game run of ladder rows can carry a header
   // and the "Soonest" sort can find a kickoff.
