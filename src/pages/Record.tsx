@@ -40,7 +40,7 @@
 //
 // The math is `src/lib/recordData.ts` (presentation-free). This file draws.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
@@ -50,11 +50,13 @@ import { cfbNameKey } from "../../server/cfbNames";
 import { FBS_CONFERENCE } from "../lib/fbsConferences";
 import {
   applyFilters, applyRung, baseMarket, betDays, betLine, betWords, calibration,
-  calibrationMiss, cents, etDayStart, etDayTicks, frameSentence, frameWords,
+  calibrationMiss, cents, closeSentence, clvBins, clvOf, clvSummary, clvZeroIndex,
+  etDayStart, etDayTicks, frameSentence, frameWords,
   isPreFee, ladderOf, loadRecord, marketWords, PERIOD_WORDS, periodOf, PREFEE_TIP,
   PRICE_BANDS, RecordNotPublished, signed, STAKE_MODES, stakeOf, stakeWords,
   summarize, UNDERPOWERED, unitsOf, venuesOf, venueWords, weekLine,
-  type BetPoint, type CalibrationBucket, type EvMode, type RecordFilters,
+  type BetPoint, type CalibrationBucket, type ClvBin, type ClvSummary,
+  type EvMode, type RecordFilters,
   type RecordLoad, type RecordRow, type RungMode, type UnitMode,
 } from "../lib/recordData";
 
@@ -569,12 +571,296 @@ function RunningUnits({ rows, frame, fee, mode }: {
   );
 }
 
+/* ------------------------------------------ did the market come to us? */
+/*
+ * CLV for the current selection (owner's ask, 2026-09-13: "some way to show
+ * CLV on the filter-selected games").
+ *
+ * It sits directly under the running-units line because that is the shape it
+ * has to be read AGAINST: the line above is what we won, this is whether the
+ * market later agreed with us, and the one sentence at the bottom of the
+ * words panel says which of the two is the result (standing rule 2026-08-23 —
+ * CLV is the leak diagnostic, never the scoring frame).
+ *
+ * House bar-test shape: ONE number at rest (the mean move, in the tile above
+ * and again as the verdict sentence here), the whole distribution as a SHAPE
+ * on one shared axis with zero marked, and the derivation — what a "close"
+ * even is at each venue, which way is good, what was left out — behind a
+ * words toggle.
+ *
+ * The two ways this panel could lie, and what stops each:
+ *   • A row with no close is MISSING, not zero (`clvSummary` counts them and
+ *     the words panel prints the count). Treating an uncaptured close as "no
+ *     move" would pull every mean toward zero and invent flat bets.
+ *   • A blended mean over two venues is one number over two different
+ *     measurements — a Kalshi book close and a DKeX pre-kick VWAP are not the
+ *     same object — so a mixed selection gets the per-venue split beside it,
+ *     exactly as the hero does for ROI.
+ */
+
+/** A mean move in cents: signed, one decimal, never a bare "5". */
+const clvWords = (c: number | null): string =>
+  c == null ? "—" : `${c > 0 ? "+" : c < 0 ? "−" : ""}${Math.abs(c).toFixed(1)}¢`;
+
+/** Whole cents for a bin edge — the axis and the bar titles. */
+const edgeWords = (c: number): string => `${c > 0 ? "+" : c < 0 ? "−" : ""}${Math.abs(c)}¢`;
+
+/** What one bar covers, in words. Bins are two whole cents wide, so a bin
+ *  names its two values rather than a half-open interval nobody reads. */
+function binWords(b: ClvBin): string {
+  // An end bin holds its own two cents AND everything past the clip, so it is
+  // named from the edge nearest zero — "−29¢ or worse", not "−30¢ or worse",
+  // which would exclude one of the two values the bar actually draws.
+  if (b.clipped && b.lo < 0) return `${edgeWords(b.hi - 1)} or worse`;
+  if (b.clipped && b.lo > 0) return `${edgeWords(b.lo)} or better`;
+  if (b.lo === 0) return "no move, or +1¢";
+  const a = edgeWords(b.lo), z = edgeWords(b.hi - 1);
+  return b.lo < 0 ? `${z} to ${a}` : `${a} to ${z}`;
+}
+
+/** The whole hover sentence for one bar. The bin AT zero says what it is made
+ *  of, because it is the only bar that mixes two verdicts. */
+function barTitle(b: ClvBin): string {
+  const bets = `${b.n} bet${b.n === 1 ? "" : "s"}`;
+  if (b.lo === 0) {
+    return `${binWords(b)} · ${bets} — ${b.flat} did not move at all, ` +
+      `${b.n - b.flat} moved a cent our way`;
+  }
+  return `${binWords(b)} · ${bets}${
+    b.beyond ? ` (${b.beyond} of them further out than the axis goes)` : ""}`;
+}
+
+function ClvHistogram({ bins, label }: { bins: ClvBin[]; label: string }) {
+  const max = bins.reduce((m, b) => Math.max(m, b.n), 0);
+  const zero = clvZeroIndex(bins);
+  const style = {
+    ["--clv-bins" as any]: String(bins.length),
+    ["--clv-zero" as any]: `${(zero / bins.length) * 100}%`,
+  } as CSSProperties;
+  return (
+    /* The zero fraction lives on the PLOT, not the bars, because two children
+       read it: the rule over the histogram and the axis label under it, which
+       is positioned at the same fraction rather than merely centred (the two
+       end labels are not the same width, so centring would drift). */
+    <div className="rec__clvPlot" style={style}>
+      <div className="rec__clvHist" role="img" aria-label={label}>
+        <div className="rec__clvZeroLine" aria-hidden />
+        {bins.map((b) => (
+          <div key={b.lo} className="rec__clvBar"
+               data-sign={b.lo < 0 ? "neg" : "pos"} title={barTitle(b)}>
+            {b.n > 0 && (
+              /* THE BIN AT ZERO IS STACKED, and this is the one drawing rule
+                 the panel would be dishonest without. Even bin edges put the
+                 bets that did not move at all in the same bin as the +1¢
+                 ones, and on a real week the flat ones are most of it — a
+                 solid green bar there would read "the market came to us" over
+                 a hundred bets where nothing happened. The flat part is drawn
+                 neutral, under the part that actually moved. */
+              <i data-stacked={b.flat > 0 ? "true" : undefined}
+                 style={{ height: `${Math.max(3, (b.n / (max || 1)) * 100)}%` }}>
+                {b.flat > 0 && (
+                  <>
+                    <em data-part="moved" aria-hidden
+                        style={{ height: `${((b.n - b.flat) / b.n) * 100}%` }} />
+                    <em data-part="flat" aria-hidden
+                        style={{ height: `${(b.flat / b.n) * 100}%` }} />
+                  </>
+                )}
+              </i>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="rec__clvAxis" aria-hidden>
+        <span>{binWords(bins[0])}</span>
+        <span className="rec__clvAxisMid">the price we paid</span>
+        <span>{binWords(bins[bins.length - 1])}</span>
+      </div>
+    </div>
+  );
+}
+
+/** The beat/flat/lost legend: semantics in words once, then colour carries it. */
+function ClvLegend({ s }: { s: ClvSummary }) {
+  return (
+    <div className="rec__clvLegend">
+      <span className="rec__clvKey" data-tone="pos">
+        <i aria-hidden />{s.beat.toLocaleString()} moved our way
+      </span>
+      <span className="rec__clvKey" data-tone="flat">
+        <i aria-hidden />{s.flat.toLocaleString()} did not move
+      </span>
+      <span className="rec__clvKey" data-tone="neg">
+        <i aria-hidden />{s.lost.toLocaleString()} moved away
+      </span>
+    </div>
+  );
+}
+
+function ClvPanel({ rows, mode, frame }: {
+  rows: RecordRow[]; mode: UnitMode; frame: string;
+}) {
+  const [why, setWhy] = useState(false);
+  const s = useMemo(() => clvSummary(rows, mode), [rows, mode]);
+  const bins = useMemo(() => clvBins(rows), [rows]);
+  const venues = useMemo(() => venuesOf(rows), [rows]);
+  const byVenue = useMemo(
+    () => (venues.length > 1
+      ? venues.map((v) => ({
+          venue: v,
+          s: clvSummary(rows.filter((r) => (r.venue ?? "kalshi").toLowerCase() === v), mode),
+        }))
+      : []),
+    [venues, rows, mode],
+  );
+
+  if (s.n === 0) {
+    return (
+      <div className="rec__clv">
+        <div className="rec__caption">
+          <strong>Closing line value.</strong> No bet in this selection has a
+          close captured{s.missing
+            ? <> — all {s.missing.toLocaleString()} of them are missing one</>
+            : null}, so there is nothing to compare the price we paid against.
+        </div>
+      </div>
+    );
+  }
+
+  const share = s.shareBeat == null ? null : Math.round(s.shareBeat * 100);
+  /* How much of the CLV population the two return tiles actually cover: a
+     pending bet has a close but no result, so the split is smaller than `n`
+     whenever the selection is still running. The words panel says which. */
+  const splitScored = s.roi.beat.scored + s.roi.other.scored;
+  const roiWords = (roi: number | null): string =>
+    roi == null ? "—" : `${roi > 0 ? "+" : roi < 0 ? "−" : ""}${Math.abs(roi * 100).toFixed(1)}%`;
+
+  return (
+    <div className="rec__clv">
+      <div className="rec__runHead">
+        <div className="rec__runTitle">Did the market come to us?</div>
+        <button type="button" className="ui-btn rec__mini"
+                onClick={() => setWhy((v) => !v)} aria-expanded={why}>
+          {why ? "Hide the words" : "What is the close?"}
+        </button>
+      </div>
+
+      <div className="rec__caption">
+        Our side moved{" "}
+        <strong style={{ color: toneOf(s.mean ?? 0) }}>{clvWords(s.mean)}</strong>{" "}
+        on average between the price we are graded at and the close, across{" "}
+        {s.n.toLocaleString()} bet{s.n === 1 ? "" : "s"} with a close
+        {share == null ? null : <> — the market came to us on {share}% of them</>}.
+      </div>
+
+      <div className="rec__clvBody">
+        <div className="rec__clvChart">
+          <ClvHistogram
+            bins={bins}
+            label={`Per-bet closing line value, ${s.n} bets, mean ${clvWords(s.mean)}`}
+          />
+          <ClvLegend s={s} />
+        </div>
+
+        {/* Not the result — the return of the bets the market later agreed
+            with, beside the return of the rest. Thin cells say so. */}
+        <div className="rec__clvTiles">
+          <Tile
+            label="Return · came to us"
+            value={roiWords(s.roi.beat.roi)}
+            tone={s.roi.beat.roi == null ? undefined : toneOf(s.roi.beat.roi)}
+            note={s.roi.beat.scored
+              ? `${s.roi.beat.scored.toLocaleString()} settled${
+                  s.roi.beat.scored < UNDERPOWERED ? " · thin" : ""}`
+              : "nothing settled"} />
+          <Tile
+            label="Return · it did not"
+            value={roiWords(s.roi.other.roi)}
+            tone={s.roi.other.roi == null ? undefined : toneOf(s.roi.other.roi)}
+            note={s.roi.other.scored
+              ? `${s.roi.other.scored.toLocaleString()} settled${
+                  s.roi.other.scored < UNDERPOWERED ? " · thin" : ""}`
+              : "nothing settled"} />
+        </div>
+      </div>
+
+      {/* TWO VENUES, TWO CLOSES. A Kalshi book close and a DKeX pre-kick VWAP
+          are different measurements, so the blended mean never stands alone. */}
+      {byVenue.length > 1 && (
+        <div className="rec__split">
+          {byVenue.map(({ venue, s: v }) => (
+            <div key={venue} className="rec__splitTile">
+              <span className="rec__splitName">
+                {venueWords(venue)}
+                {venue === "dkex" ? " · pre-kick VWAP" : " · book close"}
+              </span>
+              <span className="rec__splitRoi" style={{ color: toneOf(v.mean ?? 0) }}>
+                {clvWords(v.mean)}
+              </span>
+              <span className="rec__splitN">
+                {v.n.toLocaleString()} with a close
+                {v.shareBeat == null ? null : ` · ${Math.round(v.shareBeat * 100)}% came to us`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {s.underpowered && (
+        <div className="rec__caption">
+          One side of that split is under {UNDERPOWERED} settled bets, so read
+          the two returns as noise rather than as a finding.
+        </div>
+      )}
+
+      {why && (
+        <div className="rec__defs rec__clvWords" role="region" aria-label="What closing line value is">
+          <p><strong>What the close is.</strong> {closeSentence(venues)} Every
+            bet here is graded {frame}, and CLV is how far the close sits from
+            that price — the move that happened AFTER we were already in.</p>
+          <p><strong>Which way is good.</strong> A positive move means the side
+            we took got dearer: the market came toward our opinion, and we got
+            in cheaper than the last price it offered. We count it as beating
+            the close at a cent or more, losing it at a cent or more the other
+            way, and flat in between — prices trade in whole cents, so there is
+            nothing smaller to measure.</p>
+          <p><strong>What is left out.</strong> {s.missing > 0
+            ? <>{s.missing.toLocaleString()} bet{s.missing === 1 ? " in" : "s in"} this
+                selection had no close captured — never quoted two-sided before
+                the market shut, or the market has not closed yet — and{" "}
+                {s.missing === 1 ? "it is" : "they are"} in none of these numbers
+                rather than counted as no move.</>
+            : <>Every bet in this selection had a close captured, so nothing is
+                missing from these numbers.</>}{" "}
+            {splitScored < s.n
+              ? <>The two returns beside the chart can only cover the SETTLED
+                  part of the selection — {splitScored.toLocaleString()} of
+                  the {s.n.toLocaleString()} bets with a close — which is why
+                  they add up to less.</>
+              : <>All {s.n.toLocaleString()} of them have settled, so the two
+                  returns beside the chart cover every one.</>}</p>
+          <p><strong>The average is not the middle.</strong> The average move
+            is {clvWords(s.mean)} and the middle bet of the{" "}
+            {s.n.toLocaleString()} moved {clvWords(s.median)}. When those two
+            disagree it is because a handful of big moves carry the average — a
+            market that was all but decided before it closed sits near 0¢ or
+            100¢ — so read the shape, not only the average.</p>
+          <p><strong>It is a diagnostic, not the result.</strong> This says
+            whether the market later agreed with us; what we actually won is
+            the settled return above.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- one row */
 
 function LadderLine({ rung, shown, mode }: {
   rung: RecordRow; shown: boolean; mode: UnitMode;
 }) {
-  const move = rung.price_close != null ? rung.price_close - rung.price_publish : null;
+  // ONE definition of the move, shared with the CLV panel and the grader.
+  const move = clvOf(rung);
   const units = unitsOf(rung, mode);
   return (
     <div className={`rec__rung${shown ? " rec__rung--shown" : ""}`}>
@@ -615,7 +901,7 @@ function Row({ row, ladder, open, onToggle, showLadder, mode }: {
   showLadder: boolean;
   mode: UnitMode;
 }) {
-  const move = row.price_close != null ? row.price_close - row.price_publish : null;
+  const move = clvOf(row);
   const player = row.family === "player";
   const preFee = isPreFee(row);
   const units = unitsOf(row, mode);
@@ -820,6 +1106,12 @@ export default function Record() {
 
   const sum = useMemo(() => summarize(selection, stake), [selection, stake]);
 
+  /* CLV over the SAME selection the hero and the calibration read — after
+     `applyRung`, so Main line / Best EV count each ladder once. A close is
+     not a settlement, so this spans the pending rows too, and rows with no
+     close captured are excluded and counted rather than read as no move. */
+  const clv = useMemo(() => clvSummary(selection, stake), [selection, stake]);
+
   /* THE FRAME OF THIS SELECTION, and — when it holds two — the split.
      A blended ROI over a Kalshi publish price and a DKeX in-week trade is one
      number describing two frames, so the headline never stands alone. */
@@ -979,6 +1271,13 @@ export default function Record() {
             barely a filter there. ★ is the smaller set the same rule picked as
             bets; on the week-1 props it marks what <em>would</em> have been a
             pick, since those were not shown on the site that week.</p>
+          <p><strong>CLV, the closing line.</strong> How far the price of the
+            side we took moved between the price we are graded at and the
+            close. Positive means the market came toward us after we were
+            already in. It is a diagnostic — it says whether the market later
+            agreed with us, not what we won, which is the settled return. The
+            panel under the running-units chart names what "the close" is at
+            each venue in the selection and how many bets had none captured.</p>
           <p><strong>Thin buckets.</strong> A calibration bucket under{" "}
             {UNDERPOWERED} settled bets is drawn hollow and labelled: it is
             noise, not a finding.</p>
@@ -1159,9 +1458,23 @@ export default function Record() {
                     note={allRungs ? "every priced rung" : "one bet each"} />
               <Tile label="Pending" value={sum.pending.toLocaleString()}
                     note="not in these numbers" />
+              {/* A DIAGNOSTIC, and it sits last for that reason: it says
+                  whether the market later agreed with us, not what we won.
+                  The block under the chart below is its derivation. */}
+              <Tile label="CLV"
+                    value={clv.n ? clvWords(clv.mean) : "—"}
+                    tone={clv.n ? toneOf(clv.mean ?? 0) : undefined}
+                    note={clv.n && clv.shareBeat != null
+                      ? `beat the close on ${Math.round(clv.shareBeat * 100)}% of ${clv.n.toLocaleString()}`
+                      : "no close captured"} />
             </div>
 
             <RunningUnits rows={selection} frame={frame} fee={feeWords} mode={stake} />
+
+            {/* Directly under the line, because it is the thing that line has
+                to be read against — what we won, then whether the market
+                later agreed. */}
+            <ClvPanel rows={selection} mode={stake} frame={frame} />
 
             <div className="rec__notes">
               {evDegenerate && (
@@ -1177,8 +1490,9 @@ export default function Record() {
                 <div className="rec__warn">
                   All rungs is showing every priced rung. <strong>The rungs of one
                   ladder are correlated</strong> — they are the same opinion at
-                  several prices — so treat n here as games, not independent bets.
-                  Main line and Best EV count each ladder once.
+                  several prices, and they move together — so treat n here as
+                  games, not independent bets, in the record, the calibration
+                  and the CLV alike. Main line and Best EV count each ladder once.
                 </div>
               )}
               {sum.pending > 0 && (

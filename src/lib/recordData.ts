@@ -741,6 +741,201 @@ export function calibrationMiss(buckets: CalibrationBucket[]): { miss: number; n
   return n ? { miss: acc / n, n } : null;
 }
 
+/* ----------------------------------------------------------------- CLV */
+/*
+ * CLOSING LINE VALUE — did the market later move toward the side we took?
+ *
+ * ONE definition, and it is the same one the Python grader writes into the
+ * docs: `clv = price_close − price_publish`, in dollars, shown in cents.
+ * `price_publish` is the frame the bet is GRADED at (the standing rule: bets
+ * go in Mon/Tue/Wed), `price_close` is the last price in that same frame's
+ * currency before the market shut. Positive means our side got dearer after
+ * we published — the market came to us.
+ *
+ * Three things this code is careful about, because each one is a way to draw
+ * a flattering number that is not true:
+ *
+ *   • A ROW WITHOUT A CLOSE IS MISSING, NEVER ZERO. Not every market was
+ *     quoted two-sided before it closed, and a null close treated as "no
+ *     move" would drag every mean toward zero and invent a flat bet. Those
+ *     rows are excluded from every CLV number AND counted, and the page
+ *     prints the count.
+ *   • PENDING ROWS STILL HAVE A CLOSE. A close is not a settlement — a bet on
+ *     a game that has not finished can already have closed. So CLV spans the
+ *     whole selection, while the ROI split beside it can only span the settled
+ *     part of it, and the two n's are different on purpose.
+ *   • CLV IS A DIAGNOSTIC, NOT THE RESULT (standing rule, 2026-08-23). It
+ *     says whether the market agreed with us afterwards; the settled return
+ *     above it says whether we were right. Nothing here feeds units or ROI.
+ */
+
+/** `price_close − price_publish`, in dollars. null when no close was captured. */
+export const clvOf = (row: RecordRow): number | null =>
+  row.price_close == null ? null : row.price_close - row.price_publish;
+
+/** The same number in whole cents — what every count and bin is keyed on.
+ *  Prices are published in whole cents, so the sign test below is exact. */
+export const clvCents = (row: RecordRow): number | null => {
+  const c = clvOf(row);
+  return c == null ? null : Math.round(c * 100);
+};
+
+/** A move of less than a cent cannot exist at whole-cent prices, so ±1¢ is
+ *  the smallest real move and the boundary between beat / flat / lost. */
+export const CLV_FLAT = 1;
+
+export type ClvVerdict = "beat" | "flat" | "lost" | "none";
+
+export function clvVerdict(row: RecordRow): ClvVerdict {
+  const c = clvCents(row);
+  if (c == null) return "none";
+  return c >= CLV_FLAT ? "beat" : c <= -CLV_FLAT ? "lost" : "flat";
+}
+
+export type ClvSummary = {
+  /** Rows carrying a close — everything below rests on exactly these. */
+  n: number;
+  /** Rows in the selection with NO close captured. Excluded, and printed. */
+  missing: number;
+  /** Mean CLV in cents. null when nothing in the selection has a close. */
+  mean: number | null;
+  /** Median CLV in cents. */
+  median: number | null;
+  beat: number;
+  flat: number;
+  lost: number;
+  /** beat / n, 0–1. */
+  shareBeat: number | null;
+  /**
+   * The settled return of the bets the market later agreed with, against the
+   * settled return of the rest. Same `summarize` the hero uses, so the two
+   * ROIs are the same arithmetic — just split by which way the line went.
+   */
+  roi: { beat: RecordSummary; other: RecordSummary };
+  /** True when either side of that split is under UNDERPOWERED settled bets. */
+  underpowered: boolean;
+};
+
+export function clvSummary(rows: RecordRow[], mode: UnitMode = "risk"): ClvSummary {
+  const withClose: RecordRow[] = [];
+  let missing = 0;
+  for (const r of rows) {
+    if (clvOf(r) == null) missing++;
+    else withClose.push(r);
+  }
+  const cents = withClose.map((r) => clvCents(r) as number);
+  const sorted = [...cents].sort((a, b) => a - b);
+  const n = cents.length;
+  const beatRows = withClose.filter((r) => clvVerdict(r) === "beat");
+  const otherRows = withClose.filter((r) => clvVerdict(r) !== "beat");
+  const roi = { beat: summarize(beatRows, mode), other: summarize(otherRows, mode) };
+  return {
+    n,
+    missing,
+    mean: n ? cents.reduce((a, b) => a + b, 0) / n : null,
+    median: n
+      ? (sorted.length % 2
+          ? sorted[(sorted.length - 1) / 2]
+          : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2)
+      : null,
+    beat: beatRows.length,
+    flat: withClose.filter((r) => clvVerdict(r) === "flat").length,
+    lost: withClose.filter((r) => clvVerdict(r) === "lost").length,
+    shareBeat: n ? beatRows.length / n : null,
+    roi,
+    underpowered: roi.beat.scored < UNDERPOWERED || roi.other.scored < UNDERPOWERED,
+  };
+}
+
+/* --------------------------------------------------------- the histogram */
+
+/** Cents beyond this are CLIPPED INTO the end bin, never dropped. A market
+ *  that was already decided before it closed sits near 0 or 100, so the tails
+ *  are real and large; letting them set the axis would squash everything else
+ *  into one pixel, and dropping them would hide the biggest moves of all. */
+export const CLV_CLIP = 30;
+/** Bin width in cents. */
+export const CLV_BIN = 2;
+
+export type ClvBin = {
+  /** Inclusive lower edge in cents; the bin holds [lo, lo + CLV_BIN). */
+  lo: number;
+  hi: number;
+  n: number;
+  /** True on the two end bins, which also hold everything past the clip. */
+  clipped: boolean;
+  /** How many of `n` landed here only because they were clipped in. */
+  beyond: number;
+  /**
+   * How many of `n` did not move AT ALL (exactly 0¢). Only the bin at zero
+   * can have any, and it matters: with even bin edges that bin holds the
+   * flat bets alongside the +1¢ ones, and on real weeks the flat ones are
+   * most of it — drawing the whole bar as "the market came to us" would be
+   * the chart's single biggest lie. The view stacks this part neutrally.
+   */
+  flat: number;
+};
+
+/**
+ * Per-bet CLV as a shape on ONE axis, with zero a bin BOUNDARY.
+ *
+ * Bin edges are even cents, so the axis crosses zero between the [−2,0) bin
+ * and the [0,2) bin. The [0,2) bin therefore holds the bets that did not move
+ * at all alongside the +1¢ ones — which is why `flat` is counted separately
+ * and printed beside the chart rather than read off the bars.
+ */
+export function clvBins(rows: RecordRow[]): ClvBin[] {
+  const bins: ClvBin[] = [];
+  for (let lo = -CLV_CLIP; lo < CLV_CLIP; lo += CLV_BIN) {
+    bins.push({
+      lo, hi: lo + CLV_BIN, n: 0,
+      clipped: lo === -CLV_CLIP || lo === CLV_CLIP - CLV_BIN,
+      beyond: 0,
+      flat: 0,
+    });
+  }
+  const first = bins[0];
+  const last = bins[bins.length - 1];
+  for (const r of rows) {
+    const c = clvCents(r);
+    if (c == null) continue;
+    if (c < first.lo) { first.n++; first.beyond++; continue; }
+    if (c >= last.hi) { last.n++; last.beyond++; continue; }
+    const b = bins[Math.floor((c - first.lo) / CLV_BIN)];
+    b.n++;
+    if (c === 0) b.flat++;
+  }
+  return bins;
+}
+
+/** Index of the first bin at or above zero — where the zero rule is drawn. */
+export const clvZeroIndex = (bins: ClvBin[]): number => {
+  const i = bins.findIndex((b) => b.lo >= 0);
+  return i < 0 ? bins.length : i;
+};
+
+/* ----------------------------------------------------- what "the close" is */
+/*
+ * The close is a DIFFERENT instant and a different measurement at each venue,
+ * and CLV is meaningless without knowing which — so, exactly like
+ * `frameWords` / `frameSentence`, the words live here and nothing on the page
+ * types them in by hand.
+ */
+
+/** What the close is at ONE venue, as a sentence fragment. */
+export const closeWords = (venue?: string | null): string =>
+  String(venue ?? "").toLowerCase() === "dkex"
+    ? "the volume-weighted price it traded at before kickoff"
+    : "the last two-sided quote before the market closed, read on the same side of the book we took — the ask on a yes, 1 − the bid on a no";
+
+/** The same for a SELECTION, naming every venue it holds. */
+export function closeSentence(venues: string[]): string {
+  if (venues.length <= 1) {
+    return `The close is ${closeWords(venues[0] ?? "kalshi")}.`;
+  }
+  return venues.map((v) => `On ${venueWords(v)}, ${closeWords(v)}.`).join(" ");
+}
+
 /* ---------------------------------------------------------------- filters */
 
 export type RecordFilters = {

@@ -2549,3 +2549,168 @@ a.fr-person:hover, a.fr-person:focus-visible {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ===========================================================================
+   CLV ON THE RECORD  (`.rec__clv*`, the panel under the running-units chart)
+   ---------------------------------------------------------------------------
+   Appended as its OWN block on purpose: theme.css is never union-merged, and
+   an unbalanced brace here is a css-syntax-error, which vite prints as a
+   warning but is a BUILD FAILURE (incident 2026-09-09).
+
+   House bar-test grammar: the whole distribution of per-bet closing line
+   value is a SHAPE on one shared axis with zero marked — not a table of
+   moves — and the only numbers at rest are the mean (the tile above) and the
+   three legend counts. Colour is the edge-sign channel (--pos / --neg), which
+   is legitimate here because the thing being coloured IS a sign; position
+   relative to the zero rule carries the same reading on its own, so colour is
+   never the only channel.
+
+   Phone rule: the histogram is a fractional grid (`minmax(0, 1fr)` columns),
+   so it SQUEEZES rather than scrolls — 30 bins across a 330px card is 11px a
+   bar, which still reads as a shape. It sits inside `.rec__clv`, which is
+   `min-width: 0`, so it can never widen the card the way an svg-measuring
+   chart can.
+   ========================================================================= */
+.rec__clv {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+}
+
+/* Chart left, the two returns right — one column on a phone, two once there
+   is room for the tiles to sit beside the shape instead of under it. */
+.rec__clvBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  align-items: start;
+}
+.rec__clvChart { display: grid; gap: 5px; min-width: 0; }
+.rec__clvTiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+@media (min-width: 720px) {
+  .rec__clvBody { grid-template-columns: minmax(0, 1fr) minmax(200px, 0.55fr); }
+  .rec__clvTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.rec__clvPlot { position: relative; display: grid; gap: 3px; min-width: 0; }
+
+/* One bar a 2¢ bin, all on one axis. `align-items: end` is what makes the
+   bars grow from the axis up; the zero rule is absolutely positioned at the
+   bin BOUNDARY (an even number of bins either side of it), so a bet that did
+   not move sits immediately to its right — which is why the legend counts
+   "did not move" separately instead of asking the eye to read it off a bar. */
+.rec__clvHist {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--clv-bins, 30), minmax(0, 1fr));
+  gap: 1px;
+  align-items: end;
+  height: 84px;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+/* The zero rule runs the full height and 6px ABOVE the plot, because the
+   tallest bar on a real week sits right beside it — a rule that stopped at
+   the plot top would disappear behind it exactly where it is needed. It is
+   positioned, so it paints over the (static) bars. */
+.rec__clvZeroLine {
+  position: absolute;
+  left: var(--clv-zero, 50%);
+  top: -6px;
+  bottom: 0;
+  width: 1px;
+  background: var(--text);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.rec__clvBar {
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+  min-width: 0;
+  cursor: help;
+}
+.rec__clvBar > i {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--pos);
+  overflow: hidden;
+}
+.rec__clvBar[data-sign="neg"] > i { background: var(--neg); }
+/* The flat share of the bin at zero, stacked UNDER the part that moved. The
+   wrapper drops its own fill when it is stacked, so each segment composites
+   against the CARD rather than against the other segment's hue — a muted grey
+   painted at 40% over green comes out a muddy green and reads as a win. Not a
+   third data hue either: no move is the absence of a sign, so it is muted. */
+.rec__clvBar > i[data-stacked] {
+  background: none;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.rec__clvBar > i > em { display: block; width: 100%; flex: 0 0 auto; }
+.rec__clvBar > i > em[data-part="moved"] {
+  background: var(--pos); border-radius: 2px 2px 0 0;
+}
+.rec__clvBar[data-sign="neg"] > i > em[data-part="moved"] { background: var(--neg); }
+.rec__clvBar > i > em[data-part="flat"] { background: var(--muted); opacity: 0.45; }
+
+/* Three labels under one axis: the two ends say "or worse"/"or better"
+   because the end bins hold everything past the clip, and the middle names
+   what the zero rule IS rather than printing a 0. */
+.rec__clvAxis {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  min-width: 0;
+}
+/* Pinned to the SAME fraction as the zero rule above it, not merely centred:
+   the two end labels are different widths, so space-between would drift the
+   middle one off the line it names. */
+.rec__clvAxisMid {
+  position: absolute;
+  left: var(--clv-zero, 50%);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+/* Semantics in words ONCE, then position and colour carry it. */
+.rec__clvLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+.rec__clvKey { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.rec__clvKey > i {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+.rec__clvKey[data-tone="pos"] > i { background: var(--pos); }
+.rec__clvKey[data-tone="neg"] > i { background: var(--neg); }
+/* Matches the neutral segment stacked in the bin at zero, so the legend key
+   and the mark it names are the same paint. */
+.rec__clvKey[data-tone="flat"] > i { background: var(--muted); opacity: 0.45; }
+
+/* The derivation, on tap — the same surface as the page's own definitions
+   panel, indented under the chart it explains. */
+.rec__clvWords { border-left: 3px solid var(--border); border-radius: 0 12px 12px 0; }
