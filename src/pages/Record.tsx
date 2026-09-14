@@ -593,7 +593,7 @@ function RunningUnits({ rows, frame, fee, mode }: {
  *     the words panel prints the count). Treating an uncaptured close as "no
  *     move" would pull every mean toward zero and invent flat bets.
  *   • A blended mean over two venues is one number over two different
- *     measurements — a Kalshi book close and a DKeX pre-kick VWAP are not the
+ *     measurements — a Kalshi kickoff close and a DKeX pre-kick VWAP are not the
  *     same object — so a mixed selection gets the per-venue split beside it,
  *     exactly as the hero does for ROI.
  */
@@ -792,7 +792,7 @@ function ClvPanel({ rows, mode, frame }: {
             <div key={venue} className="rec__splitTile">
               <span className="rec__splitName">
                 {venueWords(venue)}
-                {venue === "dkex" ? " · pre-kick VWAP" : " · book close"}
+                {venue === "dkex" ? " · pre-kick VWAP" : " · kickoff close"}
               </span>
               <span className="rec__splitRoi" style={{ color: toneOf(v.mean ?? 0) }}>
                 {clvWords(v.mean)}
@@ -827,7 +827,7 @@ function ClvPanel({ rows, mode, frame }: {
           <p><strong>What is left out.</strong> {s.missing > 0
             ? <>{s.missing.toLocaleString()} bet{s.missing === 1 ? " in" : "s in"} this
                 selection had no close captured — never quoted two-sided before
-                the market shut, or the market has not closed yet — and{" "}
+                kickoff, or the game has not kicked off yet — and{" "}
                 {s.missing === 1 ? "it is" : "they are"} in none of these numbers
                 rather than counted as no move.</>
             : <>Every bet in this selection had a close captured, so nothing is

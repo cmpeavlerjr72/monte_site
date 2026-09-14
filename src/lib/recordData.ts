@@ -771,7 +771,7 @@ export function calibrationMiss(buckets: CalibrationBucket[]): { miss: number; n
  * a flattering number that is not true:
  *
  *   • A ROW WITHOUT A CLOSE IS MISSING, NEVER ZERO. Not every market was
- *     quoted two-sided before it closed, and a null close treated as "no
+ *     quoted two-sided before kickoff, and a null close treated as "no
  *     move" would drag every mean toward zero and invent a flat bet. Those
  *     rows are excluded from every CLV number AND counted, and the page
  *     prints the count.
@@ -941,7 +941,7 @@ export const clvZeroIndex = (bins: ClvBin[]): number => {
 export const closeWords = (venue?: string | null): string =>
   String(venue ?? "").toLowerCase() === "dkex"
     ? "the volume-weighted price it traded at before kickoff"
-    : "the last two-sided quote before the market closed, read on the same side of the book we took — the ask on a yes, 1 − the bid on a no";
+    : "the last two-sided quote at or before kickoff, read on the same side of the book we took — the ask on a yes, 1 − the bid on a no. Kalshi keeps trading through the game, so the quote at the market's own close is an in-play or settlement price and is never used";
 
 /** The same for a SELECTION, naming every venue it holds. */
 export function closeSentence(venues: string[]): string {
