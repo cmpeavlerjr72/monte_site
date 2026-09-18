@@ -21,10 +21,16 @@
 // dates (one or many). ESPN serves any past date's scoreboard indefinitely
 // (finals included — verified back through 2025), so a finished slate keeps
 // its scores, grading, and gamecasts the morning after instead of vanishing
-// when the wall-clock date rolls over. Multi-date slates use ESPN's range
-// syntax (dates=MIN-MAX, verified stub-free per single group). Polling is
-// adaptive: 20s while any game is in progress, 60s pregame, and a single
-// fetch — no polling — once every event is final (finals are immutable).
+// when the wall-clock date rolls over. Multi-date slates walk EACH DATE
+// (one fetch per group per date, merged by event id): ESPN's range syntax
+// (dates=MIN-MAX) that this hook used through week 2 began answering
+// HTTP 400 {"code":400,"message":"Failed to get events endpoint."} on
+// 2026-09-17 (Syracuse@Pitt Wednesday night showed no live data); a
+// comma list 400s too, and a repeated dates= param honours only the first.
+// A single date still covers its full ET day, late kicks included.
+// Polling is adaptive: 20s while any game is in progress, 60s pregame, and
+// a single fetch — no polling — once every event is final (finals are
+// immutable).
 
 import { useEffect, useState } from "react";
 import { dataUrl } from "./cfbData";
@@ -60,26 +66,6 @@ function normalizeDates(date: string | string[] | null | undefined): string[] {
   return [...out].sort();
 }
 
-/** ESPN `dates=` value: single date, or a MIN-MAX range for multi-date
- *  slates. The range END is EXCLUSIVE at day granularity (verified
- *  2026-08-28: 20260827-20260829 returned Thu+Fri only, -20260830 added all
- *  42 Saturday games), so the last slate day is extended by one. A single
- *  date needs no such padding — it covers its full ET day, late kicks
- *  included. Span is clamped to 9 days from the earliest date so one
- *  malformed row can't balloon the query past the fetch limit. */
-function datesParam(dates: string[]): string {
-  if (dates.length === 1) return dates[0];
-  const toUtc = (d: string) => Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8));
-  const fmt = (ms: number) => {
-    const dt = new Date(ms);
-    return `${dt.getUTCFullYear()}${String(dt.getUTCMonth() + 1).padStart(2, "0")}${String(dt.getUTCDate()).padStart(2, "0")}`;
-  };
-  const min = dates[0];
-  const spanMs = Math.min(toUtc(dates[dates.length - 1]) - toUtc(min), 9 * 86_400_000);
-  const max = fmt(toUtc(min) + spanMs + 86_400_000); // exclusive end → +1 day
-  return `${min}-${max}`;
-}
-
 /** Merge payloads into the first one as scaffold, events deduped by id
  *  (drops ESPN's id-less stub events too) and sorted by kick datetime. */
 function mergePayloads(payloads: any[]): any | null {
@@ -103,15 +89,20 @@ function mergePayloads(payloads: any[]): any | null {
   return scaffold;
 }
 
-/** One direct walk: per-group fetches over the slate's date span, merged.
- *  Returns null when every fetch failed — an empty-but-healthy slate returns
- *  a payload with events: []. */
+/** One direct walk: one fetch per group per slate date, merged. A slate is
+ *  at most a handful of dates (Thu/Fri/Sat, plus the odd Tue/Wed MACtion
+ *  or Wednesday ACC kick) × two groups, so the fan-out stays small; the
+ *  9-day clamp guards a malformed row from ballooning it. Returns null when
+ *  every fetch failed — an empty-but-healthy slate returns a payload with
+ *  events: []. */
+const MAX_SLATE_DATES = 9;
+
 async function fetchEspnDirect(dates: string[], sport: SportKey): Promise<any | null> {
   const cfg = SPORT_CFG[sport];
-  const d = datesParam(dates);
-  const urls = cfg.groups.length
-    ? cfg.groups.map((g) => `${cfg.base}?dates=${d}&groups=${g}&limit=${cfg.limit}`)
-    : [`${cfg.base}?dates=${d}&limit=${cfg.limit}`];
+  const groupQs = cfg.groups.length ? cfg.groups.map((g) => `&groups=${g}`) : [""];
+  const urls = dates
+    .slice(0, MAX_SLATE_DATES)
+    .flatMap((d) => groupQs.map((gq) => `${cfg.base}?dates=${d}${gq}&limit=${cfg.limit}`));
 
   const payloads = await Promise.all(
     urls.map((u) =>
