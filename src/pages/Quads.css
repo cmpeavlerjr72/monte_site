@@ -1,0 +1,57 @@
+/* Scoped to the Quads page. Colours defined on :root (light), redefined for dark. */
+:root {
+  --quad-q1: #15803d; --quad-q1-fg: #ffffff;
+  --quad-q2: #86efac; --quad-q2-fg: #14532d;
+  --quad-q3: #fbbf24; --quad-q3-fg: #451a03;
+  --quad-q4: #ea580c; --quad-q4-fg: #ffffff;
+  --quad-fcs: #9ca3af; --quad-fcs-fg: #111827;
+  --quad-bad: color-mix(in oklab, #dc2626 16%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --quad-q1: #2ea043; --quad-q1-fg: #ffffff;
+    --quad-q2: #2f6f45; --quad-q2-fg: #d1fae5;
+    --quad-q3: #b7791f; --quad-q3-fg: #fffbeb;
+    --quad-q4: #d9480f; --quad-q4-fg: #ffffff;
+    --quad-fcs: #4b5563; --quad-fcs-fg: #f3f4f6;
+    --quad-bad: color-mix(in oklab, #f85149 22%, transparent);
+  }
+}
+:root[data-theme="dark"] {
+  --quad-q1: #2ea043; --quad-q1-fg: #ffffff;
+  --quad-q2: #2f6f45; --quad-q2-fg: #d1fae5;
+  --quad-q3: #b7791f; --quad-q3-fg: #fffbeb;
+  --quad-q4: #d9480f; --quad-q4-fg: #ffffff;
+  --quad-fcs: #4b5563; --quad-fcs-fg: #f3f4f6;
+  --quad-bad: color-mix(in oklab, #f85149 22%, transparent);
+}
+
+.quads { display: grid; gap: 14px; min-width: 0; }
+.quads__card { padding: 14px; min-width: 0; }
+.quads__card h2 { margin: 0 0 8px; font-size: 1.05rem; }
+.quads__muted { color: var(--muted); font-size: 0.85rem; }
+.quads__seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.quads__seg .ui-btn { padding: 8px 4px; font-size: 0.82rem; min-width: 0; }
+.quads__filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.quads__filters select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); }
+.quads__scroll { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.quads__table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+.quads__table th, .quads__table td { padding: 6px 8px; text-align: center; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.quads__table th { color: var(--muted); font-weight: 600; font-size: 0.75rem; }
+.quads__table td.l, .quads__table th.l { text-align: left; }
+.quads__row { cursor: pointer; }
+.quads__row:hover { background: var(--fill, transparent); }
+.quads__team { display: flex; align-items: center; gap: 8px; }
+.quads__team img { width: 22px; height: 22px; object-fit: contain; }
+.quads__conf { display: block; color: var(--muted); font-size: 0.7rem; }
+.quads__bad { background: var(--quad-bad); }
+.quads__best { font-weight: 800; }
+.quads__chip { display: inline-block; min-width: 26px; padding: 1px 6px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; text-align: center; opacity: 0.85; }
+.quads__chip[data-on="true"] { opacity: 1; outline: 2px solid var(--text); outline-offset: 1px; }
+.quads__chip[data-q="q1"] { background: var(--quad-q1); color: var(--quad-q1-fg); }
+.quads__chip[data-q="q2"] { background: var(--quad-q2); color: var(--quad-q2-fg); }
+.quads__chip[data-q="q3"] { background: var(--quad-q3); color: var(--quad-q3-fg); }
+.quads__chip[data-q="q4"] { background: var(--quad-q4); color: var(--quad-q4-fg); }
+.quads__chip[data-q="fcs"] { background: var(--quad-fcs); color: var(--quad-fcs-fg); }
+.quads__sheet { text-align: left; padding: 8px 4px; }
+.quads__diff { background: color-mix(in oklab, var(--accent) 35%, transparent); font-weight: 700; }

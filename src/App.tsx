@@ -16,6 +16,7 @@ import Results from "./pages/Results";
 // across Kalshi team markets and game lines, so its record is a filtered view
 // over a published ledger rather than one spread/ML/total per game.
 import RecordPage from "./pages/Record";
+import QuadsPage from "./pages/Quads";
 import TrendsCLV from "./pages/Trends_CLV";
 import GameCenter from "./pages/GameCenter";
 import CLVPage from "./pages/CLV";
@@ -83,6 +84,7 @@ export default function App() {
           <Route path="/cfb/scoreboard" element={<Scoreboard />} />
           <Route path="/cfb/results" element={<Results />} />
           <Route path="/cfb/record" element={<RecordPage />} />
+          <Route path="/cfb/quads" element={<QuadsPage />} />
           <Route path="/cfb/trends-clv" element={<TrendsCLV />} />
           <Route path="/cfb/game/*" element={<GameCenter />} />
           <Route path="/cfb/clv/*" element={<CLVPage />} />

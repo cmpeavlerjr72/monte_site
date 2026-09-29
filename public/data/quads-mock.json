@@ -1,0 +1,2042 @@
+{
+ "season": 2026,
+ "through_week": 5,
+ "sp_week": 5,
+ "generated_at": "2026-09-28T14:05:00Z",
+ "params": {
+  "sigma": 13.5,
+  "hfa": 2.5,
+  "bubble_rank": 12,
+  "bubble_rating": 14.2
+ },
+ "versions": [
+  {
+   "key": "A",
+   "name": "Rank-scaled",
+   "short": "A Rank",
+   "blurb": "Quads cut by opponent SP+ rank, scaled by site.",
+   "rules": [
+    {
+     "label": "Q1",
+     "text": "Home 1-15, Neutral 1-25, Away 1-40"
+    },
+    {
+     "label": "Q2",
+     "text": "Home 16-40, Neutral 26-55, Away 41-75"
+    },
+    {
+     "label": "Q3",
+     "text": "Home 41-80, Neutral 56-100, Away 76-120"
+    },
+    {
+     "label": "Q4",
+     "text": "Everything else FBS"
+    }
+   ]
+  },
+  {
+   "key": "B",
+   "name": "Bubble win prob",
+   "short": "B Win prob",
+   "blurb": "Quads cut by a bubble team's win probability in that game.",
+   "rules": [
+    {
+     "label": "Q1",
+     "text": "WP < 35%"
+    },
+    {
+     "label": "Q2",
+     "text": "35-60%"
+    },
+    {
+     "label": "Q3",
+     "text": "60-85%"
+    },
+    {
+     "label": "Q4",
+     "text": "> 85%"
+    }
+   ]
+  },
+  {
+   "key": "C",
+   "name": "Committee-fit",
+   "short": "C Committee",
+   "blurb": "Cut lines fit to committee behaviour.",
+   "rules": [
+    {
+     "label": "Q1",
+     "text": "Opp rank 1-20"
+    },
+    {
+     "label": "Q2",
+     "text": "21-50"
+    },
+    {
+     "label": "Q3",
+     "text": "51-90"
+    },
+    {
+     "label": "Q4",
+     "text": "91+"
+    }
+   ]
+  },
+  {
+   "key": "D",
+   "name": "Consensus",
+   "short": "D Consensus",
+   "blurb": "Rounded average of A, B and C per game.",
+   "rules": [
+    {
+     "label": "All",
+     "text": "Average of A, B, C quad index, rounded"
+    }
+   ]
+  }
+ ],
+ "backtest": {
+  "seasons": "2014-2025",
+  "note": "Mock numbers for layout only.",
+  "metrics": [
+   {
+    "version": "A",
+    "label": "A Rank-scaled",
+    "pairwise": 0.78,
+    "top4": 0.62,
+    "top12": 0.71,
+    "spearman25": 0.83
+   },
+   {
+    "version": "D",
+    "label": "D Consensus",
+    "pairwise": 0.8,
+    "top4": 0.66,
+    "top12": 0.74,
+    "spearman25": 0.85
+   },
+   {
+    "version": "record",
+    "label": "Record only",
+    "pairwise": 0.7,
+    "top4": 0.5,
+    "top12": 0.62,
+    "spearman25": 0.7
+   },
+   {
+    "version": "sp",
+    "label": "SP+ rank",
+    "pairwise": 0.76,
+    "top4": 0.58,
+    "top12": 0.7,
+    "spearman25": 0.8
+   }
+  ]
+ },
+ "teams": [
+  {
+   "team": "Ohio State",
+   "conference": "Big Ten",
+   "sp": 30,
+   "sp_rank": 1,
+   "record": "3-1",
+   "wab": 2.4,
+   "rank": {
+    "A": 1,
+    "B": 1,
+    "C": 2,
+    "D": 1
+   },
+   "score": {
+    "A": 10,
+    "B": 9.9,
+    "C": 9.8,
+    "D": 9.7
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      0,
+      1
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      0,
+      1
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      2,
+      0
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "D": {
+     "q1": [
+      0,
+      1
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "B": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "D": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "L",
+     "score": "20-24",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q1",
+      "B": "q1",
+      "C": "q2",
+      "D": "q1"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  },
+  {
+   "team": "Georgia",
+   "conference": "SEC",
+   "sp": 27.7,
+   "sp_rank": 2,
+   "record": "4-0",
+   "wab": 1.9,
+   "rank": {
+    "A": 2,
+    "B": 3,
+    "C": 1,
+    "D": 2
+   },
+   "score": {
+    "A": 8.9,
+    "B": 8.8,
+    "C": 8.7,
+    "D": 8.6
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      2,
+      0
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      1,
+      0
+     ]
+    },
+    "D": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "B": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "D": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "fcs",
+      "B": "q1",
+      "C": "q1",
+      "D": "fcs"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  },
+  {
+   "team": "Texas Tech",
+   "conference": "Big 12",
+   "sp": 25.4,
+   "sp_rank": 9,
+   "record": "3-1",
+   "wab": 1.4,
+   "rank": {
+    "A": 4,
+    "B": 2,
+    "C": 3,
+    "D": 4
+   },
+   "score": {
+    "A": 7.8,
+    "B": 7.7,
+    "C": 7.6,
+    "D": 7.5
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      0,
+      1
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      0,
+      1
+     ],
+     "q3": [
+      2,
+      0
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "D": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      0,
+      1
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "B": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "D": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q1",
+      "B": "q1",
+      "C": "q2",
+      "D": "q1"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "L",
+     "score": "20-24",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  },
+  {
+   "team": "Miami",
+   "conference": "ACC",
+   "sp": 23.1,
+   "sp_rank": 4,
+   "record": "3-1",
+   "wab": 0.9,
+   "rank": {
+    "A": 3,
+    "B": 4,
+    "C": 5,
+    "D": 3
+   },
+   "score": {
+    "A": 6.7,
+    "B": 6.6,
+    "C": 6.5,
+    "D": 6.4
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      0,
+      1
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      2,
+      0
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      0,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      1,
+      0
+     ]
+    },
+    "D": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      0,
+      1
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "B": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "D": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "L",
+     "score": "20-24",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "fcs",
+      "B": "q1",
+      "C": "q1",
+      "D": "fcs"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  },
+  {
+   "team": "Indiana",
+   "conference": "Big Ten",
+   "sp": 20.8,
+   "sp_rank": 6,
+   "record": "3-1",
+   "wab": 0.4,
+   "rank": {
+    "A": 5,
+    "B": 6,
+    "C": 4,
+    "D": 5
+   },
+   "score": {
+    "A": 5.6,
+    "B": 5.5,
+    "C": 5.4,
+    "D": 5.3
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      0,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      1
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      0,
+      1
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "D": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      0,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "B": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "D": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q1",
+      "B": "q1",
+      "C": "q2",
+      "D": "q1"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "L",
+     "score": "20-24",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  },
+  {
+   "team": "BYU",
+   "conference": "Big 12",
+   "sp": 18.5,
+   "sp_rank": 14,
+   "record": "3-1",
+   "wab": -0.1,
+   "rank": {
+    "A": 7,
+    "B": 5,
+    "C": 6,
+    "D": 7
+   },
+   "score": {
+    "A": 4.5,
+    "B": 4.4,
+    "C": 4.3,
+    "D": 4.2
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      1,
+      1
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      0,
+      1
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      1,
+      0
+     ]
+    },
+    "D": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "B": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "D": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "L",
+     "score": "20-24",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "fcs",
+      "B": "q1",
+      "C": "q1",
+      "D": "fcs"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  },
+  {
+   "team": "Memphis",
+   "conference": "American Athletic",
+   "sp": 16.200000000000003,
+   "sp_rank": 31,
+   "record": "4-0",
+   "wab": -0.6,
+   "rank": {
+    "A": 6,
+    "B": 7,
+    "C": 8,
+    "D": 6
+   },
+   "score": {
+    "A": 3.4,
+    "B": 3.3,
+    "C": 3.2,
+    "D": 3.1
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      2,
+      0
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      2,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "D": {
+     "q1": [
+      1,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "B": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "D": {
+     "q1": 0,
+     "q2": 1,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q1",
+      "B": "q1",
+      "C": "q2",
+      "D": "q1"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  },
+  {
+   "team": "Notre Dame",
+   "conference": "FBS Independents",
+   "sp": 13.900000000000002,
+   "sp_rank": 8,
+   "record": "3-1",
+   "wab": -1.1,
+   "rank": {
+    "A": 8,
+    "B": 9,
+    "C": 7,
+    "D": 8
+   },
+   "score": {
+    "A": 2.3,
+    "B": 2.2,
+    "C": 2.1,
+    "D": 2
+   },
+   "quads": {
+    "A": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "B": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      2,
+      0
+     ],
+     "q4": [
+      0,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    },
+    "C": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      0
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      1
+     ]
+    },
+    "D": {
+     "q1": [
+      0,
+      0
+     ],
+     "q2": [
+      1,
+      1
+     ],
+     "q3": [
+      1,
+      0
+     ],
+     "q4": [
+      1,
+      0
+     ],
+     "fcs": [
+      0,
+      0
+     ]
+    }
+   },
+   "remaining": {
+    "A": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    },
+    "B": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "C": {
+     "q1": 1,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 1
+    },
+    "D": {
+     "q1": 0,
+     "q2": 0,
+     "q3": 0,
+     "q4": 0,
+     "fcs": 2
+    }
+   },
+   "games": [
+    {
+     "week": 1,
+     "date": "2026-09-05",
+     "opp": "Kent State",
+     "opp_sp_rank": 118,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.95,
+     "quad": {
+      "A": "q2",
+      "B": "q3",
+      "C": "q3",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 2,
+     "date": "2026-09-12",
+     "opp": "Texas",
+     "opp_sp_rank": 5,
+     "site": "A",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.82,
+     "quad": {
+      "A": "q3",
+      "B": "q3",
+      "C": "q4",
+      "D": "q3"
+     }
+    },
+    {
+     "week": 3,
+     "date": "2026-09-19",
+     "opp": "Illinois",
+     "opp_sp_rank": 33,
+     "site": "H",
+     "result": "W",
+     "score": "31-17",
+     "bubble_wp": 0.69,
+     "quad": {
+      "A": "q4",
+      "B": "q2",
+      "C": "q2",
+      "D": "q4"
+     }
+    },
+    {
+     "week": 4,
+     "date": "2026-09-26",
+     "opp": "Rutgers",
+     "opp_sp_rank": 71,
+     "site": "A",
+     "result": "L",
+     "score": "20-24",
+     "bubble_wp": 0.56,
+     "quad": {
+      "A": "q2",
+      "B": "q2",
+      "C": "fcs",
+      "D": "q2"
+     }
+    },
+    {
+     "week": 5,
+     "date": "2026-09-30",
+     "opp": "Tulane",
+     "opp_sp_rank": 48,
+     "site": "N",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.43,
+     "quad": {
+      "A": "fcs",
+      "B": "q1",
+      "C": "q1",
+      "D": "fcs"
+     }
+    },
+    {
+     "week": 6,
+     "date": "2026-09-30",
+     "opp": "Citadel",
+     "opp_sp_rank": null,
+     "site": "H",
+     "result": null,
+     "score": null,
+     "bubble_wp": 0.99,
+     "quad": {
+      "A": "fcs",
+      "B": "fcs",
+      "C": "fcs",
+      "D": "fcs"
+     }
+    }
+   ]
+  }
+ ]
+}
