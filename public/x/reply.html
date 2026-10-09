@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reply in X</title>
+<style>
+:root{color-scheme:light dark;--bg:#0f1419;--fg:#e7e9ea;--mut:#8b98a5;--btn:#1d9bf0}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;padding:16px}
+a.b{display:block;text-align:center;background:var(--btn);color:#fff;text-decoration:none;padding:14px;border-radius:999px;font-weight:700;margin:10px 0}
+a.s{background:#273340}
+textarea{width:100%;box-sizing:border-box;background:#192734;color:var(--fg);border:1px solid #38444d;border-radius:12px;padding:12px;font:inherit;min-height:110px}
+p{color:var(--mut);margin:8px 0}
+</style></head><body>
+<h3 style="margin:4px 0 12px">Reply in X</h3>
+<p id="st">Opening the X composer…</p>
+<a class="b" id="app" href="#">Open the reply composer (X app)</a>
+<a class="b s" id="web" href="#">Open the reply composer (web)</a>
+<a class="b s" id="post" href="#">Open the post</a>
+<p>Reply text (tap to copy if the composer came up empty):</p>
+<textarea id="t" readonly></textarea>
+<a class="b s" id="copy" href="#">Copy text</a>
+<script>
+(function(){
+  var q=new URLSearchParams(location.search), id=(q.get('id')||'').replace(/\D/g,''), text=q.get('text')||'';
+  var app='twitter://post?in_reply_to_status_id='+id+'&message='+encodeURIComponent(text);
+  var web='https://x.com/intent/post?in_reply_to='+id+'&text='+encodeURIComponent(text);
+  var post=q.get('post')||('https://x.com/i/web/status/'+id);
+  document.getElementById('app').href=app; document.getElementById('web').href=web; document.getElementById('post').href=post;
+  var ta=document.getElementById('t'); ta.value=text;
+  document.getElementById('copy').onclick=function(e){e.preventDefault(); ta.select(); try{navigator.clipboard.writeText(text);}catch(_){document.execCommand('copy');} this.textContent='Copied';};
+  if(!id){document.getElementById('st').textContent='No post id in the link.'; return;}
+  if(q.get('auto')!=='0'){
+    var t0=Date.now(); location.href=app;                       // the app's own composer, prefilled, replying to the post
+    setTimeout(function(){ if(!document.hidden && Date.now()-t0<2600){ document.getElementById('st').textContent='The app composer did not open; use a button below.'; } }, 2000);
+  } else { document.getElementById('st').textContent='Pick a route:'; }
+})();
+</script></body></html>
