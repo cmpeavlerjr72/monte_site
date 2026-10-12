@@ -59,6 +59,7 @@ import {
 import { buildGameYesP, buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
 import type { FeeParams, Sizing, Suggestion, UnitMode } from "../lib/suggestedBets";
 import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
+import { getDkCfb, indexDkBySlug, type DkGame } from "../lib/dk";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
   computeSettlementRecord, buildSlatePairs, parseNcaafTicker, buildCodeToSlug, buildPortalYesP,
@@ -1884,6 +1885,10 @@ function ScoreboardPage() {
   const [kalshiStamp, setKalshiStamp] = useState("");
   /** Kalshi's own per-series fee params, forwarded by the proxy. */
   const [kalshiFees, setKalshiFees] = useState<Record<string, FeeParams>>({});
+  /** DraftKings Predictions listings under the same CARD keys — read-only
+   *  second venue for the Bets tab's DK chip (src/lib/dk.ts). Fetched once
+   *  per week load; no poll. */
+  const [dkBySlug, setDkBySlug] = useState<Map<string, DkGame>>(new Map());
 
   /* ---- My-Kalshi portal: the owner's resting orders + fills ----
    * Token-gated server route; polls only while a token is stored. Games the
@@ -2006,6 +2011,33 @@ function ScoreboardPage() {
       } catch (e: any) {
         if (e?.name === "AbortError") return;
         if (alive) { setKalshiBySlug(new Map()); setKalshiStamp(""); setKalshiFees({}); }
+      }
+    })();
+    return () => { alive = false; ac.abort(); };
+  }, [season, selectedWeek, weekOptions, showFbs, showFcs, fcsNs]);
+
+  // DK Predictions: same week id, same namespaces, same card-key merge as the
+  // Kalshi feed above. Fails to an empty map (no chips), never an error.
+  useEffect(() => {
+    if (!season || !selectedWeek) { setDkBySlug(new Map()); return; }
+    const weekId =
+      weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
+    const ac = new AbortController();
+    let alive = true;
+    (async () => {
+      try {
+        const [fbsPayload, fcsPayload] = await Promise.all([
+          showFbs ? getDkCfb(season, weekId, ac.signal) : null,
+          showFcs ? getDkCfb(fcsNs, weekId, ac.signal) : null,
+        ]);
+        if (!alive) return;
+        const merged = new Map<string, DkGame>();
+        if (fbsPayload) for (const [k, v] of indexDkBySlug(fbsPayload)) merged.set(k, v);
+        if (fcsPayload) for (const [k, v] of indexDkBySlug(fcsPayload)) merged.set(fcsCardKey(k), v);
+        setDkBySlug(merged);
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        if (alive) setDkBySlug(new Map());
       }
     })();
     return () => { alive = false; ac.abort(); };
@@ -3071,6 +3103,7 @@ function ScoreboardPage() {
                        and therefore how the friends-on-this-game strip finds
                        who else is on it. */
                     gameSlug={openCard.key}
+                    dk={dkBySlug.get(openCard.key)}
                     browse={suggestions.browseBySlug.get(openCard.key) ?? NO_BROWSE_ROWS}
                     verdict={suggestions.pregameBySlug.get(openCard.key)}
                     hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}

@@ -134,6 +134,8 @@ import {
 import type { WeekEngine, RegimeTrend } from "../lib/cfbJson";
 import type { LeagueId } from "../lib/leagues";
 import { RegimeTrendSummary } from "./RegimeTrend";
+// DraftKings Predictions, read-only second venue: a price + a link, never an order.
+import { dkQuoteForRung, type DkGame } from "../lib/dk";
 
 /** What "$30/ladder" MEANS under each mode, in a few words, beside the number
  *  it qualifies. The full definitions live behind the ? on the switch itself
@@ -170,6 +172,47 @@ function ModeChip({ mode, price }: { mode: "REST" | "TAKE"; price?: number }) {
     }}>
       {mode}{price === undefined ? "" : ` @${cents(price)}`}
     </span>
+  );
+}
+
+/**
+ * DraftKings Predictions' price for the SAME bet as this rung, and a link to
+ * that game's DK page (owner 2026-10-12). Fee-inclusive ask in cents — the
+ * number a DK buy actually costs — with the ask/fee/depth split in the
+ * tooltip. A neighbouring strike is marked ≈ and dotted, the same convention
+ * as the approximate Kalshi strikes. No DK listing = renders nothing.
+ * Read-only: the owner places on DK by hand, in their own browser.
+ */
+function DkChip({ r, dk, homeTeam }: {
+  r: Suggestion | undefined; dk?: DkGame; homeTeam?: string;
+}) {
+  const m = r ? dkQuoteForRung(r, dk, homeTeam) : null;
+  const q = m?.quote;
+  if (!dk || !m || !q || q.ask_fee === null) return null;
+  const tip = [
+    q.ask !== null && q.fee !== null
+      ? `ask ${cents(q.ask)} + ${cents(q.fee)} fee`
+      : `ask ${cents(q.ask_fee)} incl. fee`,
+    q.depth !== null ? `${Math.round(q.depth).toLocaleString()} at ask` : null,
+    m.approx && m.line !== null ? `DK line ${m.line} (nearest listed)` : null,
+  ].filter(Boolean).join(" · ");
+  return (
+    <a
+      className="ui-btn"
+      href={dk.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={tip}
+      style={{
+        flex: "none", alignSelf: "center", padding: "1px 6px",
+        fontSize: 10, fontWeight: 800, whiteSpace: "nowrap",
+        textDecoration: m.approx ? "underline dotted" : "none",
+        textUnderlineOffset: 2, color: "var(--text)",
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      DK {m.approx ? "≈" : ""}{cents(q.ask_fee)} ↗
+    </a>
   );
 }
 
@@ -465,13 +508,15 @@ function FilterChips({
  * changes how it looks.
  */
 function LadderRows({
-  groups, tailGroups, unit, onPlace, onProject,
+  groups, tailGroups, unit, onPlace, onProject, dk, homeTeam,
 }: {
   groups: LadderGroup[];
   tailGroups: LadderGroup[];
   unit: number;
   onPlace: (g: LadderGroup) => void;
   onProject: (t: ProjectionTarget) => void;
+  dk?: DkGame;
+  homeTeam?: string;
 }) {
   const [sel, setSel] = useState<string | null>(null);
 
@@ -494,7 +539,8 @@ function LadderRows({
         // execution-mode hue. A ladder whose rungs disagree takes the BEST
         // rung's hue, and shows a chip for each mode anyway.
         const modes = Array.from(new Set(g.rungs.map((r) => r.mode)));
-        const bestMode = g.rungs.reduce((m, r) => (r.edge > m.edge ? r : m), g.rungs[0]).mode;
+        const bestRung = g.rungs.reduce((m, r) => (r.edge > m.edge ? r : m), g.rungs[0]);
+        const bestMode = bestRung.mode;
         // A TAIL row keeps its number but LOSES its colour: green on an edge
         // we do not stand behind would be the panel lying in its loudest
         // channel. The badge and the muted ink say so instead.
@@ -597,6 +643,9 @@ function LadderRows({
                   </span>
                 </span>
               </button>
+              {/* DK's price for the headline rung (the one whose edge the row
+                  prints), beside Place; nothing when DK does not list it. */}
+              <DkChip r={single ? head : bestRung} dk={dk} homeTeam={homeTeam} />
               {/* Every mode gets a Place button. A REST rung rests post-only;
                   a TAKE rung is a LIMIT order at this exact price — never a
                   market order (user decision 2026-08-28). A ladder's rungs go
@@ -752,10 +801,12 @@ const WHEEL_ITEM_W = 58;
  * Place button. Opens centred on the best non-tail edge, so the wheel's
  * resting position is already the most interesting strike.
  */
-function RungWheel({ rungs, onPlace, refReason }: {
+function RungWheel({ rungs, onPlace, refReason, dk, homeTeam }: {
   rungs: Suggestion[];
   onPlace: (r: Suggestion) => void;
   refReason?: string | null;
+  dk?: DkGame;
+  homeTeam?: string;
 }) {
   const bestIdx = useMemo(() => {
     // The wheel's resting position is the best rung we would actually stand
@@ -867,6 +918,7 @@ function RungWheel({ rungs, onPlace, refReason }: {
             {r.star && <TargetStar cell={r.cell} />}
             {signed(r.edge)}
           </span>
+          <DkChip r={r} dk={dk} homeTeam={homeTeam} />
           <button
             type="button" className="ui-btn"
             onClick={() => onPlace(r)}
@@ -946,8 +998,9 @@ function wheelFace(x: Suggestion, mag: boolean): string {
 
 /** One rung as a single flat line — the ≤2-rung rendering (a winner market,
  *  a two-rung stat ladder). A wheel with one or two faces is not a wheel. */
-function CompactRung({ r, onPlace, refReason }: {
+function CompactRung({ r, onPlace, refReason, dk, homeTeam }: {
   r: Suggestion; onPlace: (r: Suggestion) => void; refReason?: string | null;
+  dk?: DkGame; homeTeam?: string;
 }) {
   return (
     <div style={{
@@ -972,6 +1025,7 @@ function CompactRung({ r, onPlace, refReason }: {
         {r.star && <TargetStar cell={r.cell} />}
         {signed(r.edge)}
       </span>
+      <DkChip r={r} dk={dk} homeTeam={homeTeam} />
       <button
         type="button" className="ui-btn" onClick={() => onPlace(r)}
         style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
@@ -987,7 +1041,7 @@ export default function GameBetsPanel({
   token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
   showTails, onShowTails, regime, edgeRules, onEdgeRules, engine, trend, onProject,
-  homeTeam, awayTeam, league, gameSlug,
+  homeTeam, awayTeam, league, gameSlug, dk,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
@@ -1047,6 +1101,9 @@ export default function GameBetsPanel({
    *  strip finds the rows. Optional: a harness that passes none simply gets
    *  no strip. */
   gameSlug?: string;
+  /** This game's DraftKings Predictions listing (src/lib/dk.ts), or undefined
+   *  when DK does not list it / the feed is down — then no DK chips draw. */
+  dk?: DkGame;
 }) {
   /** Whether the week-1 rulebook can describe this board at all. */
   const rulebookOk = rulesApplyFor(engine);
@@ -1243,6 +1300,8 @@ export default function GameBetsPanel({
           unit={unit}
           onPlace={(g) => setSlip({ group: g, idem: newIdempotencyKey() })}
           onProject={onProject}
+          dk={dk}
+          homeTeam={homeTeam}
         />
       )}
 
@@ -1317,9 +1376,9 @@ export default function GameBetsPanel({
                 </div>
                 {rungs.length <= 2
                   ? rungs.map((r) => (
-                      <CompactRung key={r.key} r={r} onPlace={place} refReason={refReason} />
+                      <CompactRung key={r.key} r={r} onPlace={place} refReason={refReason} dk={dk} homeTeam={homeTeam} />
                     ))
-                  : <RungWheel rungs={rungs} onPlace={place} refReason={refReason} />}
+                  : <RungWheel rungs={rungs} onPlace={place} refReason={refReason} dk={dk} homeTeam={homeTeam} />}
               </div>
             );
           })}
