@@ -50,6 +50,7 @@ import {
 } from "../lib/suggestedBets";
 import { regimeWords, rulesApplyFor, regimeFor } from "../lib/edgeRules";
 import UnitModeControl from "../components/UnitModeControl";
+import { getDkCfb, indexDkBySlug, type DkGame } from "../lib/dk";
 
 /** Ball State @ Ohio State is the mismatch (open −50.5, P4 host v MAC — the
  *  Python's own worked example); Clemson @ LSU is the peer game whose open
@@ -305,6 +306,17 @@ export default function TestBets() {
    */
   const [engine, setEngine] = useState<WeekEngine | null | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
+  /** The REAL DraftKings Predictions feed for this week (live, or the daily
+   *  snapshot when DK refuses the host) — so the Bets row's DK chip can be
+   *  seen. Unlike the Kalshi book above, these prices are not fixtures. */
+  const [dkBySlug, setDkBySlug] = useState<Map<string, DkGame>>(new Map());
+  useEffect(() => {
+    const ac = new AbortController();
+    getDkCfb(SEASON, weekId, ac.signal)
+      .then((p) => setDkBySlug(indexDkBySlug(p)))
+      .catch(() => {});
+    return () => ac.abort();
+  }, [weekId]);
 
   useEffect(() => {
     let dead = false;
@@ -512,6 +524,9 @@ export default function TestBets() {
               edgeRules={rulesOn}
               onEdgeRules={() => {}}
               onProject={() => {}}
+              homeTeam={g.teamA}
+              awayTeam={g.teamB}
+              dk={dkBySlug.get(g.slug)}
             />
           </section>
         );

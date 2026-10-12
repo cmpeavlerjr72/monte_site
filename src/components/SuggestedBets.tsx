@@ -211,7 +211,8 @@ function DkChip({ r, dk, homeTeam }: {
         fontVariantNumeric: "tabular-nums",
       }}
     >
-      DK {m.approx ? "≈" : ""}{cents(q.ask_fee)} ↗
+      {/* U+FE0E: the TEXT arrow — Windows Chrome otherwise draws ↗ as an emoji tile. */}
+      DK {m.approx ? "≈" : ""}{cents(q.ask_fee)} {"↗︎"}
     </a>
   );
 }
