@@ -98,7 +98,7 @@
 // server/liveScores.ts. No position bookkeeping either: after a live placement
 // the portfolio strip picks it up on its own next poll.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   groupLadders, orderFee, timingWords,
   MIN_MAKER_EDGE, TAKE_THRESHOLD, TAKE_THRESHOLD_LATE, TAKE_THRESHOLD_NEAR,
@@ -175,45 +175,105 @@ function ModeChip({ mode, price }: { mode: "REST" | "TAKE"; price?: number }) {
   );
 }
 
+/** "10/12 6:49 PM ET" from an ISO time; "" when absent/unparseable. */
+function etStamp(iso: string | undefined): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString("en-US", {
+    timeZone: "America/New_York", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  }).replace(",", "") + " ET";
+}
+
 /**
- * DraftKings Predictions' price for the SAME bet as this rung, and a link to
- * that game's DK page (owner 2026-10-12). Fee-inclusive ask in cents — the
- * number a DK buy actually costs — with the ask/fee/depth split in the
- * tooltip. A neighbouring strike is marked ≈ and dotted, the same convention
- * as the approximate Kalshi strikes. No DK listing = renders nothing.
- * Read-only: the owner places on DK by hand, in their own browser.
+ * THE TWO VENUES, side by side (owner 2026-10-12: "with an easy look we can
+ * find the better price"). Two matched buttons, same size, same format:
+ *
+ *   [Kalshi 48¢]   the Place action, unchanged handler — stake in the tooltip
+ *   [DK 51¢ ↗]     a link to DK's event page; the owner trades there by hand
+ *
+ * BOTH NUMBERS ARE FEE-INCLUSIVE COST PER CONTRACT FOR THE SAME SIDE, whole
+ * cents: Kalshi = this rung's price + its per-contract fee at the sized count
+ * (the same fee the slip itemises), DK = ask + DK's technology fee. The
+ * cheaper one wears the active treatment; a tie highlights neither. A DK
+ * price on a NEIGHBOURING strike (≈, dotted) is a different bet, so it is
+ * never compared — neither button lights. No DK listing = Kalshi alone.
+ * Read-only on the DK side: nothing here places a DK order.
  */
-function DkChip({ r, dk, homeTeam }: {
-  r: Suggestion | undefined; dk?: DkGame; homeTeam?: string;
+function VenueButtons({ r, stake, rungs, onPlace, dk, homeTeam, tall = false }: {
+  /** The rung both prices are for (the row's headline rung on a ladder). */
+  r: Suggestion;
+  /** Dollars the Place press commits (the whole ladder on a ladder row). */
+  stake: number;
+  /** Orders the Place press sends (1 except on a ladder row). */
+  rungs?: number;
+  onPlace: () => void;
+  dk?: DkGame;
+  homeTeam?: string;
+  /** Full row height + fixed width (the picked-rows column). */
+  tall?: boolean;
 }) {
-  const m = r ? dkQuoteForRung(r, dk, homeTeam) : null;
+  const feePer = r.fee / Math.max(r.count, 1);
+  const kCost = Math.round((r.price + feePer) * 100);
+  const m = dkQuoteForRung(r, dk, homeTeam);
   const q = m?.quote;
-  if (!dk || !m || !q || q.ask_fee === null) return null;
-  const tip = [
+  const dkCost = q && q.ask_fee !== null ? Math.round(q.ask_fee * 100) : null;
+  const comparable = dkCost !== null && !m!.approx;
+  const kBetter = comparable && kCost < dkCost!;
+  const dBetter = comparable && dkCost! < kCost;
+
+  const box: CSSProperties = tall
+    ? { width: 74, flex: "none", padding: 0, fontSize: 11, fontWeight: 800 }
+    : { width: 74, flex: "none", padding: "1px 0", fontSize: 10, fontWeight: 800 };
+  const common: CSSProperties = {
+    ...box, whiteSpace: "nowrap", textAlign: "center",
+    fontVariantNumeric: "tabular-nums",
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+  };
+  const kTip = [
+    `Kalshi ${cents(r.price)} + ${(feePer * 100).toFixed(1)}¢ fee`,
+    `Place $${stake.toFixed(2)}${rungs && rungs > 1 ? ` (${rungs} orders)` : ""}`,
+    r.mode === "REST" ? "rest" : "take",
+  ].join(" · ");
+  const dTip = q ? [
     q.ask !== null && q.fee !== null
-      ? `ask ${cents(q.ask)} + ${cents(q.fee)} fee`
-      : `ask ${cents(q.ask_fee)} incl. fee`,
+      ? `DK ask ${cents(q.ask)} + ${cents(q.fee)} fee`
+      : `DK ${cents(q.ask_fee ?? 0)} incl. fee`,
     q.depth !== null ? `${Math.round(q.depth).toLocaleString()} at ask` : null,
-    m.approx && m.line !== null ? `DK line ${m.line} (nearest listed)` : null,
-  ].filter(Boolean).join(" · ");
+    m!.approx && m!.line !== null ? `DK line ${m!.line} (nearest listed, not compared)` : null,
+    dk?.as_of ? `as of ${etStamp(dk.as_of)}` : null,
+  ].filter(Boolean).join(" · ") : "";
+
   return (
-    <a
-      className="ui-btn"
-      href={dk.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={tip}
-      style={{
-        flex: "none", alignSelf: "center", padding: "1px 6px",
-        fontSize: 10, fontWeight: 800, whiteSpace: "nowrap",
-        textDecoration: m.approx ? "underline dotted" : "none",
-        textUnderlineOffset: 2, color: "var(--text)",
-        fontVariantNumeric: "tabular-nums",
-      }}
-    >
-      {/* U+FE0E: the TEXT arrow — Windows Chrome otherwise draws ↗ as an emoji tile. */}
-      DK {m.approx ? "≈" : ""}{cents(q.ask_fee)} {"↗︎"}
-    </a>
+    <>
+      <button
+        type="button" className="ui-btn"
+        data-on={kBetter ? "true" : "false"}
+        onClick={onPlace}
+        title={kTip}
+        style={common}
+      >
+        Kalshi {kCost}¢
+      </button>
+      {dk && q && dkCost !== null && (
+        <a
+          className="ui-btn"
+          data-on={dBetter ? "true" : "false"}
+          href={dk.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={dTip}
+          style={{
+            ...common,
+            textDecoration: m!.approx ? "underline dotted" : "none",
+            textUnderlineOffset: 2,
+          }}
+        >
+          {/* U+FE0E: the TEXT arrow — Windows Chrome otherwise draws ↗ as an emoji tile. */}
+          DK {m!.approx ? "≈" : ""}{dkCost}¢ {"\u2197\uFE0E"}
+        </a>
+      )}
+    </>
   );
 }
 
@@ -644,27 +704,17 @@ function LadderRows({
                   </span>
                 </span>
               </button>
-              {/* DK's price for the headline rung (the one whose edge the row
-                  prints), beside Place; nothing when DK does not list it. */}
-              <DkChip r={single ? head : bestRung} dk={dk} homeTeam={homeTeam} />
-              {/* Every mode gets a Place button. A REST rung rests post-only;
-                  a TAKE rung is a LIMIT order at this exact price — never a
-                  market order (user decision 2026-08-28). A ladder's rungs go
-                  as ONE request. */}
-              <button
-                type="button"
-                className="ui-btn"
-                onClick={() => onPlace(g)}
-                title={`Place ${g.rungs.length} order${g.rungs.length === 1 ? "" : "s"}`}
-                style={{
-                  // Fixed width, so the edge column above it lines up across
-                  // every row of the panel.
-                  width: 62, flex: "none", padding: 0,
-                  fontSize: 11, fontWeight: 800,
-                }}
-              >
-                Place
-              </button>
+              {/* Kalshi (= Place, the whole ladder as ONE request — a REST
+                  rung rests post-only, a TAKE rung is a LIMIT at this exact
+                  price, never a market order) beside DK, both fee-inclusive
+                  cost for the headline rung, the cheaper one lit. */}
+              <VenueButtons
+                r={single ? head : bestRung}
+                stake={g.rungs.reduce((t, x) => t + x.outlay, 0)}
+                rungs={g.rungs.length}
+                onPlace={() => onPlace(g)}
+                dk={dk} homeTeam={homeTeam} tall
+              />
             </div>
 
             {/* The chart this bet came out of, one tap away and NAMED. The
@@ -919,14 +969,10 @@ function RungWheel({ rungs, onPlace, refReason, dk, homeTeam }: {
             {r.star && <TargetStar cell={r.cell} />}
             {signed(r.edge)}
           </span>
-          <DkChip r={r} dk={dk} homeTeam={homeTeam} />
-          <button
-            type="button" className="ui-btn"
-            onClick={() => onPlace(r)}
-            style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
-          >
-            Place ${r.outlay.toFixed(0)}
-          </button>
+          <VenueButtons
+            r={r} stake={r.outlay} onPlace={() => onPlace(r)}
+            dk={dk} homeTeam={homeTeam}
+          />
         </div>
       )}
     </div>
@@ -1026,13 +1072,10 @@ function CompactRung({ r, onPlace, refReason, dk, homeTeam }: {
         {r.star && <TargetStar cell={r.cell} />}
         {signed(r.edge)}
       </span>
-      <DkChip r={r} dk={dk} homeTeam={homeTeam} />
-      <button
-        type="button" className="ui-btn" onClick={() => onPlace(r)}
-        style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
-      >
-        Place ${r.outlay.toFixed(0)}
-      </button>
+      <VenueButtons
+        r={r} stake={r.outlay} onPlace={() => onPlace(r)}
+        dk={dk} homeTeam={homeTeam}
+      />
     </div>
   );
 }

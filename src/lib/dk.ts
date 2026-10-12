@@ -59,6 +59,8 @@ export type DkGame = {
   first_quarter: DkPeriod;
   team_total: { home: DkLineRung[]; away: DkLineRung[] };
   anytime_td: { player: string; quote: DkQuote }[];
+  /** When these prices were read (copied from the payload by indexDkBySlug). */
+  as_of?: string;
 };
 
 export type DkPayload = {
@@ -100,7 +102,9 @@ export async function getDkCfb(
 export function indexDkBySlug(p: DkPayload): Map<string, DkGame> {
   const m = new Map<string, DkGame>();
   if (!p.available) return m;
-  for (const g of p.games) if (g?.slug) m.set(g.slug, g);
+  // Each game carries the payload's price time, so a chip can say how old
+  // its number is (production runs on the daily snapshot).
+  for (const g of p.games) if (g?.slug) m.set(g.slug, { ...g, as_of: g.as_of ?? p.as_of });
   return m;
 }
 
