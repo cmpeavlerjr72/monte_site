@@ -4633,7 +4633,15 @@ function CardPanelHost({
     awayLogo: getTeamLogo(espnHomeIsA ? card.teamB : card.teamA) || undefined,
   };
   const tabs = panelTabsFor(card, gdata, bets, kind);
-  const venueText = lv?.venue ? venueLine(lv.venue) : "";
+  // Header pieces: logos, and kickoff · network · city as one muted line.
+  const logoA = getTeamLogo(card.teamA) || undefined;
+  const logoB = getTeamLogo(card.teamB) || undefined;
+  const venueFull = lv?.venue ? venueLine(lv.venue) : "";
+  const venueWhere = lv?.venue
+    ? [lv.venue.city, lv.venue.state || (lv.venue.country && lv.venue.country !== "USA" ? lv.venue.country : "")]
+        .filter(Boolean).join(", ")
+    : "";
+  const headerMeta = [card.kickoffLabel, lv?.broadcast, venueWhere].filter(Boolean).join(" · ");
 
   return (
     <section
@@ -4642,24 +4650,34 @@ function CardPanelHost({
         background: "var(--card)", padding: 10,
       }}
     >
-      {/* Header: the matchup, WHERE it is played (moved here off the card,
-          2026-10-12), Close. Then the tab strip — the card has no buttons
-          row; this strip is how the reader moves between panels. */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4, minWidth: 0 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--brand-text)", whiteSpace: "nowrap" }}>
-          {card.teamB} @ {card.teamA}
+      {/* Header (bets declutter, 2026-10-12): logo + name for each team, then
+          kickoff · network · where as ONE muted line on the right (the full
+          stadium line rides its tooltip), then Close. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, minWidth: 0, flexWrap: "wrap" }}>
+        <span style={{
+          display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0,
+          fontSize: 13, fontWeight: 800, color: "var(--brand-text)", whiteSpace: "nowrap",
+        }}>
+          {logoB && <img src={logoB} alt="" width={20} height={20} style={{ objectFit: "contain", flex: "none" }} />}
+          {card.teamB}
+          <span style={{ color: "var(--muted)", fontWeight: 600 }}>@</span>
+          {logoA && <img src={logoA} alt="" width={20} height={20} style={{ objectFit: "contain", flex: "none" }} />}
+          {card.teamA}
         </span>
-        {venueText && (
+        {headerMeta && (
           <span
-            title={venueText}
-            style={{ fontSize: 11, color: "var(--muted)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            title={venueFull || headerMeta}
+            style={{
+              marginLeft: "auto", fontSize: 11, color: "var(--muted)", minWidth: 0,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}
           >
-            {venueText}
+            {headerMeta}
           </span>
         )}
         <button
           type="button" onClick={onClose} className="ui-btn"
-          style={{ marginLeft: "auto", padding: "3px 10px", fontSize: 12, flex: "none" }}
+          style={{ marginLeft: headerMeta ? 0 : "auto", padding: "3px 10px", fontSize: 12, flex: "none" }}
         >
           Close
         </button>

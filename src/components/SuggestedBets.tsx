@@ -98,7 +98,7 @@
 // server/liveScores.ts. No position bookkeeping either: after a live placement
 // the portfolio strip picks it up on its own next poll.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   groupLadders, orderFee, timingWords,
   MIN_MAKER_EDGE, TAKE_THRESHOLD, TAKE_THRESHOLD_LATE, TAKE_THRESHOLD_NEAR,
@@ -128,7 +128,7 @@ import type { SuggestSection } from "../lib/useSuggestions";
 import {
   ABSTAIN_WORDS, CELL_TAG, abstainTag, regimeWords, starWords,
   STAR_ASK_HI, STAR_ASK_LO, engineWords, rulesApplyFor,
-  decisionNote, decisionReason,
+  decisionNote, decisionReason, decisionFamilyWords,
   type AbstainReason, type CellName, type GameRegime,
 } from "../lib/edgeRules";
 import type { WeekEngine, RegimeTrend } from "../lib/cfbJson";
@@ -136,6 +136,7 @@ import type { LeagueId } from "../lib/leagues";
 import { RegimeTrendSummary } from "./RegimeTrend";
 // DraftKings Predictions, read-only second venue: a price + a link, never an order.
 import { dkQuoteForRung, type DkGame } from "../lib/dk";
+import { getTeamLogo } from "../utils/teamLogo";
 
 /** What "$30/ladder" MEANS under each mode, in a few words, beside the number
  *  it qualifies. The full definitions live behind the ? on the switch itself
@@ -223,8 +224,8 @@ function VenueButtons({ r, stake, rungs, onPlace, dk, homeTeam, tall = false }: 
   const dBetter = comparable && dkCost! < kCost;
 
   const box: CSSProperties = tall
-    ? { width: 74, flex: "none", padding: 0, fontSize: 11, fontWeight: 800 }
-    : { width: 74, flex: "none", padding: "1px 0", fontSize: 10, fontWeight: 800 };
+    ? { width: 92, flex: "none", padding: "9px 0", fontSize: 13, fontWeight: 800 }
+    : { width: 78, flex: "none", padding: "3px 0", fontSize: 11, fontWeight: 800 };
   const common: CSSProperties = {
     ...box, whiteSpace: "nowrap", textAlign: "center",
     fontVariantNumeric: "tabular-nums",
@@ -516,47 +517,149 @@ export function projectionTargetFor(g: LadderGroup): ProjectionTarget | null {
  * compute — a filter that only applied here would make the badge lie.
  * Persisted per browser, exactly as before.
  */
-function FilterChips({
-  modeFilter, onModeFilter, typeFilter, onTypeFilter,
-}: {
-  modeFilter: ModeFilter;
-  onModeFilter: (v: ModeFilter) => void;
-  typeFilter: BetTypeFilter;
-  onTypeFilter: (v: BetTypeFilter) => void;
-}) {
-  const chip = { padding: "3px 9px", fontSize: 11, fontWeight: 700 } as const;
+/* --------------------------- compact row pieces ---------------------------
+ * The declutter (owner-approved mockup, 2026-10-12): every rung reads as ONE
+ * fixed grid line — face, mode glyph, sim %, edge, then the two venue
+ * buttons — so the eye runs down columns instead of parsing sentences. The
+ * words that used to sit in each row (the legend, the REST/TAKE @price chip,
+ * the per-row REFERENCE badge) live in tooltips and section headers now.
+ * Nothing here computes: every number is the Suggestion's own.
+ * ------------------------------------------------------------------------ */
+
+function TeamLogo({ team, size = 18 }: { team?: string; size?: number }) {
+  const src = team ? getTeamLogo(team) : undefined;
+  if (!src) return null;
   return (
-    <div style={{ display: "grid", gap: 5 }}>
-      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Execution mode filter">
-        {([["all", "All"], ["rest", "Maker"], ["take", "Taker"]] as const).map(([v, label]) => (
-          <button
-            key={v} type="button" className="ui-btn"
-            data-on={modeFilter === v ? "true" : "false"}
-            onClick={() => onModeFilter(v)}
-            style={chip}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {/* Second filter row: bet TYPE, by Kalshi series family. Composes with
-          the mode filter (both apply); an unrecognised future series
-          (`family` null) only shows under "All", never crashes. */}
-      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }} role="group" aria-label="Bet type filter">
-        {([
-          ["all", "All"], ["game", "Game lines"], ["td", "TD props"],
-          ["yardage", "Yardage"], ["team", "Team totals"],
-        ] as const).map(([v, label]) => (
-          <button
-            key={v} type="button" className="ui-btn"
-            data-on={typeFilter === v ? "true" : "false"}
-            onClick={() => onTypeFilter(v)}
-            style={chip}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <img
+      src={src} alt="" width={size} height={size} loading="lazy"
+      style={{ width: size, height: size, objectFit: "contain", flex: "none" }}
+    />
+  );
+}
+
+/** The shortest honest face for one rung: "U 52.5", logo + "+5.5" (spread),
+ *  logo + team (winner), logo + "21+ points" (team stat). */
+function rungFace(r: Suggestion): { team?: string; text: string } {
+  if (r.series === "KXNCAAFTOTAL") {
+    return { text: `${/^Under\b/i.test(r.label) ? "U" : "O"} ${r.strike}` };
+  }
+  if (r.series === "KXNCAAFSPREAD") return { team: r.team, text: r.rungText ?? r.label };
+  if (r.series === "KXNCAAFGAME") return { team: r.team, text: r.team };
+  if (r.team) return { team: r.team, text: `${r.rungText ?? `${r.strike}+`} ${r.statText}`.trim() };
+  return { text: r.label };
+}
+
+function Face({ r, size = 18 }: { r: Suggestion; size?: number }) {
+  const f = rungFace(r);
+  return (
+    <span title={r.label} style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+      <TeamLogo team={f.team} size={size} />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.text}</span>
+    </span>
+  );
+}
+
+/** The legend, moved INTO the chip it explains. */
+const MODE_WORDS = { REST: "rest (maker fee)", TAKE: "take now (taker fee)" } as const;
+
+/** Execution mode as a glyph — ⏳ rest / ⚡ take — in its own hue channel.
+ *  The price left the chip for the Kalshi button; it stays in the tooltip. */
+function ModeGlyph({ mode, price, word = false }: {
+  mode: "REST" | "TAKE"; price?: number; word?: boolean;
+}) {
+  return (
+    <span
+      title={`${MODE_WORDS[mode]}${price === undefined ? "" : ` · ${cents(price)}`}`}
+      style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4,
+        minWidth: 30, padding: "1px 7px", borderRadius: 999, flex: "none",
+        fontSize: 10.5, fontWeight: 900, whiteSpace: "nowrap", justifySelf: "start",
+        background: modeHue(mode), color: modeInk(mode),
+      }}
+    >
+      {mode === "REST" ? "⏳" : "⚡"}{word ? (mode === "REST" ? " rest" : " take") : ""}
+    </span>
+  );
+}
+
+/** One rung as one fixed grid line. Phone width: the venue buttons wrap
+ *  under the face (theme.css `.bets-line`, a container query on the panel). */
+function RungLine({ r, onPlace, dk, homeTeam }: {
+  r: Suggestion; onPlace: (r: Suggestion) => void; dk?: DkGame; homeTeam?: string;
+}) {
+  // The number and its sign always render; only the green/red — the part
+  // that reads as an endorsement — drops out on a row the site is not
+  // pitching (tail, abstained, or reference-only).
+  const quiet = r.tail || r.abstain || r.displayOnly;
+  return (
+    <div className="bets-line" style={{ color: r.tail || r.abstain ? "var(--muted)" : "var(--text)" }}>
+      <span style={{
+        display: "flex", alignItems: "center", gap: 6, minWidth: 0,
+        fontWeight: 800, fontSize: 12.5,
+      }}>
+        <Face r={r} />
+        {r.tail && <TailBadge inline />}
+        <AbstainTag reason={r.abstain} />
+        {r.star && <CellTag cell={r.cell} />}
+      </span>
+      <ModeGlyph mode={r.mode} price={r.price} />
+      <span title={`sim ${(r.simP * 100).toFixed(0)}%`} style={{
+        color: "var(--muted)", fontSize: 11.5, fontVariantNumeric: "tabular-nums",
+      }}>
+        {(r.simP * 100).toFixed(0)}%
+      </span>
+      <span style={{
+        fontWeight: 800, fontSize: 12, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+        color: quiet ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
+      }}>
+        {r.star && <TargetStar cell={r.cell} />}
+        {signed(r.edge)}
+      </span>
+      <span className="bets-act">
+        <VenueButtons r={r} stake={r.outlay} onPlace={() => onPlace(r)} dk={dk} homeTeam={homeTeam} />
+      </span>
+    </div>
+  );
+}
+
+/** The rung a ladder RESTS on: the best rung we would actually stand behind —
+ *  not a tail, not abstained; else best non-tail; else the middle. Shared by
+ *  the collapsed browse row and the wheel's opening position. */
+function restingIndex(rungs: Suggestion[]): number {
+  const pick = (ok: (r: Suggestion) => boolean) => {
+    let bi = -1, be = -Infinity;
+    rungs.forEach((r, i) => { if (ok(r) && r.edge > be) { be = r.edge; bi = i; } });
+    return bi;
+  };
+  const clean = pick((r) => !r.tail && !r.abstain);
+  if (clean >= 0) return clean;
+  const nonTail = pick((r) => !r.tail);
+  return nonTail >= 0 ? nonTail : Math.floor(rungs.length / 2);
+}
+
+/** WINNER / SPREAD / TOTAL ... with ONE dashed REFERENCE tag when the family
+ *  is reference-only this week (replaces the per-row badge). */
+function SectionHead({ title, reference, refReason }: {
+  title: string; reference: boolean; refReason?: string | null;
+}) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      fontSize: 10, fontWeight: 800, color: "var(--muted)",
+      textTransform: "uppercase", letterSpacing: 0.6,
+    }}>
+      {title}
+      {reference && (
+        <span
+          title={refReason ?? "Shown for reference this week: priced and placeable, never starred."}
+          style={{
+            fontSize: 9, fontWeight: 800, letterSpacing: 0.5, padding: "0 6px",
+            borderRadius: 5, border: "1px dashed var(--border)", color: "var(--muted)",
+          }}
+        >
+          REFERENCE
+        </span>
+      )}
     </div>
   );
 }
@@ -632,109 +735,94 @@ function LadderRows({
                 </span>
               </div>
             )}
-            <div style={{ display: "flex", alignItems: "stretch", gap: 4, minWidth: 0 }}>
-              <button
-                type="button"
+            {/* THE PICK CARD: legs large, one muted line (mode · money ·
+                projection), the edge, then Kalshi (= Place, the whole ladder
+                as ONE request — a REST rung rests post-only, a TAKE rung is a
+                LIMIT at this exact price, never a market order) beside DK.
+                Tapping the legs still opens the detail below. */}
+            <div className="bets-pick" style={{
+              padding: "8px 10px", borderRadius: 9,
+              // Dashed = TAIL (a number we do not stand behind); the
+              // abstention keeps a solid outline and mutes the INK.
+              border: `1px ${g.tail ? "dashed" : "solid"} ${on ? "var(--brand)" : "var(--border)"}`,
+              borderLeft: `5px solid ${muted ? "var(--border)" : modeHue(bestMode)}`,
+              background: muted ? "var(--fill)" : "var(--card)",
+              color: muted ? "var(--muted)" : "var(--text)",
+            }}>
+              <div
+                role="button" tabIndex={0} aria-expanded={on}
                 onClick={() => setSel(on ? null : gid)}
-                style={{
-                  flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
-                  // gridTemplateColumns pins the ONE column to the button's own
-                  // width: a grid's implicit column is min-content wide, which
-                  // for line 2 is the un-shrinkable chip + tag + edge run.
-                  display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 3,
-                  padding: "7px 8px", borderRadius: 7,
-                  // A tail row is DASHED and sits on the section fill rather
-                  // than the card: at a glance it reads as a provisional row,
-                  // the same dotted convention the approximate-strike marks use.
-                  // Dashed = TAIL (a number we do not stand behind); the
-                  // abstention keeps a solid outline and mutes the INK, so the
-                  // two states stay tellable apart at a glance.
-                  border: `1px ${g.tail ? "dashed" : "solid"} ${on ? "var(--brand)" : "var(--border)"}`,
-                  borderLeft: `4px solid ${muted ? "var(--border)" : modeHue(bestMode)}`,
-                  background: muted ? "var(--fill)" : "var(--card)",
-                  color: muted ? "var(--muted)" : "var(--text)",
-                  font: "inherit", fontSize: 12,
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSel(on ? null : gid); }
                 }}
+                style={{ flex: "1 1 220px", minWidth: 0, cursor: "pointer", display: "grid", gap: 3 }}
               >
-                {/* TWO FIXED LINES, always in the same order: the bet in
-                    words, then chip / sizing / edge. The edge is the last
-                    thing on line 2 in a column of its own, so every row's
-                    number lands at the same x. */}
-                <span style={{ fontWeight: 700, lineHeight: 1.25 }}>
+                <span style={{
+                  display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6,
+                  fontSize: 16, fontWeight: 800, lineHeight: 1.25,
+                }}>
                   {g.tail && <TailBadge inline />}
-                  {single ? head.label : g.headline}
+                  {g.rungs.map((x, xi) => (
+                    <Fragment key={x.key}>
+                      {xi > 0 && <span style={{ color: "var(--muted)", fontWeight: 600 }}>+</span>}
+                      <Face r={x} size={20} />
+                    </Fragment>
+                  ))}
                 </span>
                 <span style={{
-                  display: "flex", alignItems: "center", gap: 6, minWidth: 0,
-                  // The row is TWO FIXED LINES and line 2 must never wrap into
-                  // a third; the sizing text is the one thing here that gives.
-                  flexWrap: "nowrap",
+                  display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+                  fontSize: 11, color: "var(--muted)",
                 }}>
-                  {single
-                    ? <ModeChip mode={head.mode} price={head.price} />
-                    : modes.map((m) => <ModeChip key={m} mode={m} />)}
-                  <span style={{
-                    fontSize: 10.5, color: "var(--muted)", minWidth: 0,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>
-                    {/* ONE number, and it is the money that leaves: the
-                        risk, FIRST. What it wins is derivation and lives in
-                        the popover — a "$86 → $30" pair on this line would put
-                        two numbers where the row has room for one.
-                        THE DOLLAR LEADS (2026-09-08). This line is the one
-                        thing allowed to ellipse when the row is squeezed (it
-                        must stay two lines), and at 375px it did: "97 @ 92¢ ·
-                        $89.37" truncated to "9". Under the sizing modes the
-                        risk varies by 3x between rows, so it is exactly the
-                        number that must survive the squeeze. */}
+                  {modes.map((m) => (
+                    <ModeGlyph key={m} mode={m} word price={single ? head.price : undefined} />
+                  ))}
+                  <span>
                     {single
                       ? `$${head.outlay.toFixed(2)} · ${head.count} @ ${cents(head.price)}`
                       : `$${g.risk.toFixed(2)} · ${g.rungs.length} rungs`}
                   </span>
-                  {/* The rules' verdict, in words, before the number. */}
                   <AbstainTag reason={g.abstain} />
                   {g.star && <CellTag cell={g.cell} />}
-                  <span style={{
-                    marginLeft: "auto", flex: "none", fontWeight: 800,
-                    fontVariantNumeric: "tabular-nums",
-                    color: edgeColor,
-                  }}>
-                    {g.star && <TargetStar cell={g.cell} />}
-                    {signed(g.bestEdge)}
-                  </span>
+                  {/* The chart this bet came out of, one tap away. */}
+                  {target && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onProject(target); }}
+                        title={target.kind === "teamstats"
+                          ? `Show ${target.team}'s simulated distribution with the ${target.strike}+ market marked`
+                          : `Show the simulated score distribution${
+                              target.line === undefined ? "" : ` with ${target.line} marked`}`}
+                        style={{
+                          border: "none", background: "none", padding: 0, font: "inherit",
+                          color: "inherit", cursor: "pointer", textDecoration: "underline",
+                          textUnderlineOffset: 2,
+                        }}
+                      >
+                        projection →
+                      </button>
+                    </>
+                  )}
                 </span>
-              </button>
-              {/* Kalshi (= Place, the whole ladder as ONE request — a REST
-                  rung rests post-only, a TAKE rung is a LIMIT at this exact
-                  price, never a market order) beside DK, both fee-inclusive
-                  cost for the headline rung, the cheaper one lit. */}
-              <VenueButtons
-                r={single ? head : bestRung}
-                stake={g.rungs.reduce((t, x) => t + x.outlay, 0)}
-                rungs={g.rungs.length}
-                onPlace={() => onPlace(g)}
-                dk={dk} homeTeam={homeTeam} tall
-              />
-            </div>
-
-            {/* The chart this bet came out of, one tap away and NAMED. The
-                "Bets" tab stays visible above the panel, so getting back is
-                the button you just came from — no back-plumbing. */}
-            {target && (
-              <div style={{ display: "flex", marginTop: 2 }}>
-                <button
-                  type="button" className="ui-btn"
-                  onClick={() => onProject(target)}
-                  title={target.kind === "teamstats"
-                    ? `Show ${target.team}'s simulated distribution with the ${target.strike}+ market marked`
-                    : `Show the simulated score distribution${
-                        target.line === undefined ? "" : ` with ${target.line} marked`}`}
-                  style={{ padding: "1px 8px", fontSize: 10.5, fontWeight: 700 }}
-                >
-                  See projection →
-                </button>
               </div>
-            )}
+              <span style={{
+                flex: "none", fontWeight: 800, fontSize: 18,
+                fontVariantNumeric: "tabular-nums", color: edgeColor, whiteSpace: "nowrap",
+              }}>
+                {g.star && <TargetStar cell={g.cell} />}
+                {signed(g.bestEdge)}
+              </span>
+              <span className="bets-act">
+                <VenueButtons
+                  r={single ? head : bestRung}
+                  stake={g.rungs.reduce((t, x) => t + x.outlay, 0)}
+                  rungs={g.rungs.length}
+                  onPlace={() => onPlace(g)}
+                  dk={dk} homeTeam={homeTeam} tall
+                />
+              </span>
+            </div>
 
             {on && (
               <div style={{
@@ -859,22 +947,8 @@ function RungWheel({ rungs, onPlace, refReason, dk, homeTeam }: {
   dk?: DkGame;
   homeTeam?: string;
 }) {
-  const bestIdx = useMemo(() => {
-    // The wheel's resting position is the best rung we would actually stand
-    // behind: not a tail, and not one the week-2 rules abstain on. If every
-    // rung is one of those the old rule applies — best non-tail, else middle —
-    // because a wheel that refuses to open on anything is worse than a wheel
-    // that opens on a labelled row.
-    const pick = (ok: (r: Suggestion) => boolean) => {
-      let bi = -1, be = -Infinity;
-      rungs.forEach((r, i) => { if (ok(r) && r.edge > be) { be = r.edge; bi = i; } });
-      return bi;
-    };
-    const clean = pick((r) => !r.tail && !r.abstain);
-    if (clean >= 0) return clean;
-    const nonTail = pick((r) => !r.tail);
-    return nonTail >= 0 ? nonTail : Math.floor(rungs.length / 2);
-  }, [rungs]);
+  // Opens on the ladder's resting rung (see restingIndex).
+  const bestIdx = useMemo(() => restingIndex(rungs), [rungs]);
   const [sel, setSel] = useState(bestIdx);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -946,35 +1020,7 @@ function RungWheel({ rungs, onPlace, refReason, dk, homeTeam }: {
           </button>
         ))}
       </div>
-      {r && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
-          justifyContent: "center", flexWrap: "wrap",
-          color: r.tail || r.abstain ? "var(--muted)" : "var(--text)",
-        }}>
-          {/* WHOSE bet the centred face is — a merged spread wheel shows the
-              home axis, but the kept side can be either team. */}
-          <span style={{ fontWeight: 800 }}>{r.label}</span>
-          <ModeChip mode={r.mode} price={r.price} />
-          <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
-          {r.tail && <TailBadge inline />}
-          <AbstainTag reason={r.abstain} />
-          {r.displayOnly && <RefTag reason={refReason ?? null} />}
-          {r.star && <CellTag cell={r.cell} />}
-          <span style={{
-            fontWeight: 800, fontVariantNumeric: "tabular-nums",
-            color: r.tail || r.abstain || r.displayOnly
-              ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
-          }}>
-            {r.star && <TargetStar cell={r.cell} />}
-            {signed(r.edge)}
-          </span>
-          <VenueButtons
-            r={r} stake={r.outlay} onPlace={() => onPlace(r)}
-            dk={dk} homeTeam={homeTeam}
-          />
-        </div>
-      )}
+      {r && <RungLine r={r} onPlace={onPlace} dk={dk} homeTeam={homeTeam} />}
     </div>
   );
 }
@@ -1041,43 +1087,6 @@ function wheelFace(x: Suggestion, mag: boolean): string {
   }
   if (x.series === "KXNCAAFTOTAL") return String(x.strike);
   return x.rungText ?? x.label;
-}
-
-/** One rung as a single flat line — the ≤2-rung rendering (a winner market,
- *  a two-rung stat ladder). A wheel with one or two faces is not a wheel. */
-function CompactRung({ r, onPlace, refReason, dk, homeTeam }: {
-  r: Suggestion; onPlace: (r: Suggestion) => void; refReason?: string | null;
-  dk?: DkGame; homeTeam?: string;
-}) {
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
-      color: r.tail || r.abstain ? "var(--muted)" : "var(--text)",
-    }}>
-      <span style={{ fontWeight: 700 }}>{r.label}</span>
-      <ModeChip mode={r.mode} price={r.price} />
-      <span style={{ color: "var(--muted)" }}>sim {(r.simP * 100).toFixed(0)}%</span>
-      {r.tail && <TailBadge inline />}
-      <AbstainTag reason={r.abstain} />
-      {r.displayOnly && <RefTag reason={refReason ?? null} />}
-      {r.star && <CellTag cell={r.cell} />}
-      <span style={{
-        marginLeft: "auto", fontWeight: 800, fontVariantNumeric: "tabular-nums",
-        // The number and its sign always render; only the green/red — the
-        // part that reads as an endorsement — drops out on a row the site is
-        // not pitching (tail, abstained, or reference-only).
-        color: r.tail || r.abstain || r.displayOnly
-          ? "var(--muted)" : r.edge > 0 ? "var(--pos)" : "var(--neg)",
-      }}>
-        {r.star && <TargetStar cell={r.cell} />}
-        {signed(r.edge)}
-      </span>
-      <VenueButtons
-        r={r} stake={r.outlay} onPlace={() => onPlace(r)}
-        dk={dk} homeTeam={homeTeam}
-      />
-    </div>
-  );
 }
 
 export default function GameBetsPanel({
@@ -1154,142 +1163,225 @@ export default function GameBetsPanel({
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
    *  Confirm replays server-side instead of placing twice. */
   const [slip, setSlip] = useState<{ group: LadderGroup; idem: string } | null>(null);
-  /** The full-ladder browse, collapsed by default — the picked rows stay the
-   *  headline; this is the walk-the-ladder view behind one press. */
+  /** The full-ladder picker, collapsed by default — each ladder shows its
+   *  resting rung; this opens every strike behind one press. */
   const [showBrowse, setShowBrowse] = useState(false);
   /* THE WEEK'S MARKET-ELIGIBILITY POLICY (index.json engine.decision). Null on
      every week published before it existed, and then nothing below draws. */
   const refNote = decisionNote(engine);
   const refReason = decisionReason(engine);
-  /** The note's own words popover — one line at rest, evidence on tap. */
+  const refFamilies = decisionFamilyWords(engine);
+  /** The policy's evidence — one line at rest, the reason on tap. */
   const [refOpen, setRefOpen] = useState(false);
+
+  /* Filters ▾ and ? popovers (same pattern as ScoreboardV2's toolbar
+     Filters): UI-only state; every control inside is the existing prop it
+     always was. Outside click / Esc closes. */
+  const [pop, setPop] = useState<null | "filters" | "help">(null);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!pop) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const el = barRef.current;
+      if (el && !el.contains(e.target as Node)) setPop(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPop(null); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [pop]);
 
   const groups = section?.groups ?? [];
   const tailGroups = section?.tailGroups ?? [];
   const nothing = groups.length === 0 && tailGroups.length === 0;
   const clearFilters = () => { onModeFilter("all"); onTypeFilter("all"); };
+  const placeOne = (r: Suggestion) => setSlip({
+    group: groupLadders([r], unit)[0],
+    idem: newIdempotencyKey(),
+  });
+
+  const chip = { padding: "3px 10px", fontSize: 11.5, fontWeight: 700 } as const;
+  const popBox: CSSProperties = {
+    position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 40,
+    width: 300, maxWidth: "calc(100vw - 40px)", padding: 12,
+    background: "var(--card)", border: "1px solid var(--border)", borderRadius: 10,
+    boxShadow: "0 8px 24px var(--shadow)",
+    display: "grid", gap: 9, fontSize: 11, lineHeight: 1.5, color: "var(--text)",
+  };
+  const popLbl: CSSProperties = { fontSize: 10.5, fontWeight: 800, color: "var(--muted)" };
+  const filterCount = (modeFilter !== "all" ? 1 : 0) + (showTails ? 1 : 0);
 
   return (
     // `minWidth: 0` — a grid item's automatic minimum size is min-content, and
-    // this panel's own children (a ladder headline naming two teams and two
-    // lines, plus the rule tag beside the edge) have a min-content wider than a
-    // 375px card. Without it the track sizes to that instead of to the card and
-    // the Place column is pushed outside — the same trap the card header hit in
-    // 2026-08-29. Every child already knows how to give: the headline wraps,
-    // the sizing text ellipses, the chip rows wrap.
-    <div style={{ display: "grid", gap: 7, minWidth: 0 }}>
+    // this panel's rows have a min-content wider than a 375px card; without it
+    // the track sizes to that and the venue buttons are pushed outside.
+    // `bets-panel` is the container the row grids query (theme.css).
+    <div className="bets-panel" style={{ display: "grid", gap: 8, minWidth: 0 }}>
       {/* WHO ELSE IS ON THIS GAME, first — a friend's position is context for
-          the rows underneath it. Renders nothing when nobody the viewer can
-          see has a bet here (src/components/FriendsOnGame.tsx). */}
+          the rows underneath it (src/components/FriendsOnGame.tsx). */}
       <FriendsOnGame slug={gameSlug} />
 
-      <FilterChips
-        modeFilter={modeFilter} onModeFilter={onModeFilter}
-        typeFilter={typeFilter} onTypeFilter={onTypeFilter}
-      />
-
-      {/* The words legend the bar test asks for: say which colour is which,
-          once, instead of making the reader infer it. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 10.5, color: "var(--muted)", flexWrap: "wrap" }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span aria-hidden="true" style={{
-            width: 9, height: 9, borderRadius: 3, background: "var(--mode-rest)",
-            display: "inline-block", flex: "none",
-          }} />
-          rest (maker fee)
+      {/* ONE chip row: bet TYPE by Kalshi series family (an unrecognised
+          future series only shows under "All"), then Filters ▾ and ?. */}
+      <div ref={barRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+        <div role="group" aria-label="Bet type filter" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {([
+            ["all", "All", "All bet types"],
+            ["game", "📈 Lines", "Game lines"],
+            ["td", "🏈 TD", "TD props"],
+            ["yardage", "📏 Yds", "Yardage"],
+            ["team", "🛡 Team", "Team totals"],
+          ] as const).map(([v, label, words]) => (
+            <button
+              key={v} type="button" className="ui-btn" title={words}
+              data-on={typeFilter === v ? "true" : "false"}
+              onClick={() => onTypeFilter(v)}
+              style={chip}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          <button
+            type="button" className="ui-btn"
+            data-on={pop === "filters" ? "true" : "false"}
+            aria-expanded={pop === "filters"} aria-haspopup="dialog"
+            onClick={() => setPop(pop === "filters" ? null : "filters")}
+            style={chip}
+          >
+            Filters{filterCount > 0 ? ` · ${filterCount}` : ""} ▾
+          </button>
+          <button
+            type="button" className="ui-btn" title="How this tab works"
+            data-on={pop === "help" ? "true" : "false"}
+            aria-expanded={pop === "help"} aria-haspopup="dialog"
+            onClick={() => setPop(pop === "help" ? null : "help")}
+            style={{ ...chip, padding: "3px 9px" }}
+          >
+            ?
+          </button>
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span aria-hidden="true" style={{
-            width: 9, height: 9, borderRadius: 3, background: "var(--mode-take)",
-            display: "inline-block", flex: "none",
-          }} />
-          take now (taker fee)
-        </span>
-        <span>green/red is the EDGE, not the mode</span>
-      </div>
 
-      {/* The bars this game's rows had to clear, and what a row costs. The
-          take bar is a LADDER in time, so it is printed as one rather than as
-          a single number that is wrong for most of the slate. */}
-      {/* HOW a unit is spent, at the top of the surface that spends it. The
-          three definitions live behind the ? — the bars line below is already
-          the densest sentence on the panel. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 10.5, color: "var(--muted)", fontWeight: 700 }}>
-          Size a unit by
-        </span>
-        <UnitModeControl
-          mode={sizing.mode} onMode={onSizingMode}
-          multiple={sizing.maxRiskMultiple} compact
-        />
-      </div>
+        {pop === "filters" && (
+          <div role="dialog" aria-label="Bet filters" style={popBox}>
+            <div style={popLbl}>Mode</div>
+            <div role="group" aria-label="Execution mode filter" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {([["all", "All"], ["rest", "⏳ Maker"], ["take", "⚡ Taker"]] as const).map(([v, label]) => (
+                <button
+                  key={v} type="button" className="ui-btn"
+                  data-on={modeFilter === v ? "true" : "false"}
+                  onClick={() => onModeFilter(v)}
+                  style={chip}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* HOW a unit is spent; the three definitions live behind its ?. */}
+            <div style={popLbl}>Size a unit by</div>
+            <div>
+              <UnitModeControl
+                mode={sizing.mode} onMode={onSizingMode}
+                multiple={sizing.maxRiskMultiple} compact
+              />
+            </div>
+            <div style={popLbl}>Tails</div>
+            <div>
+              <button
+                type="button" className="ui-btn"
+                data-on={showTails ? "true" : "false"}
+                aria-pressed={showTails}
+                onClick={() => onShowTails(!showTails)}
+                style={chip}
+              >
+                {showTails ? "Hide tails" : "Show tails"}{tailCount > 0 ? ` (${tailCount})` : ""}
+              </button>
+            </div>
+            {rulebookOk && (
+              <>
+                <div style={popLbl}>Decision rules</div>
+                <div>
+                  <button
+                    type="button" className="ui-btn"
+                    data-on={edgeRules ? "true" : "false"}
+                    aria-pressed={edgeRules}
+                    onClick={() => onEdgeRules(!edgeRules)}
+                    title={edgeRules
+                      ? "Week-2 decision rules ON: mismatch and moneyline rows are "
+                        + "labelled 'not a target', and ★ needs a named regime cell "
+                        + `at a price inside ${Math.round(STAR_ASK_LO * 100)}–${Math.round(STAR_ASK_HI * 100)}¢. `
+                        + "Labels only — no row is hidden and no price changes."
+                      : "Week-2 decision rules OFF: ★ is the old bar (net edge "
+                        + "≥ 10¢) and nothing is labelled 'not a target'."}
+                    style={chip}
+                  >
+                    Week-2 rules {edgeRules ? "on" : "off"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
-      <div style={{ fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5 }}>
-        {/* "$30/ladder" means something different under each mode, so the
-            number never stands without the word that qualifies it. */}
-        ${unit}/ladder {SIZING_WORDS[sizing.mode]} · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+
-        {" "}(none inside 1h of kick) / take
-        {" "}{Math.round(TAKE_THRESHOLD * 100)}¢ &gt;24h,
-        {" "}{(TAKE_THRESHOLD_NEAR * 100).toFixed(1)}¢ 3–24h,
-        {" "}{Math.round(TAKE_THRESHOLD_LATE * 100)}¢ under 3h ·
-        {" "}edges NET of fee, re-checked against the live book at placement
-      </div>
-
-      {/* THE REGIME, and the switch that applies it.
-          One line of words: which regime this game is in, and what the star
-          now means. The rules only ever LABEL — an abstained row below is
-          muted and tagged, and its Place button still works. */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
-        fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5,
-      }}>
-        {!rulebookOk && <span>{engineWords(engine)}</span>}
-        {!rulebookOk && trend && <RegimeTrendSummary trend={trend} />}
-        {rulebookOk && <button
-          type="button" className="ui-btn"
-          data-on={edgeRules ? "true" : "false"}
-          aria-pressed={edgeRules}
-          onClick={() => onEdgeRules(!edgeRules)}
-          title={edgeRules
-            ? "Week-2 decision rules ON: mismatch and moneyline rows are "
-              + "labelled 'not a target', and ★ needs a named regime cell "
-              + `at a price inside ${Math.round(STAR_ASK_LO * 100)}–${Math.round(STAR_ASK_HI * 100)}¢. `
-              + "Labels only — no row is hidden and no price changes."
-            : "Week-2 decision rules OFF: ★ is the old bar (net edge "
-              + "≥ 10¢) and nothing is labelled 'not a target'."}
-          style={{ padding: "1px 8px", fontSize: 10, fontWeight: 800 }}
-        >
-          Week-2 rules {edgeRules ? "on" : "off"}
-        </button>}
-        {rulebookOk && edgeRules && regime && <span>{regimeWords(regime)}</span>}
-        {rulebookOk && edgeRules && (
-          <span>
-            ★ = a named regime cell at {Math.round(STAR_ASK_LO * 100)}–
-            {Math.round(STAR_ASK_HI * 100)}¢, then the 10¢ edge
-          </span>
+        {pop === "help" && (
+          <div role="dialog" aria-label="How this tab works" style={popBox}>
+            {/* The bars this game's rows had to clear, and what a row costs.
+                The take bar is a LADDER in time, so it is printed as one. */}
+            <div>
+              ${unit}/ladder {SIZING_WORDS[sizing.mode]} · rest {Math.round(MIN_MAKER_EDGE * 100)}¢+
+              {" "}(none inside 1h of kick) / take
+              {" "}{Math.round(TAKE_THRESHOLD * 100)}¢ &gt;24h,
+              {" "}{(TAKE_THRESHOLD_NEAR * 100).toFixed(1)}¢ 3–24h,
+              {" "}{Math.round(TAKE_THRESHOLD_LATE * 100)}¢ under 3h ·
+              {" "}edges NET of fee, re-checked against the live book at placement
+            </div>
+            <div style={{ color: "var(--muted)" }}>
+              ⏳ {MODE_WORDS.REST} · ⚡ {MODE_WORDS.TAKE} · green/red is the EDGE, not the mode
+            </div>
+            {/* THE REGIME / engine note. The rules only ever LABEL. */}
+            {!rulebookOk && <div style={{ color: "var(--muted)" }}>{engineWords(engine)}</div>}
+            {!rulebookOk && trend && <RegimeTrendSummary trend={trend} />}
+            {rulebookOk && edgeRules && regime && <div style={{ color: "var(--muted)" }}>{regimeWords(regime)}</div>}
+            {rulebookOk && edgeRules && (
+              <div style={{ color: "var(--muted)" }}>
+                ★ = a named regime cell at {Math.round(STAR_ASK_LO * 100)}–
+                {Math.round(STAR_ASK_HI * 100)}¢, then the 10¢ edge
+              </div>
+            )}
+            {refNote && <div style={{ color: "var(--muted)" }}>{refNote}</div>}
+            {tailCount > 0 && (
+              <div style={{ color: "var(--muted)" }}>
+                {tailCount} tail ladder{tailCount === 1 ? "" : "s"} on this game
+                {showTails ? " shown, muted" : " hidden"} — sim or price outside
+                {" "}{Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢,
+                where the model is least confident (Filters ▾ → Tails).
+              </div>
+            )}
+          </div>
         )}
       </div>
 
-      {/* THE MARKET-ELIGIBILITY POLICY. Verdict first, evidence on tap — and
-          it says the second half out loud, because "reference" alone reads as
-          "withdrawn": these rungs live under "Browse all rungs" below, priced
-          and placeable, they are simply not suggested. */}
+      {/* THE MARKET-ELIGIBILITY POLICY, one line; its evidence on tap. */}
       {refNote && (
-        <div style={{ fontSize: 10.5, color: "var(--muted)", lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
+          {refFamilies ?? "Some markets"} are reference-only this week ·{" "}
           <button
             type="button"
             onClick={() => setRefOpen((v) => !v)}
             aria-expanded={refOpen}
             style={{
-              display: "block", width: "100%", textAlign: "left", border: "none",
-              background: "transparent", padding: 0, font: "inherit",
+              border: "none", background: "transparent", padding: 0, font: "inherit",
               color: "inherit", cursor: "pointer",
+              textDecoration: "underline dotted", textUnderlineOffset: 2,
             }}
           >
-            {refNote} Find them under “Browse all rungs”.{" "}
-            <span style={{ textDecoration: "underline dotted", textUnderlineOffset: 2 }}>
-              {refOpen ? "Hide why" : "Why"}
-            </span>
+            {refOpen ? "Hide why" : "Why"}
           </button>
           {refOpen && refReason && (
             <div role="status" style={{
@@ -1362,70 +1454,48 @@ export default function GameBetsPanel({
         </div>
       )}
 
-      {/* THE TAIL LINE. Held-out ladders are counted, explained in one
-          sentence, and one press away — a filter the reader cannot see is how
-          a filter becomes a mystery. */}
-      {tailCount > 0 && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap",
-          fontSize: 10, color: "var(--muted)",
-        }}>
-          <span>
-            {tailCount} tail ladder{tailCount === 1 ? "" : "s"} on this game
-            {showTails ? " shown, muted" : " hidden"} — sim or price outside
-            {" "}{Math.round(TAIL_LO * 100)}–{Math.round(TAIL_HI * 100)}¢,
-            where the model is least confident.
-          </span>
-          <button
-            type="button" className="ui-btn"
-            data-on={showTails ? "true" : "false"}
-            aria-pressed={showTails}
-            onClick={() => onShowTails(!showTails)}
-            style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}
-          >
-            {showTails ? "Hide tails" : "Show tails"}
-          </button>
-        </div>
-      )}
-
-      {/* FULL-LADDER BROWSE (owner ask 2026-08-30, the Auburn −7.5 case).
-          Every priced rung on this game — uncapped by the picker, tails
-          muted — so the reader can walk the whole spread/total ladder and
-          take the strike THEY want. Placement goes through the exact same
+      {/* EVERY PRICED RUNG, one section per family. Collapsed: each ladder
+          shows its resting rung (both sides of a ≤2-rung market). "Browse all
+          rungs" opens the full picker. Placement goes through the exact same
           ConfirmSlip as a picked row: one rung, sized at the full unit. */}
-      {browse.length > 0 && (
-        <div style={{ display: "grid", gap: 5 }}>
-          <button
-            type="button" className="ui-btn"
-            data-on={showBrowse ? "true" : "false"}
-            aria-pressed={showBrowse}
-            onClick={() => setShowBrowse(!showBrowse)}
-            style={{ padding: "2px 9px", fontSize: 10.5, fontWeight: 700, justifySelf: "start" }}
-          >
-            {showBrowse ? "Hide" : "Browse"} all rungs ({browse.length})
-          </button>
-          {showBrowse && [...browseLadders(browse)].map(([lad, rungs], gi) => {
-            const place = (r: Suggestion) => setSlip({
-              group: groupLadders([r], unit)[0],
-              idem: newIdempotencyKey(),
-            });
-            return (
-              <div key={lad} style={{
-                display: "grid", gap: 3,
-                paddingTop: gi === 0 ? 0 : 6,
-                borderTop: gi === 0 ? "none" : "1px solid var(--line, rgba(128,128,128,.25))",
-              }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>
-                  {ladderHeadline(rungs)}
-                </div>
-                {rungs.length <= 2
-                  ? rungs.map((r) => (
-                      <CompactRung key={r.key} r={r} onPlace={place} refReason={refReason} dk={dk} homeTeam={homeTeam} />
-                    ))
-                  : <RungWheel rungs={rungs} onPlace={place} refReason={refReason} dk={dk} homeTeam={homeTeam} />}
-              </div>
-            );
-          })}
+      {browse.length > 0 && [...browseLadders(browse)].map(([lad, rungs]) => {
+        const wheel = rungs.length > 2;
+        const shown = wheel && !showBrowse ? [rungs[restingIndex(rungs)]] : rungs;
+        const head = ladderHeadline(rungs);
+        const title = head.startsWith("spread") ? "spread" : head;
+        return (
+          <div key={lad} style={{
+            display: "grid", gap: 4, paddingTop: 8,
+            borderTop: "1px solid var(--line, rgba(128,128,128,.25))",
+          }}>
+            <SectionHead title={title} reference={rungs.some((x) => x.displayOnly)} refReason={refReason} />
+            {wheel && showBrowse
+              ? <RungWheel rungs={rungs} onPlace={placeOne} refReason={refReason} dk={dk} homeTeam={homeTeam} />
+              : shown.map((r) => <RungLine key={r.key} r={r} onPlace={placeOne} dk={dk} homeTeam={homeTeam} />)}
+          </div>
+        );
+      })}
+
+      {(browse.length > 0 || (tailCount > 0 && !showTails)) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 11 }}>
+          {browse.length > 0 && (
+            <button
+              type="button"
+              aria-expanded={showBrowse}
+              onClick={() => setShowBrowse(!showBrowse)}
+              style={{
+                border: "none", background: "transparent", padding: 0, font: "inherit",
+                fontWeight: 700, color: "var(--text)", cursor: "pointer",
+              }}
+            >
+              Browse all rungs ({browse.length}) {showBrowse ? "▴" : "▾"}
+            </button>
+          )}
+          {tailCount > 0 && !showTails && (
+            <span style={{ color: "var(--muted)" }}>
+              {tailCount} tail{tailCount === 1 ? "" : "s"} hidden
+            </span>
+          )}
         </div>
       )}
 

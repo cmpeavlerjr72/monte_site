@@ -2763,3 +2763,24 @@ a.fr-person:hover, a.fr-person:focus-visible {
 /* A reference-only row keeps its edge NUMBER and loses the endorsement fill —
    see EdgePill in src/components/TopEdges.tsx. */
 .top-edges__edge[data-sign="ref"] { color: var(--muted); background: var(--fill); }
+
+/* BETS TAB rows (declutter, owner-approved mockup 2026-10-12).
+   One fixed grid per rung: face | mode glyph | sim % | edge | venue buttons.
+   The panel is the query container, so a narrow drawer (phone, or a narrow
+   column on desktop) wraps the Kalshi/DK buttons under the face. */
+.bets-panel { container-type: inline-size; }
+.bets-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px 40px 72px auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 3px 0;
+}
+.bets-act { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.bets-pick { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+@container (max-width: 560px) {
+  .bets-line { grid-template-columns: minmax(0, 1fr) 40px 36px 64px; }
+  .bets-line > .bets-act { grid-column: 1 / -1; justify-content: flex-start; }
+  .bets-pick > .bets-act { flex-basis: 100%; justify-content: flex-start; }
+}
