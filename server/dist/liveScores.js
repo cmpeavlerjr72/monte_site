@@ -1452,6 +1452,493 @@ app.get("/api/kalshi/cfb", asyncRoute(async (req, res) => {
     }
 }));
 // ----------------------------------------------------------------------------
+// DraftKings Predictions (DKeX) — a SECOND VENUE, read-only (owner 2026-10-12)
+//
+// GET /api/dk/cfb?season=&week=  -> per game: DK's event id + page URL and
+// every listed CFB market with its side-specific book top (ask, ask incl. fee,
+// bid, fee, depth at the ask, raw selection id). The Bets tab prints ONE chip
+// per rung row — DK's fee-inclusive ask — linking to the event page so the
+// owner places the trade BY HAND in their own logged-in browser.
+//
+// NOTHING HERE PLACES ANYTHING. DK's trade flow is a cookie session with
+// GeoComply attestation and no public trading API; scripting it is what DK's
+// terms prohibit (cfb-props-sim docs/ops/dk_predictions_api.md §5). This route
+// only reads the two anonymous endpoints the public web client itself reads:
+//
+//   board  GET  sportsbook-nash.draftkings.com/.../leagueSubcategory/v1/markets
+//               one call per subcategory, top=100 = the whole slate
+//   book   POST predictions.draftkings.com/en/resource-route/calculate-trades-by-selections
+//               ≤50 selection ids per call, both sides' book per ticker
+//
+// The Akamai gate is the web client's x-pe-* tags (no cookie, no login).
+//
+// SIDE SEMANTICS. Each board selection resolves to (ticker, tickerSide) and
+// the book carries BOTH sides of that ticker, so a selection's own price is
+// purchase[tickerSide]. Over/Under of one total and the two sides of one
+// spread are ONE ticker — so only one selection of each such pair is
+// resolved and its partner is the opposite side of the same answer (halves
+// the fan-out). Moneylines are two tickers and resolve separately.
+//
+// SPREAD CONVENTION matches the Kalshi feed: `line` is HOME-perspective
+// (negative = home favored). DK's selection `points` is that selection's own
+// handicap, so a home selection's points IS the home line and an away
+// selection at p sits on home line −p.
+//
+// FALLBACK. DK sits behind Akamai, which already blocks this host's egress
+// for ESPN. When the live fetch fails the route reads the same event list
+// from the HF dataset (<season>/weeks/<week>/dk_markets.json, published daily
+// by cfb-props-sim scripts/dk_markets_publish.py from the local pullers) and
+// marks the payload `source: "snapshot"` with its as-of time.
+// ----------------------------------------------------------------------------
+const DK_LEAGUE_ID = "87637"; // College Football on DK Predictions
+const DK_BOARD_BASE = "https://sportsbook-nash.draftkings.com/sites/PREDICT/api/sportscontent" +
+    "/controldata/home/leagueSubcategory/v1/markets";
+const DK_BOOK_URL = "https://predictions.draftkings.com/en/resource-route/calculate-trades-by-selections";
+const DK_TTL_MS = 60_000;
+const DK_BOOK_BATCH = 50; // 100 -> HTTP 500 (probed 2026-10-12)
+const DK_BOOK_PARALLEL = 4;
+/** Ladder rungs priced outside this band are not resolved: the Bets tab never
+ *  shows a Kalshi rung that deep, and they are most of the alt ladders. */
+const DK_P_LO = 0.03;
+const DK_P_HI = 0.97;
+const DK_SUBCATS = {
+    "4518": "game_lines",
+    "13195": "alt_spread",
+    "13196": "alt_total",
+    "4631": "halves",
+    "4632": "quarters",
+    "16719": "team_totals",
+    "12438": "anytime_td",
+};
+const DK_HEADERS = {
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    accept: "application/json",
+    origin: "https://predictions.draftkings.com",
+    referer: "https://predictions.draftkings.com/",
+    "x-pe-cn": "predict-web",
+    "x-pe-cv": "1.12.0",
+    "x-pe-ep": "PR",
+    "x-pe-loc": "US-GA",
+};
+const dkUrlFor = (seo, id) => seo
+    ? `https://predictions.draftkings.com/en/event/${seo}/${id}`
+    : `https://predictions.draftkings.com/en/event/${id}`;
+async function dkBoardSub(sub) {
+    const eq = `$filter=leagueId eq '${DK_LEAGUE_ID}' AND clientMetadata/Subcategories/any(s: s/Id eq '${sub}')`;
+    const mq = `$filter=clientMetadata/subCategoryId eq '${sub}' AND tags/all(t: t ne 'SportcastBetBuilder')`;
+    const out = { events: [], markets: [], selections: [] };
+    let cursor = null;
+    for (let page = 0; page < 10; page++) {
+        let url = `${DK_BOARD_BASE}?isBatchable=false&eventsQuery=${encodeURIComponent(eq)}` +
+            `&marketsQuery=${encodeURIComponent(mq)}&include=Events&entity=events&top=100`;
+        if (cursor)
+            url += `&cursor=${encodeURIComponent(cursor)}`;
+        const r = await fetchWithTimeout(url, { headers: DK_HEADERS }, 15_000);
+        if (!r.ok)
+            throw new Error(`dk board ${sub} -> HTTP ${r.status}`);
+        const j = await r.json();
+        out.events.push(...(j?.events ?? []));
+        out.markets.push(...(j?.markets ?? []));
+        out.selections.push(...(j?.selections ?? []));
+        cursor = j?.nextCursor ?? null;
+        if (!cursor)
+            break;
+    }
+    return out;
+}
+async function dkBookBatch(ids) {
+    const r = await fetchWithTimeout(DK_BOOK_URL, {
+        method: "POST",
+        headers: { ...DK_HEADERS, "content-type": "application/json" },
+        body: JSON.stringify({ selectionIds: ids, intent: "purchase" }),
+    }, 20_000);
+    if (!r.ok)
+        throw new Error(`dk book -> HTTP ${r.status}`);
+    const j = await r.json();
+    return Array.isArray(j?.resolvedSelections) ? j.resolvedSelections : [];
+}
+const dkNum = (v) => {
+    if (v === null || v === undefined || v === "")
+        return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+};
+/** A selection's quote on `side` of the resolved ticker. */
+function dkQuoteFrom(sel, session, side) {
+    const ticker = String(session?.ticker ?? "");
+    const p = session?.pricingData?.purchase?.[side];
+    if (!ticker || !p)
+        return null;
+    return {
+        sel, ticker, side,
+        ask: dkNum(p.askPrice),
+        ask_fee: dkNum(p.sharePriceWithFeesInDollars),
+        bid: dkNum(p.bidPrice),
+        fee: dkNum(p.totalFeesPerContract),
+        depth: dkNum(p.maxAvailableShares),
+    };
+}
+const emptyPeriod = () => ({ moneyline: { home: null, away: null }, spread: [], total: [] });
+/** Board + book -> DkEvent[]. Throws when DK refuses the board outright. */
+async function buildDkEventsLive() {
+    const subs = Object.keys(DK_SUBCATS);
+    const settled = await Promise.allSettled(subs.map((s) => dkBoardSub(s)));
+    if (!settled.some((r) => r.status === "fulfilled")) {
+        throw new Error(settled[0].reason?.message ?? "board unavailable");
+    }
+    settled.forEach((r, i) => {
+        if (r.status === "rejected")
+            console.error(`[dk] board ${subs[i]} failed:`, r.reason?.message ?? r.reason);
+    });
+    const events = new Map();
+    const markets = new Map();
+    const sels = [];
+    settled.forEach((r, i) => {
+        if (r.status !== "fulfilled")
+            return;
+        for (const e of r.value.events)
+            events.set(String(e.id), e);
+        for (const m of r.value.markets)
+            markets.set(String(m.id), m);
+        for (const s of r.value.selections)
+            sels.push({ s, sub: DK_SUBCATS[subs[i]] });
+    });
+    // Classify every selection into (event, period, family, line, side).
+    const slots = [];
+    for (const { s, sub } of sels) {
+        const m = markets.get(String(s?.marketId));
+        if (!m)
+            continue;
+        const ev = String(m?.eventId ?? "");
+        const sel = String(s?.id ?? "");
+        if (!events.has(ev) || !sel)
+            continue;
+        const mtype = String(m?.marketType?.name ?? m?.name ?? "");
+        const period = /1st Half/i.test(mtype)
+            ? "first_half" : /1st Quarter/i.test(mtype) ? "first_quarter" : "game";
+        const outcome = String(s?.outcomeType ?? "");
+        const pts = dkNum(s?.points);
+        const main = Array.isArray(s?.tags) && s.tags.includes("MainPointLine");
+        const tOdds = dkNum(s?.trueOdds);
+        const p = tOdds && tOdds > 0 ? 1 / tOdds : null;
+        const base = { sel, ev, period, main, p };
+        if (sub === "anytime_td") {
+            slots.push({ ...base, family: "td", side: "yes", line: null, pair: null,
+                player: String(s?.label ?? s?.participants?.[0]?.name ?? "") });
+        }
+        else if (/Team Total/i.test(mtype)) {
+            const role = /^Home/i.test(mtype) ? "home" : /^Away/i.test(mtype) ? "away" : null;
+            if (!role || pts === null || (outcome !== "Over" && outcome !== "Under"))
+                continue;
+            slots.push({ ...base, family: "tt", teamRole: role, side: outcome.toLowerCase(),
+                line: pts, pair: `${m.id}|${pts}` });
+        }
+        else if (/Moneyline/i.test(mtype)) {
+            if (outcome !== "Home" && outcome !== "Away")
+                continue;
+            slots.push({ ...base, family: "ml", side: outcome.toLowerCase(), line: null, pair: null });
+        }
+        else if (/Spread/i.test(mtype)) {
+            if (pts === null || (outcome !== "Home" && outcome !== "Away"))
+                continue;
+            const homeLine = outcome === "Home" ? pts : -pts;
+            slots.push({ ...base, family: "spread", side: outcome.toLowerCase(), line: homeLine,
+                pair: `${m.id}|${homeLine}` });
+        }
+        else if (/Total/i.test(mtype)) {
+            if (pts === null || (outcome !== "Over" && outcome !== "Under"))
+                continue;
+            slots.push({ ...base, family: "total", side: outcome.toLowerCase(), line: pts,
+                pair: `${m.id}|${pts}` });
+        }
+    }
+    // Which selections to resolve: one representative per pair (the home /
+    // over side), only inside the price band unless it is a main line; every
+    // moneyline and TD selection.
+    const pairs = new Map();
+    for (const sl of slots)
+        if (sl.pair) {
+            const a = pairs.get(sl.pair);
+            if (a)
+                a.push(sl);
+            else
+                pairs.set(sl.pair, [sl]);
+        }
+    const toResolve = [];
+    for (const sl of slots) {
+        if (!sl.pair) {
+            toResolve.push(sl);
+            continue;
+        }
+        const grp = pairs.get(sl.pair);
+        const rep = grp.find((x) => x.side === "home" || x.side === "over") ?? grp[0];
+        if (rep !== sl)
+            continue;
+        const inBand = grp.some((x) => x.p !== null && x.p >= DK_P_LO && x.p <= DK_P_HI);
+        if (grp.some((x) => x.main) || inBand)
+            toResolve.push(sl);
+    }
+    const ids = toResolve.map((x) => x.sel);
+    const sessions = new Map();
+    const batches = [];
+    for (let i = 0; i < ids.length; i += DK_BOOK_BATCH)
+        batches.push(ids.slice(i, i + DK_BOOK_BATCH));
+    let failed = 0;
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(DK_BOOK_PARALLEL, batches.length) }, async () => {
+        while (next < batches.length) {
+            const b = batches[next++];
+            try {
+                const res = await dkBookBatch(b);
+                // The resolver answers in request order.
+                b.forEach((id, k) => { if (res[k]?.session)
+                    sessions.set(id, res[k].session); });
+            }
+            catch (err) {
+                failed++;
+                if (failed === 1)
+                    console.error("[dk] book batch failed:", err?.message ?? err);
+            }
+        }
+    }));
+    if (!sessions.size)
+        throw new Error(`dk book unavailable (${failed}/${batches.length} batches failed)`);
+    if (failed)
+        console.warn(`[dk] ${failed}/${batches.length} book batches failed; those rungs are absent`);
+    // Assemble per event.
+    const out = new Map();
+    const evOf = (id) => {
+        const have = out.get(id);
+        if (have)
+            return have;
+        const raw = events.get(id);
+        const parts = raw?.participants ?? [];
+        const role = (r) => String(parts.find((p) => p?.venueRole === r)?.name ?? "");
+        const seo = raw?.seoIdentifier ? String(raw.seoIdentifier) : null;
+        const e = {
+            event_id: id, event_seo: seo, url: dkUrlFor(seo, id),
+            start: raw?.startEventDate ?? null, status: raw?.status ?? null,
+            home: role("Home"), away: role("Away"),
+            game: emptyPeriod(), first_half: emptyPeriod(), first_quarter: emptyPeriod(),
+            team_total: { home: [], away: [] }, anytime_td: [],
+        };
+        out.set(id, e);
+        return e;
+    };
+    const upsertRung = (arr, line, main) => {
+        let r = arr.find((x) => x.line === line);
+        if (!r) {
+            r = { line };
+            arr.push(r);
+        }
+        if (main)
+            r.main = true;
+        return r;
+    };
+    for (const rep of toResolve) {
+        const session = sessions.get(rep.sel);
+        if (!session)
+            continue;
+        const repSide = session?.tickerSide === "no" ? "no" : "yes";
+        const e = evOf(rep.ev);
+        if (rep.family === "td") {
+            const q = dkQuoteFrom(rep.sel, session, repSide);
+            if (q)
+                e.anytime_td.push({ player: rep.player ?? "", quote: q });
+            continue;
+        }
+        if (rep.family === "ml") {
+            const q = dkQuoteFrom(rep.sel, session, repSide);
+            if (q)
+                e[rep.period].moneyline[rep.side] = q;
+            continue;
+        }
+        // Paired families: fill both sides from the ONE answer.
+        const grp = pairs.get(rep.pair) ?? [rep];
+        const main = grp.some((x) => x.main);
+        const rung = rep.family === "tt"
+            ? upsertRung(e.team_total[rep.teamRole], rep.line, main)
+            : upsertRung(e[rep.period][rep.family], rep.line, main);
+        for (const x of grp) {
+            const side = x === rep ? repSide : repSide === "yes" ? "no" : "yes";
+            const q = dkQuoteFrom(x.sel, session, side);
+            if (q)
+                rung[x.side] = q;
+        }
+    }
+    // Main lines only for halves/quarters (the chip never reads their ladders);
+    // everything sorted by line.
+    for (const e of out.values()) {
+        for (const per of [e.first_half, e.first_quarter]) {
+            if (per.spread.some((r) => r.main))
+                per.spread = per.spread.filter((r) => r.main);
+            if (per.total.some((r) => r.main))
+                per.total = per.total.filter((r) => r.main);
+        }
+        for (const per of [e.game, e.first_half, e.first_quarter]) {
+            per.spread.sort((a, b) => a.line - b.line);
+            per.total.sort((a, b) => a.line - b.line);
+        }
+        e.team_total.home.sort((a, b) => a.line - b.line);
+        e.team_total.away.sort((a, b) => a.line - b.line);
+    }
+    return [...out.values()].filter((e) => e.home && e.away);
+}
+/** The board is slate-independent: one build serves every season/week key. */
+let DK_EVENTS_CACHE = null;
+let DK_EVENTS_INFLIGHT = null;
+function dkEventsLiveCached() {
+    if (DK_EVENTS_CACHE && Date.now() - DK_EVENTS_CACHE.at < DK_TTL_MS) {
+        return Promise.resolve(DK_EVENTS_CACHE.events);
+    }
+    if (!DK_EVENTS_INFLIGHT) {
+        DK_EVENTS_INFLIGHT = buildDkEventsLive()
+            .then((events) => { DK_EVENTS_CACHE = { at: Date.now(), events }; return events; })
+            .finally(() => { DK_EVENTS_INFLIGHT = null; });
+    }
+    return DK_EVENTS_INFLIGHT;
+}
+/** The daily snapshot cfb-props-sim publishes for when DK refuses this host. */
+async function dkEventsSnapshot(season, week) {
+    const repo = `cfb-sims-${season}`;
+    if (!HF_LIVE_REPOS.has(repo))
+        return null;
+    const url = `https://huggingface.co/datasets/${HF_OWNER}/${repo}/resolve/main/${season}/weeks/${week}/dk_markets.json`;
+    try {
+        const r = await fetchWithTimeout(url, { headers: { "user-agent": "monte-site-proxy" }, redirect: "follow" }, 12_000);
+        if (!r.ok)
+            return null;
+        const j = await r.json();
+        const events = Array.isArray(j?.events) ? j.events : [];
+        return events.length ? { events, as_of: j?.as_of ? String(j.as_of) : null } : null;
+    }
+    catch {
+        return null;
+    }
+}
+/** Swap home/away on one event (spread lines re-signed). */
+function dkFlip(e) {
+    const per = (p) => ({
+        moneyline: { home: p.moneyline.away, away: p.moneyline.home },
+        spread: p.spread
+            .map((r) => ({ ...r, line: -r.line, home: r.away, away: r.home }))
+            .sort((a, b) => a.line - b.line),
+        total: p.total,
+    });
+    return {
+        ...e, home: e.away, away: e.home,
+        game: per(e.game), first_half: per(e.first_half), first_quarter: per(e.first_quarter),
+        team_total: { home: e.team_total.away, away: e.team_total.home },
+    };
+}
+async function buildDkCfb(season, week) {
+    const updated = new Date().toISOString();
+    const ours = await ourWeekGames(season, week);
+    if (!ours.length)
+        return { available: false, reason: "no_slate", updated, season, week, games: [] };
+    let events;
+    let source = "live";
+    let as_of = updated;
+    try {
+        events = await dkEventsLiveCached();
+    }
+    catch (err) {
+        console.warn("[dk] live board unavailable:", err?.message ?? err, "- trying the HF snapshot");
+        const snap = await dkEventsSnapshot(season, week);
+        if (!snap)
+            return { available: false, reason: "upstream_unavailable", updated, season, week, games: [] };
+        events = snap.events;
+        source = "snapshot";
+        as_of = snap.as_of ?? undefined;
+    }
+    // Same join as the Kalshi feed: unordered team pair; nearest kickoff when a
+    // pair repeats (the board can carry a later week's listing too).
+    const byPair = new Map();
+    for (const e of events) {
+        const k = pairKeyOf(e.home, e.away);
+        const a = byPair.get(k);
+        if (a)
+            a.push(e);
+        else
+            byPair.set(k, [e]);
+    }
+    const games = [];
+    const unmatched = [];
+    for (const g of ours) {
+        const cands = byPair.get(pairKeyOf(g.teamA, g.teamB)) ?? [];
+        let best = cands[0];
+        if (cands.length > 1 && g.date) {
+            const t = Date.parse(`${g.date}T16:00:00Z`);
+            const dist = (e) => Math.abs(Date.parse(String(e.start)) - t) || 0;
+            best = cands.reduce((a, b) => (dist(a) <= dist(b) ? a : b));
+        }
+        if (!best) {
+            unmatched.push(`${g.teamB} @ ${g.teamA}`);
+            continue;
+        }
+        // Our teamA is HOME. A neutral-site listing DK flipped is swapped here so
+        // the client can trust home = teamA everywhere.
+        const flipped = cfbNameKey(best.home) !== cfbNameKey(g.teamA);
+        games.push({ ...(flipped ? dkFlip(best) : best), slug: g.slug });
+    }
+    if (unmatched.length) {
+        console.log(`[dk] ${games.length}/${ours.length} matched; unmatched: ${unmatched.join(" | ")}`);
+    }
+    return {
+        available: games.length > 0,
+        reason: games.length ? undefined : "no_games_matched",
+        updated, season, week, source, as_of,
+        matched: games.length, unmatched, games,
+    };
+}
+const DK_CACHE = new Map();
+const DK_INFLIGHT = new Map();
+app.get("/api/dk/cfb", asyncRoute(async (req, res) => {
+    const season = /^(?:fcs-)?\d{4}$/.test(String(req.query.season || ""))
+        ? String(req.query.season)
+        : "2026";
+    const week = /^week\d{2}$/.test(String(req.query.week || "")) ? String(req.query.week) : "week00";
+    const key = `${season}:${week}`;
+    res.set("Cache-Control", "public, max-age=60");
+    const hit = DK_CACHE.get(key);
+    if (hit && Date.now() - hit.at < DK_TTL_MS) {
+        res.json(hit.payload);
+        return;
+    }
+    let work = DK_INFLIGHT.get(key);
+    if (!work) {
+        work = buildDkCfb(season, week)
+            .then((payload) => {
+            DK_CACHE.set(key, { at: Date.now(), payload });
+            if (DK_CACHE.size > 8) {
+                const oldest = DK_CACHE.keys().next().value;
+                if (oldest !== undefined)
+                    DK_CACHE.delete(oldest);
+            }
+            return payload;
+        })
+            .finally(() => DK_INFLIGHT.delete(key));
+        DK_INFLIGHT.set(key, work);
+    }
+    try {
+        res.json(await work);
+    }
+    catch (err) {
+        // Log, never throw at the client: no DK feed just means no DK chips.
+        console.error("[/api/dk/cfb] failed:", err?.message ?? err);
+        const stale = DK_CACHE.get(key);
+        if (stale) {
+            res.json({ ...stale.payload, stale: true });
+            return;
+        }
+        res.json({
+            available: false, reason: "upstream_unavailable",
+            updated: new Date().toISOString(), season, week, games: [],
+        });
+    }
+}));
+// ----------------------------------------------------------------------------
 // Static React build
 // ----------------------------------------------------------------------------
 const __filename = fileURLToPath(import.meta.url);

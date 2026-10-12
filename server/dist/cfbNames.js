@@ -70,6 +70,9 @@ export const KALSHI_TEAM_ALIASES = {
     // there the same day, commit f566d2d).
     umass: "massachusetts",
     louisianamonroe: "ulmonroe",
+    // DraftKings Predictions short names (2026-10-12 board).
+    ulm: "ulmonroe",
+    fiu: "floridainternational",
     // Live 2026-09-08, wk2 (user: "no markets for the App State game"): Kalshi
     // writes "Appalachian St." where the slate says "App State". Same miss in
     // the sim repo's TEAM_ALIAS, fixed the same night.
