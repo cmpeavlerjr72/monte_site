@@ -2,6 +2,8 @@
 // classic one at /cfb/scoreboard2 so the owner can flip between them (2026-10-12).
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as Papa from "papaparse";
+import SlateSearch from "../components/SlateSearch";
+import { buildTeamSearchIndex, cardSearchWords, matchesTokens, queryTokens, type TeamSearchIndex } from "../lib/slateSearch";
 import { displayTeamColor } from "../utils/teamColors";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
@@ -1411,6 +1413,11 @@ function ScoreboardPage() {
   const [teamToConf, setTeamToConf] = useState<Record<string, string>>({});
   const [confOptions, setConfOptions] = useState<string[]>([]);
   const [confFilter, setConfFilter] = useState<string>("all");
+  /** Search box (2026-10-12). Per-team text from team_info.csv; matching in
+   *  lib/slateSearch.ts. Narrows the board the same way the conference filter
+   *  does, so the tray, the status count and the record follow it. */
+  const [teamSearch, setTeamSearch] = useState<TeamSearchIndex>({});
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (!teamInfoRaw) return;
@@ -1445,6 +1452,7 @@ function ScoreboardPage() {
       }
     }
     setTeamToConf(t2c);
+    setTeamSearch(buildTeamSearchIndex(parsed.data || []));
     setConfOptions(Array.from(confSet).sort((a,b)=>a.localeCompare(b)));
   }, []);
 
@@ -2662,10 +2670,17 @@ function ScoreboardPage() {
 
 
   // Apply conference filter (game shows if either team is in selected conference)
-  const filteredCards = useMemo(() => {
+  const confCards = useMemo(() => {
     if (confFilter === "all") return cards;
     return cards.filter(c => (confOf(c.teamA) === confFilter) || (confOf(c.teamB) === confFilter));
   }, [cards, confFilter, teamToConf]);
+
+  /** Then the search box. Every token must hit (any order) — see slateSearch. */
+  const searchTokens = useMemo(() => queryTokens(query), [query]);
+  const filteredCards = useMemo(() => {
+    if (!searchTokens.length) return confCards;
+    return confCards.filter((c) => matchesTokens(searchTokens, cardSearchWords(teamSearch, c)));
+  }, [confCards, searchTokens, teamSearch]);
 
   /**
    * THE "MY GAMES" MEMBERSHIP — which cards the owner already has skin in.
@@ -3118,6 +3133,8 @@ function ScoreboardPage() {
     ? "Dataset unavailable"
     : slateLoading
     ? "Loading…"
+    : filteredCards.length !== cards.length
+    ? `${filteredCards.length} of ${cards.length} game${cards.length === 1 ? "" : "s"}${simsText}`
     : `${filteredCards.length} game${filteredCards.length === 1 ? "" : "s"}${simsText}`;
 
   /**
@@ -3175,6 +3192,9 @@ function ScoreboardPage() {
             <option value="kickoff">Sort: Kickoff</option>
             <option value="edge">Sort: Edge</option>
           </select>
+
+          <SlateSearch value={query} onChange={setQuery} width={170} />
+
           {sortBy === "edge" && edgesLoading && (
             <span
               style={{ fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}
@@ -3462,9 +3482,18 @@ function ScoreboardPage() {
         </section>
       )}
 
-      {!catalogError && !weekError && !slateLoading && !catalogLoading && !filteredCards.length && !fcsNote && (
-        <section className="card" style={{ padding: 16, marginBottom: 16, fontSize: 13, color: "var(--muted)" }}>
-          No games for this selection.
+      {!catalogError && !weekError && !slateLoading && !catalogLoading && !filteredCards.length && (searchTokens.length > 0 || !fcsNote) && (
+        <section className="card" style={{ padding: 16, marginBottom: 16, fontSize: 13, color: "var(--muted)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {searchTokens.length > 0 ? (
+            <>
+              <span>No games match “{query.trim()}”{confFilter !== "all" ? ` in ${confFilter}` : ""}.</span>
+              <button type="button" className="ui-btn" onClick={() => setQuery("")} style={{ fontSize: 12, padding: "4px 10px" }}>
+                Clear search
+              </button>
+            </>
+          ) : (
+            "No games for this selection."
+          )}
         </section>
       )}
 
