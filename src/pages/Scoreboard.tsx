@@ -4076,14 +4076,8 @@ export function GameCard({
             win/cover flow chart while the event is still on today's board. */}
         {lv?.id && (liveNow || lv.state === "final") &&
           tabBtn("live", liveNow ? "Live" : "Game Flow", liveNow)}
-        {canShowScores && tabBtn("scores", "Simulated Scores")}
-        {csvCard && tabBtn("players", "Player Stats", true)}
-        {jsonRow && card.hasPlayers && tabBtn("props", "Player Props")}
-        {jsonRow && card.hasPlayers && tabBtn("box", "Box Score", true)}
-        {/* Team box-stat distributions. Gated on hasPlayers exactly like the
-            player panels: team_stats.json is built from the player sweep, so
-            the FCS (game-level-only) namespace has none and gets no button. */}
-        {jsonRow && card.hasPlayers && tabBtn("teamstats", "Team Stats")}
+        {/* Bets FIRST after Live (owner 2026-10-12: no scrolling to it on a
+            phone). */}
         {/* OWNER ONLY. The button shows whenever the game produced ANY
             candidate (a Kalshi quote paired with a published rung) — picked
             or not — because the panel can always explain what happened to
@@ -4111,6 +4105,14 @@ export function GameCard({
           </>,
           true,
         )}
+        {canShowScores && tabBtn("scores", "Simulated Scores")}
+        {csvCard && tabBtn("players", "Player Stats", true)}
+        {jsonRow && card.hasPlayers && tabBtn("props", "Player Props")}
+        {jsonRow && card.hasPlayers && tabBtn("box", "Box Score", true)}
+        {/* Team box-stat distributions. Gated on hasPlayers exactly like the
+            player panels: team_stats.json is built from the player sweep, so
+            the FCS (game-level-only) namespace has none and gets no button. */}
+        {jsonRow && card.hasPlayers && tabBtn("teamstats", "Team Stats")}
       </div>
     </article>
   );

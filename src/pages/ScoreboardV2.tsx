@@ -4171,8 +4171,13 @@ function panelTabsFor(
      only for real picks, "tail" when the tail band is all there is, bare
      otherwise. `openKind === "bets"` keeps the tab alive while its own panel
      is open, so a feed update cannot yank it out from under the reader. */
+  // FIRST TAB (owner 2026-10-12: "move the bets tab to the first position
+  // instead of having to scroll to it on the phone"). The card opens on
+  // tabs[0], so a game with Bets content now opens on Bets; a game without
+  // it keeps its old default. Only a game LIVE right now keeps Live ahead
+  // of it — the bets panel is pregame-only and says so once a ball is kicked.
   if (bets && (bets.nCand > 0 || bets.n + bets.nTail > 0 || openKind === "bets")) {
-    out.push({
+    out.splice(liveTab && liveNow ? 1 : 0, 0, {
       kind: "bets", label: "Bets",
       badge: bets.n > 0 ? String(bets.n) : bets.nTail > 0 ? "tail" : undefined,
     });
@@ -4633,6 +4638,12 @@ function CardPanelHost({
     awayLogo: getTeamLogo(espnHomeIsA ? card.teamB : card.teamA) || undefined,
   };
   const tabs = panelTabsFor(card, gdata, bets, kind);
+  /** Each game's strip starts scrolled hard left, so the first tab (Bets)
+   *  is visible on a phone without a swipe. */
+  const tabStripRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (tabStripRef.current) tabStripRef.current.scrollLeft = 0;
+  }, [card.key]);
   // Header pieces: logos, and kickoff · network · city as one muted line.
   const logoA = getTeamLogo(card.teamA) || undefined;
   const logoB = getTeamLogo(card.teamB) || undefined;
@@ -4687,6 +4698,7 @@ function CardPanelHost({
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>{title}</div>
       ) : (
         <div
+          ref={tabStripRef}
           role="tablist"
           aria-label="Game panels"
           style={{
