@@ -3158,6 +3158,16 @@ function ScoreboardPage() {
 
             <span style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>{statusText}</span>
 
+            {/* The redesigned board (2026-10-12), live beside this one for a
+                side-by-side read; same season/week via the URL. */}
+            <a
+              href={`/cfb/scoreboard2${typeof window !== "undefined" ? window.location.search : ""}`}
+              className="ui-btn"
+              data-on="true"
+              style={{ padding: "4px 10px", fontSize: 12, whiteSpace: "nowrap", textDecoration: "none" }}
+            >
+              New board ↗
+            </a>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", minWidth: 0 }}>
             {/* NEW: Conference filter */}

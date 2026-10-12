@@ -10,6 +10,7 @@ import "./index.css";
 // CFB pages (existing)
 import Home from "./pages/Home";
 import Scoreboard from "./pages/Scoreboard";
+import ScoreboardV2 from "./pages/ScoreboardV2";
 import Results from "./pages/Results";
 // The 2026 record. A SEPARATE page from Results (which is the 2025 season and
 // stays exactly as it was): 2026 publishes thousands of priced rungs a week
@@ -82,6 +83,7 @@ export default function App() {
           {/* CFB (namespaced) */}
           <Route path="/cfb" element={<Home />} />
           <Route path="/cfb/scoreboard" element={<Scoreboard />} />
+          <Route path="/cfb/scoreboard2" element={<ScoreboardV2 />} />
           <Route path="/cfb/results" element={<Results />} />
           <Route path="/cfb/record" element={<RecordPage />} />
           <Route path="/cfb/quads" element={<QuadsPage />} />
