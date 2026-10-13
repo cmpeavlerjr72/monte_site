@@ -8,6 +8,15 @@
 // One pricer, one renderer: rows come from `loadGameProps` -> `propsForGame`
 // (the exact function the slate scan uses) and draw through TopEdges'
 // `PropRow` in its in-game mode. Nothing here re-derives a number.
+//
+// Owner 2026-10-13: "we dont need to list every rung of the ladders. we should
+// show the one that is at 50/50 and then if they want to hit the ladder button
+// then we can see all the rungs and the edges underneath it with separate DK
+// buttons for each rung". So: one row per (player, stat) = the rung DK prices
+// nearest 50/50 (the market's main line); its Ladder button opens every priced
+// rung as a full row (sim / DK / EV / DK link each). Ladders are ordered by
+// their best rung's EV so the ones carrying edge sit on top, and the button
+// names that best rung so nobody has to open a ladder to learn it is there.
 
 import { useEffect, useMemo, useState } from "react";
 import { hoursSince, loadGameProps, type GamePropsResult } from "../lib/edges";
@@ -32,6 +41,36 @@ export type DkPropsGame = {
 
 const evOf = (p: PropEdge) => p.evFee ?? p.edge;
 
+/** Every priced strike of one player's stat, headline first. */
+type Ladder = {
+  key: string;
+  /** The rung DK prices nearest 50/50 -- the main line, what the row shows. */
+  main: PropEdge;
+  /** All rungs, ascending strike (the main one included). */
+  rungs: PropEdge[];
+  best: PropEdge;
+};
+
+/** Group rows into ladders by (player, stat, side); pick each one's main line. */
+function buildLadders(props: PropEdge[]): Ladder[] {
+  const by = new Map<string, PropEdge[]>();
+  for (const p of props) {
+    const k = `${p.player}|${p.stat}|${p.side}`;
+    const a = by.get(k);
+    if (a) a.push(p); else by.set(k, [p]);
+  }
+  const out: Ladder[] = [];
+  for (const [key, rungs] of by) {
+    rungs.sort((a, b) => a.line - b.line);
+    // Nearest to DK's 50/50 by the market's own price; ties go to the better EV.
+    const main = rungs.slice().sort((a, b) =>
+      Math.abs(a.fairP - 0.5) - Math.abs(b.fairP - 0.5) || evOf(b) - evOf(a))[0];
+    const best = rungs.slice().sort((a, b) => evOf(b) - evOf(a))[0];
+    out.push({ key, main, rungs, best });
+  }
+  return out;
+}
+
 function evWords(feeModel: string | null): string {
   if (feeModel?.startsWith("dk_live")) return "EV per $1 staked at DK's ask, fees inside";
   if (feeModel === "none_published_flat2") return "EV per $1 staked, after a flat 2¢ round trip";
@@ -46,6 +85,7 @@ export default function GameDkProps({ game, onAddLeg }: {
   const [res, setRes] = useState<GamePropsResult | null>(null);
   const [inBandOnly, setInBandOnly] = useState(true);
   const [posOnly, setPosOnly] = useState(true);
+  const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set());
 
   const slug = game?.slug;
   const season = game?.season;
@@ -55,6 +95,7 @@ export default function GameDkProps({ game, onAddLeg }: {
   const teamB = game?.teamB;
   useEffect(() => {
     setRes(null);
+    setOpenKeys(new Set());
     if (!slug || season === undefined || !weekId || !row || !teamA || !teamB) return;
     const ctl = new AbortController();
     loadGameProps({ slug, teamA, teamB, row }, season, weekId, ctl.signal)
@@ -73,10 +114,23 @@ export default function GameDkProps({ game, onAddLeg }: {
     () => (res?.props ?? []).slice().sort((a, b) => evOf(b) - evOf(a)),
     [res]
   );
-  const shown = useMemo(
-    () => sorted.filter((p) => (!inBandOnly || p.inBand) && (!posOnly || evOf(p) > 0)),
-    [sorted, inBandOnly, posOnly]
+  // The filters act on RUNGS: a ladder is listed when any rung passes, and
+  // an open ladder shows only the rungs that pass. The main line itself is
+  // never filtered away -- it is the row's identity, not a recommendation.
+  const passes = (p: PropEdge) => (!inBandOnly || p.inBand) && (!posOnly || evOf(p) > 0);
+  const ladders = useMemo(() => buildLadders(sorted), [sorted]);
+  const shownLadders = useMemo(
+    () => ladders
+      .filter((l) => l.rungs.some(passes))
+      .sort((a, b) => evOf(b.best) - evOf(a.best)),
+    [ladders, inBandOnly, posOnly]   // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const shown = useMemo(() => sorted.filter(passes), [sorted, inBandOnly, posOnly]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = (k: string) => setOpenKeys((s) => {
+    const n = new Set(s);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
 
   const chip = { padding: "2px 9px", fontSize: 11, fontWeight: 700 } as const;
 
@@ -140,7 +194,7 @@ export default function GameDkProps({ game, onAddLeg }: {
           +EV only
         </button>
         <span className="dkprops__count">
-          {shown.length} of {sorted.length} priced
+          {shownLadders.length} of {ladders.length} ladders · {shown.length} of {sorted.length} rungs
         </span>
       </div>
 
@@ -161,15 +215,44 @@ export default function GameDkProps({ game, onAddLeg }: {
             <span>EV</span>
             <span />
           </div>
-          {shown.map((p) => (
-            <PropRow
-              key={`${p.player}:${p.stat}:${p.line}`}
-              p={p}
-              inGame
-              evTitle={evTitle}
-              onAddLeg={onAddLeg}
-            />
-          ))}
+          {shownLadders.map((l) => {
+            const open = openKeys.has(l.key);
+            const rungs = open ? l.rungs.filter((r) => r === l.main || passes(r)) : [];
+            const side = l.main.side === "over" ? "o" : "u";
+            return (
+              <div key={l.key} className="dkprops__ladder" data-open={open ? "true" : "false"}>
+                <PropRow
+                  p={l.main}
+                  inGame
+                  evTitle={evTitle}
+                  onAddLeg={onAddLeg}
+                  ladder={l.rungs.length > 1 ? {
+                    n: l.rungs.length, open, onToggle: () => toggle(l.key),
+                    bestEv: evOf(l.best), bestLine: l.best.line,
+                  } : undefined}
+                />
+                {open && (
+                  <div className="dkprops__rungs" role="group"
+                    aria-label={`${l.main.player} ${l.main.statShort} ladder`}>
+                    <div className="dkprops__rungs-note">
+                      every priced strike on {l.main.player}&rsquo;s {l.main.statShort} ladder
+                      {" · "}<b>{side}{l.main.line}</b> is DK&rsquo;s closest to 50/50
+                      {rungs.length < l.rungs.length && ` · ${l.rungs.length - rungs.length} hidden by the filters`}
+                    </div>
+                    {rungs.map((r) => (
+                      <div
+                        key={`${r.player}:${r.stat}:${r.line}`}
+                        className="dkprops__rung"
+                        data-main={r === l.main ? "true" : "false"}
+                      >
+                        <PropRow p={r} inGame evTitle={evTitle} onAddLeg={onAddLeg} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

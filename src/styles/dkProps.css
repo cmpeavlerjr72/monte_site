@@ -56,3 +56,42 @@
   color: var(--muted);
   line-height: 1.5;
 }
+
+/* One ladder = its main-line row + (when open) every priced rung underneath,
+   each a full PropRow with its own DK button (owner 2026-10-13). */
+.dkprops__ladder[data-open="true"] > .edge-row {
+  background: color-mix(in oklab, var(--accent) 7%, var(--card));
+  border-color: var(--border);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.dkprops__rungs {
+  display: grid;
+  gap: 1px;
+  margin: 0 0 6px 10px;
+  padding: 4px 0 4px 6px;
+  border-left: 2px solid color-mix(in oklab, var(--accent) 45%, var(--border));
+  background: color-mix(in oklab, var(--accent) 4%, var(--card));
+  border-radius: 0 0 8px 8px;
+}
+.dkprops__rungs-note {
+  padding: 2px 5px 4px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.dkprops__rung[data-main="true"] > .edge-row {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+}
+/* Inside an open ladder the player name repeats on every rung; the strike is
+   the thing that differs, so the name steps back and the bet stays bold. */
+.dkprops__rung .edge-row__t1--prop {
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.edge-flag__hint {
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}

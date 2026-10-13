@@ -467,13 +467,34 @@ function LadderRungs({ p }: { p: PropEdge }) {
  * for (top-rung mark, book depth, a link to the venue's event page) is shown.
  * The slate column passes neither and renders exactly as before.
  */
-export function PropRow({ p, rank, onPick, onAddLeg, inGame, evTitle }: {
+export type LadderControl = {
+  /** Rungs on this player's ladder (all priced strikes for the stat). */
+  n: number;
+  open: boolean;
+  onToggle: () => void;
+  /** Best EV across the rungs, for the button's hint. */
+  bestEv: number;
+  /** The best-EV rung's strike, so the hint can name it. */
+  bestLine: number;
+};
+
+export function PropRow({ p, rank, onPick, onAddLeg, inGame, evTitle, ladder }: {
   p: PropEdge; rank?: number; onPick?: (slug: string) => void;
   /** Omit to drop the quick-add "+" (a spacer keeps the grid aligned). */
   onAddLeg?: (slug: string, spec: LegSpec) => void;
   inGame?: boolean;
   /** Hover on the EV pill; defaults to the flat-2c wording. */
   evTitle?: string;
+  /**
+   * Owner 2026-10-13: inside a game the list shows ONE rung per player and
+   * stat (the one DK prices nearest 50/50) and a Ladder button opens every
+   * priced rung underneath, each with its own DK button. When this is
+   * given, the row's ladder button belongs to the caller (GameDkProps
+   * renders the rungs as full rows) and the publisher's "ladder candidate"
+   * flag + its inline rung chart are not drawn — the open list already
+   * shows every rung's edge.
+   */
+  ladder?: LadderControl;
 }) {
   const [open, setOpen] = useState(false);
   // An over-only venue has no under to bet, so the decision number is EV per
@@ -521,7 +542,24 @@ export function PropRow({ p, rank, onPick, onAddLeg, inGame, evTitle }: {
                   ? `${p.price > 0 ? "+" : ""}${p.price}`
                   : shortTeam(p.playerTeam)}
             </span>
-            {p.ladder && (
+            {ladder ? (
+              <button
+                type="button"
+                className="edge-flag edge-flag--ladder"
+                data-primary={ladder.open ? "true" : undefined}
+                aria-expanded={ladder.open}
+                title={`${ladder.n} priced strikes on this ladder — tap to see every rung, its edge and a DK button for each`}
+                onClick={(ev) => { ev.stopPropagation(); ladder.onToggle(); }}
+                onKeyDown={(ev) => ev.stopPropagation()}
+              >
+                Ladder {ladder.n} {ladder.open ? "▾" : "▸"}
+                {ladder.bestEv > 0 && (
+                  <span className="edge-flag__hint">
+                    {" "}best {ladder.bestEv >= 0 ? "+" : ""}{(ladder.bestEv * 100).toFixed(0)}% at {p.side === "over" ? "o" : "u"}{ladder.bestLine}
+                  </span>
+                )}
+              </button>
+            ) : p.ladder && (
               <button
                 type="button"
                 className="edge-flag edge-flag--ladder"
@@ -584,7 +622,7 @@ export function PropRow({ p, rank, onPick, onAddLeg, inGame, evTitle }: {
           ? <AddLegButton label={propLabel(p)} onAdd={() => onAddLeg(p.slug, legSpecForPropRow(p))} />
           : <span className="edge-row__add-gap" aria-hidden />}
       </div>
-      {p.ladder && open && <LadderRungs p={p} />}
+      {!ladder && p.ladder && open && <LadderRungs p={p} />}
     </>
   );
 }
