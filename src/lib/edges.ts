@@ -15,6 +15,7 @@ import {
   getTeamMarketsCached, TeamMarketsNotPublished, getWeekEngineCached,
   getRegimeTrendCached,
   type JsonWeekRow, type TeamMarketRow, type WeekEngine, type RegimeTrend,
+  type PropsOdds,
 } from "./cfbJson";
 import { propEdge, type PropEdge } from "./propEdge";
 import { buildMarketRows, makeSeedCounts, rowEdge, type MarketRow } from "./marketEdge";
@@ -257,20 +258,11 @@ export async function ensureSlateEdges(
       // FCS publishes no props (has_players/has_props false, no props_odds.json
       // in that namespace), so this lookup simply misses for FCS games and the
       // dist fetch below never fires — the flag and the miss agree.
-      const propRows = propsOdds?.byGame.get(g.slug);
-      if (!propRows?.length) return;
+      if (!propsOdds?.byGame.get(g.slug)?.length) return;
       try {
-        const dist = await getPlayersDistCached(g.row, gameSeason);
+        const priced = await propsForGame(g, gameSeason, propsOdds, signal);
         if (signal?.aborted) return;
-        const byPlayer = new Map(dist.players.map((pl) => [pl.player, pl]));
-        for (const row of propRows) {
-          const pl = byPlayer.get(row.player);   // canonical name, joins verbatim
-          if (!pl) continue;
-          const e = propEdge(row, pl.stats[row.stat], {
-            slug: g.slug, teamA: g.teamA, teamB: g.teamB, playerTeam: pl.team,
-          });
-          if (e) props.push(e);
-        }
+        props.push(...priced);
       } catch (err) {
         if ((err as any)?.name === "AbortError") throw err;
         console.warn(`[edges] players_dist failed for ${g.slug}:`, err);
@@ -299,6 +291,99 @@ export async function ensureSlateEdges(
     rulesApply: rulesApplyFor(engine),
     trend,
   };
+}
+
+/**
+ * Price ONE game's player props: its props_odds rows joined to its
+ * players_dist PMFs through `propEdge`. The slate scan above and the per-game
+ * Bets-tab list (`loadGameProps`) both call this, so the two can never
+ * disagree about a row's number.
+ *
+ * Returns [] when the file quotes nothing for `g.slug` (players_dist is then
+ * never fetched). A players_dist failure THROWS — the caller decides whether
+ * that is a warning (slate) or an error line (one game).
+ */
+export async function propsForGame(
+  g: Pick<EdgeInput, "slug" | "teamA" | "teamB" | "row">,
+  season: Season,
+  propsOdds: PropsOdds | null | undefined,
+  signal?: AbortSignal
+): Promise<PropEdge[]> {
+  const propRows = propsOdds?.byGame.get(g.slug);
+  if (!propRows?.length) return [];
+  const dist = await getPlayersDistCached(g.row, season);
+  if (signal?.aborted) return [];
+  const byPlayer = new Map(dist.players.map((pl) => [pl.player, pl]));
+  const out: PropEdge[] = [];
+  for (const row of propRows) {
+    const pl = byPlayer.get(row.player);   // canonical name, joins verbatim
+    if (!pl) continue;
+    const e = propEdge(row, pl.stats[row.stat], {
+      slug: g.slug, teamA: g.teamA, teamB: g.teamB, playerTeam: pl.team,
+    });
+    if (e) out.push(e);
+  }
+  return out;
+}
+
+/** One game's priced props, for the Bets tab's "DK props" chip. */
+export type GamePropsResult = {
+  /** "missing" = the week (or this namespace, e.g. FCS) publishes no
+   *  props_odds.json — the expected state, not an error. */
+  status: "ok" | "missing" | "error";
+  /** Rows the venue lists for this game, before the sim join. */
+  listed: number;
+  /** Every priced row, unsorted and unfiltered. */
+  props: PropEdge[];
+  updated: string | null;
+  venue: string | null;
+  book: string | null;
+  sideOnly: "over" | null;
+  feeModel: string | null;
+};
+
+/**
+ * Load + price one game's props from ITS OWN namespace's week file (the same
+ * cached fetch the slate scan uses, so opening the chip after the scan costs
+ * nothing). Never throws except on abort: a missing file (FCS publishes
+ * none) resolves to status "missing".
+ */
+export async function loadGameProps(
+  g: Pick<EdgeInput, "slug" | "teamA" | "teamB" | "row">,
+  season: Season,
+  weekId: string,
+  signal?: AbortSignal
+): Promise<GamePropsResult> {
+  const empty = {
+    listed: 0, props: [] as PropEdge[], updated: null, venue: null, book: null,
+    sideOnly: null, feeModel: null,
+  };
+  let odds: PropsOdds;
+  try {
+    odds = await getPropsOddsCached(season, weekId);
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") throw err;
+    const notPublished =
+      err instanceof PropsNotPublished ||
+      (err as any)?.name === "PropsNotPublished" ||
+      err instanceof DatasetUnavailable ||
+      (err as any)?.name === "DatasetUnavailable";
+    if (!notPublished) console.warn("[edges] props_odds failed:", err);
+    return { ...empty, status: notPublished ? "missing" : "error" };
+  }
+  const meta = {
+    updated: odds.updated, venue: odds.venue, book: odds.book,
+    sideOnly: odds.sideOnly, feeModel: odds.feeModel,
+  };
+  const listed = odds.byGame.get(g.slug)?.length ?? 0;
+  try {
+    const props = await propsForGame(g, season, odds, signal);
+    return { status: "ok", listed, props, ...meta };
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") throw err;
+    console.warn(`[edges] players_dist failed for ${g.slug}:`, err);
+    return { status: "error", listed, props: [], ...meta };
+  }
 }
 
 /**

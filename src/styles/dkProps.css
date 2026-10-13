@@ -1,0 +1,58 @@
+/* Per-game "DK props" list on the Bets tab (src/components/GameDkProps.tsx).
+   Kept OUT of theme.css on purpose (incident 2026-09-09: a hand-merged
+   theme.css shipped an unparseable stylesheet). Tokens only. */
+
+/* The shared .edge-row grid minus its 16px rank column: inside one game the
+   rank says nothing, and the row is not a "go to game" button. */
+.edge-row.edge-row--ingame {
+  grid-template-columns: auto minmax(0, 1fr) 46px 46px 50px 24px;
+  cursor: default;
+}
+
+.dkprops__depth {
+  margin-left: 5px;
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* A plain link styled as a small chip; not a primary action. */
+.dkprops__link {
+  margin-left: 5px;
+  padding: 0 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 16px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.dkprops__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.dkprops__count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.dkprops__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px 46px 50px 24px;
+  gap: 6px;
+  padding: 0 5px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: right;
+}
+.dkprops__cols span:first-child { text-align: left; }
+.dkprops__empty,
+.dkprops__foot {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}

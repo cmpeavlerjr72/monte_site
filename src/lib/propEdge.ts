@@ -89,6 +89,11 @@ export type PropEdge = {
    * predates the field.
    */
   inBand: boolean;
+  /** The venue's event page for this market, when the publisher sent one
+   *  (DK Predictions live source). */
+  url?: string;
+  /** Contracts resting at the quoted ask, when the source reports depth. */
+  depth?: number;
 };
 
 /** [min, max] sim P(over) a row must sit inside to not be a tail — the
@@ -211,6 +216,8 @@ export function propEdge(
     ladderBoardAdjacent: row.ladder_board_adjacent,
     topRung: row.top_rung,
     inBand,
+    url: row.url,
+    depth: row.depth,
   };
 }
 

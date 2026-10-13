@@ -862,6 +862,15 @@ export type PropOddsRow = {
    *  on a payload published before the field existed -- callers fall back to
    *  sim P(over) in [0.30, 0.85] in that case (`propEdge.ts`'s `inFallbackBand`). */
   in_band?: boolean;
+
+  /* ---- live order-book fields (source "dk-live-book", 2026-10-12+) -------
+   * Absent on every payload published before the live source. */
+  /** The venue's own event page for this market (DK Predictions). */
+  url?: string;
+  /** Contracts resting at the ask — how much size the price is good for. */
+  depth?: number;
+  bid_cents?: number;
+  ask_cents?: number;
 };
 
 export type PropsOdds = {
@@ -988,6 +997,10 @@ export async function getPropsOdds(
         top_rung: p?.top_rung === true ? true
           : p?.top_rung === false ? false : undefined,
         in_band: p?.in_band === true ? true : p?.in_band === false ? false : undefined,
+        url: typeof p?.url === "string" && /^https:\/\//.test(p.url) ? p.url : undefined,
+        depth: num(p?.depth),
+        bid_cents: num(p?.bid_cents),
+        ask_cents: num(p?.ask_cents),
       });
     }
     if (rows.length) byGame.set(slug, rows);

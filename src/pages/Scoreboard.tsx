@@ -3077,6 +3077,14 @@ function ScoreboardPage() {
                        who else is on it. */
                     gameSlug={openCard.key}
                     dk={dkBySlug.get(openCard.key)}
+                    /* The "DK props" chip: this card's key, row and OWN
+                       namespace (FCS publishes no props file, so its chip
+                       shows the empty state). Quick-add reuses Top Edges'. */
+                    dkPropsGame={openCard.jsonRow ? {
+                      slug: openCard.key, teamA: openCard.teamA, teamB: openCard.teamB,
+                      row: openCard.jsonRow, season: openCard.ns, weekId,
+                    } : undefined}
+                    onAddPropLeg={addLegFromTopEdges}
                     browse={suggestions.browseBySlug.get(openCard.key) ?? NO_BROWSE_ROWS}
                     verdict={suggestions.pregameBySlug.get(openCard.key)}
                     hiddenByFilter={suggestions.hiddenBySlug.get(openCard.key) ?? 0}

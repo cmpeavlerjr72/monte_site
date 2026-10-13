@@ -137,6 +137,8 @@ import { RegimeTrendSummary } from "./RegimeTrend";
 // DraftKings Predictions, read-only second venue: a price + a link, never an order.
 import { dkQuoteForRung, type DkGame } from "../lib/dk";
 import { getTeamLogo } from "../utils/teamLogo";
+import GameDkProps, { type DkPropsGame } from "./GameDkProps";
+import type { LegSpec } from "../lib/parlay";
 
 /** What "$30/ladder" MEANS under each mode, in a few words, beside the number
  *  it qualifies. The full definitions live behind the ? on the switch itself
@@ -1094,7 +1096,7 @@ export default function GameBetsPanel({
   token, feeParams,
   quotedAt, ordersLive, modeFilter, onModeFilter, typeFilter, onTypeFilter,
   showTails, onShowTails, regime, edgeRules, onEdgeRules, engine, trend, onProject,
-  homeTeam, awayTeam, league, gameSlug, dk,
+  homeTeam, awayTeam, league, gameSlug, dk, dkPropsGame, onAddPropLeg,
 }: {
   /** This game's slice of the page compute, or undefined when it has none. */
   section: SuggestSection | undefined;
@@ -1157,7 +1159,17 @@ export default function GameBetsPanel({
   /** This game's DraftKings Predictions listing (src/lib/dk.ts), or undefined
    *  when DK does not list it / the feed is down — then no DK chips draw. */
   dk?: DkGame;
+  /** This game's identity for the "DK props" chip (DraftKings Predictions
+   *  player props off the week's props_odds.json). Undefined = the chip
+   *  shows its "no props" empty state. */
+  dkPropsGame?: DkPropsGame;
+  /** Quick-add a prop to the combo slip from the DK props list. */
+  onAddPropLeg?: (slug: string, spec: LegSpec) => void;
 }) {
+  /** The "DK props" chip. Panel-local, NOT the page's typeFilter: that filter
+   *  also drives the index and the badges over Kalshi ladders, and DK player
+   *  props are a different file altogether. */
+  const [dkPropsOn, setDkPropsOn] = useState(false);
   /** Whether the week-1 rulebook can describe this board at all. */
   const rulebookOk = rulesApplyFor(engine);
   /** The confirm slip. `idem` is minted ONCE per opening, so a double-tap on
@@ -1239,13 +1251,23 @@ export default function GameBetsPanel({
           ] as const).map(([v, label, words]) => (
             <button
               key={v} type="button" className="ui-btn" title={words}
-              data-on={typeFilter === v ? "true" : "false"}
-              onClick={() => onTypeFilter(v)}
+              data-on={!dkPropsOn && typeFilter === v ? "true" : "false"}
+              onClick={() => { setDkPropsOn(false); onTypeFilter(v); }}
               style={chip}
             >
               {label}
             </button>
           ))}
+          <button
+            type="button" className="ui-btn"
+            title="DraftKings player props for this game"
+            data-on={dkPropsOn ? "true" : "false"}
+            aria-pressed={dkPropsOn}
+            onClick={() => setDkPropsOn((v) => !v)}
+            style={chip}
+          >
+            🎯 DK props
+          </button>
         </div>
         <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
           <button
@@ -1395,108 +1417,115 @@ export default function GameBetsPanel({
         </div>
       )}
 
-      {nothing ? (
-        <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5, display: "grid", gap: 6 }}>
-          {verdict && !verdict.ok ? (
-            <span>
-              Nothing here: this game is no longer pregame ({verdict.reason}).
-              Suggestions are PREGAME ONLY — our fairs are pregame
-              distributions, so an "edge" measured against a live book is not
-              an edge, it is a wrong number pointed at real money.
-            </span>
-          ) : hiddenByFilter > 0 ? (
-            <>
-              <span>
-                {hiddenByFilter} suggestion{hiddenByFilter === 1 ? "" : "s"} on
-                this game {hiddenByFilter === 1 ? "is" : "are"} hidden by the
-                mode / bet-type filters above.
-              </span>
-              <span>
-                <button type="button" className="ui-btn" onClick={clearFilters}
-                        style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>
-                  Show all types
-                </button>
-              </span>
-            </>
-          ) : (
-            <span>
-              Nothing on this game clears the thresholds right now — no listed
-              market, no published rung at those strikes, a book too wide or
-              one-sided to price against, or no edge left after the fee.
-              Early in the week many games list only the winner market with a
-              near-empty book; ladders and real quotes usually arrive in the
-              last days before kickoff.
-            </span>
-          )}
-        </div>
+      {/* DK PROPS replaces the Kalshi rows while its chip is on. */}
+      {dkPropsOn ? (
+        <GameDkProps game={dkPropsGame} onAddLeg={onAddPropLeg} />
       ) : (
-        <LadderRows
-          groups={groups}
-          tailGroups={tailGroups}
-          unit={unit}
-          onPlace={(g) => setSlip({ group: g, idem: newIdempotencyKey() })}
-          onProject={onProject}
-          dk={dk}
-          homeTeam={homeTeam}
-        />
-      )}
-
-      {hiddenByFilter > 0 && !nothing && (
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", fontSize: 10, color: "var(--muted)" }}>
-          <span>
-            {hiddenByFilter} more suggestion{hiddenByFilter === 1 ? "" : "s"} on
-            this game hidden by the filters.
-          </span>
-          <button type="button" className="ui-btn" onClick={clearFilters}
-                  style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>
-            Show all types
-          </button>
-        </div>
-      )}
-
-      {/* EVERY PRICED RUNG, one section per family. Collapsed: each ladder
-          shows its resting rung (both sides of a ≤2-rung market). "Browse all
-          rungs" opens the full picker. Placement goes through the exact same
-          ConfirmSlip as a picked row: one rung, sized at the full unit. */}
-      {browse.length > 0 && [...browseLadders(browse)].map(([lad, rungs]) => {
-        const wheel = rungs.length > 2;
-        const shown = wheel && !showBrowse ? [rungs[restingIndex(rungs)]] : rungs;
-        const head = ladderHeadline(rungs);
-        const title = head.startsWith("spread") ? "spread" : head;
-        return (
-          <div key={lad} style={{
-            display: "grid", gap: 4, paddingTop: 8,
-            borderTop: "1px solid var(--line, rgba(128,128,128,.25))",
-          }}>
-            <SectionHead title={title} reference={rungs.some((x) => x.displayOnly)} refReason={refReason} />
-            {wheel && showBrowse
-              ? <RungWheel rungs={rungs} onPlace={placeOne} refReason={refReason} dk={dk} homeTeam={homeTeam} />
-              : shown.map((r) => <RungLine key={r.key} r={r} onPlace={placeOne} dk={dk} homeTeam={homeTeam} />)}
+        <>
+        {nothing ? (
+          <div style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5, display: "grid", gap: 6 }}>
+            {verdict && !verdict.ok ? (
+              <span>
+                Nothing here: this game is no longer pregame ({verdict.reason}).
+                Suggestions are PREGAME ONLY — our fairs are pregame
+                distributions, so an "edge" measured against a live book is not
+                an edge, it is a wrong number pointed at real money.
+              </span>
+            ) : hiddenByFilter > 0 ? (
+              <>
+                <span>
+                  {hiddenByFilter} suggestion{hiddenByFilter === 1 ? "" : "s"} on
+                  this game {hiddenByFilter === 1 ? "is" : "are"} hidden by the
+                  mode / bet-type filters above.
+                </span>
+                <span>
+                  <button type="button" className="ui-btn" onClick={clearFilters}
+                          style={{ padding: "2px 9px", fontSize: 11, fontWeight: 700 }}>
+                    Show all types
+                  </button>
+                </span>
+              </>
+            ) : (
+              <span>
+                Nothing on this game clears the thresholds right now — no listed
+                market, no published rung at those strikes, a book too wide or
+                one-sided to price against, or no edge left after the fee.
+                Early in the week many games list only the winner market with a
+                near-empty book; ladders and real quotes usually arrive in the
+                last days before kickoff.
+              </span>
+            )}
           </div>
-        );
-      })}
+        ) : (
+          <LadderRows
+            groups={groups}
+            tailGroups={tailGroups}
+            unit={unit}
+            onPlace={(g) => setSlip({ group: g, idem: newIdempotencyKey() })}
+            onProject={onProject}
+            dk={dk}
+            homeTeam={homeTeam}
+          />
+        )}
 
-      {(browse.length > 0 || (tailCount > 0 && !showTails)) && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 11 }}>
-          {browse.length > 0 && (
-            <button
-              type="button"
-              aria-expanded={showBrowse}
-              onClick={() => setShowBrowse(!showBrowse)}
-              style={{
-                border: "none", background: "transparent", padding: 0, font: "inherit",
-                fontWeight: 700, color: "var(--text)", cursor: "pointer",
-              }}
-            >
-              Browse all rungs ({browse.length}) {showBrowse ? "▴" : "▾"}
-            </button>
-          )}
-          {tailCount > 0 && !showTails && (
-            <span style={{ color: "var(--muted)" }}>
-              {tailCount} tail{tailCount === 1 ? "" : "s"} hidden
+        {hiddenByFilter > 0 && !nothing && (
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", fontSize: 10, color: "var(--muted)" }}>
+            <span>
+              {hiddenByFilter} more suggestion{hiddenByFilter === 1 ? "" : "s"} on
+              this game hidden by the filters.
             </span>
-          )}
-        </div>
+            <button type="button" className="ui-btn" onClick={clearFilters}
+                    style={{ padding: "1px 8px", fontSize: 10, fontWeight: 700 }}>
+              Show all types
+            </button>
+          </div>
+        )}
+
+        {/* EVERY PRICED RUNG, one section per family. Collapsed: each ladder
+            shows its resting rung (both sides of a ≤2-rung market). "Browse all
+            rungs" opens the full picker. Placement goes through the exact same
+            ConfirmSlip as a picked row: one rung, sized at the full unit. */}
+        {browse.length > 0 && [...browseLadders(browse)].map(([lad, rungs]) => {
+          const wheel = rungs.length > 2;
+          const shown = wheel && !showBrowse ? [rungs[restingIndex(rungs)]] : rungs;
+          const head = ladderHeadline(rungs);
+          const title = head.startsWith("spread") ? "spread" : head;
+          return (
+            <div key={lad} style={{
+              display: "grid", gap: 4, paddingTop: 8,
+              borderTop: "1px solid var(--line, rgba(128,128,128,.25))",
+            }}>
+              <SectionHead title={title} reference={rungs.some((x) => x.displayOnly)} refReason={refReason} />
+              {wheel && showBrowse
+                ? <RungWheel rungs={rungs} onPlace={placeOne} refReason={refReason} dk={dk} homeTeam={homeTeam} />
+                : shown.map((r) => <RungLine key={r.key} r={r} onPlace={placeOne} dk={dk} homeTeam={homeTeam} />)}
+            </div>
+          );
+        })}
+
+        {(browse.length > 0 || (tailCount > 0 && !showTails)) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 11 }}>
+            {browse.length > 0 && (
+              <button
+                type="button"
+                aria-expanded={showBrowse}
+                onClick={() => setShowBrowse(!showBrowse)}
+                style={{
+                  border: "none", background: "transparent", padding: 0, font: "inherit",
+                  fontWeight: 700, color: "var(--text)", cursor: "pointer",
+                }}
+              >
+                Browse all rungs ({browse.length}) {showBrowse ? "▴" : "▾"}
+              </button>
+            )}
+            {tailCount > 0 && !showTails && (
+              <span style={{ color: "var(--muted)" }}>
+                {tailCount} tail{tailCount === 1 ? "" : "s"} hidden
+              </span>
+            )}
+          </div>
+        )}
+        </>
       )}
 
       {!ordersLive && (

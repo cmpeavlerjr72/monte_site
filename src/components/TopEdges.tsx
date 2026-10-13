@@ -457,26 +457,42 @@ function LadderRungs({ p }: { p: PropEdge }) {
   );
 }
 
-function PropRow({ p, rank, onPick, onAddLeg }: {
-  p: PropEdge; rank: number; onPick: (slug: string) => void;
-  onAddLeg: (slug: string, spec: LegSpec) => void;
+/**
+ * One player-prop row. Shared by the slate-wide "Top prop overs" column and
+ * the per-game Bets tab's "DK props" list (GameDkProps.tsx) — one renderer,
+ * so the two can never show the same bet differently.
+ *
+ * `inGame`: the row already sits inside its game, so the rank and the
+ * "go to game" click are dropped, and the venue detail a per-game list is
+ * for (top-rung mark, book depth, a link to the venue's event page) is shown.
+ * The slate column passes neither and renders exactly as before.
+ */
+export function PropRow({ p, rank, onPick, onAddLeg, inGame, evTitle }: {
+  p: PropEdge; rank?: number; onPick?: (slug: string) => void;
+  /** Omit to drop the quick-add "+" (a spacer keeps the grid aligned). */
+  onAddLeg?: (slug: string, spec: LegSpec) => void;
+  inGame?: boolean;
+  /** Hover on the EV pill; defaults to the flat-2c wording. */
+  evTitle?: string;
 }) {
   const [open, setOpen] = useState(false);
   // An over-only venue has no under to bet, so the decision number is EV per
   // $1 staked, not the probability gap — and there is no second side button
   // anywhere on this row by construction.
   const verdict = p.overOnly ? (p.evFee ?? p.edge) : p.edge;
+  const pick = !inGame && onPick ? () => onPick(p.slug) : undefined;
   return (
     <>
       <div
-        className="edge-row" role="button" tabIndex={0}
-        onClick={() => onPick(p.slug)}
-        onKeyDown={(ev) => {
-          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onPick(p.slug); }
-        }}
-        title={`Go to ${p.teamB} @ ${p.teamA}`}
+        className={inGame ? "edge-row edge-row--ingame" : "edge-row"}
+        role={pick ? "button" : undefined} tabIndex={pick ? 0 : undefined}
+        onClick={pick}
+        onKeyDown={pick ? (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); }
+        } : undefined}
+        title={pick ? `Go to ${p.teamB} @ ${p.teamA}` : undefined}
       >
-        <span className="edge-row__rank">{rank}</span>
+        {!inGame && <span className="edge-row__rank">{rank}</span>}
         <Logos teams={[p.playerTeam]} />
         <span className="edge-row__main">
           {/* Line 1: the player, and nothing else — the strike is the thing
@@ -497,7 +513,9 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
             <span className="edge-row__propmeta">
               {" · "}
               {/* The venue is named once in the column footer, not per row. */}
-              {p.priceCents !== undefined
+              {inGame && p.priceCents !== undefined
+                ? `${p.priceCents}¢`
+              : p.priceCents !== undefined
                 ? `${p.priceCents}¢${p.nTrades !== undefined ? ` · ${p.nTrades} trade${p.nTrades === 1 ? "" : "s"}` : ""}`
                 : p.price !== undefined
                   ? `${p.price > 0 ? "+" : ""}${p.price}`
@@ -524,6 +542,26 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
                 T3
               </span>
             )}
+            {inGame && p.topRung && (
+              <span className="edge-flag" title="best-EV strike for this player and stat">
+                TOP
+              </span>
+            )}
+            {inGame && p.depth !== undefined && (
+              <span className="dkprops__depth" title="contracts resting at this price">
+                depth {p.depth.toLocaleString()}
+              </span>
+            )}
+            {inGame && p.url && (
+              <a
+                className="ui-btn dkprops__link"
+                href={p.url} target="_blank" rel="noopener noreferrer"
+                title="Open this market on DraftKings Predictions"
+                onClick={(ev) => ev.stopPropagation()}
+              >
+                DK ↗
+              </a>
+            )}
           </span>
         </span>
         <span className="edge-row__num">
@@ -534,15 +572,15 @@ function PropRow({ p, rank, onPick, onAddLeg }: {
         </span>
         <EdgePill
           edge={verdict}
-          title={p.overOnly
+          title={evTitle ?? (p.overOnly
             ? "EV per $1 staked, after a flat 2¢ round trip"
-            : "sim probability minus market, in points"}
+            : "sim probability minus market, in points")}
         />
         {/* The slip prices a leg off seeds.json. An anytime-TD market is
             rush_td + rec_td, a sum seeds.json does not carry, so offering the
             "+" there would add a leg the slip could only fail on. The row is
             still a bet at the venue — it just is not a parlay leg here. */}
-        {isSlipPriceable(p)
+        {onAddLeg && isSlipPriceable(p)
           ? <AddLegButton label={propLabel(p)} onAdd={() => onAddLeg(p.slug, legSpecForPropRow(p))} />
           : <span className="edge-row__add-gap" aria-hidden />}
       </div>
