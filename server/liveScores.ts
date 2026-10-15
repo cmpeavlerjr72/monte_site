@@ -1597,6 +1597,41 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     }
   }
 
+  // 2026-10-15: Kalshi now dates the GAME (and 1H) event one day EARLIER than
+  // the SPREAD / TOTAL / TEAMTOTAL / stat events for the same game (week 7:
+  // KXNCAAFGAME-26OCT16FLATEX vs KXNCAAFSPREAD-26OCT17FLATEX — 25 of 52
+  // Saturday games). Keying every other series off the GAME event's suffix
+  // therefore returned EMPTY ladders for those games (Texas–Florida showed
+  // only the winner market). Resolve each series by exact key first, then by
+  // the same team code within ±2 days.
+  const codeOf = (suffix: string) => suffix.replace(/^\d{2}[A-Z]{3}\d{2}/, "");
+  const dayOf = (suffix: string): number | null => {
+    const m = suffix.match(/^(\d{2})([A-Z]{3})(\d{2})/);
+    if (!m) return null;
+    const mon = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"].indexOf(m[2]);
+    if (mon < 0) return null;
+    return Date.UTC(2000 + Number(m[1]), mon, Number(m[3])) / 86_400_000;
+  };
+  const seriesMarkets = (by: Map<string, any[]>, series: string, suffix: string): any[] => {
+    const exact = by.get(`${series}-${suffix}`);
+    if (exact?.length) return exact;
+    const code = codeOf(suffix);
+    const day = dayOf(suffix);
+    if (!code || day === null) return [];
+    let best: any[] = [];
+    let bestGap = Infinity;
+    for (const [k, list] of by) {
+      if (!k.startsWith(`${series}-`)) continue;
+      const suf = k.slice(series.length + 1);
+      if (codeOf(suf) !== code) continue;
+      const d = dayOf(suf);
+      if (d === null) continue;
+      const gap = Math.abs(d - day);
+      if (gap <= 2 && gap < bestGap) { best = list; bestGap = gap; }
+    }
+    return best;
+  };
+
   const games = matches.map(({ slug, ev, teamA, teamB }): KalshiGame => {
     const suffix = String(ev.event_ticker).replace(/^KXNCAAFGAME-/, "");
     const out: KalshiGame = {
@@ -1620,7 +1655,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     // so the client joins by strike with no interpolation anywhere.
     for (let i = 0; i < statSeries.length; i++) {
       const stat = KALSHI_STAT_SERIES[statSeries[i]];
-      for (const m of statBy[i].get(`${statSeries[i]}-${suffix}`) ?? []) {
+      for (const m of seriesMarkets(statBy[i], statSeries[i], suffix)) {
         // Two live subtitle shapes, both verified 2026-08-26/28:
         //   "North Carolina: 300+"                  (the stat ladders)
         //   "North Carolina over 6.5 points scored" (the team-points ladder)
@@ -1637,7 +1672,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     }
 
     // Winner: one binary market per team, identified by yes_sub_title.
-    for (const m of winBy.get(`KXNCAAFGAME-${suffix}`) ?? []) {
+    for (const m of seriesMarkets(winBy, "KXNCAAFGAME", suffix)) {
       const k = cfbNameKey(m?.yes_sub_title ?? "");
       const price = marketPrice(m);
       const side = k === keyA ? "A" : k === keyB ? "B" : null;
@@ -1655,8 +1690,8 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     }
 
     // Total: "Over X.5 points scored"; floor_strike is the line.
-    const totalMarkets = totBy.get(`KXNCAAFTOTAL-${suffix}`) ?? [];
-    const spreadMarkets = sprBy.get(`KXNCAAFSPREAD-${suffix}`) ?? [];
+    const totalMarkets = seriesMarkets(totBy, "KXNCAAFTOTAL", suffix);
+    const spreadMarkets = seriesMarkets(sprBy, "KXNCAAFSPREAD", suffix);
 
     // Totals: floor_strike is the line, yes = P(over).
     out.total_ladder = buildLadder(
