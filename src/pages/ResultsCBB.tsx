@@ -868,7 +868,7 @@ export default function ResultsCBB_alt() {
             {loading ? (
               "Loading…"
             ) : err ? (
-              <span style={{ color: "var(--accent)" }}>{err}</span>
+              <span style={{ color: "var(--accent-ink)" }}>{err}</span>
             ) : (
               <>
                 <div>{`Days: ${candles.length} · Final P&L: ${fmtUnits(

@@ -15,177 +15,211 @@
    directions.
    ========================================================================= */
 
+/* ------------------------------------------------------------ the face ---- */
+/* ONE display face, self-hosted (Barlow Condensed, SIL OFL, licence beside the
+   files in src/assets/fonts/). It sets headlines, the wordmark, nav, section
+   kickers and big numbers. Everything else is the plain system sans: fast,
+   familiar, and not Inter-on-everything. swap = text is never invisible. */
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal; font-weight: 600; font-display: swap;
+  src: url("./assets/fonts/barlow-condensed-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url("./assets/fonts/barlow-condensed-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal; font-weight: 800 900; font-display: swap;
+  src: url("./assets/fonts/barlow-condensed-latin-800-normal.woff2") format("woff2");
+}
+
 :root {
-  --brand: #0b2d4b;          /* navy */
+  /* ---- BRAND (docs/DESIGN.md). Navy + ONE gold, the same pair as the X
+     banner and the bot's cards (xbot content.py / graphics.py). The two
+     constants never theme: the header is navy in both themes, and gold is
+     gold. Everything else below is a ROLE that resolves per theme. */
+  --navy: #0b2d4b;
+  --gold: #c2a35a;
+
+  --brand: var(--navy);      /* surfaces: primary buttons, active toggles */
   --brand-contrast: #ffffff; /* text on brand */
-  --accent: #c59b2b;         /* gold */
-  --accent-contrast: #091016;
-  --text: #111827;           /* near-black */
-  --muted: #6b7280;
-  --bg: #f8fafc;             /* page background */
+  /* Gold as a FILL, rule, underline, badge or star. Gold on white is ~2.4:1,
+     so gold TEXT on a light surface uses --accent-ink (5.5:1 on white, 4.9:1 on --bg) —
+     never --accent. On navy and on dark surfaces gold text is fine. */
+  --accent: var(--gold);
+  --accent-contrast: var(--navy); /* text on a gold fill: 5.8:1 */
+  --accent-ink: #80661b;
+  --text: #121820;
+  --muted: #5f6670;
+  --bg: #f4f3ef;             /* warm paper, not app-grey */
   --card: #ffffff;
-  --border: #e2e8f0;
+  --border: #dedcd4;
 
-  /* The TARGET star (★) on a suggested-bet row. Its own token, because it is
-     neither an edge sign (--pos/--neg) nor an execution mode (--mode-*) nor
-     the brand accent — it marks "this row cleared the week-2 bar", and the
-     four channels must stay disjoint. Same amber in both themes: it always
-     sits beside a coloured edge number that carries the reading, and it is
-     the mark the owner already recognises (unchanged since 2026-08-30). */
-  --target-star: #f0b429;
+  /* The TARGET star on a suggested-bet row: "this row cleared the bar". It
+     is THE gold (owner 2026-10-16: one gold everywhere, gold marks starred
+     picks). As a small glyph on white it takes the ink value so it clears
+     3:1; on dark surfaces the gold itself. Still its own token, because it
+     must stay disjoint from the edge sign (--pos/--neg) and the execution
+     mode (--mode-*). */
+  --target-star: var(--accent-ink);
 
-  /* NEWS, not a verdict. A score update in the feed is a fact about a game —
-     it is neither an edge sign (--pos/--neg), nor an execution mode
-     (--mode-*), nor the brand. Its own token so the feed's four kinds stay
-     four disjoint channels: placed = --brand, tailed = --accent,
-     score = --info, settled = --pos/--neg/--muted. Every kind is ALSO
-     direct-labelled with a one-word tag, so identity is never colour-alone.
-     Deliberately brighter and cooler than --brand in BOTH themes, because in
-     dark --brand is itself a blue (#3178c6) and a rail must be told apart
-     from a rail at a glance. */
-  --info: #0284c7;
+  /* NEWS, not a verdict: a score update in the feed. Its own channel so the
+     feed's kinds stay disjoint: placed = --brand, tailed = --accent,
+     score = --info, settled = --pos/--neg/--muted (each also word-tagged). */
+  --info: #0b6e99;
 
-  /* CHART MARK (the /cfb/record calibration + running line). Its own token
-     because a plotted data mark is none of the other four channels: not the
-     brand (a surface), not an edge sign (--pos/--neg), not an execution mode
-     (--mode-*), not news (--info). Both values were CHOSEN BY RUNNING the
-     dataviz palette validator against each theme's card surface rather than
-     by eye:
-       light #2a78d6 on #ffffff — L 0.55 in band, chroma 0.15, contrast 4.6:1
-       dark  #4d97e6 on #161b22 — L 0.66 in band, chroma 0.13, contrast 5.4:1
-     Both charts are SINGLE-series, so this is the only data hue on the page;
-     the de-emphasised (thin-bucket) dots are hollow --muted, which is shape
-     plus colour plus a printed n, never colour alone. */
-  --rec-mark: #2a78d6;
+  /* CHART MARK. One rule everywhere (DESIGN.md): the series line is navy,
+     highlight points are gold. Dark mode lifts the navy to a readable
+     steel so the line still clears 3:1 on the card. The bright chart blue
+     (#2a78d6 / #4d97e6) is retired. */
+  --rec-mark: var(--navy);
+  --chart-line: var(--rec-mark);
+  --chart-point: var(--gold);
+  --chart-grid: var(--border);
 
-  /* Semantic result colours — themed so win/loss read on either background. */
+  /* Money. Green and red mean won and lost, and nothing else. */
   --pos: #15803d;
-  --neg: #dc2626;
+  --neg: #c81e1e;
 
-  /* EXECUTION MODE (maker vs taker) — a CATEGORICAL channel, deliberately
-     disjoint from --pos/--neg. On the bet cards those two mean exactly ONE
-     thing, the sign of an edge; painting "take now" red would read as a bad
-     bet. Cool = rest/maker, warm-but-not-red = take/taker.
-
-     Chosen by RUNNING the dataviz palette validator, not by eye
-     (`scripts/validate_palette.js "<hexes>" --mode light|dark --pairs all`).
-     Every pair involving a mode hue passes CVD separation and the
-     normal-vision floor against BOTH edge colours:
-       light  rest #6d28d9 / take #c08603 vs pos #15803d, neg #dc2626
-              worst CVD ΔE 7.9, worst normal ΔE 18.6
-       dark   rest #a78bfa / take #fbbf24 vs pos #3fb950, neg #f85149
-              worst CVD ΔE 8.5, worst normal ΔE 19.8
-     Contrast of each fill against its own ink is AA for small text
-     (7.10 / 5.62 light, 6.74 / 10.99 dark) and every fill clears 3:1 against
-     the card surface. Chips are ALSO direct-labelled "REST"/"TAKE", so
-     identity is never colour-alone.
-
-     (The one pair that fails the validator anywhere is --pos↔--neg in dark,
-     ΔE 2.2 deutan. That is pre-existing and site-wide semantic colour, not
-     something this channel introduced — do not "fix" it here.) */
+  /* EXECUTION MODE (maker vs taker), a categorical channel disjoint from
+     --pos/--neg. Values were chosen by running the dataviz palette validator
+     against both edge colours and both card surfaces (CVD and normal-vision
+     separation, AA ink); unchanged here. Chips are also word-labelled. */
   --mode-rest: #6d28d9;
   --mode-rest-ink: #ffffff;
   --mode-take: #c08603;
   --mode-take-ink: #111827;
 
-  /* Brand as TEXT. On dark, the brand that works as a button surface (white on
-     #3178c6 = 4.53) is only 3.8 as small text on the card, so text gets its
-     own lighter value. In light they are the same colour. */
+  /* Brand as TEXT (links, headings in brand colour). Same as the surface in
+     light; lifted in dark, where the surface value is too dim as small text. */
   --brand-text: var(--brand);
 
-  /* The site header is its own surface: in dark it must NOT become a bright
-     brand-coloured bar across the top. */
-  --header-bg: var(--brand);
-  --header-fg: var(--brand-contrast);
+  /* The site header: navy in BOTH themes, with a gold rule under it. */
+  --header-bg: var(--navy);
+  --header-fg: #ffffff;
+  --header-muted: #b4c2d1;   /* inactive nav on navy: 7.4:1 */
 
   /* Neutral raised fill (chips, table heads, skeletons). */
   --fill: color-mix(in oklab, var(--border) 55%, transparent);
-  --shadow: rgba(15, 23, 42, 0.18);
+  --shadow: rgba(15, 23, 42, 0.14);
+
+  /* ---- TYPE. One display face + the system sans. Every stat sets
+     font-variant-numeric: tabular-nums (.num, and the primitives do it). */
+  --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  --fs-xs: 12px;     /* the floor for any label (audit 7.4) */
+  --fs-sm: 13px;
+  --fs-base: 15px;
+  --fs-md: 17px;
+  --fs-lg: 20px;
+  --fs-xl: 26px;     /* section headline (display) */
+  --fs-2xl: 36px;    /* page headline (display) */
+  --fs-3xl: 52px;    /* hero number (display) */
+
+  /* ---- SPACE + SHAPE. 4px grid. Corners are small and rules are 1px; no
+     soft-shadow-on-everything. */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+  --r-sm: 3px;
+  --r: 4px;
+  --r-lg: 6px;
+  --rule: 1px solid var(--border);
+  --content-max: 1200px;
+  --read-max: 700px;
 
   color-scheme: light;
 }
 
-/* Georgia Southern palette (default) */
-.theme-blue-gold {
-  --brand: #0b2d4b;
-  --brand-contrast: #ffffff;
-  --accent: #c59b2b;
-}
-
-/* (Optional) Alabama palette you can toggle to later */
-.theme-crimson-white {
-  --brand: #9e1b32;          /* crimson */
-  --brand-contrast: #ffffff;
-  --accent: #bfbfbf;         /* subtle silver accent */
-}
-
 /* ---------------------------------------------------------------- dark ---- */
-/* Brand lightens in dark so it works BOTH as a button surface (white text on
-   #3178c6 clears AA) and as heading text on the page background. */
+/* Dark is navy-tinted charcoal, so the navy header sits on its own family.
+   --brand becomes a muted steel-navy that works both as a button surface
+   (white text 5.3:1) and as a fill on the card (3.3:1). The old bright
+   #3178c6 is retired everywhere. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --brand: #3178c6;
+    --brand: #3a6ea5;
     --brand-contrast: #ffffff;
-    --accent: #d3a83f;
-    --accent-contrast: #10151b;
-    --text: #e6edf3;
-    --muted: #97a5b6;
-    --bg: #0d1117;
-    --card: #161b22;
-    --border: #2b3440;
+    --accent-contrast: var(--navy);
+    --accent-ink: var(--gold);
+    --text: #e8edf2;
+    --muted: #9aa7b6;
+    --bg: #0c131b;
+    --card: #131c26;
+    --border: #273444;
     --pos: #3fb950;
     --neg: #f85149;
     --info: #56c8e8;
-    --rec-mark: #4d97e6;
+    --rec-mark: #8fb4dc;
     --mode-rest: #a78bfa;
     --mode-rest-ink: #10151b;
     --mode-take: #fbbf24;
     --mode-take-ink: #10151b;
-    --target-star: #f0b429;
-    --brand-text: #6cb0f5;
-    --header-bg: #10161f;
-    --header-fg: #e6edf3;
-    --shadow: rgba(0, 0, 0, 0.55);
+    --target-star: var(--gold);
+    --brand-text: #8fb4dc;
+    --shadow: rgba(0, 0, 0, 0.5);
     color-scheme: dark;
   }
-  /* Brand palettes must lighten too, or they win the cascade and go dark. */
-  :root:not([data-theme="light"]) .theme-blue-gold { --brand: #3178c6; --accent: #d3a83f; }
-  :root:not([data-theme="light"]) .theme-crimson-white { --brand: #d2465c; --accent: #cfcfcf; }
 }
 
 :root[data-theme="dark"] {
-  --brand: #3178c6;
+  --brand: #3a6ea5;
   --brand-contrast: #ffffff;
-  --accent: #d3a83f;
-  --accent-contrast: #10151b;
-  --text: #e6edf3;
-  --muted: #97a5b6;
-  --bg: #0d1117;
-  --card: #161b22;
-  --border: #2b3440;
+  --accent-contrast: var(--navy);
+  --accent-ink: var(--gold);
+  --text: #e8edf2;
+  --muted: #9aa7b6;
+  --bg: #0c131b;
+  --card: #131c26;
+  --border: #273444;
   --pos: #3fb950;
   --neg: #f85149;
   --info: #56c8e8;
-  --rec-mark: #4d97e6;
+  --rec-mark: #8fb4dc;
   --mode-rest: #a78bfa;
   --mode-rest-ink: #10151b;
   --mode-take: #fbbf24;
   --mode-take-ink: #10151b;
-  --target-star: #f0b429;
-    --brand-text: #6cb0f5;
-  --header-bg: #10161f;
-  --header-fg: #e6edf3;
-  --shadow: rgba(0, 0, 0, 0.55);
+  --target-star: var(--gold);
+  --brand-text: #8fb4dc;
+  --shadow: rgba(0, 0, 0, 0.5);
   color-scheme: dark;
 }
-:root[data-theme="dark"] .theme-blue-gold { --brand: #3178c6; --accent: #d3a83f; }
-:root[data-theme="dark"] .theme-crimson-white { --brand: #d2465c; --accent: #cfcfcf; }
 
 /* ------------------------------------------------------------ surfaces ---- */
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headlines are the display face everywhere, so a page that never heard of
+   the primitives still reads as the same publication. Weight 700, tight
+   leading, no letter-spacing tricks. */
+h1, h2, h3, .display {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+h1 { font-size: var(--fs-2xl); }
+h2 { font-size: var(--fs-xl); }
+h3 { font-size: var(--fs-lg); }
+/* Every stat is tabular so columns of numbers line up like agate. */
+.num, td, th, time { font-variant-numeric: tabular-nums; }
+/* Section kicker: the small uppercase label that heads a block. */
+.kicker {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--fs-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
 }
 
 .header {
@@ -199,14 +233,14 @@ body {
 .card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
 }
 
 .btn {
   background: var(--brand);
   color: var(--brand-contrast);
   border: 1px solid color-mix(in oklab, var(--brand) 70%, var(--card));
-  padding: 8px 12px; border-radius: 10px; cursor: pointer;
+  padding: 8px 12px; border-radius: var(--r-lg); cursor: pointer;
 }
 .btn.secondary {
   background: var(--accent);
@@ -228,7 +262,7 @@ body {
   font-size: 13px;
   line-height: 1.2;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r);
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--text);
@@ -313,7 +347,7 @@ body {
   font: inherit;
   font-size: 13px;
   padding: 5px 8px;
-  border-radius: 8px;
+  border-radius: var(--r);
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--text);
@@ -342,7 +376,7 @@ input, select, textarea {
   color: var(--text) !important;
   background-color: var(--card) !important;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r);
   padding: 6px 10px;
 }
 
@@ -387,7 +421,7 @@ input:focus, select:focus, textarea:focus {
   background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 12px 0 0 0;
+  border-radius: var(--r-lg) 0 0 0;
   box-shadow: 0 -4px 24px var(--shadow);
 }
 
@@ -395,7 +429,7 @@ input:focus, select:focus, textarea:focus {
   .parlay-slip {
     width: 100vw;
     max-height: 55vh;
-    border-radius: 12px 12px 0 0;
+    border-radius: var(--r-lg) 12px 0 0;
   }
 }
 
@@ -408,10 +442,10 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 1px solid var(--border);
   border-top: 3px solid var(--brand);
   background: color-mix(in oklab, var(--brand) 6%, var(--card));
-  border-radius: 12px 0 0 0;
+  border-radius: var(--r-lg) 0 0 0;
 }
 @media (max-width: 720px) {
-  .parlay-slip__head { border-radius: 12px 12px 0 0; }
+  .parlay-slip__head { border-radius: var(--r-lg) 12px 0 0; }
 }
 
 /* Division tag (FCS). Token-only so it reads in both themes; deliberately
@@ -447,7 +481,7 @@ input:focus, select:focus, textarea:focus {
 /* One game = one group, so same-game legs read as a unit. */
 .parlay-group {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   background: color-mix(in oklab, var(--border) 14%, var(--card));
 }
@@ -490,7 +524,7 @@ input:focus, select:focus, textarea:focus {
 /* Totals: the fair price is the hero, the maths that qualifies it is quieter. */
 .parlay-total {
   border: 1px solid var(--brand);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   overflow: hidden;
 }
 .parlay-hero {
@@ -547,7 +581,7 @@ input:focus, select:focus, textarea:focus {
    ========================================================================= */
 .top-edges {
   border: 1px solid var(--brand);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   background: var(--card);
   margin-bottom: 16px;
   overflow: hidden;
@@ -570,7 +604,7 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   width: 100%;
   padding: 5px 6px;
-  border-radius: 8px;
+  border-radius: var(--r);
   text-align: left;
   font: inherit;
   color: var(--text);
@@ -697,7 +731,7 @@ input:focus, select:focus, textarea:focus {
   width: 100%;
   padding: 4px 5px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--r);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -798,7 +832,7 @@ input:focus, select:focus, textarea:focus {
   gap: 6px;
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r);
   background: var(--card);
 }
 .portal-login__note { font-size: 11px; color: var(--muted); white-space: nowrap; }
@@ -823,7 +857,7 @@ input:focus, select:focus, textarea:focus {
   flex-direction: column;
   margin-top: 5px;
   padding: 0 4px 3px;
-  border-radius: 7px;
+  border-radius: var(--r);
   border: 1px solid color-mix(in oklab, var(--brand) 35%, var(--border));
   background: color-mix(in oklab, var(--brand) 8%, var(--card));
   font-variant-numeric: tabular-nums;
@@ -865,7 +899,7 @@ input:focus, select:focus, textarea:focus {
   height: 40px;
   padding: 0 5px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--r);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -971,7 +1005,7 @@ input:focus, select:focus, textarea:focus {
   flex-direction: column;
   margin-top: 5px;
   padding: 0 4px 3px;
-  border-radius: 7px;
+  border-radius: var(--r);
   border: 1px solid color-mix(in oklab, var(--brand) 35%, var(--border));
   background: color-mix(in oklab, var(--brand) 8%, var(--card));
   font-variant-numeric: tabular-nums;
@@ -999,7 +1033,7 @@ input:focus, select:focus, textarea:focus {
   height: 40px;
   padding: 0 5px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--r);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -1105,7 +1139,7 @@ input:focus, select:focus, textarea:focus {
   width: 28px; height: 32px;
   display: grid; place-items: center;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--r);
   background: transparent;
   color: var(--mybook-dim);
   font-size: 12px; font-weight: 800; line-height: 1;
@@ -1125,7 +1159,7 @@ input:focus, select:focus, textarea:focus {
   gap: 3px;
   padding: 8px 10px;
   border: 1px solid var(--brand);
-  border-radius: 8px;
+  border-radius: var(--r);
   background: var(--card);
   box-shadow: 0 4px 14px var(--shadow);
   font-size: 11.5px;
@@ -1153,7 +1187,7 @@ input:focus, select:focus, textarea:focus {
   width: 100%;
   padding: 4px 8px;
   border: 1px solid color-mix(in oklab, var(--brand) 35%, var(--border));
-  border-radius: 9px;
+  border-radius: var(--r);
   background: color-mix(in oklab, var(--brand) 8%, var(--card));
   color: var(--text);
   font: inherit;
@@ -1194,7 +1228,7 @@ input:focus, select:focus, textarea:focus {
   min-height: 30px;
   padding: 3px 8px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--r);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -1360,7 +1394,7 @@ input:focus, select:focus, textarea:focus {
   margin: 0 0 12px;
   padding: 7px 12px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--r);
   background: var(--card);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -1456,7 +1490,7 @@ input:focus, select:focus, textarea:focus {
 .parlay-notice {
   border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--border));
   border-left: 3px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   padding: 9px 10px;
   background: color-mix(in oklab, var(--accent) 10%, var(--card));
 }
@@ -1468,7 +1502,7 @@ input:focus, select:focus, textarea:focus {
 .skel {
   position: relative;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: var(--r);
   background: color-mix(in oklab, var(--border) 70%, var(--card));
 }
 .skel::after {
@@ -1535,7 +1569,7 @@ input:focus, select:focus, textarea:focus {
   gap: 0;
   border: 1px solid var(--border);
   border-left-width: 4px;
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   background: var(--card);
   overflow: hidden;
 }
@@ -1631,7 +1665,7 @@ input:focus, select:focus, textarea:focus {
 .fdp__chip {
   font-size: 11px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-ink);
   white-space: nowrap;
 }
 .fdp__meta { font-size: 11.5px; color: var(--muted); line-height: 1.3; }
@@ -1648,7 +1682,7 @@ input:focus, select:focus, textarea:focus {
   margin: 4px 0 6px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r);
   background: var(--card);
   box-shadow: 0 6px 18px var(--shadow);
   font-size: 12px;
@@ -1804,7 +1838,7 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   gap: 2px;
   min-width: 0;
-  border-radius: 9px;
+  border-radius: var(--r);
   border: 1px solid transparent;
 }
 .booktree__row[data-depth="0"] {
@@ -1949,7 +1983,7 @@ input:focus, select:focus, textarea:focus {
   display: grid;
   gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r);
   background: var(--card);
   font-size: 11.5px;
   line-height: 1.45;
@@ -1989,7 +2023,7 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--border);
-  border-radius: 14px 14px 0 0;
+  border-radius: var(--r-lg) 14px 0 0;
   background: var(--card);
   box-shadow: 0 -8px 26px var(--shadow);
 }
@@ -2002,7 +2036,7 @@ input:focus, select:focus, textarea:focus {
     max-height: none;
     border-top: 0;
     border-left: 1px solid var(--border);
-    border-radius: 14px 0 0 14px;
+    border-radius: var(--r-lg) 0 0 14px;
     box-shadow: -8px 0 26px var(--shadow);
   }
 }
@@ -2129,14 +2163,14 @@ input:focus, select:focus, textarea:focus {
   justify-content: space-between; min-width: 0;
 }
 .rec__headWords { min-width: 0; display: grid; gap: 3px; }
-.rec__h1 { margin: 0; font-size: 22px; font-weight: 900; letter-spacing: -0.4px; }
-.rec__h2 { margin: 0; font-size: 15px; font-weight: 800; }
+.rec__h1 { margin: 0; font-family: var(--font-display); font-size: var(--fs-2xl); font-weight: 700; line-height: 1.05; }
+.rec__h2 { margin: 0; font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 700; line-height: 1.1; }
 .rec__sub { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
 .rec__help { flex: 0 0 auto; font-weight: 800; }
 
 .rec__defs {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   background: var(--card);
   padding: 10px 12px;
   font-size: 12.5px;
@@ -2155,13 +2189,13 @@ input:focus, select:focus, textarea:focus {
   grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   background: var(--card);
   padding: 10px;
 }
 .rec__f { display: grid; gap: 3px; min-width: 0; }
 .rec__f > span {
-  font-size: 10.5px; font-weight: 800; letter-spacing: 0.4px;
+  font-size: var(--fs-xs); font-weight: 800; letter-spacing: 0.4px;
   text-transform: uppercase; color: var(--muted);
 }
 .rec__f .ui-sel { width: 100%; min-width: 0; min-height: 34px; }
@@ -2170,7 +2204,7 @@ input:focus, select:focus, textarea:focus {
 /* -------------------------------- the panels ----------------------------- */
 .rec__panel {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   background: var(--card);
   padding: 12px;
   display: grid; gap: 10px;
@@ -2188,10 +2222,11 @@ input:focus, select:focus, textarea:focus {
   font-size: 11px; font-weight: 800; letter-spacing: 0.4px;
   text-transform: uppercase; color: var(--muted);
 }
-/* Proportional figures on purpose: tabular-nums makes a display-size number
-   read loose. The same sans as everything else — no display face. */
+/* The verdict number is the display face (DESIGN.md: one condensed face for
+   headlines and big numbers). Tabular, like every stat. */
 .rec__hero {
-  font-size: 44px; font-weight: 900; line-height: 1.02; letter-spacing: -1.5px;
+  font-family: var(--font-display); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-3xl); font-weight: 800; line-height: 1; letter-spacing: 0;
 }
 .rec__heroSub { font-size: 13px; color: var(--muted); line-height: 1.45; }
 .rec__heroSub strong { color: var(--text); font-weight: 900; }
@@ -2203,7 +2238,7 @@ input:focus, select:focus, textarea:focus {
 }
 .rec__tile {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: var(--fill);
   padding: 7px 9px;
   min-width: 0;
@@ -2213,7 +2248,8 @@ input:focus, select:focus, textarea:focus {
   text-transform: uppercase; color: var(--muted);
 }
 .rec__tileValue {
-  font-size: 19px; font-weight: 900; letter-spacing: -0.4px; line-height: 1.2;
+  font-family: var(--font-display); font-variant-numeric: tabular-nums;
+  font-size: 24px; font-weight: 700; line-height: 1.15;
 }
 .rec__tileNote { font-size: 10.5px; color: var(--muted); }
 
@@ -2228,7 +2264,7 @@ input:focus, select:focus, textarea:focus {
 }
 .rec__splitTile {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: var(--fill);
   padding: 6px 9px;
   min-width: 0;
@@ -2239,7 +2275,7 @@ input:focus, select:focus, textarea:focus {
   text-transform: uppercase; color: var(--muted);
   flex: 1 0 100%;
 }
-.rec__splitRoi { font-size: 17px; font-weight: 900; letter-spacing: -0.4px; }
+.rec__splitRoi { font-family: var(--font-display); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; }
 .rec__splitN { font-size: 11px; color: var(--muted); }
 
 /* The exporter's own fine print for a family in play, under the selectors. */
@@ -2315,7 +2351,7 @@ input:focus, select:focus, textarea:focus {
 .rec__tip {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   box-shadow: 0 6px 18px var(--shadow);
   padding: 7px 9px;
   font-size: 11.5px;
@@ -2402,7 +2438,7 @@ input:focus, select:focus, textarea:focus {
   gap: 6px; align-items: baseline;
   font-size: 11.5px;
   padding: 4px 6px;
-  border-radius: 7px;
+  border-radius: var(--r);
   min-width: 0;
 }
 .rec__rung--shown { background: var(--fill); font-weight: 800; }
@@ -2414,7 +2450,7 @@ input:focus, select:focus, textarea:focus {
 /* --------------------------------- states -------------------------------- */
 .rec__empty {
   border: 1px dashed var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   padding: 16px;
   font-size: 13px;
   color: var(--muted);
@@ -2460,7 +2496,7 @@ input:focus, select:focus, textarea:focus {
   margin: -2px 0 6px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r);
   background: color-mix(in oklab, var(--accent) 6%, var(--card));
 }
 
@@ -2745,7 +2781,7 @@ a.fr-person:hover, a.fr-person:focus-visible {
   margin-top: 5px;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r);
   background: var(--fill);
   font-size: 11px;
   line-height: 1.5;

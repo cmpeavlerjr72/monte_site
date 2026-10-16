@@ -132,7 +132,7 @@
 .cb-mb-side { display: flex; align-items: center; gap: 8px; }
 .cb-mb-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; }
 .cb-mb-name { font-weight: 600; color: var(--text); }
-.cb-mb-num { color: var(--accent); font-weight: 600; }
+.cb-mb-num { color: var(--accent-ink); font-weight: 600; }
 
 /* Situation */
 .cb-situation { display: flex; justify-content: center; gap: 24px; margin-bottom: 16px; font-size: 13px; color: var(--muted); }
@@ -172,7 +172,7 @@
 .cb-bt-player-cell { text-align: left !important; padding-left: 12px !important; color: var(--text) !important; }
 .cb-jersey { color: var(--muted); font-size: 11px; margin-right: 4px; }
 .cb-pname { font-weight: 500; }
-.cb-hl { color: var(--accent) !important; font-weight: 700 !important; }
+.cb-hl { color: var(--accent-ink) !important; font-weight: 700 !important; }
 .cb-box-table tbody tr:hover { background: color-mix(in oklab, var(--card) 96%, var(--brand)); }
 .cb-totals td { font-weight: 700 !important; color: var(--text) !important; border-top: 2px solid var(--border); background: color-mix(in oklab, var(--card) 95%, var(--border)); }
 
@@ -180,7 +180,7 @@
 .cb-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 16px; }
 .cb-tabs button { background: none; border: none; padding: 10px 20px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
 .cb-tabs button:hover { color: var(--text); }
-.cb-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.cb-tabs button.active { color: var(--accent-ink); border-bottom-color: var(--accent); }
 
 /* ── Responsive ───────────────────────────────────────────── */
 @media (max-width: 768px) {

@@ -6,6 +6,9 @@ import { BrowserRouter } from "react-router-dom";
 // App.tsx or a page.
 import "./theme.css";
 import "./index.css";
+import "./styles/ui.css";
+// Applies the stored theme choice at boot (shared store, see usePrefs.ts).
+import "./lib/usePrefs";
 import App from "./App";
 import { registerServiceWorker } from "./lib/pwa";
 
@@ -17,7 +20,6 @@ if (!rootEl) {
   throw new Error("Missing #root element");
 }
 
-document.documentElement.classList.add("theme-blue-gold");
 
 
 ReactDOM.createRoot(rootEl).render(

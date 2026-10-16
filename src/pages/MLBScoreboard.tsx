@@ -505,7 +505,7 @@ function GameCard({
           <Link
             to={`/mlb/game/${g.slug}`}
             style={{
-              color: "var(--accent)",
+              color: "var(--accent-ink)",
               fontWeight: 700,
               fontSize: 13,
               textDecoration: "none",

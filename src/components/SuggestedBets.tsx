@@ -2253,7 +2253,7 @@ export function ConfirmSlip({
                             // literal, which put a partial fill in the "this
                             // row cleared the bar" channel — different meaning,
                             // same colour.
-                            color: "var(--accent)", fontWeight: 800, fontSize: 12,
+                            color: "var(--accent-ink)", fontWeight: 800, fontSize: 12,
                             lineHeight: 1.45,
                           }}>
                             Partial fill: {filled} of {p.count} contracts
@@ -2354,7 +2354,7 @@ export function ConfirmSlip({
                       display: "grid", gap: 4, marginTop: 4, padding: "6px 8px",
                       border: "1px solid var(--border)", borderRadius: 8,
                     }}>
-                      <div style={{ color: "var(--accent)", fontWeight: 800, fontSize: 12 }}>
+                      <div style={{ color: "var(--accent-ink)", fontWeight: 800, fontSize: 12 }}>
                         Price is now {cents(ask)}{size !== null && size !== undefined ? ` (${Math.floor(size)} there)` : ""}
                         {" "}— you confirmed {cents(r.price_dollars)}.
                       </div>

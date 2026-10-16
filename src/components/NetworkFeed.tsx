@@ -712,7 +712,7 @@ function kindOf(item: FeedItem): Kind {
       tone, rail: tone,
     };
   }
-  if (item.tailed_from) return { word: "tailed", tone: "var(--accent)", rail: "var(--accent)" };
+  if (item.tailed_from) return { word: "tailed", tone: "var(--accent-ink)", rail: "var(--accent)" };
   return {
     word: item.source === "posted" ? "posted" : "placed",
     tone: "var(--brand-text)",

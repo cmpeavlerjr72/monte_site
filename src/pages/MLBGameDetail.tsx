@@ -177,7 +177,7 @@ export default function MLBGameDetail() {
   return (
     <div>
       {/* Back link */}
-      <Link to="/mlb/scoreboard" style={{ color: "var(--accent)", fontWeight: 600, fontSize: 13, textDecoration: "none" }}>
+      <Link to="/mlb/scoreboard" style={{ color: "var(--accent-ink)", fontWeight: 600, fontSize: 13, textDecoration: "none" }}>
         &larr; Back to Scoreboard
       </Link>
 

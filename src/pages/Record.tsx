@@ -65,12 +65,12 @@ const SEASON = "2026";
 /** Rows drawn before the first "show more", and per press after it. */
 const PAGE = 50;
 
-/** Chart mark hue. Its own token because it is a DATA mark, not the brand, not
- *  an edge sign and not an execution mode — the four channels stay disjoint.
- *  Both values were chosen by running the dataviz palette validator against
- *  each theme's card surface (light #2a78d6 on #ffffff, dark #4d97e6 on
- *  #161b22): lightness band, chroma floor and 3:1 contrast all pass. */
+/** Chart marks, one rule site-wide (docs/DESIGN.md): the series LINE is navy
+ *  (`--rec-mark`, lifted to a steel that clears 3:1 on the dark card) and the
+ *  HIGHLIGHT POINTS are the brand gold. Data marks stay disjoint from the edge
+ *  sign (--pos/--neg) and the execution mode (--mode-*). */
 const MARK = "var(--rec-mark)";
+const POINT = "var(--chart-point)";
 
 const conferenceOf = (team: string): string =>
   FBS_CONFERENCE[cfbNameKey(team || "")] ?? "";
@@ -144,7 +144,7 @@ function CalDot(props: any) {
   return (
     <circle
       cx={cx} cy={cy} r={5}
-      fill={thin ? "var(--card)" : MARK}
+      fill={thin ? "var(--card)" : POINT}
       stroke={thin ? "var(--muted)" : "var(--card)"}
       strokeWidth={2}
       opacity={thin ? 0.85 : 1}
@@ -545,13 +545,13 @@ function RunningUnits({ rows, frame, fee, mode }: {
                     dot={points.length <= DOTS_UPTO
                       ? { r: 2.5, fill: MARK, stroke: "none", fillOpacity: 0.55 }
                       : false}
-                    activeDot={{ r: 5, fill: MARK, stroke: "var(--card)", strokeWidth: 2 }}
+                    activeDot={{ r: 5, fill: POINT, stroke: "var(--card)", strokeWidth: 2 }}
                     isAnimationActive={false}
                   />
                   {/* The one direct label: where the line ends is the hero. */}
                   <ReferenceDot
-                    x={chart.last.t} y={chart.last.cum} r={3.5}
-                    fill={MARK} stroke="var(--card)" strokeWidth={2}
+                    x={chart.last.t} y={chart.last.cum} r={4.5}
+                    fill={POINT} stroke="var(--card)" strokeWidth={2}
                     label={{ value: `${signed(end)}u`, position: "right",
                              fill: toneOf(end), fontSize: 11.5, fontWeight: 800 }}
                   />

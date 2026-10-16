@@ -1,7 +1,7 @@
 // src/components/Header.tsx
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
-import logoLight from "../assets/mvpeav-logo-light.png";
+import shield from "../assets/mv-shield.png";
 
 import SupportButton from "../components/SupportButton";
 import AccountMenu from "./AccountMenu";
@@ -39,15 +39,9 @@ export default function Header() {
     <header className="site-header" data-role="header">
       <div className="inner header-inner">
         {/* Brand */}
-        <Link
-          to="/"
-          className="brand"
-          style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none" }}
-        >
-          <img src={logoLight} alt="MVPeav" height={40} />
-          <span style={{ fontWeight: 800, letterSpacing: 1, color: "var(--brand-contrast)" }}>
-            MVPEAV
-          </span>
+        <Link to="/" className="brand" aria-label="MVPEAV home">
+          <img className="brand__mark" src={shield} alt="" width={33} height={36} />
+          <span className="brand__word">MVPEAV</span>
         </Link>
 
         {/* Sport pills (always visible) */}

@@ -3278,7 +3278,7 @@ function Distributions(props: {
   return (
     <div style={{ marginTop: 10 }}>
       {loadingDist && <div style={{ opacity: 0.8 }}>Loading sims…</div>}
-      {errDist && <div style={{ color: "var(--accent)" }}>{errDist}</div>}
+      {errDist && <div style={{ color: "var(--accent-ink)" }}>{errDist}</div>}
 
       {!loadingDist && !errDist && !!(Apts.length && Bpts.length) && (
         <>

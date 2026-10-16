@@ -434,7 +434,7 @@ export default function TestBets() {
           border: "1px dashed var(--border)", borderRadius: 8, padding: "8px 10px",
           background: "var(--fill)", color: "var(--muted)", fontSize: 11.5, lineHeight: 1.55,
         }}>
-          <b style={{ color: "var(--accent)" }}>FIXTURE BOOK.</b>{" "}
+          <b style={{ color: "var(--accent-ink)" }}>FIXTURE BOOK.</b>{" "}
           Sim rungs, team names and open spreads are the REAL published
           {" "}{data?.note ?? "week"}. The Kalshi PRICES are synthetic — every
           rung is placed {Math.round(skew * 100)}¢ under the sim (tapering into

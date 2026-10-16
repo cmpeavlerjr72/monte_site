@@ -16,12 +16,11 @@
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:site" content="@MVPeav" />
 
-    <!-- PWA: installable shell. Colors mirror what the header actually paints,
-         which is var(--brand) in src/index.css — navy in light, the lightened
-         brand blue in dark (see src/theme.css). -->
+    <!-- PWA: installable shell. The header is navy in both themes
+         (--header-bg in src/theme.css), so the browser chrome is too. -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#0b2d4b" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#3178c6" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#0b2d4b" media="(prefers-color-scheme: dark)" />
     <meta name="application-name" content="MVPEAV" />
 
     <!-- iOS installability. black-translucent puts the status bar OVER the
@@ -33,6 +32,11 @@
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
 
+    <!-- Apply a stored light/dark choice before first paint (no flash). Same
+         key and values as src/lib/usePrefs.ts; storage can throw, so guarded. -->
+    <script>
+      try { var m = localStorage.getItem("cfb.theme"); if (m === "light" || m === "dark") document.documentElement.setAttribute("data-theme", m); } catch (e) {}
+    </script>
     <style>
       body { margin:0; font-family: system-ui, Arial, sans-serif; }
       #root { min-height: 100vh; }

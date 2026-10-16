@@ -109,16 +109,34 @@ export function useIsDark(): boolean {
   return useSyncExternalStore(subscribeTheme, resolveIsDark, () => false);
 }
 
-export function useThemeMode() {
-  const [mode, setMode] = useState<ThemeMode>(() => {
-    const v = typeof window === "undefined" ? null : readStored(THEME_KEY);
-    return v === "light" || v === "dark" || v === "system" ? v : "system";
-  });
+/* THE CHOSEN theme mode is ONE module-level store (2026-10-16). It used to be
+   per-component useState, applied only while a scoreboard was mounted: a
+   viewer who picked dark on the board and then opened /cfb/record directly got
+   the OS theme, and two toggles on one page (board + footer) disagreed. Now
+   the stored choice is applied once at module load and every useThemeMode()
+   reads and writes the same value. */
+function readMode(): ThemeMode {
+  const v = typeof window === "undefined" ? null : readStored(THEME_KEY);
+  return v === "light" || v === "dark" || v === "system" ? v : "system";
+}
+let themeModeNow: ThemeMode = readMode();
+applyTheme(themeModeNow);
+const themeModeListeners = new Set<() => void>();
+function subscribeThemeMode(fn: () => void): () => void {
+  themeModeListeners.add(fn);
+  return () => { themeModeListeners.delete(fn); };
+}
+function setThemeModeNow(next: ThemeMode | ((m: ThemeMode) => ThemeMode)): void {
+  const m = typeof next === "function" ? next(themeModeNow) : next;
+  if (m === themeModeNow) return;
+  themeModeNow = m;
+  applyTheme(m);
+  writeStored(THEME_KEY, m);
+  themeModeListeners.forEach((fn) => fn());
+}
 
-  useEffect(() => {
-    applyTheme(mode);
-    writeStored(THEME_KEY, mode);
-  }, [mode]);
+export function useThemeMode() {
+  const mode = useSyncExternalStore(subscribeThemeMode, () => themeModeNow, () => "system" as ThemeMode);
 
   /** What the page is actually showing right now, resolving "system".
    *  Reads the store so an OS flip under "system" re-renders the consumer
@@ -128,8 +146,9 @@ export function useThemeMode() {
 
   // Cycle light -> dark -> system so a viewer can always get back to the OS.
   const cycle = useCallback(() => {
-    setMode((m) => (m === "system" ? "dark" : m === "dark" ? "light" : "system"));
+    setThemeModeNow((m) => (m === "system" ? "dark" : m === "dark" ? "light" : "system"));
   }, []);
+  const setMode = useCallback((m: ThemeMode) => setThemeModeNow(m), []);
 
   return { mode, resolved, setMode, cycle };
 }

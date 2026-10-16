@@ -1,0 +1,160 @@
+/* ============================================================================
+   PRIMITIVES (src/components/ui). Tokens only; see docs/DESIGN.md.
+   Imported once, in main.tsx, right after theme.css and index.css.
+   ========================================================================= */
+
+/* ------------------------------------------------------------ PageHeader -- */
+.ph {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-4);
+  padding-bottom: var(--sp-3); margin-bottom: var(--sp-5);
+  border-bottom: var(--rule); min-width: 0;
+}
+.ph__words { display: grid; gap: 4px; min-width: 0; }
+.ph__title { margin: 0; font-size: var(--fs-2xl); font-weight: 700; line-height: 1.02; text-wrap: balance; }
+.ph__sub { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-base); max-width: 70ch; }
+.ph__actions { flex: 0 0 auto; display: flex; gap: var(--sp-2); align-items: center; }
+@media (max-width: 560px) {
+  .ph { flex-direction: column; align-items: flex-start; margin-bottom: var(--sp-4); }
+  .ph__title { font-size: 30px; }
+}
+
+/* ------------------------------------------------------------------ Card -- */
+.ui-card {
+  background: var(--card); border: var(--rule); border-radius: var(--r-lg);
+  padding: var(--sp-4); min-width: 0;
+}
+.ui-card--flush { padding: 0; overflow: hidden; }
+.ui-card--flush > .ui-card__head { padding: var(--sp-3) var(--sp-4); border-bottom: var(--rule); margin: 0; }
+.ui-card__head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-3);
+  margin-bottom: var(--sp-3); min-width: 0;
+}
+.ui-card__titles { display: grid; gap: 2px; min-width: 0; }
+.ui-card__title {
+  margin: 0; font-size: var(--fs-lg); font-weight: 700; line-height: 1.1;
+}
+.ui-card__action { flex: 0 0 auto; font-size: var(--fs-sm); }
+.ui-card__action a { color: var(--brand-text); font-weight: 700; }
+.ui-card__action a:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------------------ Stat -- */
+.stat { display: grid; gap: 2px; min-width: 0; }
+.stat__label {
+  font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.stat__value {
+  font-family: var(--font-display); font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap;
+}
+.stat--sm .stat__value { font-size: 20px; }
+.stat--md .stat__value { font-size: 28px; }
+.stat--lg .stat__value { font-size: 40px; font-weight: 800; }
+.stat--xl .stat__value { font-size: var(--fs-3xl); font-weight: 800; }
+.stat__note { font-size: var(--fs-xs); color: var(--muted); }
+.tone-pos { color: var(--pos) !important; }
+.tone-neg { color: var(--neg) !important; }
+.tone-gold { color: var(--accent-ink) !important; }
+.tone-muted { color: var(--muted) !important; }
+
+/* ------------------------------------------------------------------ Pill -- */
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 6px; border-radius: var(--r-sm);
+  font-family: var(--font-display); font-weight: 700; font-size: var(--fs-sm);
+  letter-spacing: 0.06em; text-transform: uppercase; line-height: 1.25;
+  white-space: nowrap; border: 1px solid transparent;
+}
+.pill--neutral { background: var(--fill); color: var(--text); }
+.pill--outline { border-color: var(--border); color: var(--muted); }
+.pill--gold { background: var(--gold); color: var(--navy); }
+.pill--navy { background: var(--navy); color: #ffffff; }
+.pill--pos { background: color-mix(in oklab, var(--pos) 14%, var(--card)); color: var(--pos); }
+.pill--neg { background: color-mix(in oklab, var(--neg) 14%, var(--card)); color: var(--neg); }
+
+/* ------------------------------------------------------------------ Tabs -- */
+.tabs {
+  display: flex; gap: var(--sp-5); border-bottom: var(--rule);
+  overflow-x: auto; scrollbar-width: none; min-width: 0;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tabs__tab {
+  appearance: none; background: none; border: 0; border-bottom: 3px solid transparent;
+  margin-bottom: -1px; padding: 8px 0 7px; cursor: pointer; white-space: nowrap;
+  font-family: var(--font-display); font-weight: 700; font-size: 17px;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted);
+}
+.tabs__tab:hover { color: var(--text); border-bottom-color: var(--border); }
+.tabs__tab.is-active, .tabs__tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--gold); }
+button.tabs__tab:hover:not(:disabled) { border-color: transparent; border-bottom-color: var(--border); }
+button.tabs__tab.is-active:hover:not(:disabled) { border-bottom-color: var(--gold); }
+
+/* ------------------------------------------------------------- DataTable -- */
+.dt-scroll { overflow-x: auto; width: 100%; min-width: 0; }
+.dt { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.dt th {
+  font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--text);
+  white-space: nowrap; background: transparent;
+}
+.dt td { padding: 8px 10px; border-bottom: var(--rule); vertical-align: middle; }
+.dt tbody tr:last-child td { border-bottom: 0; }
+.dt tbody tr:hover td { background: color-mix(in oklab, var(--fill) 60%, transparent); }
+.dt--dense td, .dt--dense th { padding: 5px 8px; }
+.dt__empty { color: var(--muted); text-align: center !important; padding: 18px !important; }
+.dt__caption { caption-side: top; text-align: left; font-size: var(--fs-xs); color: var(--muted); padding-bottom: 6px; }
+
+/* ------------------------------------------------------------ EmptyState -- */
+.empty {
+  border: var(--rule); border-left: 4px solid var(--gold); border-radius: var(--r);
+  background: var(--card); padding: var(--sp-5) var(--sp-5); display: grid; gap: var(--sp-2);
+  max-width: 760px;
+}
+.empty--compact { padding: var(--sp-3) var(--sp-4); }
+.empty__title { margin: 0; font-size: var(--fs-xl); line-height: 1.05; }
+.empty--compact .empty__title { font-size: var(--fs-lg); }
+.empty__body { color: var(--muted); font-size: var(--fs-base); max-width: 62ch; }
+.empty__body p { margin: 0 0 6px; }
+.empty__action { margin-top: var(--sp-2); display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+
+/* -------------------------------------------------------------- TeamCell -- */
+.team-cell { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.team-cell__logo { flex: 0 0 auto; object-fit: contain; }
+.team-cell__logo--none { display: inline-block; border-radius: 50%; background: var(--fill); }
+.team-cell__words { display: grid; min-width: 0; }
+.team-cell__name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.team-cell__sub { font-size: var(--fs-xs); color: var(--muted); }
+
+/* ------------------------------------------------------------ ButtonLink -- */
+.btn-link {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 16px;
+  border-radius: var(--r); font-family: var(--font-display); font-weight: 700;
+  font-size: 17px; letter-spacing: 0.05em; text-transform: uppercase; border: 1px solid transparent;
+  text-decoration: none; white-space: nowrap;
+}
+.btn-link--primary { background: var(--navy); color: #ffffff; }
+.btn-link--primary:hover { background: color-mix(in oklab, var(--navy) 85%, var(--text)); }
+:root[data-theme="dark"] .btn-link--primary { background: var(--brand); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn-link--primary { background: var(--brand); } }
+.btn-link--gold { background: var(--gold); color: var(--navy); }
+.btn-link--gold:hover { background: color-mix(in oklab, var(--gold) 85%, var(--text)); }
+.btn-link--quiet { border-color: var(--border); color: var(--text); background: var(--card); }
+.btn-link--quiet:hover { border-color: var(--text); }
+
+/* ---------------------------------------------------------------- layout -- */
+/* A simple responsive grid for cards. */
+.grid { display: grid; gap: var(--sp-4); }
+.grid--2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); }
+.grid--3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.grid--4 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+.stack { display: grid; gap: var(--sp-5); }
+.prose { max-width: var(--read-max); font-size: 17px; line-height: 1.6; }
+.prose p { margin: 0 0 1em; }
+.prose h2 { margin: 1.4em 0 0.4em; }
+.prose a { color: var(--brand-text); text-decoration: underline; text-underline-offset: 2px; }
+.link { color: var(--brand-text); font-weight: 700; }
+.link:hover { text-decoration: underline; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}

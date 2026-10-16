@@ -30,60 +30,68 @@ a { color: inherit; text-decoration: none; }
 
   /* --- New Part --- */
 
-/* Keep your existing header colors; add positioning so dropdown anchors to header */
-.site-header { position: sticky; top: 0; z-index: 1000; background: var(--brand, #0b63f6); color: var(--brand-contrast, #fff); }
-.header-inner { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
-.tabbar { display: flex; gap: 8px; }
-.tab { display:inline-flex; align-items:center; padding:6px 10px; border-radius:999px; font-weight:700; color: var(--brand-contrast,#fff); border:1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.12); }
-.tab.active, .tab[aria-current="page"] { background:#fff; color: var(--brand,#0b63f6); border-color:transparent; }
+/* ================================================================ header ===
+   Navy bar in BOTH themes (--header-bg), the MV shield + wordmark, plain-text
+   nav with a gold underline on the active page, and a 2px gold rule along the
+   bottom. Tokens only: no fallback hexes (they disagreed with theme.css). */
+.site-header {
+  position: sticky; top: 0; z-index: 1000;
+  background: var(--header-bg); color: var(--header-fg);
+  border-bottom: 2px solid var(--gold);
+}
+.header-inner {
+  position: relative; display: flex; align-items: center; gap: var(--sp-5);
+  max-width: var(--content-max); margin: 0 auto; padding: 0 16px; min-height: 56px;
+}
+.brand { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; color: var(--header-fg); }
+.brand__mark { display: block; width: auto; height: 36px; }
+.brand__word {
+  font-family: var(--font-display); font-weight: 800; font-size: 24px;
+  letter-spacing: 0.04em; line-height: 1; color: var(--header-fg);
+}
 
-/* Desktop inline nav */
-.primary-nav { display:flex; gap:12px; font-weight:600; margin-left:auto; }
-.primary-nav a { color: var(--brand-contrast,#fff); text-decoration:none; }
-.primary-nav a.active { text-decoration: underline; }
+/* Plain-text nav. Active = white text + gold underline sitting on the rule. */
+.tabbar, .primary-nav { display: flex; align-items: stretch; gap: var(--sp-4); }
+.tab, .primary-nav a {
+  display: inline-flex; align-items: center; min-height: 56px;
+  font-family: var(--font-display); font-weight: 700; font-size: 18px;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--header-muted); border-bottom: 3px solid transparent; margin-bottom: -2px;
+  padding-top: 3px;
+}
+.tab:hover, .primary-nav a:hover { color: var(--header-fg); }
+.tab.active, .tab[aria-current="page"], .primary-nav a.active {
+  color: var(--header-fg); border-bottom-color: var(--gold);
+}
+.primary-nav { margin-left: auto; gap: var(--sp-3); }
+.primary-nav a { font-size: 15px; }
 
 /* Hamburger trigger (hidden on desktop) */
-.menu-wrap { position: relative; margin-left: 8px; }
-.menu-trigger { display:none; width:40px; height:40px; border:0; background: transparent; border-radius: 8px; }
+.menu-wrap { position: relative; margin-left: 4px; }
+.menu-trigger {
+  display: none; width: 44px; height: 44px; border: 0; background: transparent;
+  border-radius: var(--r); color: var(--header-fg);
+}
 .menu-icon, .menu-icon::before, .menu-icon::after {
-  content:""; display:block; width:22px; height:3px; background: var(--brand-contrast,#fff);
-  margin:0 auto; border-radius: 3px; position: relative;
+  content:""; display:block; width:22px; height:2px; background: var(--header-fg);
+  margin:0 auto; position: relative;
 }
 .menu-icon::before { position:absolute; top:-7px; left:0; right:0; }
 .menu-icon::after  { position:absolute; top: 7px; left:0; right:0; }
 
 /* Dropdown (anchored to top-right of header content) */
 .menu-dropdown {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  background: #fff;
-  color: #0b1225;
-  border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(0,0,0,.18);
-  width: min(86vw, 320px);
-  padding: 6px;
-  display: grid;
-  gap: 4px;
-  transform-origin: top right;
-  transform: scaleY(0.8);
-  opacity: 0;
-  pointer-events: none;
-  transition: transform .16s ease, opacity .16s ease;
-  z-index: 1100;
+  position: absolute; right: 0; top: calc(100% + 2px);
+  background: var(--card); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: 0 10px 24px var(--shadow);
+  width: min(86vw, 320px); padding: 6px; display: grid; gap: 2px;
+  opacity: 0; pointer-events: none; transition: opacity .12s ease; z-index: 1100;
 }
-.menu-dropdown a {
-  padding: 10px 12px;
-  border-radius: 8px;
-  text-decoration: none;
-  color: inherit;
-  font-weight: 600;
-}
-.menu-dropdown a:hover, .menu-dropdown a.active {
-  background: #eef3ff;
-  color: #0b63f6;
-}
-.menu-dropdown.open { transform: scaleY(1); opacity: 1; pointer-events: auto; }
+.menu-dropdown a { padding: 10px 12px; border-radius: var(--r); color: inherit; font-weight: 600; }
+.menu-dropdown a:hover, .menu-dropdown a.active { background: var(--fill); }
+.menu-dropdown a.active { box-shadow: inset 3px 0 0 var(--gold); }
+.menu-dropdown.open { opacity: 1; pointer-events: auto; }
 
 /* ---------------------------------------------- account menu (ribbon) ---
    The Log in / username control. It sits in the brand-coloured ribbon, so
@@ -94,8 +102,8 @@ a { color: inherit; text-decoration: none; }
 .acct-trigger {
   display: inline-flex; align-items: center; gap: 6px;
   min-height: 34px; padding: 6px 12px;
-  border-radius: 999px; border: 1px solid rgba(255,255,255,.25);
-  background: rgba(255,255,255,.12); color: var(--brand-contrast, #fff);
+  border-radius: var(--r); border: 1px solid color-mix(in oklab, var(--header-fg) 30%, transparent);
+  background: transparent; color: var(--header-fg);
   font: inherit; font-weight: 700; font-size: 13px; cursor: pointer;
   white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis;
 }
@@ -103,12 +111,12 @@ a { color: inherit; text-decoration: none; }
   position: absolute; right: 0; top: calc(100% + 6px);
   width: min(92vw, 340px); padding: 12px;
   background: var(--card); color: var(--text);
-  border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 10px 24px var(--shadow, rgba(0,0,0,.18));
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: 0 10px 24px var(--shadow);
   z-index: 1100;
 }
 .acct-item {
-  display: block; width: 100%; padding: 9px 10px; border-radius: 8px;
+  display: block; width: 100%; padding: 9px 10px; border-radius: var(--r);
   color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600;
 }
 .acct-item:hover { background: var(--fill); }
@@ -163,7 +171,7 @@ html, body { width:100%; max-width:100%; overflow-x:hidden; }
   background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   box-shadow: 0 2px 8px var(--shadow);
   font-size: 14px;
 }
@@ -214,7 +222,7 @@ html, body { width:100%; max-width:100%; overflow-x:hidden; }
   background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   padding: 14px 16px 16px;
   box-shadow: 0 -6px 28px var(--shadow);
 }
@@ -234,7 +242,7 @@ html, body { width:100%; max-width:100%; overflow-x:hidden; }
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: var(--fill);
   font-size: 14px;
 }
