@@ -937,10 +937,6 @@ export default function CBBSims() {
   // so both "2025-11-23" and "20251123" are fine.
   const livePayload = useEspnScoreboard(date, { sport: "cbb", groups: "50", limit: 357, pollMs: 20000 });
 
-  useEffect(() => {
-  console.log("CBB livePayload", livePayload);
-  }, [livePayload]);
-
   const liveGames: LiveGame[] = useMemo(
     () => (livePayload ? mapEspnToLiveGamesCbb(livePayload) : []),
     [livePayload]
@@ -1433,14 +1429,7 @@ export default function CBBSims() {
       // 3) final fallback to name-key
       if (!lg) lg = liveNameMap.get(pairKey(r.teamA, r.teamB));
 
-      // DEBUG (while you test one-off cases)
-      if (r.teamA.toLowerCase().includes("army") || r.teamB.toLowerCase().includes("fdu")) {
-        console.log("JOIN", r.teamA, AID, r.teamB, BID, "=>", !!lg, lg?.awayId, lg?.homeId, lg?.awayScore, lg?.homeScore);
-      }
-
-
       // const lg = liveMap.get(pairKey(r.teamA, r.teamB));
-      console.log("JOIN", r.teamA,r.A_espn_id, r.teamB,r.B_espn_id, "=>", !!lg, lg?.awayScore, lg?.homeScore);
 
       if (lg) {
         liveState = lg.state;

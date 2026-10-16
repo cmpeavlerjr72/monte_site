@@ -2271,16 +2271,6 @@ function ScoreboardPage() {
         }
       }
 
-      // --- DEBUG: one compact line per card ---
-      console.debug("SCORE DECISION", {
-        week: selectedWeek,
-        teams: `${g.teamA} vs ${g.teamB}`,
-        source: scoreSource,
-        csv: joined ? { A: joined.finalA, B: joined.finalB } : null,
-        live: { state: lg?.state, a: aScore, b: bScore, status: statusText },
-        flipped
-      });
-
       out.push({
         key,
         // Legacy CSV seasons are FBS-only and predate the division split; they
