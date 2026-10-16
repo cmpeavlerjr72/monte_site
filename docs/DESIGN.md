@@ -34,9 +34,9 @@ primitives in `src/components/ui/index.tsx` with styles in `src/styles/ui.css`.
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--bg` | `#f4f3ef` warm paper | `#0c131b` | page |
-| `--card` | `#ffffff` | `#131c26` | panels |
-| `--border` | `#dedcd4` | `#273444` | 1px rules |
+| `--bg` | `#eef1f5` cool grey | `#111316` graphite | page |
+| `--card` | `#ffffff` | `#1a1d22` | panels |
+| `--border` | `#d6dce4` | `#2d3138` | 1px rules |
 | `--text` | `#121820` | `#e8edf2` | body |
 | `--muted` | `#5f6670` (5.2:1 on bg) | `#9aa7b6` | secondary text |
 | `--brand` | navy | `#3a6ea5` steel | button and toggle surfaces |

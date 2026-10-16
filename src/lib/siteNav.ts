@@ -1,29 +1,31 @@
 // src/lib/siteNav.ts: THE SITE MAP, in one place (2026-10-16).
 //
 // The header, the mobile menu, the footer and the /labs index all read these
-// lists, so a page is added or hidden in exactly one spot. Main nav is the
-// audience-facing product (Blog, CFB, CBB, Record, About); Labs holds the side
-// projects, whose old URLs (/mlb, /nascar, /tennis, /college-baseball) keep
-// working unchanged.
+// lists, so a page is added or hidden in exactly one spot. Main nav is one
+// entry per PROJECT (CFB, CBB, Fantasy AI), then Blog and About, the way a
+// sports site lists its sports (owner 2026-10-16: modelled on cbssports.com).
+// Each sport opens on its own home page (its posts + a score ticker) with the
+// board one tab over. Labs holds the side projects, whose old URLs (/mlb,
+// /nascar, /tennis, /college-baseball) keep working unchanged.
 
 import { GATES, isOpen } from "./seasons";
 
 export type NavItem = { to: string; label: string; end?: boolean };
-export type Section = "blog" | "cfb" | "cbb" | "record" | "about" | "labs" | "account" | null;
+export type Section = "blog" | "cfb" | "cbb" | "fantasy-ai" | "about" | "labs" | "account" | null;
 
 export const MAIN_NAV: Array<NavItem & { section: Exclude<Section, null> }> = [
+  { to: "/cfb", label: "CFB", section: "cfb" },
+  { to: "/cbb", label: "CBB", section: "cbb" },
+  { to: "/fantasy-ai", label: "Fantasy AI", section: "fantasy-ai" },
   { to: "/blog", label: "Blog", section: "blog" },
-  { to: "/cfb/scoreboard", label: "CFB", section: "cfb" },
-  { to: "/cbb/scoreboard", label: "CBB", section: "cbb" },
-  { to: "/cfb/record", label: "Record", section: "record" },
   { to: "/about", label: "About", section: "about" },
 ];
 
 /** CFB sub-pages. The bracket appears on Selection Sunday. */
 export function cfbNav(): NavItem[] {
   return [
+    { to: "/cfb", label: "Home", end: true },
     { to: "/cfb/scoreboard", label: "Scoreboard" },
-    { to: "/cfb/game", label: "Game sims" },
     { to: "/cfb/record", label: "Record" },
     { to: "/cfb/quads", label: "Quads" },
     ...(isOpen(GATES.cfbBracket) ? [{ to: "/cfb/bracket", label: "Bracket" }] : []),
@@ -32,6 +34,7 @@ export function cfbNav(): NavItem[] {
 
 export function cbbNav(): NavItem[] {
   return [
+    { to: "/cbb", label: "Home", end: true },
     { to: "/cbb/scoreboard", label: "Scoreboard" },
     { to: "/cbb/results", label: "Results" },
     ...(isOpen(GATES.cbbBracket) ? [{ to: "/cbb/bracket", label: "Bracket" }] : []),
@@ -71,8 +74,8 @@ export const LABS: LabsProject[] = [
 
 /** Which top-level section a path belongs to (drives the gold underline). */
 export function sectionOf(pathname: string): Section {
-  if (pathname.startsWith("/blog") || pathname === "/nhl" || pathname === "/fantasy-ai") return "blog";
-  if (pathname.startsWith("/cfb/record") || pathname.startsWith("/cfb/results")) return "record";
+  if (pathname === "/fantasy-ai") return "fantasy-ai";
+  if (pathname.startsWith("/blog") || pathname === "/nhl") return "blog";
   if (pathname.startsWith("/cfb")) return "cfb";
   if (pathname.startsWith("/cbb")) return "cbb";
   if (pathname.startsWith("/about")) return "about";

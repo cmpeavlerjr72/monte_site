@@ -1,0 +1,78 @@
+// src/pages/site/SportHome.tsx: /cfb and /cbb, each sport's home page
+// (2026-10-16). Modelled on a cbssports.com sport home: the sport's own
+// articles lead (a lead story plus a headline list), with the board one click
+// away (the sub-nav's Scoreboard tab, the ticker's "Full board", and the
+// button here). The side column carries the sport's quick links and, for
+// CFB, the live record.
+
+import { Link } from "react-router-dom";
+import { ButtonLink, EmptyState, PageHeader } from "../../components/ui";
+import { useDocumentMeta } from "../../lib/useDocumentMeta";
+import { visiblePosts } from "../../lib/blog/posts";
+import { GATES, isOpen } from "../../lib/seasons";
+import { TopStories } from "../../components/site/TopStories";
+import { RecordTile } from "../../components/site/RecordTile";
+
+type Sport = "cfb" | "cbb";
+
+const CFG: Record<Sport, {
+  name: string; sub: string; board: string; links: { to: string; label: string }[];
+}> = {
+  cfb: {
+    name: "College football",
+    sub: "Every FBS game and the FCS slate, simulated play by play 10,000 times a week.",
+    board: "/cfb/scoreboard",
+    links: [
+      { to: "/cfb/scoreboard", label: "This week's board" },
+      { to: "/cfb/record", label: "The 2026 record" },
+      { to: "/cfb/quads", label: "Quads" },
+      { to: "/about/how-it-works", label: "How to read the board" },
+    ],
+  },
+  cbb: {
+    name: "College basketball",
+    sub: "Daily game sims through the season, and last season's numbers in the archive.",
+    board: "/cbb/scoreboard",
+    links: [
+      { to: "/cbb/scoreboard", label: "Scoreboard" },
+      { to: "/cbb/results", label: "Results" },
+    ],
+  },
+};
+
+export default function SportHome({ sport }: { sport: Sport }) {
+  const c = CFG[sport];
+  useDocumentMeta({ title: c.name, description: `${c.name} on MVPEAV: ${c.sub}` });
+  const posts = visiblePosts(sport);
+  const offSeason = sport === "cbb" && !isOpen(GATES.cbbSeason);
+
+  return (
+    <div className="stack sport-home">
+      <PageHeader kicker={offSeason ? "Season tips Nov 3" : "MVPEAV"} title={c.name} sub={c.sub}
+        actions={<ButtonLink to={c.board}>{sport === "cfb" ? "Full board" : "Scoreboard"}</ButtonLink>} />
+
+      <div className="sport-home__grid">
+        <div className="sport-home__main">
+          {posts.length ? (
+            <TopStories posts={posts} moreTo={`/blog/tag/${sport}`} moreLabel={`All ${c.name.toLowerCase()} posts`} />
+          ) : (
+            <EmptyState kicker={c.name} title="No posts yet"
+              action={<ButtonLink to={c.board}>{sport === "cfb" ? "This week's board" : "Scoreboard"}</ButtonLink>}>
+              <p>Write-ups about the {c.name.toLowerCase()} sims land here. The board is live in the meantime.</p>
+            </EmptyState>
+          )}
+        </div>
+
+        <aside className="sport-home__side">
+          {sport === "cfb" && <RecordTile />}
+          <div className="ui-card">
+            <div className="kicker">{c.name}</div>
+            <ul className="about-links">
+              {c.links.map((l) => <li key={l.to}><Link to={l.to}>{l.label} →</Link></li>)}
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}

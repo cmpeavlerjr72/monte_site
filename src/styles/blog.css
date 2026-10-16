@@ -16,14 +16,14 @@
 .pcard__words { display: grid; gap: 6px; min-width: 0; }
 .pcard__kicker {
   font-family: var(--font-display); font-weight: 700; font-size: var(--fs-sm); letter-spacing: 0.08em;
-  text-transform: uppercase; color: var(--accent-ink); display: flex; gap: 8px; align-items: center;
+  text-transform: uppercase; color: var(--kicker-ink); display: flex; gap: 8px; align-items: center;
 }
 .pcard__draft, .preview-link__draft {
   font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
   padding: 1px 5px; border: 1px dashed currentColor; border-radius: var(--r-sm); color: var(--muted);
 }
 .pcard__title { margin: 0; font-size: 22px; line-height: 1.08; }
-.pcard__title a:hover { color: var(--accent-ink); }
+.pcard__title a:hover { color: var(--brand-text); }
 .pcard__dek { margin: 0; color: var(--muted); font-size: var(--fs-md); max-width: 62ch; }
 .pcard__by { font-size: var(--fs-xs); color: var(--muted); }
 .pcard--lead {
@@ -45,7 +45,7 @@
 .post { max-width: var(--read-max); margin: 0 auto; display: grid; gap: var(--sp-5); }
 .post-draft {
   padding: 10px 14px; border: 1px dashed var(--accent); border-left: 4px solid var(--gold); border-radius: var(--r);
-  font-size: var(--fs-sm); color: var(--text); background: color-mix(in oklab, var(--gold) 8%, var(--card));
+  font-size: var(--fs-sm); color: var(--text); background: var(--card);
 }
 .post-head { display: grid; gap: var(--sp-3); }
 .post-title { margin: 0; font-size: clamp(32px, 5vw, 46px); line-height: 1.02; text-wrap: balance; }
@@ -96,7 +96,7 @@
 }
 .owner-beat {
   padding: 10px 14px; border: 2px dashed var(--accent); border-radius: var(--r); font-size: 15px;
-  color: var(--accent-ink); background: color-mix(in oklab, var(--gold) 6%, var(--card));
+  color: var(--text); background: var(--card);
 }
 .owner-beat__tag { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .directive-unknown { padding: 8px 12px; border: 1px dashed var(--border); color: var(--muted); font-size: var(--fs-sm); }

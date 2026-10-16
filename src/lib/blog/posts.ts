@@ -7,8 +7,10 @@
 // per-card work, and the answer is known on first render (no layout shift).
 //
 // VISIBILITY. A post shows when it is not a draft and its date has arrived.
-// Drafts only exist in a BLOG_DRAFTS=1 build (the preview harness), and even
-// there they show only after ?drafts=1 has been on a URL this session.
+// Drafts only exist in a BLOG_DRAFTS=1 build (the preview harness), where they
+// show by default so the owner sees the blog as it will look. Private posts
+// (content/blog-private/, e.g. Team Tillman until Tillman OKs it) stay hidden
+// unless ?drafts=1 is on a URL this session; ?drafts=0 hides every draft.
 
 import { posts, draftsIncluded, loadBody, type BlogMeta } from "virtual:blog-index";
 
@@ -17,31 +19,41 @@ export { loadBody };
 
 const DRAFTS_KEY = "mvpeav:drafts";
 
-/** Drafts are visible: a drafts build AND ?drafts=1 seen this session. */
-export function showDrafts(): boolean {
-  if (!draftsIncluded || typeof window === "undefined") return false;
+type DraftMode = "off" | "on" | "all";
+
+/** off: production rules. on (a drafts build's default): drafts and scheduled
+ *  posts too. all (?drafts=1 seen this session): private posts as well. */
+function draftMode(): DraftMode {
+  if (!draftsIncluded || typeof window === "undefined") return "off";
+  const q = new URLSearchParams(window.location.search).get("drafts");
   try {
-    const q = new URLSearchParams(window.location.search).get("drafts");
-    if (q === "1") sessionStorage.setItem(DRAFTS_KEY, "1");
-    if (q === "0") sessionStorage.removeItem(DRAFTS_KEY);
-    return sessionStorage.getItem(DRAFTS_KEY) === "1";
+    if (q === "0") sessionStorage.setItem(DRAFTS_KEY, "off");
+    if (q === "1") sessionStorage.setItem(DRAFTS_KEY, "all");
+    const v = sessionStorage.getItem(DRAFTS_KEY);
+    return v === "off" || v === "all" ? v : "on";
   } catch {
-    return new URLSearchParams(window.location.search).get("drafts") === "1";
+    return q === "0" ? "off" : q === "1" ? "all" : "on";
   }
 }
 
+/** Drafts are showing (the preview banner reads this). */
+export function showDrafts(): boolean {
+  return draftMode() !== "off";
+}
+
 /** Is this post visible right now? (published, or a draft/scheduled post
- *  while drafts are on). */
-export function isVisible(p: BlogMeta, now = Date.now(), drafts = showDrafts()): boolean {
-  if (drafts) return true;
+ *  while drafts are on; a private one only with ?drafts=1). */
+export function isVisible(p: BlogMeta, now = Date.now(), mode: DraftMode = draftMode()): boolean {
+  if (p.private) return mode === "all";
+  if (mode !== "off") return true;
   return !p.draft && Date.parse(p.date) <= now;
 }
 
 /** Visible posts, newest first, optionally one tag. */
 export function visiblePosts(tag?: string): BlogMeta[] {
-  const drafts = showDrafts();
+  const mode = draftMode();
   const now = Date.now();
-  return posts.filter((p) => isVisible(p, now, drafts) && (!tag || p.tags.includes(tag)));
+  return posts.filter((p) => isVisible(p, now, mode) && (!tag || p.tags.includes(tag)));
 }
 
 export function postBySlug(slug: string): BlogMeta | undefined {
@@ -51,19 +63,19 @@ export function postBySlug(slug: string): BlogMeta | undefined {
 
 /** game_id -> the newest visible post about that game. Built once per
  *  drafts-state; posts change only on a deploy. */
-let gameMap: { drafts: boolean; map: Map<string, BlogMeta> } | null = null;
+let gameMap: { mode: DraftMode; map: Map<string, BlogMeta> } | null = null;
 export function postForGame(gameId: string | number | null | undefined): BlogMeta | undefined {
   if (gameId == null || gameId === "") return undefined;
-  const drafts = showDrafts();
-  if (!gameMap || gameMap.drafts !== drafts) {
+  const mode = draftMode();
+  if (!gameMap || gameMap.mode !== mode) {
     const map = new Map<string, BlogMeta>();
     const now = Date.now();
     for (const p of posts) {           // newest first, so the first one wins
-      if (!p.game || !isVisible(p, now, drafts)) continue;
+      if (!p.game || !isVisible(p, now, mode)) continue;
       const k = String(p.game.game_id);
       if (!map.has(k)) map.set(k, p);
     }
-    gameMap = { drafts, map };
+    gameMap = { mode, map };
   }
   return gameMap.map.get(String(gameId));
 }
@@ -86,7 +98,4 @@ export const fmtPostDate = (iso: string) => {
 /** The board URL that focuses a post's game. */
 export function gameCardHref(g: NonNullable<BlogMeta["game"]>): string {
   return `/cfb/scoreboard?week=week${String(g.week).padStart(2, "0")}&game=${g.game_id}`;
-}
-export function gameSimsHref(g: NonNullable<BlogMeta["game"]>): string {
-  return `/cfb/game?week=week${String(g.week).padStart(2, "0")}&game=${g.game_id}`;
 }

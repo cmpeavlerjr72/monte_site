@@ -104,7 +104,7 @@ a { color: inherit; text-decoration: none; }
 .site-menu__col { display: grid; align-content: start; gap: 2px; }
 .site-menu__head {
   font-family: var(--font-display); font-weight: 700; font-size: var(--fs-sm);
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-ink);
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--kicker-ink);
   padding: 0 0 6px; margin-bottom: 4px; border-bottom: var(--rule);
 }
 .site-menu__head a:hover { text-decoration: underline; }
@@ -113,7 +113,7 @@ a { color: inherit; text-decoration: none; }
   letter-spacing: 0.03em; padding: 4px 0; line-height: 1.15;
 }
 .site-menu__link { padding: 7px 0; font-weight: 600; }
-.site-menu__top:hover, .site-menu__link:hover { color: var(--accent-ink); }
+.site-menu__top:hover, .site-menu__link:hover { color: var(--brand-text); }
 .site-menu__top.active, .site-menu__link.active { box-shadow: inset 3px 0 0 var(--gold); padding-left: 10px; }
 
 /* Section sub-nav: a slim card-coloured bar under the header. */

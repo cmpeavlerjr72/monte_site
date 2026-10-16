@@ -1,55 +1,56 @@
-// src/pages/site/About.tsx: /about (2026-10-16). Who, what the sims are, how
-// the picks are graded, and the disclaimer. Plain English; the technical
-// detail lives on the Record page's own "?" and on /about/how-it-works.
+// src/pages/site/About.tsx: /about (2026-10-16, second pass). What the site is:
+// the owner's projects in one place, of which the CFB sims are the most
+// developed today. The site is not pitched as a picks or betting site; the
+// grading detail is here for the people who want it, and the fine print stays
+// because the boards show market prices. Plain English, no invented
+// first-person colour: the owner adds his own voice.
 
 import { Link } from "react-router-dom";
-import { ButtonLink, PageHeader } from "../../components/ui";
+import { PageHeader } from "../../components/ui";
 import { useDocumentMeta } from "../../lib/useDocumentMeta";
 
 export default function About() {
   useDocumentMeta({
     title: "About",
-    description: "Who runs MVPEAV, what the sims are, and how every pick is graded in public, losses included.",
+    description: "What MVPEAV is: MVPeav's projects in one place, from play-by-play college football sims to an AI running a fantasy football team.",
   });
   return (
     <div className="stack about">
-      <PageHeader kicker="About" title="A sim nerd who posts the receipts"
-        sub="MVPEAV is one person, a lot of simulations, and a public record that includes the bad weeks." />
+      <PageHeader kicker="About" title="Projects, sims and experiments"
+        sub="MVPEAV is where I put the things I'm building, and write about how they're going." />
 
       <div className="about-grid">
         <div className="prose">
-          <h2>Who</h2>
+          <h2>What's here</h2>
           <p>
-            I'm <a href="https://x.com/MVPeav" target="_blank" rel="noopener noreferrer">@MVPeav</a>. Yes, I'm the guy with the
-            spreadsheet. I build computer models that play out college football and basketball games
-            thousands of times, and I post what they think before the games start.
+            I'm <a href="https://x.com/MVPeav" target="_blank" rel="noopener noreferrer">@MVPeav</a>. This site collects my
+            projects. Right now that's:
+          </p>
+          <ul>
+            <li><Link to="/cfb">College football sims</Link>: every game simulated play by play, with a weekly board and a public record.</li>
+            <li><Link to="/cbb">College basketball sims</Link>: daily game sims during the season.</li>
+            <li><Link to="/fantasy-ai">Fantasy AI</Link>: an AI running a real fantasy football team.</li>
+            <li><Link to="/nhl">NHL</Link>: a hockey sim that's in the works.</li>
+            <li><Link to="/labs">Labs</Link>: smaller side projects (MLB, NASCAR, tennis, college baseball).</li>
+          </ul>
+          <p>New projects get added as they're ready, and the <Link to="/blog">blog</Link> is where I write them up.</p>
+
+          <h2>How the college football sims work</h2>
+          <p>
+            Every FBS game (and the FCS slate) is simulated play by play, 10,000 times. Each run produces a
+            final score and a stat line for every player, so the sim doesn't hand you one number: it hands you
+            the whole range of what could happen. From that range come the win probabilities, the projected
+            scores, team totals and player stat lines you see on the <Link to="/cfb/scoreboard">board</Link>.
+            Open any game card for the full distributions, or read <Link to="/about/how-it-works">how to read
+            the board</Link>.
           </p>
 
-          <h2>What the sims are</h2>
+          <h2>Keeping score</h2>
           <p>
-            For college football, every FBS game (and the FCS slate) is simulated play by play, 10,000 times.
-            Each run produces a final score and a stat line for every player, so the sim doesn't hand you one
-            number: it hands you the whole range of what could happen. From that range come the win
-            probabilities, the spread and total numbers, team totals and player props you see on the{" "}
-            <Link to="/cfb/scoreboard">board</Link>, and the full distributions on{" "}
-            <Link to="/cfb/game">Game sims</Link>.
-          </p>
-          <p>
-            College basketball runs a daily version during the season. The side projects (MLB, NASCAR,
-            tennis, college baseball) live in <Link to="/labs">Labs</Link>.
-          </p>
-
-          <h2>How the picks are graded</h2>
-          <p>
-            A pick is only worth something if you could have actually made it. So every pick is posted
-            before kickoff and graded at the price on the market when it was posted, with the exchange's
-            fees taken out. Not the closing line, not a price I wish I'd gotten.
-          </p>
-          <p>
-            The <Link to="/cfb/record">Record</Link> shows every one of them: wins, losses, the running total,
-            whether the market moved our way after we posted, and whether we were right as often as we said
-            we'd be. Nothing gets deleted. When a week goes 119-252, it stays up, and I'll probably write a
-            blog about it.
+            A model is only worth something if you can check it. So the sims' picks are posted before kickoff
+            and graded in public at the price available when they were posted, fees taken out. The{" "}
+            <Link to="/cfb/record">Record</Link> shows every one of them, and nothing gets deleted, including the
+            bad weeks.
           </p>
 
           <h2>The fine print</h2>
@@ -64,13 +65,12 @@ export default function About() {
           <div className="ui-card">
             <div className="kicker">Start here</div>
             <ul className="about-links">
-              <li><Link to="/about/how-it-works">How to read the board →</Link></li>
-              <li><Link to="/cfb/record">The 2026 record →</Link></li>
+              <li><Link to="/cfb">College football →</Link></li>
+              <li><Link to="/fantasy-ai">Fantasy AI →</Link></li>
               <li><Link to="/blog">The blog →</Link></li>
               <li><a href="https://x.com/MVPeav" target="_blank" rel="noopener noreferrer">@MVPeav on X →</a></li>
             </ul>
           </div>
-          <ButtonLink to="/cfb/scoreboard">This week's board</ButtonLink>
         </aside>
       </div>
     </div>

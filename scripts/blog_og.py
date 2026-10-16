@@ -120,8 +120,8 @@ def og_for(meta: dict) -> None:
 
 
 def default_card() -> None:
-    html = card_html("Sports sims that keep receipts",
-                     "College football and basketball, simulated 10,000 times. Every pick graded in public.")
+    html = card_html("Sims, projects and experiments",
+                     "College football and basketball sims, an AI running a fantasy team, and the write-ups behind them.")
     shoot(html, os.path.join(ROOT, "public", "og-default.png"), 1200, 630)
 
 

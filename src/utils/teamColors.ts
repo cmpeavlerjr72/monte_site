@@ -150,7 +150,7 @@ export function getTeamColors(teamName: string | undefined | null): TeamColor | 
  * changes `--card`, change it here in the same commit — the check script
  * compares against these same two values, so it will not catch a drift.
  */
-export const CARD_BG = { light: "#ffffff", dark: "#131c26" } as const;
+export const CARD_BG = { light: "#ffffff", dark: "#1a1d22" } as const;
 
 /**
  * WCAG 1.4.11 non-text contrast: 3:1 is the floor for a "graphical object"

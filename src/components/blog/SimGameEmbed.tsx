@@ -75,7 +75,6 @@ export function SimGameEmbed({ season, week, gameId, frozen }: { season: number;
 
   const weekId = `week${String(week).padStart(2, "0")}`;
   const boardHref = `/cfb/scoreboard?week=${weekId}&game=${gameId}`;
-  const simsHref = `/cfb/game?week=${weekId}&game=${gameId}`;
 
   if (state !== "ok" || !snap) {
     return (
@@ -122,7 +121,6 @@ export function SimGameEmbed({ season, week, gameId, frozen }: { season: number;
       )}
       <div className="simcard__links">
         <Link className="simcard__link" to={boardHref}>See the live game card →</Link>
-        <Link className="link" to={simsHref}>Every outcome in Game sims →</Link>
       </div>
     </aside>
   );

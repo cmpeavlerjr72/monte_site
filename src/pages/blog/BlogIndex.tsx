@@ -26,25 +26,25 @@ export default function BlogIndex({ tag: fixedTag }: { tag?: string }) {
 
   useDocumentMeta({
     title: tag ? `${title} posts` : "Blog",
-    description: landing?.sub ?? "Sports sims with receipts: game previews, the record, and what happens when a model is wrong in public.",
+    description: landing?.sub ?? "Write-ups from MVPeav's projects: sim-driven game previews, the fantasy AI experiment, and whatever's next.",
   });
 
   return (
     <div className="stack blog-index">
       <PageHeader kicker="Blog" title={title}
-        sub={landing?.sub ?? "Game previews built on 10,000 sims, the weekly receipts, and the occasional experiment. Losses included."}
+        sub={landing?.sub ?? "Write-ups from the projects: sim-driven game previews, the fantasy AI experiment, and whatever's next."}
         actions={<a className="link" href="/blog/rss.xml">RSS</a>} />
       {!fixedTag && (
         <Tabs label="Blog sections"
           items={[{ id: "all", label: "All", to: "/blog", end: true },
             ...TAB_TAGS.map((t) => ({ id: t, label: tagWords(t), to: `/blog/tag/${t}` }))]} />
       )}
-      {drafts && <p className="blog-drafts-note">Preview mode: drafts and scheduled posts are showing (?drafts=1). They are never public.</p>}
+      {drafts && <p className="blog-drafts-note">Preview mode: drafts and scheduled posts are showing. They are never public. Add ?drafts=0 to hide them, or ?drafts=1 to include private posts.</p>}
 
       {posts.length === 0 ? (
         <EmptyState kicker={tag ? tagWords(tag) : "Blog"} title={tag ? "Nothing here yet" : "The first posts land soon"}
-          action={<><ButtonLink to="/cfb/record">The record</ButtonLink><ButtonLink to="/cfb/scoreboard" variant="quiet">This week's board</ButtonLink></>}>
-          <p>{tag ? "No posts under this tag yet." : "Game previews and the weekly receipts start here."} In the meantime, every pick is already on the record page.</p>
+          action={<><ButtonLink to="/cfb">College football</ButtonLink><ButtonLink to="/about" variant="quiet">What's here</ButtonLink></>}>
+          <p>{tag ? "No posts under this tag yet." : "Write-ups from the projects start here."} In the meantime, the college football sims are live on the board.</p>
         </EmptyState>
       ) : (
         <>

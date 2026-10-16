@@ -1,10 +1,10 @@
 """Capture the /about/how-it-works screenshots from a running site.
 
-    py -3 scripts/capture_about_shots.py http://localhost:4173
+    py -3 scripts/capture_about_shots.py http://localhost:4173 [AWAY HOME]
 
-Writes public/about/{board-card,game-sims,record}.png from the CURRENT UI
+Writes public/about/{board-card,game-scores,player-props,record}.png from the CURRENT UI
 (light theme, 2x, downscaled to 1520px wide and palette-quantised so each stays
-well under 300 KB). Re-run whenever the board, Game sims or the Record change
+well under 300 KB). Re-run whenever the board, its open-card charts or the Record change
 look. Needs Python Playwright + Pillow (both on the owner's machine).
 """
 import io
@@ -29,39 +29,43 @@ def save(png_bytes: bytes, name: str, max_w: int = 1520) -> None:
     print(path, im.size, os.path.getsize(path) // 1024, "KB")
 
 
+# One game for every board shot, so the page reads as one story. Two teams
+# with clearly different colours (owner 2026-10-16: Memphis blue vs Tulane
+# green) so the margin chart's two halves are easy to tell apart.
+AWAY, HOME = (sys.argv[2], sys.argv[3]) if len(sys.argv) > 3 else ("Memphis", "Tulane")
+
 with sync_playwright() as p:
     b = p.chromium.launch()
     ctx = b.new_context(viewport={"width": 1440, "height": 1000}, device_scale_factor=2, color_scheme="light")
     pg = ctx.new_page()
 
-    # 1. A board card that has lines and edges (skip live/final where possible).
-    pg.goto(f"{BASE}/cfb/scoreboard", wait_until="domcontentloaded")
-    pg.wait_for_timeout(7000)
-    cards = pg.locator("[id^='game-']")
-    target = None
-    for i in range(min(cards.count(), 30)):
-        c = cards.nth(i)
-        txt = c.inner_text()
-        if "Final" in txt or " ball" in txt:
-            continue
-        c.scroll_into_view_if_needed()
-        pg.wait_for_timeout(1500)
-        if "¢" in c.inner_text():
-            target = c
-            break
-    target = target or cards.first
+    # 1. The game's card on the board.
+    pg.goto(f"{BASE}/cfb/scoreboard", wait_until="networkidle")
+    pg.wait_for_timeout(6000)
+    target = pg.locator("[id^='game-']").filter(has_text=AWAY).filter(has_text=HOME).first
     target.scroll_into_view_if_needed()
     pg.wait_for_timeout(1500)
     save(target.screenshot(), "board-card.png", max_w=1040)
 
-    # 2. Game sims: the margin chart with a line entered.
-    pg.goto(f"{BASE}/cfb/game", wait_until="domcontentloaded")
-    pg.wait_for_timeout(6000)
-    pg.get_by_role("spinbutton", name="team line").fill("-6.5")
-    pg.wait_for_timeout(800)
-    save(pg.locator(".gc .ui-card").first.screenshot(), "game-sims.png")
+    # The open card's panel (a separate grid item under the card's row).
+    target.locator("button[aria-expanded]").first.click()
+    panel = pg.locator("div, section").filter(has=pg.get_by_role("button", name="Close"))         .filter(has_text="Simulated Scores").filter(has_text="Player Props").last
 
-    # 3. The Record's verdict panel.
+    # 2. Simulated Scores: the margin chart with a line entered.
+    pg.locator("button").filter(has_text="Simulated Scores").first.click()
+    pg.locator("svg[aria-label^='Simulated margin']").first.wait_for(timeout=30000)
+    panel.locator("input").first.fill("13.5")
+    pg.wait_for_timeout(1000)
+    panel.scroll_into_view_if_needed()
+    save(panel.screenshot(), "game-scores.png")
+
+    # 3. Player Props: one player's simulated stat line against a prop.
+    pg.locator("button").filter(has_text="Player Props").first.click()
+    pg.wait_for_timeout(6000)
+    panel.scroll_into_view_if_needed()
+    save(panel.screenshot(), "player-props.png")
+
+    # 4. The Record's verdict panel.
     pg.goto(f"{BASE}/cfb/record", wait_until="domcontentloaded")
     pg.wait_for_selector(".rec__hero", timeout=90000)
     pg.wait_for_timeout(2500)

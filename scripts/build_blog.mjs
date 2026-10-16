@@ -201,7 +201,7 @@ fs.writeFileSync(path.join(outDir, "index.json"), JSON.stringify(index, null, 1)
 
 /* -------------------------------------------------------- feeds + robots -- */
 const tagsUsed = [...new Set(pub.flatMap((m) => m.tags))].sort();
-const staticPages = ["/", "/blog", "/cfb/scoreboard", "/cfb/record", "/cfb/quads", "/cfb/game", "/cbb/scoreboard", "/cbb/results", "/about", "/about/how-it-works", "/labs"];
+const staticPages = ["/", "/blog", "/cfb/scoreboard", "/cfb/record", "/cfb/quads", "/cbb/scoreboard", "/cbb/results", "/about", "/about/how-it-works", "/labs"];
 const urls = [
   ...staticPages.map((u) => `<url><loc>${SITE}${u}</loc></url>`),
   ...tagsUsed.map((t) => `<url><loc>${SITE}/blog/tag/${encodeURIComponent(t)}</loc></url>`),
@@ -224,7 +224,7 @@ fs.writeFileSync(path.join(outDir, "rss.xml"), `<?xml version="1.0" encoding="UT
   <title>MVPEAV blog</title>
   <link>${SITE}/blog</link>
   <atom:link href="${SITE}/blog/rss.xml" rel="self" type="application/rss+xml" />
-  <description>Sports sims that keep receipts.</description>
+  <description>Write-ups from MVPeav's projects: sports sims, the fantasy AI experiment, and whatever's next.</description>
   <language>en-us</language>
 ${items}
 </channel>

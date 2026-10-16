@@ -1,5 +1,6 @@
 // src/lib/upNext.ts: the homepage's "up next on the board" strip (2026-10-16).
 //
+// (Now the site score ticker's data: src/components/site/ScoreTicker.tsx.)
 // The newest published 2026 week, its games in kickoff order, and the next N
 // that have not finished (or the last N if the whole slate is done). Only
 // those N summary.json files are fetched (through the board's own memoised
@@ -19,11 +20,12 @@ const SEASON = "2026";
 /** A game is "done" for this strip about 4h after kickoff. */
 const DONE_AFTER_MS = 4 * 60 * 60 * 1000;
 
-let memo: Promise<UpNext> | null = null;
+const memo = new Map<number, Promise<UpNext>>();
 
 export function loadUpNext(n = 6): Promise<UpNext> {
-  if (memo) return memo;
-  memo = (async () => {
+  const hit = memo.get(n);
+  if (hit) return hit;
+  const p = (async () => {
     const catalog = await getCatalog(SEASON);
     const wk = latestWeek(catalog);
     if (!wk) throw new Error("no 2026 week published");
@@ -43,6 +45,7 @@ export function loadUpNext(n = 6): Promise<UpNext> {
       };
     }));
     return { weekId: wk.id, weekLabel: wk.label || `Week ${wk.week}`, games };
-  })().catch((e) => { memo = null; throw e; });
-  return memo;
+  })().catch((e) => { memo.delete(n); throw e; });
+  memo.set(n, p);
+  return p;
 }

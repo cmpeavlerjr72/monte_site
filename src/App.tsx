@@ -7,6 +7,7 @@ import { GATES } from "./lib/seasons";
 import LabsFrame from "./pages/site/LabsFrame";
 import Header from "./components/Header";
 import InstallPrompt from "./components/InstallPrompt";
+import { SiteTicker } from "./components/site/ScoreTicker";
 import SiteFooter from "./components/SiteFooter";
 import { Skeleton, SkeletonLines } from "./components/Skeleton";
 import { lazyPage, RouteErrorBoundary } from "./lib/lazyPage";
@@ -29,7 +30,6 @@ const Results = lazyPage(() => import("./pages/Results"));
 const RecordPage = lazyPage(() => import("./pages/Record"));
 const QuadsPage = lazyPage(() => import("./pages/Quads"));
 const TrendsCLV = lazyPage(() => import("./pages/Trends_CLV"));
-const GameCenter = lazyPage(() => import("./pages/GameCenter"));
 const CLVPage = lazyPage(() => import("./pages/CLV"));
 const ComboTrend = lazyPage(() => import("./pages/combo_trend"));
 const Bracket = lazyPage(() => import("./pages/CFB_Bracket"));
@@ -66,6 +66,7 @@ const CollegeBaseballGame = lazyPage(() => import("./pages/CollegeBaseballGame")
 // New pages
 // Site pages (2026-10-16 refresh)
 const SiteHome = lazyPage(() => import("./pages/site/Home"));
+const SportHome = lazyPage(() => import("./pages/site/SportHome"));
 const About = lazyPage(() => import("./pages/site/About"));
 const HowItWorks = lazyPage(() => import("./pages/site/HowItWorks"));
 const Labs = lazyPage(() => import("./pages/site/Labs"));
@@ -78,6 +79,13 @@ const NotFound = lazyPage(() => import("./pages/site/NotFound"));
 function RedirectKeepSearch({ to }: { to: string }) {
   const { search, hash } = useLocation();
   return <Navigate to={`${to}${search}${hash}`} replace />;
+}
+
+/** /cfb and /cbb are the sports' home pages now, but older links carried the
+ *  board's ?season=/week=/game= on them: those still land on the board. */
+function SportHomeOrBoard({ sport }: { sport: "cfb" | "cbb" }) {
+  const { search } = useLocation();
+  return search.length > 1 ? <RedirectKeepSearch to={`/${sport}/scoreboard`} /> : <SportHome sport={sport} />;
 }
 
 // DEV-ONLY routes. The test harnesses (and the unlinked 2025 CLV / Combo
@@ -118,6 +126,9 @@ export default function App() {
           never once installed (standalone or a detected related app). */}
       <InstallPrompt />
 
+      {/* The score ticker, full width under the header (home and /cfb only). */}
+      <SiteTicker />
+
       <main id="main" tabIndex={-1} style={{ flex: "1 0 auto", width: "100%", maxWidth: "var(--content-max)", margin: "24px auto 0", padding: "0 16px" }}>
         <RouteErrorBoundary resetKey={pathname}>
         <Suspense fallback={<RouteFallback />}>
@@ -139,7 +150,7 @@ export default function App() {
               old /scoreboard2 URL forwards with its query string. /cfb
               itself goes to the board; the old /cfb guide is now
               /about/how-it-works. */}
-          <Route path="/cfb" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
+          <Route path="/cfb" element={<SportHomeOrBoard sport="cfb" />} />
           <Route path="/cfb/scoreboard" element={<ScoreboardV2 />} />
           <Route path="/cfb/scoreboard-classic" element={<Scoreboard />} />
           <Route path="/cfb/scoreboard2" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
@@ -152,7 +163,9 @@ export default function App() {
           {/* Trends reads 2025 CSVs that 2026 does not publish: hidden (dev
               builds only) until it is rebuilt on the 2026 JSON. */}
           {TEST_ROUTES && <Route path="/cfb/trends-clv" element={<TrendsCLV />} />}
-          <Route path="/cfb/game/*" element={<GameCenter />} />
+          {/* Game sims retired 2026-10-16: the expanded board card shows every sim. Old
+              links (?week=&game=) land on the board with that game focused. */}
+          <Route path="/cfb/game/*" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
           {TEST_ROUTES && <Route path="/cfb/clv/*" element={<CLVPage />} />}
           {TEST_ROUTES && <Route path="/cfb/combo/*" element={<ComboTrend />} />}
           <Route path="/cfb/bracket/*" element={
@@ -187,10 +200,10 @@ export default function App() {
           {/* Legacy redirects to preserve old links */}
           <Route path="/scoreboard" element={<Navigate to="/cfb/scoreboard" replace />} />
           <Route path="/results" element={<Navigate to="/cfb/record/2025" replace />} />
-          <Route path="/game/*" element={<Navigate to="/cfb/game" replace />} />
+          <Route path="/game/*" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
 
           {/* CBB */}
-          <Route path="/cbb" element={<RedirectKeepSearch to="/cbb/scoreboard" />} />
+          <Route path="/cbb" element={<SportHomeOrBoard sport="cbb" />} />
           <Route path="/cbb/scoreboard" element={<CBB_Sims />} />
           <Route path="/cbb/results" element={<ResultsCBB />} />
           <Route path="/cbb/bracket" element={

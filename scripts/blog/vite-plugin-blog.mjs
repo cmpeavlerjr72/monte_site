@@ -41,7 +41,9 @@ export default function blogPlugin() {
         .filter((p) => !p.errors.length && p.data.slug && (includeDrafts || metaOf(p).draft !== true));
       if (id === "\0" + INDEX_ID) {
         for (const p of posts) this.addWatchFile(p.full);
-        const metas = posts.map(metaOf).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+        // `private` (content/blog-private/) only rides along here, for the preview's
+        // draft switch; build_blog.mjs keeps it out of every public file.
+        const metas = posts.map((p) => ({ ...metaOf(p), private: p.private === true })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
         const loaders = metas.map((m) => `  ${JSON.stringify(m.slug)}: () => import(${JSON.stringify(POST_PREFIX + m.slug)}).then((m) => m.default),`).join("\n");
         return [
           `export const draftsIncluded = ${JSON.stringify(includeDrafts)};`,

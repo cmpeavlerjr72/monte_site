@@ -54,9 +54,12 @@
   --accent-ink: #80661b;
   --text: #121820;
   --muted: #5f6670;
-  --bg: #f4f3ef;             /* warm paper, not app-grey */
+  --bg: #f6f7f9;             /* near-white neutral, like a sports site's page (owner 2026-10-16: no beige, no yellow) */
   --card: #ffffff;
-  --border: #dedcd4;
+  --border: #dfe3e8;
+  /* Kickers and section labels. Navy on light (owner: no yellow shades on
+     the light theme); gold on dark, where it reads as the brand, not tan. */
+  --kicker-ink: var(--navy);
 
   /* The TARGET star on a suggested-bet row: "this row cleared the bar". It
      is THE gold (owner 2026-10-16: one gold everywhere, gold marks starred
@@ -137,7 +140,8 @@
 }
 
 /* ---------------------------------------------------------------- dark ---- */
-/* Dark is navy-tinted charcoal, so the navy header sits on its own family.
+/* Dark is NEUTRAL graphite (owner 2026-10-16: a near-black navy page under
+   the navy header read as two navies clashing), so the header is the one navy.
    --brand becomes a muted steel-navy that works both as a button surface
    (white text 5.3:1) and as a fill on the card (3.3:1). The old bright
    #3178c6 is retired everywhere. */
@@ -149,9 +153,9 @@
     --accent-ink: var(--gold);
     --text: #e8edf2;
     --muted: #9aa7b6;
-    --bg: #0c131b;
-    --card: #131c26;
-    --border: #273444;
+    --bg: #111316;
+    --card: #1a1d22;
+    --border: #2d3138;
     --pos: #3fb950;
     --neg: #f85149;
     --info: #56c8e8;
@@ -161,6 +165,7 @@
     --mode-take: #fbbf24;
     --mode-take-ink: #10151b;
     --target-star: var(--gold);
+    --kicker-ink: var(--gold);
     --brand-text: #8fb4dc;
     --shadow: rgba(0, 0, 0, 0.5);
     color-scheme: dark;
@@ -174,9 +179,9 @@
   --accent-ink: var(--gold);
   --text: #e8edf2;
   --muted: #9aa7b6;
-  --bg: #0c131b;
-  --card: #131c26;
-  --border: #273444;
+  --bg: #111316;
+  --card: #1a1d22;
+  --border: #2d3138;
   --pos: #3fb950;
   --neg: #f85149;
   --info: #56c8e8;
@@ -186,6 +191,7 @@
   --mode-take: #fbbf24;
   --mode-take-ink: #10151b;
   --target-star: var(--gold);
+  --kicker-ink: var(--gold);
   --brand-text: #8fb4dc;
   --shadow: rgba(0, 0, 0, 0.5);
   color-scheme: dark;
@@ -222,7 +228,7 @@ h3 { font-size: var(--fs-lg); }
   font-size: var(--fs-sm);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--accent-ink);
+  color: var(--kicker-ink);
 }
 
 .header {

@@ -2,9 +2,9 @@
 //
 // THE SITE HEADER (2026-10-16 refresh). Navy bar in both themes:
 //
-//   [MV shield] MVPEAV   Blog  CFB  CBB  Record  About          [account] [menu]
+//   [MV shield] MVPEAV   CFB  CBB  Fantasy AI  Blog  About   [account] [menu]
 //   ---------------------------------------------------------------- gold rule
-//   Scoreboard  Game sims  Record  Quads                      <- section sub-nav
+//   Home  Scoreboard  Record  Quads                          <- section sub-nav
 //
 // The main nav is the audience-facing product only. Side projects (MLB,
 // NASCAR, Tennis, College Baseball) live under Labs: in the menu, the footer
@@ -68,7 +68,7 @@ export default function Header() {
   useEffect(() => setOpen(false), [pathname]);
 
   const sub: { items: NavItem[]; label: string } | null =
-    section === "cfb" || section === "record" ? { items: cfbNav(), label: "College football" }
+    section === "cfb" ? { items: cfbNav(), label: "College football" }
     : section === "cbb" ? { items: cbbNav(), label: "College basketball" }
     : labsProject && labsProject.pages.length > 1 ? { items: labsProject.pages, label: labsProject.name }
     : null;

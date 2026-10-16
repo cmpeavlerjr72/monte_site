@@ -35,7 +35,7 @@ export default function SiteFooter() {
         <div className="site-footer__cols">
           <div className="site-footer__col site-footer__brand">
             <div className="site-footer__word">MVPEAV</div>
-            <p className="site-footer__tag">Sports sims that keep receipts.</p>
+            <p className="site-footer__tag">Sims, projects and experiments.</p>
             <ThemeToggle />
           </div>
           <nav className="site-footer__col" aria-label="Footer: site">
