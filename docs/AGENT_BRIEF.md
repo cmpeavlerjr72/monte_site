@@ -263,7 +263,8 @@ fetch layer needed no changes: `Season` is a string NAMESPACE, so
 
 ## The 2026 record (`/cfb/record`, `Record.tsx` + `recordData.ts`)
 
-`/cfb/results` is the 2025 page and stays as it was: one spread, one moneyline
+`/cfb/record/2025` (formerly `/cfb/results`, which now redirects there; a
+season TAB beside 2026 since 2026-10-16) is the 2025 page: one spread, one moneyline
 and one total per game. 2026 publishes THOUSANDS of priced rungs a week, so the
 record is a filtered view over a published ledger, not a table of everything
 (owner 2026-09-09: browsable "against the market in as many markets as

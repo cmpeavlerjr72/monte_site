@@ -67,6 +67,7 @@ const SiteHome = lazyPage(() => import("./pages/site/Home"));
 const About = lazyPage(() => import("./pages/site/About"));
 const HowItWorks = lazyPage(() => import("./pages/site/HowItWorks"));
 const Labs = lazyPage(() => import("./pages/site/Labs"));
+const RecordShell = lazyPage(() => import("./pages/site/RecordShell"));
 const BlogIndex = lazyPage(() => import("./pages/blog/BlogIndex"));
 const BlogPost = lazyPage(() => import("./pages/blog/BlogPost"));
 const NotFound = lazyPage(() => import("./pages/site/NotFound"));
@@ -140,8 +141,11 @@ export default function App() {
           <Route path="/cfb/scoreboard" element={<ScoreboardV2 />} />
           <Route path="/cfb/scoreboard-classic" element={<Scoreboard />} />
           <Route path="/cfb/scoreboard2" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
-          <Route path="/cfb/results" element={<Results />} />
-          <Route path="/cfb/record" element={<RecordPage />} />
+          {/* THE RECORD: season tabs. 2026 is the ledger; the 2025 archive is
+              the old /cfb/results page, which now redirects there. */}
+          <Route path="/cfb/record" element={<RecordShell season="2026"><RecordPage /></RecordShell>} />
+          <Route path="/cfb/record/2025" element={<RecordShell season="2025"><Results /></RecordShell>} />
+          <Route path="/cfb/results" element={<RedirectKeepSearch to="/cfb/record/2025" />} />
           <Route path="/cfb/quads" element={<QuadsPage />} />
           {/* Trends reads 2025 CSVs that 2026 does not publish: hidden (dev
               builds only) until it is rebuilt on the 2026 JSON. */}
@@ -180,7 +184,7 @@ export default function App() {
 
           {/* Legacy redirects to preserve old links */}
           <Route path="/scoreboard" element={<Navigate to="/cfb/scoreboard" replace />} />
-          <Route path="/results" element={<Navigate to="/cfb/results" replace />} />
+          <Route path="/results" element={<Navigate to="/cfb/record/2025" replace />} />
           <Route path="/game/*" element={<Navigate to="/cfb/game" replace />} />
 
           {/* CBB */}

@@ -1,4 +1,5 @@
 // src/pages/Results.tsx
+import { Skeleton, SkeletonLines } from "../components/Skeleton";
 import { useEffect, useMemo, useState } from "react";
 import * as Papa from "papaparse";
 import { getCatalog, type CfbCatalog, type FileItem } from "../lib/cfbData";
@@ -223,6 +224,10 @@ export default function Results() {
 
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<PickRow[]>([]);
+  /** True once the week bundles have answered (2026-10-16). Until then the
+   *  page shows skeletons, never "Record 0-0-0" (it took ~17s and read as a
+   *  broken page with a 0-0 record). */
+  const [loaded, setLoaded] = useState(false);
 
   // NEW: team-info state
   const [teamToConf, setTeamToConf] = useState<Record<string, string>>({});
@@ -538,7 +543,10 @@ export default function Results() {
         if (!alive) return;
         setRows(allRows);
       } finally {
-        if (alive) setLoading(false);
+        // "Loaded" only means something once the catalog has listed weeks;
+        // the first pass (no catalog yet) loads nothing and must not end the
+        // skeleton.
+        if (alive) { setLoading(false); if (weeks.length) setLoaded(true); }
       }
     }
 
@@ -657,12 +665,12 @@ export default function Results() {
   }, [marketFilter]);
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+    <div style={{ width: "100%", maxWidth: 1100, margin: "0 auto", padding: "0 0 16px" }}>
       <section className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 16, alignItems: "baseline", flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0, fontWeight: 800, fontSize: 20 }}>Results</h2>
-          <span style={{ fontSize: 14, opacity: 0.8 }}>
-            {loading ? "Loading…" : `Graded picks: ${filteredRows.length}`}
+          <h2 style={{ margin: 0 }}>2025 season</h2>
+          <span style={{ fontSize: 14, color: "var(--muted)" }}>
+            {catalogError ? "The 2025 archive didn't load. Refresh in a minute." : !loaded ? "Loading every 2025 week (this archive is large; give it a few seconds)…" : `One spread, moneyline and total pick per game · ${filteredRows.length} graded`}
           </span>
         </div>
 
@@ -769,18 +777,23 @@ export default function Results() {
           </div>
         </div>
 
-        <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
+        {!loaded ? (
+          <div style={{ marginTop: 8 }} aria-busy="true"><Skeleton height={20} width="60%" /></div>
+        ) : (
+        <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }} className="num">
           <span><b>Record:</b> {gradedBets.filter(r=>r.result==="W").length}-{gradedBets.filter(r=>r.result==="L").length}-{filteredRows.filter(r=>r.result==="P").length}</span>
           <span><b>Profit:</b> {Number(filteredRows.reduce((s, r) => s + r.units, 0)).toFixed(2)}u</span>
           <span><b>Win%:</b> {win_pct.toFixed(1)}%</span>
           <span><b>RoR:</b> {overall.ror.toFixed(1)}%</span>
         </div>
+        )}
       </section>
 
       {/* Cumulative Units Chart (filtered) */}
       <section className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Cumulative Units (by pick order)</div>
         <div style={{ height: 260 }}>
+          {!loaded ? <Skeleton height={260} /> : (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={unitsSeries} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
               <CartesianGrid stroke="var(--border)" strokeOpacity={0.35} />
@@ -800,9 +813,10 @@ export default function Results() {
                   label={{ value: d.label, position: "top", fontSize: 11, fill: "var(--muted)" }}
                 />
               ))}
-              <Line type="monotone" dataKey="units" dot={false} stroke="var(--accent)" strokeWidth={2} />
+              <Line type="monotone" dataKey="units" dot={false} stroke="var(--chart-line)" strokeWidth={2} />
             </LineChart>
           </ResponsiveContainer>
+          )}
         </div>
       </section>
 
@@ -831,7 +845,8 @@ export default function Results() {
                 </div>
               </div>
             ))}
-          {!Object.keys(byWeek).length && <div style={{ opacity: 0.7 }}>No graded games in this filter.</div>}
+          {!loaded ? <SkeletonLines rows={5} height={16} /> :
+            !Object.keys(byWeek).length && <div style={{ color: "var(--muted)" }}>No graded games in this filter.</div>}
         </div>
       </section>
     </div>

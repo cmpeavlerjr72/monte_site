@@ -73,6 +73,12 @@ const PAGE = 50;
 const MARK = "var(--rec-mark)";
 const POINT = "var(--chart-point)";
 
+/** The exporter's fine print, minus internal bookkeeping a reader does not
+ *  need ("owner decision 2026-09-13;"). The substance stays. */
+const publicNote = (note: string): string =>
+  note.replace(/\(?\s*owner decision \d{4}-\d{2}-\d{2}\s*;?\s*/gi, (m) => (m.trim().startsWith("(") ? "(" : ""))
+      .replace(/\(\s*\)/g, "").replace(/\s{2,}/g, " ").trim();
+
 const conferenceOf = (team: string): string =>
   FBS_CONFERENCE[cfbNameKey(team || "")] ?? "";
 
@@ -1233,7 +1239,6 @@ export default function Record() {
             Every bet we priced against the market, graded{" "}
             <strong>{frame}</strong>
             {latestWeek?.publish_utc ? <> · through week {latestWeek.week}, published {fmtDate(latestWeek.publish_utc)}</> : null}
-            {load?.weeks[0]?.engine_tag ? <> · engine {load.weeks[load.weeks.length - 1].engine_tag}</> : null}
           </div>
         </div>
         <button type="button" className="ui-btn icon rec__help"
@@ -1405,7 +1410,7 @@ export default function Record() {
       {/* The exporter's own fine print for a family in play, verbatim and
           muted, directly under the selectors that put it there. */}
       {familyNotes.map((note) => (
-        <div key={note} className="rec__famNote">{note}</div>
+        <div key={note} className="rec__famNote">{publicNote(note)}</div>
       ))}
 
       {/* -------------------------------- THE VERDICT -------------------- */}
