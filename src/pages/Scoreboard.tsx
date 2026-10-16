@@ -3154,7 +3154,7 @@ function ScoreboardPage() {
         className="card"
         style={{
           padding: 10, marginBottom: 16,
-          position: "sticky", top: 0, zIndex: 30,
+          position: "sticky", top: "var(--header-h)", zIndex: 30,
           background: "var(--card)",
           boxShadow: "0 2px 10px var(--shadow)",
         }}

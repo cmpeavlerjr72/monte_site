@@ -5256,7 +5256,146 @@ app.use("/api", (req: Request, res: Response) => {
   res.status(404).json({ error: "unknown_api_route", path: req.originalUrl });
 });
 
-app.use(express.static(staticDir));
+// ----------------------------------------------------------------------------
+// BLOG: per-post <head> for crawlers (2026-10-16)
+//
+// X's crawler (Twitterbot), Slack, iMessage and Google read the FIRST HTML
+// response and run no JavaScript, so the SPA's generic head would be every
+// post's link card. For /blog, /blog/tag/:tag and /blog/:slug this answers
+// index.html with the post's title, description, canonical, Open Graph,
+// Twitter card and JSON-LD swapped in, and the sanitised article HTML inside
+// #root (React replaces it on boot, so people see the app and crawlers see the
+// post). Post metadata comes from dist/blog/index.json, which
+// scripts/build_blog.mjs writes on EVERY deploy (public posts only: never a
+// draft or a future-dated post), so a new post never needs a server change.
+// Any failure falls through to the plain SPA.
+const SITE_ORIGIN = "https://www.mvpeav.com";
+type BlogIndexEntry = {
+  slug: string; title: string; description: string; date: string; updated?: string | null;
+  author?: string; author_x?: string; tags?: string[]; hero?: string | null; hero_alt?: string;
+  og_image?: string | null;
+};
+let blogCache: { mtime: number; posts: BlogIndexEntry[] } | null = null;
+let indexHtmlCache: { mtime: number; html: string } | null = null;
+
+function blogPosts(): BlogIndexEntry[] {
+  try {
+    const p = path.join(staticDir, "blog", "index.json");
+    const mtime = fs.statSync(p).mtimeMs;
+    if (!blogCache || blogCache.mtime !== mtime) {
+      const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+      blogCache = { mtime, posts: Array.isArray(raw) ? raw : [] };
+    }
+    return blogCache.posts;
+  } catch {
+    return [];
+  }
+}
+function indexHtml(): string | null {
+  try {
+    const p = path.join(staticDir, "index.html");
+    const mtime = fs.statSync(p).mtimeMs;
+    if (!indexHtmlCache || indexHtmlCache.mtime !== mtime) {
+      indexHtmlCache = { mtime, html: fs.readFileSync(p, "utf8") };
+    }
+    return indexHtmlCache.html;
+  } catch {
+    return null;
+  }
+}
+const escHtml = (s: unknown) => String(s ?? "")
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const absUrl = (u: string) => (/^https?:\/\//.test(u) ? u : `${SITE_ORIGIN}${u.startsWith("/") ? "" : "/"}${u}`);
+
+type HeadMeta = {
+  title: string; description: string; url: string; image: string; imageAlt: string;
+  type: "website" | "article"; published?: string; modified?: string; tags?: string[];
+  jsonLd?: Record<string, unknown>;
+};
+function injectHead(html: string, m: HeadMeta, body: string): string {
+  // Drop the defaults this replaces, then add ours right after <head>.
+  let out = html
+    .replace(/<title>[\s\S]*?<\/title>/i, "")
+    .replace(/<meta\s+(?:name|property)="(?:description|og:[^"]+|twitter:[^"]+|article:[^"]+)"[^>]*>\s*/gi, "")
+    .replace(/<link\s+rel="canonical"[^>]*>\s*/gi, "");
+  const tags = [
+    `<title>${escHtml(m.title)}</title>`,
+    `<meta name="description" content="${escHtml(m.description)}" />`,
+    `<link rel="canonical" href="${escHtml(m.url)}" />`,
+    `<link rel="alternate" type="application/rss+xml" title="MVPEAV blog" href="${SITE_ORIGIN}/blog/rss.xml" />`,
+    `<meta property="og:site_name" content="MVPEAV" />`,
+    `<meta property="og:type" content="${m.type}" />`,
+    `<meta property="og:title" content="${escHtml(m.title)}" />`,
+    `<meta property="og:description" content="${escHtml(m.description)}" />`,
+    `<meta property="og:url" content="${escHtml(m.url)}" />`,
+    `<meta property="og:image" content="${escHtml(m.image)}" />`,
+    `<meta property="og:image:width" content="1200" />`,
+    `<meta property="og:image:height" content="630" />`,
+    `<meta property="og:image:alt" content="${escHtml(m.imageAlt)}" />`,
+    ...(m.published ? [`<meta property="article:published_time" content="${escHtml(m.published)}" />`] : []),
+    ...(m.modified ? [`<meta property="article:modified_time" content="${escHtml(m.modified)}" />`] : []),
+    ...(m.tags ?? []).map((t) => `<meta property="article:tag" content="${escHtml(t)}" />`),
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:site" content="@MVPeav" />`,
+    `<meta name="twitter:creator" content="@MVPeav" />`,
+    `<meta name="twitter:title" content="${escHtml(m.title)}" />`,
+    `<meta name="twitter:description" content="${escHtml(m.description)}" />`,
+    `<meta name="twitter:image" content="${escHtml(m.image)}" />`,
+    `<meta name="twitter:image:alt" content="${escHtml(m.imageAlt)}" />`,
+    ...(m.jsonLd ? [`<script type="application/ld+json">${JSON.stringify(m.jsonLd).replace(/</g, "\\u003c")}</script>`] : []),
+  ].join("\n    ");
+  out = out.replace(/<head>/i, `<head>\n    ${tags}`);
+  return out.replace('<div id="root">', `<div id="root">${body}`);
+}
+
+app.get(["/blog", "/blog/", "/blog/tag/:tag", "/blog/:slug"], (req: Request, res: Response, next: NextFunction) => {
+  const html = indexHtml();
+  if (!html) return next();
+  const posts = blogPosts();
+  const slug = req.params.slug;
+  try {
+    if (slug) {
+      const post = posts.find((p) => p.slug === slug);
+      if (!post) return next(); // unknown, draft or scheduled: the SPA decides
+      let fragment = "";
+      try { fragment = fs.readFileSync(path.join(staticDir, "blog", `${post.slug}.html`), "utf8"); } catch { /* head only */ }
+      const url = `${SITE_ORIGIN}/blog/${post.slug}`;
+      const image = absUrl(post.og_image || "/og-default.png");
+      res.set("Cache-Control", "public, max-age=300");
+      res.type("html").send(injectHead(html, {
+        title: `${post.title} | MVPEAV`, description: post.description, url, image,
+        imageAlt: post.title, type: "article", published: post.date, modified: post.updated ?? undefined,
+        tags: post.tags ?? [],
+        jsonLd: {
+          "@context": "https://schema.org", "@type": "BlogPosting",
+          headline: post.title, description: post.description, datePublished: post.date,
+          dateModified: post.updated ?? post.date, image: [image], mainEntityOfPage: url,
+          author: { "@type": "Person", name: post.author ?? "MVPeav", url: `https://x.com/${post.author_x ?? "MVPeav"}` },
+          publisher: { "@type": "Organization", name: "MVPEAV", url: SITE_ORIGIN },
+        },
+      }, fragment));
+      return;
+    }
+    const tag = req.params.tag;
+    const list = tag ? posts.filter((p) => (p.tags ?? []).includes(tag)) : posts;
+    const items = list.slice(0, 30).map((p) =>
+      `<li><a href="/blog/${escHtml(p.slug)}">${escHtml(p.title)}</a> <small>${escHtml(String(p.date).slice(0, 10))}</small></li>`).join("");
+    const title = tag ? `${tag} posts | MVPEAV` : "Blog | MVPEAV";
+    res.set("Cache-Control", "public, max-age=300");
+    res.type("html").send(injectHead(html, {
+      title, description: "Sports sims with receipts: game previews built on 10,000 sims, the weekly record, losses included.",
+      url: `${SITE_ORIGIN}/blog${tag ? `/tag/${encodeURIComponent(tag)}` : ""}`,
+      image: `${SITE_ORIGIN}/og-default.png`, imageAlt: "MVPEAV", type: "website",
+    }, `<main class="blog-ssr"><h1>${escHtml(title)}</h1><ul>${items}</ul></main>`));
+  } catch (err) {
+    console.error("[blog] meta route failed, serving the plain SPA:", err);
+    next();
+  }
+});
+
+// redirect:false: a post's image folder (dist/blog/<slug>/) must not turn
+// /blog/<slug> into a 301 to /blog/<slug>/; the SPA (or the meta route) owns it.
+app.use(express.static(staticDir, { redirect: false }));
 
 app.get("*", (_req: Request, res: Response, next: NextFunction) => {
   res.sendFile(path.join(staticDir, "index.html"), (err) => {

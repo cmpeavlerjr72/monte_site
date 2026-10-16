@@ -5,16 +5,22 @@
     <!-- viewport-fit=cover lets the page paint under the notch/home indicator;
          the header/nav pay it back with env(safe-area-inset-*) padding. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>MVPEAV | Sports Simulations</title>
+    <title>MVPEAV | Sports sims that keep receipts</title>
     <!-- Site-wide defaults for search and link cards (X, iMessage, Slack).
-         No og:image yet: the design phase makes a proper card. -->
+         /blog/* pages get per-post tags from the server instead
+         (server/liveScores.ts, the BLOG meta route). The card image is
+         public/og-default.png (scripts/blog_og.py default). -->
     <meta name="description" content="Play-by-play simulations of every college football game, with a public, graded record of every pick." />
     <meta property="og:site_name" content="MVPEAV" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="MVPEAV | Sports Simulations" />
+    <meta property="og:title" content="MVPEAV | Sports sims that keep receipts" />
     <meta property="og:description" content="Play-by-play simulations of every college football game, with a public, graded record of every pick." />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content="https://www.mvpeav.com/og-default.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@MVPeav" />
+    <meta name="twitter:image" content="https://www.mvpeav.com/og-default.png" />
 
     <!-- PWA: installable shell. The header is navy in both themes
          (--header-bg in src/theme.css), so the browser chrome is too. -->

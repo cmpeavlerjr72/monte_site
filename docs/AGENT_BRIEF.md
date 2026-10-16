@@ -1209,6 +1209,37 @@ is then fully exercisable — the live-book re-check uses the PUBLIC
 orderbook GET, so it works credential-free, while the signing path is
 simply never reached. NEVER place a live order.
 
+## The blog (2026-10-16)
+
+Posts are Markdown + frontmatter in `content/blog/*.md` (BLOG_SCOPE §3 shape;
+optional `game: {season, week, game_id, away, home, kickoff}` and
+`pick: {market, side, line, label}`). ONE parser, `scripts/blog/frontmatter.mjs`,
+feeds both the app (`scripts/blog/vite-plugin-blog.mjs` -> `virtual:blog-index`,
+metadata + one lazy chunk per body) and `scripts/build_blog.mjs` (runs after
+`vite build`: validates and FAILS the build on a bad post, writes
+`dist/blog/index.json`, crawler fragments, `rss.xml`, `sitemap.xml`,
+`robots.txt`). Express injects per-post `<head>` tags for `/blog/*` from that
+index (server/liveScores.ts, BLOG meta route), so a new post needs no server
+change. Rules:
+
+- DRAFTS NEVER REACH A PRODUCTION BUILD. They compile in only with
+  `BLOG_DRAFTS=1` (the preview harness) or `vite dev`, show only with
+  `?drafts=1`, and `build_blog.mjs` strips their image folders otherwise.
+  index.json / RSS / sitemap are public-only in every build.
+- THE GITHUB REPO IS PUBLIC. A committed draft is readable there. Anything that
+  must stay private (the Team Tillman reveal) lives in the GITIGNORED
+  `content/blog-private/` + `public/blog-private/`; a post there can never be
+  published (the build fails if it says `draft: false`), and a `hold:` field
+  fails the build on any non-draft.
+- Embeds are read-only (`::sim-game`, `::record-card`, `::x-post`,
+  `:::callout`): no order, Tail or price UI in a post, ever. The directive
+  transform is `src/lib/blog/remarkMvpeav.mjs` (plain JS: the build runs on
+  Render's Node).
+- Board <-> post: `/cfb/scoreboard?week=weekNN&game=<espn id>` scrolls to and
+  flashes that card; a card whose game has a visible post shows "Read the
+  preview →" (`PreviewLink`, compiled-in metadata: no fetch, no layout shift).
+- Images: `scripts/blog_og.py` (OG cards, og-default.png, record images).
+
 ## Hard-won rules (each cost a real incident)
 
 1. NEVER retype player/team names — build keys from the data verbatim

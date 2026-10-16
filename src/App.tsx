@@ -67,6 +67,8 @@ const SiteHome = lazyPage(() => import("./pages/site/Home"));
 const About = lazyPage(() => import("./pages/site/About"));
 const HowItWorks = lazyPage(() => import("./pages/site/HowItWorks"));
 const Labs = lazyPage(() => import("./pages/site/Labs"));
+const BlogIndex = lazyPage(() => import("./pages/blog/BlogIndex"));
+const BlogPost = lazyPage(() => import("./pages/blog/BlogPost"));
 const NotFound = lazyPage(() => import("./pages/site/NotFound"));
 
 /** A redirect that keeps the query string (?season=&week= on the boards). */
@@ -119,6 +121,13 @@ export default function App() {
         {/* Hub */}
         <Routes>
           <Route path="/" element={<SiteHome />} />
+          {/* Blog. /nhl and /fantasy-ai are tag landing pages until those
+              projects have boards of their own. */}
+          <Route path="/blog" element={<BlogIndex />} />
+          <Route path="/blog/tag/:tag" element={<BlogIndex />} />
+          <Route path="/blog/:slug" element={<BlogPost />} />
+          <Route path="/nhl" element={<BlogIndex tag="nhl" />} />
+          <Route path="/fantasy-ai" element={<BlogIndex tag="fantasy-ai" />} />
           <Route path="/about" element={<About />} />
           <Route path="/about/how-it-works" element={<HowItWorks />} />
 

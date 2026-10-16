@@ -127,6 +127,9 @@
   --r: 4px;
   --r-lg: 6px;
   --rule: 1px solid var(--border);
+  /* The sticky header's height (56px bar + 2px gold rule + the notch in an
+     installed app). Sticky toolbars below it offset by this. */
+  --header-h: calc(58px + env(safe-area-inset-top, 0px));
   --content-max: 1200px;
   --read-max: 700px;
 
@@ -1476,14 +1479,14 @@ input:focus, select:focus, textarea:focus {
   cursor: help;
 }
 
-/* A card jumped to from the Top Edges list pulses so the eye finds it. */
+/* A card jumped to (Top Edges, or a ?game= deep link) pulses gold. */
 @keyframes card-flash {
   0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  25%, 75% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 55%, transparent); }
+  25%, 75% { box-shadow: 0 0 0 3px var(--gold); }
 }
 .card-flash { animation: card-flash 1.6s ease-in-out 1; }
 @media (prefers-reduced-motion: reduce) {
-  .card-flash { animation: none; outline: 2px solid var(--brand); outline-offset: 2px; }
+  .card-flash { animation: none; outline: 2px solid var(--gold); outline-offset: 2px; }
 }
 
 /* The honesty gate reads as a real notice, not a paragraph. */

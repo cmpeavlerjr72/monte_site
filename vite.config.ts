@@ -2,10 +2,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import { VitePWA } from "vite-plugin-pwa";
+// content/blog/*.md -> virtual:blog-index (drafts only with BLOG_DRAFTS=1).
+import blogPlugin from "./scripts/blog/vite-plugin-blog.mjs";
 
 export default defineConfig({
   plugins: [
     react(),
+    blogPlugin(),
     // PUSH-ONLY service worker (2026-08-29). History, because it is the rule:
     // the 2026-08-28 blank-phone incident (two caching workers stranded across
     // rapid deploys — registration alive, CacheStorage gone, every navigation

@@ -4,6 +4,7 @@
 //   preview_refresh.cmd              build app + server, serve on :4173
 //   preview_refresh.cmd --no-build   serve what is already built
 //   preview_refresh.cmd --port 4180  another port
+//   preview_refresh.cmd --no-drafts  build exactly like production (no drafts)
 //   npm run preview:refresh          same thing
 //
 // Stop it with Ctrl+C in the window it runs in (it stops the server too).
@@ -47,13 +48,17 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 const noBuild = args.includes("--no-build");
+// Drafts are compiled in for the owner's review unless --no-drafts. Even then
+// they show only with ?drafts=1, and they never reach a production build
+// (Render does not set BLOG_DRAFTS). See scripts/blog/vite-plugin-blog.mjs.
+const drafts = !args.includes("--no-drafts");
 const portArg = args.indexOf("--port");
 const PORT = portArg >= 0 ? Number(args[portArg + 1]) : 4173;
 const isWin = process.platform === "win32";
 
-function run(cmd, cmdArgs, cwd) {
+function run(cmd, cmdArgs, cwd, extraEnv = {}) {
   console.log(`\n> ${cmd} ${cmdArgs.join(" ")}   (in ${path.relative(root, cwd) || "."})`);
-  const r = spawnSync(cmd, cmdArgs, { cwd, stdio: "inherit", shell: isWin });
+  const r = spawnSync(cmd, cmdArgs, { cwd, stdio: "inherit", shell: isWin, env: { ...process.env, ...extraEnv } });
   if (r.status !== 0) {
     console.error(`\n[preview] FAILED: ${cmd} ${cmdArgs.join(" ")} (exit ${r.status})`);
     process.exit(r.status || 1);
@@ -63,7 +68,7 @@ function run(cmd, cmdArgs, cwd) {
 if (!noBuild) {
   if (!existsSync(path.join(root, "node_modules"))) run("npm", ["ci"], root);
   if (!existsSync(path.join(root, "server", "node_modules"))) run("npm", ["ci"], path.join(root, "server"));
-  run("npm", ["run", "build"], root);
+  run("npm", ["run", "build"], root, { BLOG_DRAFTS: drafts ? "1" : "" });
   run("npx", ["tsc"], path.join(root, "server"));
 }
 
@@ -99,7 +104,7 @@ child.stdout.on("data", (d) => {
   if (/listening on/.test(String(d))) {
     console.log(`\n  ========================================================`);
     console.log(`   MVPEAV preview is up:  ${url}`);
-    console.log(`   Blog drafts:           ${url}/blog?drafts=1`);
+    console.log(`   Blog drafts:           ${url}/blog?drafts=1${drafts ? "" : "   (built --no-drafts: none)"}`);
     console.log(`   Order placement is DISABLED in this preview.`);
     console.log(`   Stop: Ctrl+C in this window.`);
     console.log(`  ========================================================\n`);

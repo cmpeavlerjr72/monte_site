@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 !server/dist
 !server/dist/liveScores.js
+
+# BLOG: posts that must never reach the PUBLIC GitHub repo (e.g. the Team
+# Tillman reveal, which needs a third party's OK). Read only by drafts-enabled
+# builds (BLOG_DRAFTS=1, the local preview). See scripts/blog/frontmatter.mjs.
+content/blog-private/
+public/blog-private/

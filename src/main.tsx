@@ -7,6 +7,7 @@ import { BrowserRouter } from "react-router-dom";
 import "./theme.css";
 import "./index.css";
 import "./styles/ui.css";
+import "./styles/blog.css";
 // Applies the stored theme choice at boot (shared store, see usePrefs.ts).
 import "./lib/usePrefs";
 import App from "./App";

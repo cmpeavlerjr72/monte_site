@@ -1,0 +1,158 @@
+/* ============================================================================
+   THE BLOG (src/pages/blog, src/components/blog). Tokens only; light and dark
+   come free from theme.css. A 700px reading column, the display face for
+   headlines, gold for "ours": callouts, the preview link, the sim card rule.
+   Imported once from main.tsx (small; the Markdown renderer is the lazy part).
+   ========================================================================= */
+
+/* ------------------------------------------------------------------ lists -- */
+.pgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
+.plist { display: grid; border-top: 1px solid var(--text); }
+.plist .pcard { padding: var(--sp-4) 0; border-bottom: var(--rule); }
+.pcard { display: grid; gap: var(--sp-3); min-width: 0; }
+.pgrid .pcard { padding-top: var(--sp-3); border-top: 3px solid var(--navy); }
+:root[data-theme="dark"] .pgrid .pcard { border-top-color: var(--gold); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pgrid .pcard { border-top-color: var(--gold); } }
+.pcard__words { display: grid; gap: 6px; min-width: 0; }
+.pcard__kicker {
+  font-family: var(--font-display); font-weight: 700; font-size: var(--fs-sm); letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--accent-ink); display: flex; gap: 8px; align-items: center;
+}
+.pcard__draft, .preview-link__draft {
+  font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 1px 5px; border: 1px dashed currentColor; border-radius: var(--r-sm); color: var(--muted);
+}
+.pcard__title { margin: 0; font-size: 22px; line-height: 1.08; }
+.pcard__title a:hover { color: var(--accent-ink); }
+.pcard__dek { margin: 0; color: var(--muted); font-size: var(--fs-md); max-width: 62ch; }
+.pcard__by { font-size: var(--fs-xs); color: var(--muted); }
+.pcard--lead {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--sp-5); align-items: center;
+  padding-bottom: var(--sp-5); border-bottom: var(--rule);
+}
+.pcard--lead .pcard__title { font-size: clamp(28px, 3.4vw, 40px); }
+.pcard__hero img { display: block; width: 100%; height: auto; border-radius: var(--r-lg); border: var(--rule); }
+.blog-drafts-note {
+  margin: 0; padding: 8px 12px; border: 1px dashed var(--accent); border-radius: var(--r);
+  color: var(--accent-ink); font-size: var(--fs-sm);
+}
+@media (max-width: 860px) {
+  .pgrid { grid-template-columns: 1fr; }
+  .pcard--lead { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------------------------------- post -- */
+.post { max-width: var(--read-max); margin: 0 auto; display: grid; gap: var(--sp-5); }
+.post-draft {
+  padding: 10px 14px; border: 1px dashed var(--accent); border-left: 4px solid var(--gold); border-radius: var(--r);
+  font-size: var(--fs-sm); color: var(--text); background: color-mix(in oklab, var(--gold) 8%, var(--card));
+}
+.post-head { display: grid; gap: var(--sp-3); }
+.post-title { margin: 0; font-size: clamp(32px, 5vw, 46px); line-height: 1.02; text-wrap: balance; }
+.post-by { font-size: var(--fs-sm); color: var(--muted); }
+.post-by a { color: var(--brand-text); }
+.post-game {
+  display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding: 8px 0;
+  border-top: var(--rule); border-bottom: var(--rule); font-size: var(--fs-sm); font-weight: 600;
+}
+.post-hero { margin: 0; }
+.post-hero img { display: block; width: 100%; height: auto; border-radius: var(--r-lg); border: var(--rule); }
+.post-body { font-size: 18px; line-height: 1.62; }
+.post-body > * { margin-top: 0; margin-bottom: 0; }
+.post-body > * + * { margin-top: 1em; }
+.post-body > h2 {
+  margin: 1.6em 0 0; font-size: 28px; text-transform: uppercase; letter-spacing: 0.01em;
+  padding-top: 10px; border-top: 3px solid var(--navy);
+}
+:root[data-theme="dark"] .post-body h2 { border-top-color: var(--gold); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .post-body h2 { border-top-color: var(--gold); } }
+.post-body > h3 { margin: 1.3em 0 0; font-size: 22px; }
+.post-body a { color: var(--brand-text); text-decoration: underline; text-underline-offset: 2px; }
+.post-body strong { font-weight: 750; }
+.post-body ul, .post-body ol { padding-left: 1.3em; }
+.post-body li + li { margin-top: 0.4em; }
+.post-body > blockquote { margin: 1.2em 0; padding: 4px 0 4px 16px; border-left: 4px solid var(--gold); font-size: 20px; font-style: italic; }
+.post-body hr { border: 0; border-top: var(--rule); margin: 2em 0; }
+.post-figure, .post-body > .post-figure { margin: 1.4em 0; }
+.post-figure img { display: block; width: 100%; height: auto; border-radius: var(--r-lg); border: var(--rule); }
+.post-figure figcaption { margin-top: 6px; font-size: var(--fs-sm); color: var(--muted); line-height: 1.4; }
+.post-table { overflow-x: auto; }
+.post-table table { width: 100%; border-collapse: collapse; font-size: 16px; font-variant-numeric: tabular-nums; }
+.post-table th {
+  text-align: left; font-family: var(--font-display); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: 14px; color: var(--muted); border-bottom: 1px solid var(--text); padding: 6px 10px;
+}
+.post-table td { border-bottom: var(--rule); padding: 7px 10px; }
+.callout, .post-body > .callout {
+  margin: 1.2em 0; padding: var(--sp-4) var(--sp-5); background: var(--navy); color: #ffffff;
+  border-radius: var(--r-lg); border-left: 6px solid var(--gold); font-size: 20px; line-height: 1.45;
+}
+.callout p { margin: 0; }
+.post-body li > p { margin: 0; }
+.callout strong { color: var(--gold); }
+.callout--hand-up::before {
+  content: "Hand up, I was wrong"; display: block; font-family: var(--font-display); font-weight: 700;
+  font-size: 15px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); margin-bottom: 6px;
+}
+.owner-beat {
+  padding: 10px 14px; border: 2px dashed var(--accent); border-radius: var(--r); font-size: 15px;
+  color: var(--accent-ink); background: color-mix(in oklab, var(--gold) 6%, var(--card));
+}
+.owner-beat__tag { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.directive-unknown { padding: 8px 12px; border: 1px dashed var(--border); color: var(--muted); font-size: var(--fs-sm); }
+
+/* ------------------------------------------------------------ the sim card -- */
+.simcard, .post-body > .simcard {
+  margin: 1.4em 0; padding: var(--sp-4); background: var(--card); border: var(--rule); border-top: 4px solid var(--gold);
+  border-radius: var(--r-lg); display: grid; gap: var(--sp-3); font-size: 15px; line-height: 1.4;
+}
+.simcard--empty p { margin: 0; color: var(--muted); }
+.simcard__head { display: flex; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; align-items: baseline; }
+.simcard__asof { font-size: var(--fs-xs); color: var(--muted); }
+.simcard__rows { display: grid; gap: 6px; }
+.simcard__row { display: grid; grid-template-columns: minmax(0, 1fr) auto 56px; gap: var(--sp-3); align-items: center; }
+.simcard__row .team-cell__name { font-size: 18px; }
+.simcard__win { color: var(--muted); font-size: var(--fs-sm); }
+.simcard__pts { font-family: var(--font-display); font-weight: 800; font-size: 34px; line-height: 1; text-align: right; }
+.simcard__bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 2px; background: var(--card); }
+.simcard__bar span { display: block; height: 100%; }
+.simcard__meta { display: flex; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--muted); }
+.simcard__final { font-weight: 700; }
+.simcard__links {
+  display: flex; gap: 6px var(--sp-4); flex-wrap: wrap; align-items: baseline; padding-top: var(--sp-2);
+  border-top: var(--rule); font-size: var(--fs-sm);
+}
+.simcard__link, .preview-link {
+  font-family: var(--font-display); font-weight: 700; font-size: 16px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--accent-ink); text-decoration: none; border-bottom: 2px solid var(--gold); padding-bottom: 1px;
+}
+.simcard__link:hover, .preview-link:hover { color: var(--text); }
+.post-body .simcard__link { text-decoration: none; color: var(--accent-ink); }
+.recembed__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); }
+
+/* The board card / Game sims link. One line, gold, no layout cost elsewhere. */
+.preview-link { display: inline-flex; align-items: center; gap: 6px; justify-self: start; }
+.preview-link--compact {
+  font-size: 14px; padding-top: 6px; margin-top: 2px; border-bottom: 0; border-top: 1px solid var(--border);
+  width: 100%; justify-self: stretch;
+}
+.preview-link--compact:hover { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+
+/* --------------------------------------------------------------- post foot -- */
+.pick-result {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 12px; border: var(--rule);
+  border-left: 4px solid var(--gold); border-radius: var(--r); font-size: var(--fs-sm); font-weight: 600;
+}
+.post-foot { display: grid; gap: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--text); justify-items: start; }
+.receipts { width: 100%; padding: var(--sp-4); border: var(--rule); border-radius: var(--r-lg); background: var(--card); }
+.receipts ul { margin: 6px 0 0; padding-left: 1.2em; font-size: var(--fs-sm); color: var(--muted); }
+.receipts li + li { margin-top: 4px; }
+.receipts__note { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--muted); }
+.receipts__note a { color: var(--brand-text); text-decoration: underline; }
+.post-disclaimer { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
+.post-related { margin-top: var(--sp-4); }
+@media (max-width: 560px) {
+  .post-body { font-size: 17px; }
+  .callout { font-size: 18px; padding: var(--sp-3) var(--sp-4); }
+  .recembed__stats { grid-template-columns: 1fr; }
+}

@@ -3,6 +3,7 @@
 // board lives at /cfb/scoreboard-classic so the owner can still flip).
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as Papa from "papaparse";
+import { PreviewLink } from "../components/blog/PreviewLink";
 import SlateSearch from "../components/SlateSearch";
 import { buildTeamSearchIndex, cardSearchWords, matchesTokens, queryTokens, type TeamSearchIndex } from "../lib/slateSearch";
 import { displayTeamColor } from "../utils/teamColors";
@@ -1289,11 +1290,19 @@ const getSearchParam = (name: string) =>
   typeof window === "undefined"
     ? null
     : new URLSearchParams(window.location.search).get(name);
-const URL_SEASON = (getSearchParam("season") || "").trim();
-const URL_WEEK = (getSearchParam("week") || "").trim().toLowerCase();
+// Read at MOUNT, not at module load (2026-10-16): the chunk is cached after
+// the first visit, so a module-level read went stale for any later in-app
+// deep link (a blog post's "See the live game card" link, say).
+const urlSeason = () => (getSearchParam("season") || "").trim();
+const urlWeek = () => (getSearchParam("week") || "").trim().toLowerCase();
 
 /* --------------------- page --------------------- */
 function ScoreboardPage() {
+  const URL_SEASON = useRef(urlSeason()).current;
+  const URL_WEEK = useRef(urlWeek()).current;
+  /** ?game=<ESPN game id>: scroll that card into view and flash it once the
+   *  slate has rendered (blog previews deep-link here). Consumed once. */
+  const focusGameRef = useRef((getSearchParam("game") || "").trim());
 
   // --- LIVE scoreboard block: lives BELOW the week-row loads so the ESPN
   // poll can key on the slate's dates (see "LIVE: slate-date scoreboard"). ---
@@ -2705,6 +2714,21 @@ function ScoreboardPage() {
     return confCards.filter((c) => matchesTokens(searchTokens, cardSearchWords(teamSearch, c)));
   }, [confCards, searchTokens, teamSearch]);
 
+  /* DEEP LINK TO ONE GAME (?game=<id>, 2026-10-16). Once a card with that
+     ESPN id is on the board, scroll to it and flash it, then forget the id so
+     week switches never snap back. Keyed on the card-key signature (a
+     primitive), not on the array, per the render-loop rules. */
+  const cardKeySig = useMemo(() => filteredCards.map((c) => c.key).join("|"), [filteredCards]);
+  useEffect(() => {
+    const id = focusGameRef.current;
+    if (!id || !cardKeySig) return;
+    const hit = filteredCards.find((c) => String(c.jsonRow?.game_id ?? "") === id);
+    if (!hit) return;
+    focusGameRef.current = "";
+    scrollAndFlash(hit.key, setFlashKey, 12);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardKeySig]);
+
   /**
    * THE "MY GAMES" MEMBERSHIP — which cards the owner already has skin in.
    *
@@ -3030,6 +3054,7 @@ function ScoreboardPage() {
             // The week's market-eligibility policy, for the card's lines
             // block. Read-only: it changes no number on the card.
             engine={weekEngine ?? null}
+            footer={c.jsonRow?.game_id ? <PreviewLink gameId={String(c.jsonRow.game_id)} compact /> : null}
           />
           {openPanel && idx === rowEnd && openCard && (
             <div style={{ gridColumn: "1 / -1" }}>
@@ -3195,7 +3220,7 @@ function ScoreboardPage() {
         className="card"
         style={{
           padding: "8px 10px", marginBottom: 10,
-          position: "sticky", top: 0, zIndex: 30,
+          position: "sticky", top: "var(--header-h)", zIndex: 30,
           background: "var(--card)",
           boxShadow: "0 2px 10px var(--shadow)",
         }}
@@ -3762,8 +3787,12 @@ function KickWeatherChip({
 export function GameCard({
   card, gdata, useMean = false, kalshi, book, bookToken = "", parlayOpen,
   openKind, onToggle, weekLabel, condensed = false, onAddLeg, season,
-  flash = false, bets, engine = null,
+  flash = false, bets, engine = null, footer,
 }: {
+  /** Optional last row (2026-10-16: "Read the preview →" when a published
+   *  blog post exists for this game). Undefined/null renders nothing, so a
+   *  card with no post is exactly as it was. */
+  footer?: React.ReactNode;
   card: CardGame;
   /** Per-seed rows. Undefined on JSON seasons, which publish summaries only. */
   gdata?: GameData;
@@ -4109,6 +4138,7 @@ export function GameCard({
       {book && book.length > 0 && (
         <MyBookStrip bets={book} token={bookToken} slugTeams={cardTeams} />
       )}
+      {footer}
     </article>
   );
 }
