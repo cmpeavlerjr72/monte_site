@@ -1,4 +1,5 @@
-// ResultsCBB_alt.tsx
+// src/pages/ResultsCBB.tsx (CBB daily P&L candlesticks)
+import { GATES, isOpen } from "../lib/seasons";
 import { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
@@ -16,6 +17,18 @@ import {
 const DATASET_ROOT =
   "/api/data/cbb-sims-2026"; // same-origin proxy; see server/liveScores.ts
 const SEASON_PREFIX = "2026";
+/** The 2025-26 season as published under the 2026 prefix: first and last day
+ *  with a daily_results.json. */
+const LAST_SEASON = { start: "2025-11-03", end: "2026-03-15" };
+
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i]); }
+  }));
+  return out;
+}
 
 /* ---------- TYPES ---------- */
 type Market = "ml" | "spread" | "total";
@@ -497,8 +510,12 @@ export default function ResultsCBB_alt() {
   /* dates */
   const today = useMemo(() => toYMD(new Date()), []);
   const thirtyAgo = useMemo(() => toYMD(addDays(new Date(), -30)), []);
-  const [startDate, setStartDate] = useState(thirtyAgo);
-  const [endDate, setEndDate] = useState(today);
+  /* OFF-SEASON DEFAULT (2026-10-16): before the season tips, the last 30 days
+     hold no games and the page opened on "No daily results in range" plus a
+     wall of 404s. Until then it opens on LAST season, whole. */
+  const offSeason = !isOpen(GATES.cbbSeason);
+  const [startDate, setStartDate] = useState(offSeason ? LAST_SEASON.start : thirtyAgo);
+  const [endDate, setEndDate] = useState(offSeason ? LAST_SEASON.end : today);
 
   /* filters */
   const [fs, setFs] = useState<FilterState>(defaultFS);
@@ -520,8 +537,10 @@ export default function ResultsCBB_alt() {
         const base = DATASET_ROOT.replace(/\/+$/, "");
         const pref = SEASON_PREFIX.replace(/^\/+|\/+$/g, "");
 
-        const fetched = await Promise.all(
-          dates.map(async (d) => {
+        // At most 12 day files in flight: a whole season is ~155 of them,
+        // and firing every one at once is how the data proxy gets a 429.
+        const fetched = await mapLimit(
+          dates, 12, async (d) => {
             const url = `${base}/${pref}/days/${d}/daily_results.json`;
             try {
               const res = await fetch(url, { cache: "no-store" });
@@ -648,7 +667,7 @@ export default function ResultsCBB_alt() {
               // <-- swallow missing/non-OK day and ignore it
               return null;
             }
-          })
+          }
         );
 
         const tidy = (
@@ -819,25 +838,19 @@ export default function ResultsCBB_alt() {
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: 16 }}>
       <section className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <h1 style={{ margin: 0, fontWeight: 800, fontSize: 28 }}>
-          CBB Results — Candlestick
+        <div className="kicker">College basketball</div>
+        <h1 style={{ margin: "2px 0 0" }}>
+          {offSeason ? "2025-26 results, night by night" : "Results, night by night"}
         </h1>
         <div style={{ marginTop: 6, color: "var(--muted)" }}>
-          Each candle is daily profit (close − open). Green = positive; red =
-          negative.
+          Each candle is one night's profit in units. Green nights made money, red nights lost it.
+          {offSeason && " The 2026-27 season tips Nov 3; until then this opens on last season."}
         </div>
 
         {/* Controls */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "auto auto 1fr",
-            rowGap: 10,
-            columnGap: 16,
-            alignItems: "center",
-            marginTop: 10,
-          }}
-        >
+        {/* Wraps on a phone (it was a fixed three-column grid that pushed the
+            End date off a 390px screen). */}
+        <div className="cbbr-controls">
           {/* Dates */}
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ fontSize: 12, color: "var(--muted)" }}>Start</span>

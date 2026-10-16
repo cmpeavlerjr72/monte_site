@@ -1,3 +1,6 @@
+import CbbOffSeason from "../components/CbbOffSeason";
+import { PageHeader } from "../components/ui";
+import { GATES, isOpen } from "../lib/seasons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
@@ -896,7 +899,10 @@ function findBinLabel(hist: HistBin[], value: number | undefined) {
  *  Page
  * =======================================================*/
 export default function CBBSims() {
-  const [date, setDate] = useState(() => toYMD(new Date()));
+  const offSeason = !isOpen(GATES.cbbSeason);
+  // Off-season, open on the last night of last season (it has games) rather
+  // than on today, which has none and only produced 404s.
+  const [date, setDate] = useState(() => (offSeason ? "2026-03-15" : toYMD(new Date())));
   const [debug] = useState(false);
   const [logoMode, setLogoMode] = useState<"primary" | "alt">("primary");
   const [loading, setLoading] = useState(false);
@@ -1069,7 +1075,7 @@ export default function CBBSims() {
       }
       if (!aborted) {
         setLoading(false);
-        setError("No scores yet for this date, try another date (Season starts 11/3)");
+        setError(offSeason ? "No games on this date. Pick a date from last season." : "No sims published for this date yet.");
       }
     }
     loadIndex();
@@ -1793,7 +1799,10 @@ export default function CBBSims() {
   const fmtUnits = (u: number) => `${u >= 0 ? "+" : ""}${u.toFixed(1)}u`;
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto", padding: 16 }}>
+    <div style={{ maxWidth: 1200, margin: "0 auto", display: "grid", gap: 16 }}>
+      <PageHeader kicker="College basketball" title="CBB scoreboard"
+        sub="Every game simulated 10,000 times, every night of the season." />
+      {offSeason && <CbbOffSeason />}
       <section className="card" style={{ padding: 12, marginBottom: 12, background: "var(--card)" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <input
@@ -1973,19 +1982,19 @@ export default function CBBSims() {
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ opacity: 0.75 }}>Record:</span>
 
-          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--muted-bg, #f1f5f9)", border: "1px solid var(--border)" }}>
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--fill)", border: "1px solid var(--border)" }}>
             <strong style={{ marginRight: 6 }}>Spread</strong>
             {recSpread.w}-{recSpread.l}-{recSpread.p}
             {recSpread.n ? ` (${fmtPct1(recSpread.pct)} · ${fmtUnits(recSpread.profit)})` : ""}
           </span>
 
-          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--muted-bg, #f1f5f9)", border: "1px solid var(--border)" }}>
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--fill)", border: "1px solid var(--border)" }}>
             <strong style={{ marginRight: 6 }}>Total</strong>
             {recTotal.w}-{recTotal.l}-{recTotal.p}
             {recTotal.n ? ` (${fmtPct1(recTotal.pct)} · ${fmtUnits(recTotal.profit)})` : ""}
           </span>
 
-          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--muted-bg, #f1f5f9)", border: "1px solid var(--border)" }}>
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "var(--fill)", border: "1px solid var(--border)" }}>
             <strong style={{ marginRight: 6 }}>ML</strong>
             {recML.w}-{recML.l}-{recML.p}
             {recML.n ? ` (${fmtPct1(recML.pct)} · ${fmtUnits(recML.profit)})` : ""}
@@ -2200,7 +2209,7 @@ function getLastPlayInfo(
       bF = card.finalB;
     if (!Number.isFinite(aF as number) || !Number.isFinite(bF as number)) return undefined;
 
-    const gray = "var(--muted-bg, #f1f5f9)";
+    const gray = "var(--fill)";
     const green = "rgba(16,185,129,0.18)";
     const red = "rgba(239,68,68,0.18)";
 
@@ -2241,12 +2250,12 @@ function getLastPlayInfo(
   // background for the Pace pill (stronger color as it gets further from the line)
   function pacePillBg(signedDelta: number | undefined): string {
     if (!Number.isFinite(signedDelta as number)) {
-      return "color-mix(in oklab, var(--muted-bg, #f1f5f9) 40%, white)";
+      return "color-mix(in oklab, var(--fill) 40%, white)";
     }
     const d = signedDelta as number;
     const NEUTRAL_BAND = 2; // points within which we treat as neutral
     if (Math.abs(d) <= NEUTRAL_BAND) {
-      return "color-mix(in oklab, var(--muted-bg, #f1f5f9) 40%, white)";
+      return "color-mix(in oklab, var(--fill) 40%, white)";
     }
 
     const MAX_DELTA = 30;

@@ -230,7 +230,11 @@ export default function MarketGrid({
   );
   const noteReason = decisionReason(engine);
 
-  const loading = !compact && !failed;
+  /* A skeleton only while a fetch is actually running (2026-10-16). Before the
+     card scrolls into view nothing is in flight, so its cells print the book
+     line plainly instead of a grey bar that a reader (or a full-page capture)
+     would take for a stuck load. A failed fetch is the same plain line. */
+  const loading = !compact && !failed && inView;
   const openRow = open ? byKey.get(open) ?? null : null;
 
   const cellW = condensed ? 48 : 56;
@@ -293,7 +297,7 @@ export default function MarketGrid({
     );
   };
 
-  const anyMarket = rows.length > 0 || loading;
+  const anyMarket = rows.length > 0 || (!compact && !failed);
 
   return (
     <div ref={hostRef} data-market-block style={{ display: "grid", gap: condensed ? 6 : 8 }}>

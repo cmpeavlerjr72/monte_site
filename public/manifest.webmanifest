@@ -2,7 +2,7 @@
   "id": "/",
   "name": "MVPEAV",
   "short_name": "MVPEAV",
-  "description": "College football simulation slates, edges and live scoreboards.",
+  "description": "Sports sims that keep receipts: college football and basketball simulations, live scoreboards and a public record of every pick.",
   "start_url": "/cfb/scoreboard",
   "scope": "/",
   "display": "standalone",

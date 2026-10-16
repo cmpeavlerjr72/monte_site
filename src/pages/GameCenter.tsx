@@ -1,5 +1,20 @@
-// src/pages/GameCenter.tsx
+// src/pages/GameCenter.tsx: "Game sims", /cfb/game
+//
+// Every simulated outcome for ONE game: margin, total, each team's points, and
+// each player's stat line, with a line box that prices the series against it.
+//
+// TWO SEASONS, TWO LAYOUTS (2026-10-16). 2026 publishes per-game JSON
+// (weeks/<id>/index.json -> games/<slug>/compact.json for the 10,000 seed
+// scores, players_dist.json for each player's PMFs) and NO CSVs, so this page
+// used to open on 2025 week 0 forever. Now 2026 is the default and reads that
+// JSON through the same cached loaders as the board (cfbJson.ts); 2025 stays
+// reachable as an archive tab on its original CSV bundles. Only the LOADERS
+// differ: both feed the same GameMap / PlayerMap shapes and the same charts.
+//
+// Deep link: /cfb/game?week=week07&game=<espn game_id> (or &pair=<slug>);
+// ?season=2025 opens the archive.
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import * as Papa from "papaparse";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -8,13 +23,16 @@ import {
 import { displayTeamColor } from "../utils/teamColors";
 import { useIsDark } from "../lib/usePrefs";
 import {
-  getCatalog, playerFileForPair,
+  getCatalog, playerFileForPair, latestWeek,
   type CfbCatalog, type FileItem,
 } from "../lib/cfbData";
-
-/* --------------------------------------------------------------------------
-   Sim data is fetched at runtime from the archived dataset (see lib/cfbData).
-----------------------------------------------------------------------------*/
+import {
+  getJsonWeekIndex, getCompactCached, getPlayersDistCached, type JsonWeekRow, type PlayersDistJson,
+} from "../lib/cfbJson";
+import { PageHeader, Tabs, EmptyState } from "../components/ui";
+import { Skeleton } from "../components/Skeleton";
+import { useDocumentMeta } from "../lib/useDocumentMeta";
+import { PreviewLink } from "../components/blog/PreviewLink";
 
 /* --------------------------------------------------------------------------
    Safari-safe CSV loader (fetch as TEXT, then parse; no web workers on iOS)
@@ -90,6 +108,11 @@ function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: n
   const iqr = Math.max(1e-6, q3-q1);
 
   let binWidth = opts?.binWidth || (max>min ? Math.max(2*iqr*Math.cbrt(1/n), 0.5) : 1);
+  // Scores and stat lines are INTEGERS. A fractional bin width over integer
+  // data alternates 1-value and 2-value bins, which draws a comb of spikes
+  // that looks like signal and is not. Snap to a whole-number width.
+  const allInt = v.every((x) => Number.isInteger(x));
+  if (allInt && !opts?.bins) binWidth = Math.max(1, Math.round(binWidth));
   let bins = opts?.bins || Math.max(1, Math.ceil((max-min)/binWidth));
   if (opts?.bins && !opts?.binWidth && max>min) binWidth = (max-min)/bins;
 
@@ -108,7 +131,11 @@ function computeHistogram(values: number[], opts?: { bins?: number; binWidth?: n
   }
   return counts.map((c,i)=>{
     const s = edges[i], e = edges[i+1];
-    return { bin: `${Number(s.toFixed(1))}–${Number(e.toFixed(1))}`, count:c, start:s, end:e };
+    // Integer bins read as the values they hold: "7" or "7 to 9".
+    const label = allInt && Number.isInteger(binWidth)
+      ? (e - s <= 1 ? `${s}` : `${s} to ${e - 1}`)
+      : `${Number(s.toFixed(1))}–${Number(e.toFixed(1))}`;
+    return { bin: label, count:c, start:s, end:e };
   });
 }
 function findBinLabelForValue(hist: HistBin[], x: number) {
@@ -214,17 +241,47 @@ function buildPlayerMap(data: any[]): PlayerMap {
   return pmap;
 }
 
+/* --------------------- 2026: players_dist.json -> PlayerMap --------------------- */
+/** Each stat files under the role that OWNS it (a QB's rushing yards appear
+ *  under Rusher), the same rule the CSV path applies when a row has no role.
+ *  A PMF is expanded to its seed values so the histogram and the line math
+ *  are identical to the CSV path (mass == nsims, so 10,000 values). Stats the
+ *  page has no label for (targets, designed runs, sack yards) are skipped. */
+function buildPlayerMapFromDist(dist: PlayersDistJson): PlayerMap {
+  const pmap: PlayerMap = {};
+  for (const p of dist.players) {
+    for (const [stat, pmf] of Object.entries(p.stats)) {
+      const role = canonicalRoleFromValueKey(stat);
+      if (!role) continue;
+      // Zero-stat PMFs (all mass at 0, e.g. a receiver's passing yards) are
+      // not distributions; hard-won rule 5 filters them in the math layer.
+      if (pmf.size === 1 && pmf.has(0)) continue;
+      const values: number[] = [];
+      for (const [v, c] of pmf) for (let i = 0; i < c; i++) values.push(v);
+      if (!values.length) continue;
+      (((pmap[p.team] ||= {})[p.player] ||= {})[role] ||= {})[stat] = values;
+    }
+  }
+  return pmap;
+}
+
 /* --------------------- URL helpers (embed + deep links) --------------------- */
 const getSearchParam = (name: string) =>
   typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get(name);
 const URL_WEEK = getSearchParam("week") || "";
 const URL_PAIR = getSearchParam("pair") || "";
+const URL_GAME = getSearchParam("game") || "";
+const URL_SEASON = getSearchParam("season") === "2025" ? "2025" : "2026";
+
+type SeasonId = "2026" | "2025";
+type GameEntry = GameData & { row?: JsonWeekRow; kickoff?: string; gameId?: string };
 
 /* --------------------- Small control --------------------- */
 function NumberSpinner({
-  value, onChange, step = 0.5, min, max, width = 110, placeholder,
+  value, onChange, step = 0.5, min, max, width = 96, placeholder, label,
 }: {
-  value: string; onChange: (s: string) => void; step?: number; min?: number; max?: number; width?: number; placeholder?: string;
+  value: string; onChange: (s: string) => void; step?: number; min?: number; max?: number;
+  width?: number; placeholder?: string; label: string;
 }) {
   const toNum = (s: string) => (s.trim() === "" ? NaN : Number(s));
   const clamp = (n: number) => Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n));
@@ -233,15 +290,33 @@ function NumberSpinner({
     const next = clamp(base + dir * step); onChange(next.toFixed(1));
   };
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <button type="button" onClick={() => bump(-1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>−</button>
+    <div className="gc-spin">
+      <button type="button" className="ui-btn" onClick={() => bump(-1)} aria-label={`Lower ${label}`}>−</button>
       <input type="number" step={step} min={min} max={max} value={value} placeholder={placeholder}
-        inputMode="decimal" onChange={(e) => onChange(e.target.value)}
-        style={{ width, padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--card)" }} />
-      <button type="button" onClick={() => bump(1)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)" }}>+</button>
+        inputMode="decimal" onChange={(e) => onChange(e.target.value)} aria-label={label}
+        className="ui-sel" style={{ width }} />
+      <button type="button" className="ui-btn" onClick={() => bump(1)} aria-label={`Raise ${label}`}>+</button>
     </div>
   );
 }
+
+function ProbLine({ p }: { p: { under: number; at: number; over: number; line: number } }) {
+  const pc = (x: number) => `${(x * 100).toFixed(1)}%`;
+  return (
+    <div className="gc-prob" aria-live="polite">
+      <span className="gc-prob__label">vs {p.line}</span>
+      <span><b>Under</b> <span className="num">{pc(p.under)}</span></span>
+      {p.at > 0 && <span><b>Push</b> <span className="num">{pc(p.at)}</span></span>}
+      <span><b>Over</b> <span className="num">{pc(p.over)}</span></span>
+    </div>
+  );
+}
+
+const fmtKick = (iso?: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+};
 
 /* =============================================================================
    Page
@@ -250,6 +325,7 @@ export default function GameCenter() {
   /* Which theme the page is painting into, so team colours can be
      contrast-gated before they hit a chart. One read per component. */
   const isDark = useIsDark();
+  const [season, setSeason] = useState<SeasonId>(URL_SEASON);
 
   /* -------- Dataset catalog -------- */
   const [catalog, setCatalog] = useState<CfbCatalog | null>(null);
@@ -257,18 +333,25 @@ export default function GameCenter() {
 
   useEffect(() => {
     let alive = true;
-    getCatalog()
+    setCatalog(null);
+    setCatalogError(null);
+    getCatalog(season)
       .then((c) => { if (alive) setCatalog(c); })
       .catch((e) => { if (alive) setCatalogError(String(e?.message ?? e)); });
     return () => { alive = false; };
-  }, []);
+  }, [season]);
 
-  const weeks = useMemo(
-    () => (catalog?.weeks ?? []).map((w) => w.legacyKey),
-    [catalog]
-  );
+  /** Week options. 2026 is keyed by dataset id (week07), newest first;
+   *  2025 keeps its legacy keys, oldest first, exactly as before. */
+  const weekOpts = useMemo(() => {
+    const ws = catalog?.weeks ?? [];
+    if (season === "2026") {
+      return [...ws].sort((a, b) => b.week - a.week).map((w) => ({ key: w.id, label: w.label || `Week ${w.week}` }));
+    }
+    return ws.map((w) => ({ key: w.legacyKey, label: w.legacyKey }));
+  }, [catalog, season]);
 
-  // One bundled score file per week, keyed by the legacy week name.
+  // One bundled score file per week (2025 only), keyed by legacy week name.
   const scoreFileByWeek = useMemo(() => {
     const m: Record<string, FileItem> = {};
     for (const f of catalog?.scoreFiles ?? []) m[f.week] = f;
@@ -276,21 +359,28 @@ export default function GameCenter() {
   }, [catalog]);
 
   const [selectedWeek, setSelectedWeek] = useState("");
+  useEffect(() => { setSelectedWeek(""); }, [season]);
   useEffect(() => {
-    if (selectedWeek || !weeks.length) return;
-    setSelectedWeek(URL_WEEK && weeks.includes(URL_WEEK) ? URL_WEEK : weeks[0]);
-  }, [weeks, selectedWeek]);
+    if (selectedWeek || !weekOpts.length || !catalog) return;
+    const keys = weekOpts.map((w) => w.key);
+    if (URL_WEEK && keys.includes(URL_WEEK)) { setSelectedWeek(URL_WEEK); return; }
+    setSelectedWeek(season === "2026" ? (latestWeek(catalog)?.id ?? keys[0]) : keys[0]);
+  }, [weekOpts, selectedWeek, catalog, season]);
 
   const [loading, setLoading] = useState(false);
+  const [weekError, setWeekError] = useState<string | null>(null);
 
-  // Games (from scores)
-  const [games, setGames] = useState<GameMap>({});
+  // Games
+  const [games, setGames] = useState<Record<string, GameEntry>>({});
   const [selectedKey, setSelectedKey] = useState<string|null>(null);
   const [search, setSearch] = useState("");
 
   // Players per role
   const [players, setPlayers] = useState<PlayerMap>({});
   const [playersLoading, setPlayersLoading] = useState(false);
+
+  // 2026: the selected game's seed scores (compact.json), loaded on select.
+  const [compactRows, setCompactRows] = useState<{ key: string; rows: SimRow[] } | null>(null);
 
   // Team chart controls
   const [metric, setMetric] = useState<Metric>("spread");
@@ -305,62 +395,90 @@ export default function GameCenter() {
   const [pStat, setPStat] = useState<string>("");
   const [playerLine, setPlayerLine] = useState<string>("");
 
-  /* --------- Load the selected week's score sims (one bundled file) --------- */
+  /* --------- Load the selected week's games --------- */
   useEffect(() => {
     const ac = new AbortController();
     let alive = true;
 
-    async function load() {
-      const bundle = scoreFileByWeek[selectedWeek];
-      if (!bundle) { setGames({}); setSelectedKey(null); return; }
-
-      setLoading(true);
-      try {
-        const data = await parseCsvFromItemSafe<any>(bundle, undefined, ac.signal);
-        const scoreArrays = [
-          (data as any[])
-            .filter(r => r && r.team!=null && r.opp!=null && r.pts!=null && r.opp_pts!=null)
-            .map(r => ({ team:String(r.team), opp:String(r.opp), pts:Number(r.pts), opp_pts:Number(r.opp_pts) })) as SimRow[]
-        ];
-
-        const gameMap: GameMap = {};
-        for (const rows of scoreArrays) {
-          const byPair = new Map<string, SimRow[]>();
-          for (const r of rows) {
-            const key = sortedKey(r.team, r.opp);
-            (byPair.get(key) || (byPair.set(key, []), byPair.get(key)!)).push(r);
-          }
-          for (const [pair, arr] of byPair.entries()) {
-            const [A,B] = pair.split("__");
-            const normalized = arr
-              .map(r => r.team===A && r.opp===B
-                ? { team:A, opp:B, pts:r.pts, opp_pts:r.opp_pts }
-                : { team:A, opp:B, pts:r.opp_pts, opp_pts:r.pts })
-              .filter(Boolean) as SimRow[];
-            (gameMap[pair] ||= { teamA:A, teamB:B, rowsA:[] }).rowsA.push(...normalized);
-          }
-        }
-        if (!alive) return;
-        setGames(gameMap);
-
-        // default selection
-        const firstKey = URL_PAIR && gameMap[URL_PAIR] ? URL_PAIR : (Object.keys(gameMap)[0] ?? null);
-        setSelectedKey(firstKey);
-        setTeamOrder(0);
-      } finally {
-        if (alive) setLoading(false);
-      }
+    async function load2026() {
+      const rows = await getJsonWeekIndex(selectedWeek, "2026", ac.signal);
+      if (!alive) return;
+      if (!rows) { setGames({}); setSelectedKey(null); setWeekError("This week's sims are not published yet."); return; }
+      const sorted = [...rows].sort((a, b) => String(a.time_utc ?? "").localeCompare(String(b.time_utc ?? "")) || a.slug.localeCompare(b.slug));
+      const map: Record<string, GameEntry> = {};
+      for (const r of sorted) map[r.slug] = { teamA: r.teamA, teamB: r.teamB, rowsA: [], row: r, kickoff: r.time_utc, gameId: r.game_id };
+      setGames(map);
+      const byGame = URL_GAME ? sorted.find((r) => r.game_id === URL_GAME) : undefined;
+      const first = byGame?.slug ?? (URL_PAIR && map[URL_PAIR] ? URL_PAIR : sorted[0]?.slug ?? null);
+      setSelectedKey(first);
+      setTeamOrder(0);
     }
 
-    load();
+    async function load2025() {
+      const bundle = scoreFileByWeek[selectedWeek];
+      if (!bundle) { setGames({}); setSelectedKey(null); return; }
+      const data = await parseCsvFromItemSafe<any>(bundle, undefined, ac.signal);
+      const rows = (data as any[])
+        .filter(r => r && r.team!=null && r.opp!=null && r.pts!=null && r.opp_pts!=null)
+        .map(r => ({ team:String(r.team), opp:String(r.opp), pts:Number(r.pts), opp_pts:Number(r.opp_pts) })) as SimRow[];
+      const gameMap: Record<string, GameEntry> = {};
+      const byPair = new Map<string, SimRow[]>();
+      for (const r of rows) {
+        const key = sortedKey(r.team, r.opp);
+        (byPair.get(key) || (byPair.set(key, []), byPair.get(key)!)).push(r);
+      }
+      for (const [pair, arr] of byPair.entries()) {
+        const [A,B] = pair.split("__");
+        const normalized = arr.map(r => r.team===A && r.opp===B
+          ? { team:A, opp:B, pts:r.pts, opp_pts:r.opp_pts }
+          : { team:A, opp:B, pts:r.opp_pts, opp_pts:r.pts });
+        (gameMap[pair] ||= { teamA:A, teamB:B, rowsA:[] }).rowsA.push(...normalized);
+      }
+      if (!alive) return;
+      setGames(gameMap);
+      const firstKey = URL_PAIR && gameMap[URL_PAIR] ? URL_PAIR : (Object.keys(gameMap)[0] ?? null);
+      setSelectedKey(firstKey);
+      setTeamOrder(0);
+    }
+
+    if (!selectedWeek) return;
+    setLoading(true);
+    setWeekError(null);
+    setCompactRows(null);
+    (season === "2026" ? load2026() : load2025())
+      .catch((e) => { if (alive && e?.name !== "AbortError") setWeekError("Couldn't load this week. Try again in a minute."); })
+      .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; ac.abort(); };
-  }, [selectedWeek, scoreFileByWeek]);
+  }, [selectedWeek, scoreFileByWeek, season]);
 
-  /* -------- When selected game changes, seed player controls -------- */
   const selectedGame = selectedKey ? games[selectedKey] : null;
+  const selectedRow = selectedGame?.row;
 
-  /* --------- Player sims for the selected game only ---------
-     A full week of player sims is ~50MB; a single matchup is ~1MB. */
+  /* --------- 2026: the selected game's 10,000 seed scores --------- */
+  useEffect(() => {
+    if (season !== "2026" || !selectedRow || !selectedKey) return;
+    let alive = true;
+    getCompactCached(selectedRow, "2026")
+      .then((c) => {
+        if (!alive) return;
+        const A = c.A_pts ?? [], B = c.B_pts ?? [];
+        const n = Math.min(A.length, B.length);
+        const rows: SimRow[] = new Array(n);
+        for (let i = 0; i < n; i++) rows[i] = { team: selectedRow.teamA, opp: selectedRow.teamB, pts: A[i], opp_pts: B[i] };
+        setCompactRows({ key: selectedKey, rows });
+      })
+      .catch(() => { if (alive) setCompactRows({ key: selectedKey, rows: [] }); });
+    return () => { alive = false; };
+  }, [season, selectedRow, selectedKey]);
+
+  /** The seed scores the charts read, whichever season supplied them. */
+  const gameRows: SimRow[] = useMemo(() => {
+    if (!selectedGame) return [];
+    if (season === "2026") return compactRows && compactRows.key === selectedKey ? compactRows.rows : [];
+    return selectedGame.rowsA;
+  }, [selectedGame, season, compactRows, selectedKey]);
+
+  /* --------- Player sims for the selected game only --------- */
   useEffect(() => {
     const ac = new AbortController();
     let alive = true;
@@ -368,9 +486,14 @@ export default function GameCenter() {
     async function loadPlayers() {
       setPlayers({});
       if (!selectedWeek || !selectedGame) return;
-
       setPlayersLoading(true);
       try {
+        if (season === "2026") {
+          if (!selectedRow) return;
+          const dist = await getPlayersDistCached(selectedRow, "2026");
+          if (alive) setPlayers(buildPlayerMapFromDist(dist));
+          return;
+        }
         const item = await playerFileForPair(selectedWeek, selectedGame.teamA, selectedGame.teamB);
         if (!item || !alive) return;
         const data = await parseCsvFromItemSafe<any>(item, undefined, ac.signal);
@@ -385,34 +508,42 @@ export default function GameCenter() {
 
     loadPlayers();
     return () => { alive = false; ac.abort(); };
-  }, [selectedWeek, selectedGame?.teamA, selectedGame?.teamB]);
+  }, [selectedWeek, selectedGame?.teamA, selectedGame?.teamB, season, selectedRow]);
 
   useEffect(() => {
     if (!selectedGame) return;
-    // Default to left team initially
-    const t = selectedGame.teamA;
-    setPTeam(t);
+    setPTeam(selectedGame.teamA);
     setPRole("QB");
     setPPlayer("");
     setPStat("");
     setPlayerLine("");
   }, [selectedGame?.teamA, selectedGame?.teamB, selectedKey]);
 
+  /* Keep the URL shareable: week + game id (2026) or pair (2025). */
+  useEffect(() => {
+    if (!selectedWeek || !selectedKey || typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("week", selectedWeek);
+    if (season === "2025") { params.set("season", "2025"); params.set("pair", selectedKey); params.delete("game"); }
+    else { params.delete("season"); params.delete("pair"); if (selectedGame?.gameId) params.set("game", selectedGame.gameId); }
+    const next = `${window.location.pathname}?${params.toString()}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, "", next);
+  }, [selectedWeek, selectedKey, season, selectedGame?.gameId]);
+
   /* -------- Derived for TEAM charts -------- */
   const seriesTeam = useMemo(() => {
-    if (!selectedGame) return [] as number[];
-    const A = selectedGame.rowsA.map(r=>r.pts);
-    const B = selectedGame.rowsA.map(r=>r.opp_pts);
+    if (!gameRows.length) return [] as number[];
+    const A = gameRows.map(r=>r.pts);
+    const B = gameRows.map(r=>r.opp_pts);
     const left  = teamOrder===0 ? A : B;
     const right = teamOrder===0 ? B : A;
-
     switch (metric) {
       case "spread":    return left.map((x,i)=> x - right[i]);
       case "total":     return left.map((x,i)=> x + right[i]);
       case "teamLeft":  return left;
       case "teamRight": return right;
     }
-  }, [selectedGame, teamOrder, metric]);
+  }, [gameRows, teamOrder, metric]);
 
   const histTeam = useMemo(() => {
     if (!seriesTeam.length) return [] as HistBin[];
@@ -420,7 +551,6 @@ export default function GameCenter() {
     return computeHistogram(seriesTeam, binsNum ? { bins: binsNum } : undefined);
   }, [seriesTeam, bins]);
 
-  // probability vs line for team series
   const teamProb = useMemo(() => {
     if (!seriesTeam.length) return null as null | { under:number; at:number; over:number; line:number };
     // Blank box = no line. Number("") is 0, which used to price the series
@@ -434,24 +564,36 @@ export default function GameCenter() {
   const lineBinTeam = useMemo(() => (teamProb && histTeam.length ? findBinLabelForValue(histTeam, teamProb.line) : undefined), [teamProb, histTeam]);
 
   const teams = selectedGame ? [selectedGame.teamA, selectedGame.teamB] : ["—","—"];
-  /* Contrast-gated: a navy primary that would vanish on the dark card is
-     lifted (or traded for the school’s other colour) before it paints. */
   const leftColor  = displayTeamColor(teams[teamOrder===0?0:1], isDark) ?? "var(--brand)";
 
   /* -------- Derived for PLAYER charts -------- */
-  const teamPlayersByRole = (team: string, role: Role) =>
-    Object.keys(players[team] || {}).filter(p => !!players[team]?.[p]?.[role]).sort();
+  /** Players with this role's stats, BUSIEST FIRST (mean of the role's
+   *  yardage, else its first stat), so the default is the starter, not
+   *  whoever sorts first alphabetically. */
+  const teamPlayersByRole = (team: string, role: Role) => {
+    const roster = players[team] || {};
+    const weight = (p: string) => {
+      const st = roster[p]?.[role] || {};
+      const key = Object.keys(st).find((k) => /yds/.test(k)) ?? Object.keys(st)[0];
+      const vals = key ? st[key] : [];
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    };
+    return Object.keys(roster).filter(p => !!roster[p]?.[role])
+      .sort((a, b) => weight(b) - weight(a) || a.localeCompare(b));
+  };
   const statsFor = (team: string, player: string, role: Role) =>
     Object.keys(players[team]?.[player]?.[role] || {}).sort();
 
-  // Default player/stat when inputs change
   const defaultPlayer = useMemo(() => teamPlayersByRole(pTeam, pRole)[0] || "", [pTeam, pRole, players]);
   useEffect(()=>{ if (!pPlayer) setPPlayer(defaultPlayer); }, [defaultPlayer]); // only seed if empty
 
-  const defaultStat = useMemo(() => statsFor(pTeam, pPlayer, pRole)[4] || statsFor(pTeam, pPlayer, pRole)[0] || "", [pTeam, pPlayer, pRole, players]);
+  const defaultStat = useMemo(() => {
+    const list = statsFor(pTeam, pPlayer, pRole);
+    // Prefer the yardage stat for the role, else whatever comes first.
+    return list.find((s) => /yds/.test(s)) || list[0] || "";
+  }, [pTeam, pPlayer, pRole, players]);
   useEffect(()=>{ if (!pStat) setPStat(defaultStat); }, [defaultStat]);
 
-  /* Resolved once, not per histogram bar. */
   const pColor = displayTeamColor(pTeam, isDark) ?? "var(--brand)";
   const pValues = players[pTeam]?.[pPlayer]?.[pRole]?.[pStat] || [];
   const histPlayer = useMemo(() => computeHistogram(pValues, { bins: 20 }), [pValues]);
@@ -465,242 +607,193 @@ export default function GameCenter() {
   }, [pValues, playerLine]);
   const lineBinPlayer = useMemo(() => (pProb && histPlayer.length ? findBinLabelForValue(histPlayer, pProb.line) : undefined), [pProb, histPlayer]);
 
+  const matchup = selectedGame
+    ? season === "2026" ? `${selectedGame.teamB} at ${selectedGame.teamA}` : `${selectedGame.teamA} vs ${selectedGame.teamB}`
+    : "";
+  useDocumentMeta({
+    title: matchup ? `${matchup}: game sims` : "Game sims",
+    description: "Every simulated outcome for one college football game: margin, total, team points and player stat lines, from 10,000 simulations.",
+  });
+
+  const weekLabel = weekOpts.find((w) => w.key === selectedWeek)?.label ?? "";
+  const q = search.trim().toLowerCase();
+  const listed = Object.entries(games).filter(([key, g]) => !q
+    || key.toLowerCase().includes(q) || g.teamA.toLowerCase().includes(q) || g.teamB.toLowerCase().includes(q));
+
   /* -------- UI -------- */
   return (
-    <div key={selectedWeek} style={{ display: "grid", gap: 16 }}>
-      {/* Top controls */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <label>
-          Week:&nbsp;
-          <select
-            value={selectedWeek}
-            onChange={(e) => { setSelectedWeek(e.target.value); (e.target as HTMLSelectElement).blur(); }}
-            style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-          >
-            {weeks.map((w) => <option key={w} value={w}>{w}</option>)}
+    <div className="stack gc">
+      <PageHeader
+        kicker={season === "2026" ? `College football · 2026${weekLabel ? ` · ${weekLabel}` : ""}` : "College football · 2025 archive"}
+        title="Game sims"
+        sub="Every simulated outcome for one game, 10,000 runs: the margin, the total, each team's points and each player's stat line. Type a line to see how often the sim clears it."
+      />
+      <Tabs label="Season" value={season} onChange={(id) => setSeason(id as SeasonId)}
+        items={[{ id: "2026", label: "2026" }, { id: "2025", label: "2025 archive" }]} />
+
+      {catalogError && (
+        <EmptyState compact title="The game list didn't load">
+          <p>The data host didn't answer. Refresh in a minute.</p>
+        </EmptyState>
+      )}
+
+      <div className="gc-controls">
+        <label className="gc-field">
+          <span>Week</span>
+          <select className="ui-sel" value={selectedWeek}
+            onChange={(e) => { setSelectedWeek(e.target.value); (e.target as HTMLSelectElement).blur(); }}>
+            {weekOpts.map((w) => <option key={w.key} value={w.key}>{w.label}</option>)}
           </select>
         </label>
-        <span style={{ opacity: 0.7 }}>{loading ? "Loading…" : `${Object.keys(games).length} games`}</span>
-        <input
-          placeholder="Search team…"
-          value={search}
-          onChange={(e)=>setSearch(e.target.value)}
-          style={{ marginLeft: "auto", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-        />
+        <span className="gc-count">{loading ? "Loading games…" : `${Object.keys(games).length} games`}</span>
+        <label className="gc-field gc-field--search">
+          <span className="sr-only">Search team</span>
+          <input className="ui-sel" placeholder="Search team…" value={search} onChange={(e)=>setSearch(e.target.value)} />
+        </label>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 16, alignItems: "start" }}>
-        {/* Left list of games */}
-        <div
-          style={{
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            padding: 8,
-            background: "var(--card)",
-            maxHeight: 520,
-            overflow: "auto",
-            contentVisibility: "auto",
-            containIntrinsicSize: "400px",
-          }}
-        >
-          {Object.entries(games)
-            .filter(([key,g]) => key.toLowerCase().includes(search.toLowerCase())
-              || g.teamA.toLowerCase().includes(search.toLowerCase())
-              || g.teamB.toLowerCase().includes(search.toLowerCase()))
-            .map(([key,g]) => (
-              <div
-                key={key}
-                onClick={() => { setSelectedKey(key); setTeamOrder(0); }}
-                style={{
-                  padding: 8, borderRadius: 8, cursor: "pointer",
-                  background: selectedKey===key ? "color-mix(in oklab, var(--brand) 14%, transparent)" : "transparent",
-                }}
-              >
-                <strong>{g.teamA}</strong> vs <strong>{g.teamB}</strong>
-              </div>
-            ))}
-        </div>
+      {weekError && <EmptyState compact title="No sims for this week yet"><p>{weekError}</p></EmptyState>}
 
-        {/* Right side: TEAM chart + PLAYER chart */}
-        <div style={{ display: "grid", gap: 16 }}>
-          {/* Team sims card */}
-          <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--card)" }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <select
-                value={metric}
-                onChange={(e)=>setMetric(e.target.value as Metric)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)" }}
-              >
-                <option value="spread">Spread ({teams[teamOrder===0?0:1]} − {teams[teamOrder===0?1:0]})</option>
-                <option value="total">Total ({teams[teamOrder===0?0:1]} + {teams[teamOrder===0?1:0]})</option>
-                <option value="teamLeft">{teams[teamOrder===0?0:1]} team total</option>
-                <option value="teamRight">{teams[teamOrder===0?1:0]} team total</option>
-              </select>
-              <button
-                type="button"
-                onClick={()=>setTeamOrder(teamOrder===0?1:0)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)" }}
-              >
-                Flip Sides
+      <div className="gc-layout">
+        {/* Left: the week's games. Real buttons (keyboard + screen reader). */}
+        <nav className="gc-list" aria-label="Games this week">
+          {loading && !listed.length
+            ? Array.from({ length: 8 }, (_, i) => <Skeleton key={i} height={40} />)
+            : listed.map(([key, g]) => (
+              <button key={key} type="button" className={`gc-game${selectedKey === key ? " is-on" : ""}`}
+                aria-current={selectedKey === key ? "true" : undefined}
+                onClick={() => { setSelectedKey(key); setTeamOrder(0); setTeamLine(""); }}>
+                {season === "2026"
+                  ? <><span className="gc-game__teams">{g.teamB} <span className="gc-game__at">at</span> {g.teamA}</span>
+                      {g.kickoff && <span className="gc-game__kick">{fmtKick(g.kickoff)}</span>}</>
+                  : <span className="gc-game__teams">{g.teamA} <span className="gc-game__at">vs</span> {g.teamB}</span>}
               </button>
+            ))}
+        </nav>
 
-              <label style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
-                <span>Bins:</span>
-                <select
-                  value={String(bins)}
-                  onChange={(e)=>setBins(e.target.value==="auto"?"auto":Number(e.target.value))}
-                  style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--bg)" }}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="20">20</option>
-                  <option value="30">30</option>
-                  <option value="40">40</option>
+        <div className="stack" style={{ gap: "var(--sp-4)" }}>
+          {selectedGame && (
+            <div className="gc-matchup">
+              <h2 className="gc-matchup__title">{matchup}</h2>
+              <div className="gc-matchup__links">
+                {season === "2026" && selectedGame.gameId && <PreviewLink gameId={selectedGame.gameId} />}
+                {season === "2026" && (
+                  <Link className="link" to={`/cfb/scoreboard?week=${encodeURIComponent(selectedWeek)}${selectedGame.gameId ? `&game=${selectedGame.gameId}` : ""}`}>
+                    Live game card →
+                  </Link>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Team sims */}
+          <section className="ui-card" aria-label="Score distribution">
+            <div className="gc-toolbar">
+              <select className="ui-sel" value={metric} onChange={(e)=>setMetric(e.target.value as Metric)} aria-label="What to chart">
+                <option value="spread">Margin ({teams[teamOrder===0?0:1]} − {teams[teamOrder===0?1:0]})</option>
+                <option value="total">Total points</option>
+                <option value="teamLeft">{teams[teamOrder===0?0:1]} points</option>
+                <option value="teamRight">{teams[teamOrder===0?1:0]} points</option>
+              </select>
+              <button type="button" className="ui-btn" onClick={()=>setTeamOrder(teamOrder===0?1:0)}>Flip sides</button>
+              <label className="gc-field gc-field--inline">
+                <span>Bins</span>
+                <select className="ui-sel" value={String(bins)} onChange={(e)=>setBins(e.target.value==="auto"?"auto":Number(e.target.value))}>
+                  <option value="auto">Auto</option><option value="20">20</option><option value="30">30</option><option value="40">40</option>
                 </select>
               </label>
-
-              <label style={{ display:"inline-flex", alignItems:"center", gap:6, marginLeft:"auto" }}>
-                <span>Line:</span>
-                <NumberSpinner
-                  value={teamLine}
-                  onChange={setTeamLine}
-                  step={0.5}
-                  placeholder={metric==="spread" ? "-6.5" : "55.5"}
-                />
-              </label>
-            </div>
-
-            <div style={{ height: 360, marginTop: 8 }}>
-              <ResponsiveContainer>
-                <BarChart data={histTeam}>
-                  <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
-                  <XAxis dataKey="bin" minTickGap={12} />
-                  <YAxis allowDecimals={false} width={32} />
-                  <Tooltip
-                    contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12 }}
-                    labelStyle={{ color:"var(--muted)" }} itemStyle={{ color:"var(--text)" }}
-                    formatter={(v:any)=>[v,"Count"]}
-                  />
-                  {teamProb && lineBinTeam && (
-                    <ReferenceLine
-                      x={lineBinTeam}
-                      ifOverflow="extendDomain"
-                      stroke="var(--accent)"
-                      strokeDasharray="4 4"
-                      label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }}
-                    />
-                  )}
-                  <Bar dataKey="count" name="Frequency">
-                    {histTeam.map((h, i) => (
-                      <Cell key={i} fill={leftColor} />
-                    ))}
-                  </Bar>
-                  <ReferenceLine y={0} stroke="#888" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            {teamProb && (
-              <div className="card" style={{ marginTop:6, padding:8, fontSize:13 }}>
-                <b>Probability vs Line</b>
-                <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:4 }}>
-                  <span><b>Under</b>: {(teamProb.under*100).toFixed(1)}%</span>
-                  <span><b>At</b>: {(teamProb.at*100).toFixed(1)}%</span>
-                  <span><b>Over</b>: {(teamProb.over*100).toFixed(1)}%</span>
-                </div>
+              <div className="gc-field gc-field--inline gc-line">
+                <span>Line</span>
+                <NumberSpinner value={teamLine} onChange={setTeamLine} step={0.5} label="team line"
+                  placeholder={metric==="spread" ? "-6.5" : "55.5"} />
               </div>
-            )}
-          </div>
+            </div>
 
-          {/* Player sims card */}
-          <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, background: "var(--card)" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4, minmax(0,1fr))", gap:8 }}>
-              <select
-                value={pTeam}
-                onChange={e=>{ setPTeam(e.target.value); setPPlayer(""); setPStat(""); }}
-                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--bg)" }}
-              >
-                {selectedGame ? [selectedGame.teamA, selectedGame.teamB] : []}
+            <div style={{ height: 340, marginTop: 8 }}>
+              {!gameRows.length ? (
+                <Skeleton height={340} />
+              ) : (
+                <ResponsiveContainer>
+                  <BarChart data={histTeam}>
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                    <XAxis dataKey="bin" minTickGap={12} tick={{ fill: "var(--muted)", fontSize: 11 }} />
+                    <YAxis allowDecimals={false} width={40} tick={{ fill: "var(--muted)", fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:6 }}
+                      labelStyle={{ color:"var(--muted)" }} itemStyle={{ color:"var(--text)" }}
+                      formatter={(v:any)=>[v,"Sims"]}
+                    />
+                    {teamProb && lineBinTeam && (
+                      <ReferenceLine x={lineBinTeam} ifOverflow="extendDomain" stroke="var(--accent)" strokeWidth={2}
+                        strokeDasharray="4 4" label={{ value:`Line ${teamProb.line}`, position:"top", fontSize:11, fill:"var(--accent-ink)" }} />
+                    )}
+                    <Bar dataKey="count" name="Sims">
+                      {histTeam.map((_, i) => <Cell key={i} fill={leftColor} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            {teamProb && <ProbLine p={teamProb} />}
+          </section>
+
+          {/* Player sims */}
+          <section className="ui-card" aria-label="Player stat distribution">
+            <div className="gc-toolbar gc-toolbar--players">
+              <select className="ui-sel" aria-label="Team" value={pTeam}
+                onChange={e=>{ setPTeam(e.target.value); setPPlayer(""); setPStat(""); }}>
                 {selectedGame && [selectedGame.teamA, selectedGame.teamB].map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-
-              <select
-                value={pRole}
-                onChange={e=>{ setPRole(e.target.value as Role); setPPlayer(""); setPStat(""); }}
-                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--bg)" }}
-              >
-                <option>QB</option><option>Rusher</option><option>Receiver</option>
+              <select className="ui-sel" aria-label="Role" value={pRole}
+                onChange={e=>{ setPRole(e.target.value as Role); setPPlayer(""); setPStat(""); }}>
+                <option value="QB">Passing</option><option value="Rusher">Rushing</option><option value="Receiver">Receiving</option>
               </select>
-
-              <select
-                value={pPlayer}
-                onChange={e=>{ setPPlayer(e.target.value); setPStat(""); }}
-                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--bg)" }}
-              >
+              <select className="ui-sel" aria-label="Player" value={pPlayer}
+                onChange={e=>{ setPPlayer(e.target.value); setPStat(""); }}>
                 {teamPlayersByRole(pTeam, pRole).map(n => <option key={n} value={n}>{n}</option>)}
               </select>
-
-              <select
-                value={pStat}
-                onChange={e=>setPStat(e.target.value)}
-                style={{ padding:"6px 10px", borderRadius:8, border:"1px solid var(--border)", background:"var(--bg)" }}
-              >
+              <select className="ui-sel" aria-label="Stat" value={pStat} onChange={e=>setPStat(e.target.value)}>
                 {statsFor(pTeam, pPlayer, pRole).map(s => <option key={s} value={s}>{prettyStat(s)}</option>)}
               </select>
-
-              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <span style={{ fontSize:12, color:"var(--muted)" }}>Line:</span>
-                <NumberSpinner value={playerLine} onChange={setPlayerLine} step={0.5} />
+              <div className="gc-field gc-field--inline gc-line">
+                <span>Line</span>
+                <NumberSpinner value={playerLine} onChange={setPlayerLine} step={0.5} label="player line" />
               </div>
             </div>
 
             {!pValues.length ? (
-              <div style={{ height:200, display:"grid", placeItems:"center", opacity:.7, marginTop:6 }}>
-                {pPlayer && pStat ? "No simulated values for this selection." : "Select a team/player/stat to view distribution."}
-              </div>
+              playersLoading ? <Skeleton height={260} style={{ marginTop: 8 }} /> : (
+                <p className="gc-empty">
+                  {selectedGame ? (pPlayer && pStat ? "No simulated values for this selection." : "No player sims for this game.") : "Pick a game."}
+                </p>
+              )
             ) : (
               <>
-                <div style={{ height: 280, marginTop: 6 }}>
+                <div style={{ height: 260, marginTop: 8 }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={histPlayer} margin={{ top: 6, right: 12, left: 0, bottom: 12 }}>
-                      <CartesianGrid stroke="var(--border)" strokeOpacity={0.25} />
-                      <XAxis dataKey="bin" minTickGap={12} />
-                      <YAxis allowDecimals={false} width={32} />
+                      <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                      <XAxis dataKey="bin" minTickGap={12} tick={{ fill: "var(--muted)", fontSize: 11 }} />
+                      <YAxis allowDecimals={false} width={40} tick={{ fill: "var(--muted)", fontSize: 11 }} />
                       <Tooltip
-                        contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12 }}
+                        contentStyle={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:6 }}
                         labelStyle={{ color:"var(--muted)" }} itemStyle={{ color:"var(--text)" }}
-                        formatter={(v:any)=>[v,"Count"]}
+                        formatter={(v:any)=>[v,"Sims"]}
                       />
                       {pProb && lineBinPlayer && (
-                        <ReferenceLine
-                          x={lineBinPlayer}
-                          ifOverflow="extendDomain"
-                          stroke="var(--accent)"
-                          strokeDasharray="4 4"
-                          label={{ value:`Line ${pProb.line}`, position:"top", fontSize:11, fill:"var(--accent)" }}
-                        />
+                        <ReferenceLine x={lineBinPlayer} ifOverflow="extendDomain" stroke="var(--accent)" strokeWidth={2}
+                          strokeDasharray="4 4" label={{ value:`Line ${pProb.line}`, position:"top", fontSize:11, fill:"var(--accent-ink)" }} />
                       )}
-                      <Bar dataKey="count" name={`${pPlayer} • ${prettyStat(pStat)}`}>
-                        {histPlayer.map((_, i) => (
-                          <Cell key={i} fill={pColor} />
-                        ))}
+                      <Bar dataKey="count" name={`${pPlayer} · ${prettyStat(pStat)}`}>
+                        {histPlayer.map((_, i) => <Cell key={i} fill={pColor} />)}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-
-                {pProb && (
-                  <div className="card" style={{ marginTop:6, padding:8, fontSize:13 }}>
-                    <b>Probability vs Line</b>
-                    <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:4 }}>
-                      <span><b>Under</b>: {(pProb.under*100).toFixed(1)}%</span>
-                      <span><b>At</b>: {(pProb.at*100).toFixed(1)}%</span>
-                      <span><b>Over</b>: {(pProb.over*100).toFixed(1)}%</span>
-                    </div>
-                  </div>
-                )}
+                {pProb && <ProbLine p={pProb} />}
               </>
             )}
-          </div>
+          </section>
         </div>
       </div>
     </div>

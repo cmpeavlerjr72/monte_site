@@ -48,6 +48,7 @@ import {
 import { getTeamLogo } from "../utils/teamLogo";
 import { cfbNameKey } from "../../server/cfbNames";
 import { FBS_CONFERENCE } from "../lib/fbsConferences";
+import { loadRecordCached } from "../lib/recordHeadline";
 import {
   applyFilters, applyRung, baseMarket, betDays, betLine, betWords, calibration,
   calibrationMiss, cents, closeSentence, clvBins, clvOf, clvSummary, clvZeroIndex,
@@ -1035,7 +1036,8 @@ export default function Record() {
   useEffect(() => {
     const ac = new AbortController();
     setState("loading");
-    loadRecord(SEASON, ac.signal)
+    // Shared with the homepage record tile (one fetch per page session).
+    loadRecordCached()
       .then((r) => {
         if (ac.signal.aborted) return;
         setLoad(r);

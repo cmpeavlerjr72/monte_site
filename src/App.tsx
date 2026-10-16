@@ -17,7 +17,6 @@ import { lazyPage, RouteErrorBoundary } from "./lib/lazyPage";
 // stale tab once when a post-deploy chunk is missing). See src/lib/lazyPage.tsx.
 
 // CFB pages (existing)
-const Home = lazyPage(() => import("./pages/Home"));
 const Scoreboard = lazyPage(() => import("./pages/Scoreboard"));
 const ScoreboardV2 = lazyPage(() => import("./pages/ScoreboardV2"));
 const Results = lazyPage(() => import("./pages/Results"));
@@ -63,8 +62,10 @@ const CollegeBaseballScoreboard = lazyPage(() => import("./pages/CollegeBaseball
 const CollegeBaseballGame = lazyPage(() => import("./pages/CollegeBaseballGame"));
 
 // New pages
-const HubHome = lazyPage(() => import("./pages/HubHome"));
 // Site pages (2026-10-16 refresh)
+const SiteHome = lazyPage(() => import("./pages/site/Home"));
+const About = lazyPage(() => import("./pages/site/About"));
+const HowItWorks = lazyPage(() => import("./pages/site/HowItWorks"));
 const Labs = lazyPage(() => import("./pages/site/Labs"));
 const NotFound = lazyPage(() => import("./pages/site/NotFound"));
 
@@ -117,7 +118,9 @@ export default function App() {
         <Suspense fallback={<RouteFallback />}>
         {/* Hub */}
         <Routes>
-          <Route path="/" element={<HubHome />} />
+          <Route path="/" element={<SiteHome />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/about/how-it-works" element={<HowItWorks />} />
 
           {/* CFB (namespaced). The V2 board IS the scoreboard (2026-10-16);
               the classic board stays one more stretch at -classic, and the
@@ -184,8 +187,6 @@ export default function App() {
 
           {/* Labs: side projects. Old URLs below are unchanged. */}
           <Route path="/labs" element={<Labs />} />
-          {/* The old /cfb guide (refreshed in the About section). */}
-          <Route path="/about/how-it-works" element={<Home />} />
           {/* MLB */}
           <Route path="/mlb" element={<MLBScoreboard />} />
           <Route path="/mlb/scoreboard" element={<MLBScoreboard />} />
