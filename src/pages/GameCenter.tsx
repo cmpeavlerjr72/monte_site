@@ -423,6 +423,9 @@ export default function GameCenter() {
   // probability vs line for team series
   const teamProb = useMemo(() => {
     if (!seriesTeam.length) return null as null | { under:number; at:number; over:number; line:number };
+    // Blank box = no line. Number("") is 0, which used to price the series
+    // against a line of 0 and print "Over 100.0%" on an empty input.
+    if (teamLine.trim() === "") return null;
     const L = Number(teamLine); if (!Number.isFinite(L)) return null;
     let u=0,a=0,o=0; for (const x of seriesTeam) { if (Math.abs(x-L)<1e-9) a++; else if (x<L) u++; else o++; }
     const n = seriesTeam.length;
@@ -455,6 +458,7 @@ export default function GameCenter() {
 
   const pProb = useMemo(() => {
     if (!pValues.length) return null as null | { under:number; at:number; over:number; line:number };
+    if (playerLine.trim() === "") return null; // blank box = no line (see teamProb)
     const L = Number(playerLine); if (!Number.isFinite(L)) return null;
     let u=0,a=0,o=0; for (const x of pValues) { if (Math.abs(x-L)<1e-9) a++; else if (x<L) u++; else o++; }
     const n = pValues.length; return { under:u/n, at:a/n, over:o/n, line:L };
