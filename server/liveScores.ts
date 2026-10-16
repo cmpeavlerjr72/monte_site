@@ -48,6 +48,21 @@ app.use(compression());
 // JSON body parser for transcription ingest (small payloads; cap at 128 KB)
 app.use(express.json({ limit: "128kb" }));
 
+// LOCAL PREVIEW = READ-ONLY (2026-10-16). `scripts/preview_refresh.mjs` starts
+// this server with MVPEAV_PREVIEW=1 and an env holding no Kalshi, portal,
+// Supabase or push secret at all. Absent credentials already make every
+// portfolio route answer 503 (portalGate: no accounts, no linked user); this
+// is the second, independent wall: every request that is not a read is refused
+// before any route sees it. Production never sets the variable, so this is
+// inert there.
+if (process.env.MVPEAV_PREVIEW === "1") {
+  console.log("[preview] MVPEAV_PREVIEW=1: read-only, every non-GET request is refused");
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+    res.status(403).json({ error: "preview_read_only" });
+  });
+}
+
 const PORT = process.env.PORT || 8080;
 
 // ----------------------------------------------------------------------------

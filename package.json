@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:refresh": "node scripts/preview_refresh.mjs"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.12",
