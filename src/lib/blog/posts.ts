@@ -8,9 +8,9 @@
 //
 // VISIBILITY. A post shows when it is not a draft and its date has arrived.
 // Drafts only exist in a BLOG_DRAFTS=1 build (the preview harness), where they
-// show by default so the owner sees the blog as it will look. Private posts
-// (content/blog-private/, e.g. Team Tillman until Tillman OKs it) stay hidden
-// unless ?drafts=1 is on a URL this session; ?drafts=0 hides every draft.
+// show by default so the owner sees the blog as it will look. Held posts (a
+// `hold:` line, e.g. Team Tillman until Tillman OKs it) stay hidden unless
+// ?drafts=1 is on a URL this session; ?drafts=0 hides every draft.
 
 import { posts, draftsIncluded, loadBody, type BlogMeta } from "virtual:blog-index";
 
@@ -22,7 +22,7 @@ const DRAFTS_KEY = "mvpeav:drafts";
 type DraftMode = "off" | "on" | "all";
 
 /** off: production rules. on (a drafts build's default): drafts and scheduled
- *  posts too. all (?drafts=1 seen this session): private posts as well. */
+ *  posts too. all (?drafts=1 seen this session): held posts as well. */
 function draftMode(): DraftMode {
   if (!draftsIncluded || typeof window === "undefined") return "off";
   const q = new URLSearchParams(window.location.search).get("drafts");
@@ -42,9 +42,9 @@ export function showDrafts(): boolean {
 }
 
 /** Is this post visible right now? (published, or a draft/scheduled post
- *  while drafts are on; a private one only with ?drafts=1). */
+ *  while drafts are on; a held one only with ?drafts=1). */
 export function isVisible(p: BlogMeta, now = Date.now(), mode: DraftMode = draftMode()): boolean {
-  if (p.private) return mode === "all";
+  if (p.held) return mode === "all";
   if (mode !== "off") return true;
   return !p.draft && Date.parse(p.date) <= now;
 }

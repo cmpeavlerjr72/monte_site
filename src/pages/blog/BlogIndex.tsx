@@ -39,7 +39,7 @@ export default function BlogIndex({ tag: fixedTag }: { tag?: string }) {
           items={[{ id: "all", label: "All", to: "/blog", end: true },
             ...TAB_TAGS.map((t) => ({ id: t, label: tagWords(t), to: `/blog/tag/${t}` }))]} />
       )}
-      {drafts && <p className="blog-drafts-note">Preview mode: drafts and scheduled posts are showing. They are never public. Add ?drafts=0 to hide them, or ?drafts=1 to include private posts.</p>}
+      {drafts && <p className="blog-drafts-note">Preview mode: drafts and scheduled posts are showing. They are never public. Add ?drafts=0 to hide them, or ?drafts=1 to include held posts.</p>}
 
       {posts.length === 0 ? (
         <EmptyState kicker={tag ? tagWords(tag) : "Blog"} title={tag ? "Nothing here yet" : "The first posts land soon"}

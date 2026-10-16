@@ -18,8 +18,8 @@ declare module "virtual:blog-index" {
     hero: string | null; hero_alt: string;
     og_image: string | null;
     draft: boolean;
-    /** From content/blog-private/: shows only with ?drafts=1, never by default. */
-    private?: boolean;
+    /** Has a `hold:` line: in a preview it shows only with ?drafts=1, never by default. */
+    held?: boolean;
     disclaimer: "betting" | "none" | string;
     sources: string[];
     game: BlogGame | null;
