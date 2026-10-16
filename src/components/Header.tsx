@@ -116,19 +116,22 @@ export default function Header() {
             <NavLink to="/tennis/predictions">Predictions</NavLink>
           ) : inMLB ? (
             <>
+              {/* No "Game Detail" link: /mlb/game needs a game id and spins
+                  forever without one. It is reached from a scoreboard card. */}
               <NavLink to="/mlb/scoreboard">Scoreboard</NavLink>
-              <NavLink to="/mlb/game">Game Detail</NavLink>
             </>
           ) : (
             <>
-              <NavLink to={`${basePath}/game`}>Detailed Player</NavLink>
+              {/* /game and /trends-clv exist under /cfb only; under /cbb they
+                  hit the catch-all and bounced to the hub. */}
+              {basePath === "/cfb" && <NavLink to="/cfb/game">Detailed Player</NavLink>}
               <NavLink to={`${basePath}/scoreboard`}>Scoreboard</NavLink>
               <NavLink to={`${basePath}/results`}>Results</NavLink>
               {/* CFB ONLY: the 2026 record reads a dataset that exists for
                   college football alone, so it is not offered under /cbb. */}
               {basePath === "/cfb" && <NavLink to="/cfb/record">Record</NavLink>}
               {basePath === "/cfb" && <NavLink to="/cfb/quads">Quads</NavLink>}
-              <NavLink to={`${basePath}/trends-clv`}>Trends</NavLink>
+              {basePath === "/cfb" && <NavLink to="/cfb/trends-clv">Trends</NavLink>}
               <NavLink to={`${basePath}/bracket`}>Bracket</NavLink>
             </>
           )}
@@ -172,11 +175,12 @@ export default function Header() {
             ) : inMLB ? (
               <>
                 <NavLink to="/mlb/scoreboard" role="menuitem">Scoreboard</NavLink>
-                <NavLink to="/mlb/game" role="menuitem">Game Detail</NavLink>
               </>
             ) : (
               <>
-                <NavLink to={`${basePath}/game`} role="menuitem">Detailed Player</NavLink>
+                {basePath === "/cfb" && (
+                  <NavLink to="/cfb/game" role="menuitem">Detailed Player</NavLink>
+                )}
                 <NavLink to={`${basePath}/scoreboard`} role="menuitem">Scoreboard</NavLink>
                 <NavLink to={`${basePath}/results`} role="menuitem">Results</NavLink>
                 {basePath === "/cfb" && (
@@ -185,7 +189,9 @@ export default function Header() {
                 {basePath === "/cfb" && (
                   <NavLink to="/cfb/quads" role="menuitem">Quads</NavLink>
                 )}
-                <NavLink to={`${basePath}/trends-clv`} role="menuitem">Trends</NavLink>
+                {basePath === "/cfb" && (
+                  <NavLink to="/cfb/trends-clv" role="menuitem">Trends</NavLink>
+                )}
                 <NavLink to={`${basePath}/bracket`} role="menuitem">Bracket</NavLink>
               </>
             )}
