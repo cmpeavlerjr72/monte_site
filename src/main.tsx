@@ -1,10 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import App from "./App";
-import { registerServiceWorker } from "./lib/pwa";
+// The ONE import of the global stylesheets, ahead of App so they come first
+// in the cascade (before any page or component CSS). Don't re-import them in
+// App.tsx or a page.
 import "./theme.css";
 import "./index.css";
+import App from "./App";
+import { registerServiceWorker } from "./lib/pwa";
 
 
 
