@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Header from "./components/Header";
 import InstallPrompt from "./components/InstallPrompt";
+import SiteFooter from "./components/SiteFooter";
 import { Skeleton, SkeletonLines } from "./components/Skeleton";
 import { lazyPage, RouteErrorBoundary } from "./lib/lazyPage";
 
@@ -188,6 +189,9 @@ export default function App() {
         </Suspense>
         </RouteErrorBoundary>
       </main>
+
+      {/* Site-wide disclaimer footer, every route. */}
+      <SiteFooter />
     </div>
   );
 }
