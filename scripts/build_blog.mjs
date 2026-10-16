@@ -100,7 +100,9 @@ for (const p of posts) {
     const src = /src="([^"]*)"/.exec(m[1])?.[1], alt = /alt="([^"]*)"/.exec(m[1])?.[1], credit = /credit="([^"]*)"/.exec(m[1])?.[1];
     if (!src || !imgExists(src)) err(f, `photo ${src || "(no src)"} is missing from public/`);
     if (!alt) warn(f, `photo ${src} has no alt text`);
-    if (!credit) err(f, `photo ${src} has no credit (every photo carries its credit/license)`);
+    // The owner's own photos (own="1") carry no credit: it's his site. Everything else needs one.
+    const own = /own="(1|true)"/.test(m[1]);
+    if (!credit && !own) err(f, `photo ${src} has no credit (every photo that isn't the owner's carries its credit/license; his own take own="1")`);
     const lic = /license="([^"]*)"/.exec(m[1])?.[1] || "";
     if (/\b(NC|ND)\b|NonCommercial|NoDerivs/i.test(lic)) err(f, `photo ${src}: license "${lic}" does not allow reuse here`);
   }

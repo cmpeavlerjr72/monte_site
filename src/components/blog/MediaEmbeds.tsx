@@ -1,7 +1,8 @@
 // src/components/blog/MediaEmbeds.tsx: the three media directives (BlogBot images, 2026-10-16).
 //
-//   ::photo{src alt caption credit license licenseurl source}  a figure with a credit/license line under it
-//                                                              (Wikimedia Commons photos, our own cards)
+//   ::photo{src alt caption credit license licenseurl source own}  a figure with a credit/license line under it
+//                                                              (Wikimedia Commons photos, our own cards); own="1"
+//                                                              is the owner's own photo: no credit line
 //   ::x-embed{url author text}                                 a REAL X post, privacy-friendly: a plain card with
 //                                                              the post's text and a link; X's widget script loads
 //                                                              only when the reader taps "Load the post"

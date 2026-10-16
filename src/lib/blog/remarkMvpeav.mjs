@@ -9,7 +9,7 @@
 //   ::sim-game{season week game}       -> <sim-game>     (read-only game card)
 //   ::record-card{frozen}              -> <record-card>  (record tile)
 //   ::x-post{url img}                  -> <x-post>       (tweet screenshot, linked)
-//   ::photo{src alt caption credit license licenseurl source} -> <post-photo>  (figure + credit/license line)
+//   ::photo{src alt caption credit license licenseurl source own} -> <post-photo>  (figure + credit/license line; own="1" = the owner's photo, no credit)
 //   ::x-embed{url author text}         -> <x-embed>      (real X post: card + link; widget loads on tap)
 //   ::youtube{id title start}          -> <youtube-embed> (lite: thumbnail, youtube-nocookie player on tap)
 //   ::getty{id et sig w h caption credit page} -> <getty-embed> (Getty viewer iframe when scrolled into view; editorial only)
