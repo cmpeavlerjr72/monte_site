@@ -107,7 +107,7 @@ export default function App() {
   const { pathname } = useLocation();
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)", color: "var(--text)" }}>
-      {/* ✅ your branded header (logo, colors) */}
+      <a className="skip-link" href="#main">Skip to content</a>
       <Header />
 
       {/* Global mount: renders once, under the header, above every routed
@@ -116,7 +116,7 @@ export default function App() {
           never once installed (standalone or a detected related app). */}
       <InstallPrompt />
 
-      <main id="main" style={{ flex: "1 0 auto", width: "100%", maxWidth: "var(--content-max)", margin: "24px auto 0", padding: "0 16px" }}>
+      <main id="main" tabIndex={-1} style={{ flex: "1 0 auto", width: "100%", maxWidth: "var(--content-max)", margin: "24px auto 0", padding: "0 16px" }}>
         <RouteErrorBoundary resetKey={pathname}>
         <Suspense fallback={<RouteFallback />}>
         {/* Hub */}

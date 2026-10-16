@@ -728,6 +728,7 @@ function MatchCard({
                     <button
                     type="button"
                     onClick={() => setSpreadLine((v) => roundToHalf(v - 0.5))}
+                    aria-label="Lower the spread line by half a point"
                     style={{
                         padding: "6px 10px",
                         borderRadius: 10,
@@ -758,6 +759,7 @@ function MatchCard({
                     <button
                     type="button"
                     onClick={() => setSpreadLine((v) => roundToHalf(v + 0.5))}
+                    aria-label="Raise the spread line by half a point"
                     style={{
                         padding: "6px 10px",
                         borderRadius: 10,

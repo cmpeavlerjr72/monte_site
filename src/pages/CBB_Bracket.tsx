@@ -1398,7 +1398,7 @@ export default function CBB_Bracket() {
         const ta = align === "right" ? "text-align:right;flex-direction:row-reverse;" : "";
         const logoSrc = logoDataUrls[team.slug];
         const logoHtml = logoSrc
-          ? `<img src="${logoSrc}" style="width:14px;height:14px;object-fit:contain;flex-shrink:0;"/>`
+          ? `<img src="${logoSrc}" alt="" style="width:14px;height:14px;object-fit:contain;flex-shrink:0;"/>`
           : "";
         return `<div style="display:flex;align-items:center;gap:4px;height:20px;padding:2px 6px;border-radius:4px;${bg}${ta}white-space:nowrap;overflow:hidden;">
           <span style="font-size:10px;font-weight:800;color:#64748b;min-width:16px;text-align:center;">${team.seed}</span>

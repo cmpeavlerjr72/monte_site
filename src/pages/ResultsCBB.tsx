@@ -857,6 +857,7 @@ export default function ResultsCBB_alt() {
             <input
               type="date"
               value={startDate}
+              aria-label="Start date"
               onChange={(e) => setStartDate(e.target.value)}
             />
           </div>
@@ -865,6 +866,7 @@ export default function ResultsCBB_alt() {
             <input
               type="date"
               value={endDate}
+              aria-label="End date"
               onChange={(e) => setEndDate(e.target.value)}
             />
           </div>
@@ -988,6 +990,7 @@ export default function ResultsCBB_alt() {
             <strong style={{ width: 52 }}>ML:</strong>
             <select
               value={fs.mlSide}
+              aria-label="Moneyline side"
               onChange={(e) =>
                 setFs((p) => ({ ...p, mlSide: e.target.value as Side3 }))
               }
@@ -1021,6 +1024,7 @@ export default function ResultsCBB_alt() {
             <strong style={{ width: 52 }}>Spread:</strong>
             <select
               value={fs.spSide}
+              aria-label="Spread side"
               onChange={(e) =>
                 setFs((p) => ({ ...p, spSide: e.target.value as Side3 }))
               }
@@ -1054,6 +1058,7 @@ export default function ResultsCBB_alt() {
             <strong style={{ width: 52 }}>Total:</strong>
             <select
               value={fs.totSide}
+              aria-label="Total side"
               onChange={(e) =>
                 setFs((p) => ({ ...p, totSide: e.target.value as TotSide3 }))
               }

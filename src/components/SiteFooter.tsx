@@ -17,9 +17,9 @@ const THEME_WORDS: Record<ThemeMode, string> = { system: "Auto", light: "Light",
 function ThemeToggle() {
   const { mode, setMode } = useThemeMode();
   return (
-    <div className="theme-toggle" role="radiogroup" aria-label="Colour theme">
+    <div className="theme-toggle" role="group" aria-label="Colour theme">
       {(["system", "light", "dark"] as ThemeMode[]).map((m) => (
-        <button key={m} type="button" role="radio" aria-checked={mode === m}
+        <button key={m} type="button" aria-pressed={mode === m}
           className={`theme-toggle__opt${mode === m ? " is-on" : ""}`} onClick={() => setMode(m)}>
           {THEME_WORDS[m]}
         </button>

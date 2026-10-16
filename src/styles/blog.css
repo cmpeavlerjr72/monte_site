@@ -50,7 +50,7 @@
 .post-head { display: grid; gap: var(--sp-3); }
 .post-title { margin: 0; font-size: clamp(32px, 5vw, 46px); line-height: 1.02; text-wrap: balance; }
 .post-by { font-size: var(--fs-sm); color: var(--muted); }
-.post-by a { color: var(--brand-text); }
+.post-by a { color: var(--brand-text); text-decoration: underline; text-underline-offset: 2px; }
 .post-game {
   display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding: 8px 0;
   border-top: var(--rule); border-bottom: var(--rule); font-size: var(--fs-sm); font-weight: 600;

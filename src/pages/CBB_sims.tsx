@@ -1807,6 +1807,7 @@ export default function CBBSims() {
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <input
             type="date"
+            aria-label="Date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
             style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
@@ -1828,6 +1829,7 @@ export default function CBBSims() {
           <span style={{ fontSize: 12, color: "var(--muted)" }}>Sort:</span>
           <select
             value={sortKey}
+            aria-label="Sort games"
             onChange={(e) => setSortKey(e.target.value as any)}
             style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border)" }}
           >
@@ -1900,6 +1902,7 @@ export default function CBBSims() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Side:</span>
               <select
                 value={filterSideLoc}
+                aria-label="Side"
                 onChange={(e) => setFilterSideLoc(e.target.value as SideLoc)}
                 style={{
                   fontSize: 12,
@@ -1918,6 +1921,7 @@ export default function CBBSims() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Fav/Dog:</span>
               <select
                 value={filterFavDog}
+                aria-label="Favorite or underdog"
                 onChange={(e) => setFilterFavDog(e.target.value as FavDog)}
                 style={{
                   fontSize: 12,
@@ -2724,7 +2728,7 @@ function getLastPlayInfo(
                 style={{
                   fontSize: 10,         // smaller
                   fontWeight: 700,
-                  color: "#5b677a",     // same muted color as record
+                  color: "var(--muted)",     // same muted color as record
                   verticalAlign: "super",
                   lineHeight: 1,
                   marginRight: 2,
@@ -2735,7 +2739,7 @@ function getLastPlayInfo(
             )}
             <span style={{ fontWeight: 700 }}>{card.teamA}</span>
             {rr.A.record && (
-              <span style={{ fontSize: 12, color: "#5b677a" }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
                 &nbsp;{rr.A.record}
               </span>
             )}
@@ -2794,7 +2798,7 @@ function getLastPlayInfo(
                 style={{
                   fontSize: 10,
                   fontWeight: 700,
-                  color: "#5b677a",
+                  color: "var(--muted)",
                   verticalAlign: "super",
                   lineHeight: 1,
                   marginRight: 2,
@@ -2805,7 +2809,7 @@ function getLastPlayInfo(
             )}
             <span style={{ fontWeight: 700 }}>{card.teamB}</span>
             {rr.B.record && (
-              <span style={{ fontSize: 12, color: "#5b677a" }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
                 &nbsp;{rr.B.record}
               </span>
             )}
@@ -2839,13 +2843,13 @@ function getLastPlayInfo(
           {(vb.broadcast || vb.venue || vb.homeTeam || vb.neutralSite) && (
             <div style={{ marginLeft: "auto", textAlign: "right", lineHeight: 1 }}>
               {vb.broadcast && (
-                <div style={{ fontSize: 12, color: "#5b677a" }}>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
                   {vb.broadcast}
                 </div>
               )}
 
               {vb.venue && (
-                <div style={{ fontSize: 12, color: "#5b677a" }}>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
                   {vb.venue}
                 </div>
               )}
@@ -2854,7 +2858,7 @@ function getLastPlayInfo(
               <div
                 style={{
                   fontSize: 11,
-                  color: "#7a8597",
+                  color: "var(--muted)",
                   marginTop: 2,
                   fontStyle: vb.neutralSite ? "italic" : "normal",
                 }}
@@ -3296,6 +3300,7 @@ function Distributions(props: {
             <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <select
                 value={metric}
+                aria-label="What to chart"
                 onChange={(e) => setMetric(e.target.value as any)}
                 style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
               >
@@ -3386,6 +3391,7 @@ function Distributions(props: {
                 <b>Spread Cover %</b>
                 <select
                   value={spreadSide}
+                  aria-label="Spread side"
                   onChange={(e) => setSpreadSide(e.target.value as "A" | "B")}
                   style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
                 >
@@ -3394,6 +3400,7 @@ function Distributions(props: {
                 </select>
                 <select
                   value={spreadSelectValue}
+                  aria-label="Spread line"
                   onChange={(e) => setEnteredSpread(e.target.value)}
                   style={{ width: 100, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
                 >
@@ -3443,6 +3450,7 @@ function Distributions(props: {
               <b>Team Stats</b>
               <select
                 value={statKey}
+                aria-label="Stat"
                 onChange={(e) => setStatKey(e.target.value)}
                 style={{ padding: "6px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)" }}
               >

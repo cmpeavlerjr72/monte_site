@@ -439,6 +439,7 @@ export default function NascarScanner() {
             <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
               <button
                 onClick={() => setDelay(Math.max(0, delay - 1))}
+                aria-label="Less delay"
                 style={{
                   width: 24, height: 26, borderRadius: "6px 0 0 6px",
                   border: "1px solid var(--border)", borderRight: "none",
@@ -467,6 +468,7 @@ export default function NascarScanner() {
               />
               <button
                 onClick={() => setDelay(Math.min(90, delay + 1))}
+                aria-label="More delay"
                 style={{
                   width: 24, height: 26, borderRadius: "0 6px 6px 0",
                   border: "1px solid var(--border)", borderLeft: "none",
@@ -578,6 +580,7 @@ export default function NascarScanner() {
               {/* Remove button */}
               <button
                 onClick={() => stopStream(s.entry.stream_number)}
+                aria-label="Remove stream"
                 style={{
                   width: 28, height: 28, borderRadius: 6,
                   border: "1px solid var(--border)", background: "var(--card)",

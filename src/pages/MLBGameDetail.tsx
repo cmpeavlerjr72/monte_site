@@ -453,6 +453,8 @@ function PitcherSummaryRow({
     <div style={{ borderBottom: "1px solid var(--border)" }}>
       <div
         onClick={onToggle}
+        role="button" tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
         style={{
           display: "flex",
           alignItems: "center",
@@ -512,6 +514,8 @@ function BatterRow({
       {/* Compact row */}
       <div
         onClick={onToggle}
+        role="button" tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
         style={{
           display: "grid",
           gridTemplateColumns: `minmax(120px, 1fr) ${BATTER_BOX_COLS.map(() => "52px").join(" ")}`,
@@ -633,6 +637,8 @@ function PitcherBoxScore({
               <div key={name} style={{ borderBottom: "1px solid var(--border)" }}>
                 <div
                   onClick={() => setExpandedPlayer(expandedPlayer === name ? null : name)}
+                  role="button" tabIndex={0} aria-expanded={expandedPlayer === name}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedPlayer(expandedPlayer === name ? null : name); } }}
                   style={{
                     display: "grid",
                     gridTemplateColumns: `minmax(140px, 1fr) ${PITCHER_BOX_COLS.map(() => "52px").join(" ")}`,
@@ -871,6 +877,8 @@ function FlatPitcherList({ data }: { data: PlayerProps }) {
         <div key={name} style={{ borderBottom: "1px solid var(--border)" }}>
           <div
             onClick={() => setExpandedPlayer(expandedPlayer === name ? null : name)}
+                  role="button" tabIndex={0} aria-expanded={expandedPlayer === name}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedPlayer(expandedPlayer === name ? null : name); } }}
             style={{
               display: "grid",
               gridTemplateColumns: `minmax(140px, 1fr) ${PITCHER_BOX_COLS.map(() => "52px").join(" ")}`,

@@ -205,13 +205,17 @@ export default function QuadsPage() {
                 const logo = getTeamLogo(t.team);
                 return (
                   <Fragment key={t.team}>
-                    <tr className="quads__row" onClick={() => setOpen(isOpen ? null : t.team)}
-                      aria-expanded={isOpen}>
+                    <tr className="quads__row" onClick={() => setOpen(isOpen ? null : t.team)}>
                       <td><strong>{t.rank[v]}</strong></td>
                       <td className="l">
                         <div className="quads__team">
                           {logo ? <img src={logo} alt="" loading="lazy" /> : <span style={{ width: 22 }} />}
-                          <span>{t.team}<span className="quads__conf">{t.conference}</span></span>
+                          {/* The keyboard / screen-reader door to the row's detail
+                              (the whole row stays clickable for the mouse). */}
+                          <button type="button" className="quads__teambtn" aria-expanded={isOpen}
+                            onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : t.team); }}>
+                            {t.team}<span className="quads__conf">{t.conference}</span>
+                          </button>
                         </div>
                       </td>
                       <td>{t.record}</td>

@@ -53,7 +53,7 @@ function RecordTile() {
       {failed ? (
         <p className="rt-note">The record didn't load just now. <Link className="link" to="/cfb/record">Open the record page</Link>.</p>
       ) : !rec ? (
-        <div aria-busy="true" aria-label="Loading the record" className="rt-body">
+        <div aria-busy="true" role="status" aria-label="Loading the record" className="rt-body">
           <Skeleton height={52} width="60%" />
           <Skeleton height={16} width="85%" />
           <Skeleton height={56} />

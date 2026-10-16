@@ -55,3 +55,7 @@
 .quads__chip[data-q="fcs"] { background: var(--quad-fcs); color: var(--quad-fcs-fg); }
 .quads__sheet { text-align: left; padding: 8px 4px; }
 .quads__diff { background: color-mix(in oklab, var(--accent) 35%, transparent); font-weight: 700; }
+
+/* The row's expand control (keyboard + screen readers); looks like the name. */
+.quads__teambtn { all: unset; cursor: pointer; display: inline; }
+.quads__teambtn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 2px; }

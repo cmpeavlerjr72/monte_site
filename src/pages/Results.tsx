@@ -681,6 +681,7 @@ export default function Results() {
             <label style={{ fontSize: 13, color: "var(--muted)" }}>Market:</label>
             <select
               value={marketFilter}
+              aria-label="Market"
               onChange={(e) => { setMarketFilter(e.target.value as MarketFilter); setPickFilter("all"); }}
               style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
@@ -696,6 +697,7 @@ export default function Results() {
             <label style={{ fontSize: 13, color: "var(--muted)" }}>Pick type:</label>
             <select
               value={pickFilter}
+              aria-label="Pick type"
               onChange={(e) => setPickFilter(e.target.value as PickFilter)}
               style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
@@ -710,6 +712,7 @@ export default function Results() {
             <label style={{ fontSize: 13, color: "var(--muted)" }}>EV:</label>
             <select
               value={evFilter}
+              aria-label="EV"
               onChange={(e) => setEvFilter(e.target.value as EVFilter)}
               style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
@@ -723,6 +726,7 @@ export default function Results() {
             <label style={{ fontSize: 13, color: "var(--muted)" }}>Team:</label>
             <select
               value={teamFilter}
+              aria-label="Team"
               onChange={(e)=>setTeamFilter(e.target.value)}
               style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
@@ -736,6 +740,7 @@ export default function Results() {
             <label style={{ fontSize: 13, color: "var(--muted)" }}>Conference:</label>
             <select
               value={confFilter}
+              aria-label="Conference"
               onChange={(e)=>setConfFilter(e.target.value)}
               style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
@@ -749,6 +754,7 @@ export default function Results() {
             <label style={{ fontSize: 13, color: "var(--muted)" }}>Game type:</label>
             <select
               value={gameType}
+              aria-label="Game type"
               onChange={(e)=>setGameType(e.target.value as GameTypeFilter)}
               style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             >
@@ -763,6 +769,7 @@ export default function Results() {
             <label style={{ fontSize: 13, color: "var(--muted)" }}>Confidence %:</label>
             <input
               type="number" min={0} max={100} step={1}
+              aria-label="Minimum confidence %"
               value={confMin}
               onChange={(e)=>setConfMin(Number(e.target.value))}
               style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
@@ -770,6 +777,7 @@ export default function Results() {
             <span style={{ fontSize: 14 }}>to</span>
             <input
               type="number" min={0} max={100} step={1}
+              aria-label="Maximum confidence %"
               value={confMax}
               onChange={(e)=>setConfMax(Number(e.target.value))}
               style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
