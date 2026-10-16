@@ -73,6 +73,7 @@ const Labs = lazyPage(() => import("./pages/site/Labs"));
 const RecordShell = lazyPage(() => import("./pages/site/RecordShell"));
 const BlogIndex = lazyPage(() => import("./pages/blog/BlogIndex"));
 const BlogPost = lazyPage(() => import("./pages/blog/BlogPost"));
+const PreviewPost = lazyPage(() => import("./pages/blog/PreviewPost"));
 const NotFound = lazyPage(() => import("./pages/site/NotFound"));
 
 /** A redirect that keeps the query string (?season=&week= on the boards). */
@@ -140,6 +141,7 @@ export default function App() {
           <Route path="/blog" element={<BlogIndex />} />
           <Route path="/blog/tag/:tag" element={<BlogIndex />} />
           <Route path="/blog/:slug" element={<BlogPost />} />
+          <Route path="/preview/:token" element={<PreviewPost />} />
           <Route path="/nhl" element={<BlogIndex tag="nhl" />} />
           <Route path="/fantasy-ai" element={<BlogIndex tag="fantasy-ai" />} />
           <Route path="/about" element={<About />} />

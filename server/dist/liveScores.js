@@ -4649,6 +4649,83 @@ async function pushPollAccount(acct) {
 }
 if (PUSH_ON)
     setInterval(pushFillPoll, PUSH_FILL_POLL_MS);
+// ----------------------------------------------------------------------------
+// BLOG DRAFT PREVIEWS (2026-10-16)
+//
+// The owner's BlogBot uploads a draft's preview bundle to a PRIVATE Supabase
+// Storage bucket ("blog-previews"): <token>/preview.json {meta, body, version,
+// held, hold, expires} and <token>/img/<file>. The token is a 192-bit secret in
+// the link https://www.mvpeav.com/preview/<token>. These routes read the bucket
+// with the server's existing service-role client (no new credential). Nothing
+// lists previews; a bad, unknown or expired token is a plain 404. Every answer
+// is noindex / no-referrer / no-store. The bot deletes a bundle when the draft
+// is published, skipped or 14 days old.
+const PREVIEW_BUCKET = "blog-previews";
+const PREVIEW_TOKEN_RE = /^[A-Za-z0-9_-]{32,64}$/;
+// Images only: the bundle never needs anything else, and nothing but an image is
+// ever served from this path.
+const PREVIEW_FILE_RE = /^[A-Za-z0-9._-]{1,120}\.(png|jpe?g|webp|gif)$/i;
+function previewHeaders(res) {
+    res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+}
+function previewNotFound(res) {
+    previewHeaders(res);
+    res.status(404).type("text/plain").send("Not found");
+}
+async function previewDoc(token) {
+    if (!supa || !PREVIEW_TOKEN_RE.test(token))
+        return null;
+    const { data, error } = await supa.storage.from(PREVIEW_BUCKET).download(`${token}/preview.json`);
+    if (error || !data)
+        return null;
+    try {
+        const doc = JSON.parse(await data.text());
+        if (!doc || typeof doc.body !== "string" || !doc.meta)
+            return null;
+        if (!doc.expires || !(Date.parse(doc.expires) > Date.now()))
+            return null;
+        return doc;
+    }
+    catch {
+        return null;
+    }
+}
+app.get("/api/preview/:token", asyncRoute(async (req, res) => {
+    const doc = await previewDoc(String(req.params.token || ""));
+    if (!doc) {
+        previewNotFound(res);
+        return;
+    }
+    previewHeaders(res);
+    res.json({ meta: doc.meta, body: doc.body, version: doc.version ?? null, held: Boolean(doc.held), hold: doc.hold ?? null });
+}));
+app.get("/api/preview/:token/img/:file", asyncRoute(async (req, res) => {
+    const token = String(req.params.token || ""), file = String(req.params.file || "");
+    if (!PREVIEW_TOKEN_RE.test(token) || !PREVIEW_FILE_RE.test(file) || file.includes("..")) {
+        previewNotFound(res);
+        return;
+    }
+    if (!(await previewDoc(token))) {
+        previewNotFound(res);
+        return;
+    }
+    const { data, error } = await supa.storage.from(PREVIEW_BUCKET).download(`${token}/img/${file}`);
+    if (error || !data) {
+        previewNotFound(res);
+        return;
+    }
+    previewHeaders(res);
+    res.type(path.extname(file) || "application/octet-stream");
+    res.send(Buffer.from(await data.arrayBuffer()));
+}));
+// The /preview/:token page itself is the SPA; it just carries the same headers.
+app.get("/preview/:token", (_req, res, next) => {
+    previewHeaders(res);
+    next();
+});
 // Unknown /api routes must answer JSON. Without this the SPA catch-all below
 // serves index.html for a typo'd or removed endpoint, and the client blows up
 // on `JSON.parse("<!doctype html>")` — which looks like a page crash, not a

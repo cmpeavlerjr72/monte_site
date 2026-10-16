@@ -61,6 +61,7 @@ export default function BlogPost() {
   const { slug = "" } = useParams();
   const post = postBySlug(slug);
   const [body, setBody] = useState<string | null>(null);
+  const related = post ? visiblePosts().filter((p) => p.slug !== post.slug && p.tags.some((t) => post.tags.includes(t))).slice(0, 3) : [];
 
   useEffect(() => {
     setBody(null);
@@ -85,20 +86,25 @@ export default function BlogPost() {
     );
   }
 
+  return <PostArticle post={post} body={body} related={related} />;
+}
+
+/** The article itself, shared by /blog/:slug and the private draft preview (/preview/:token). `banner` replaces the
+ *  draft note; `related` is left out of previews. */
+export function PostArticle({ post, body, related = [], banner }: { post: BlogMeta; body: string | null; related?: BlogMeta[]; banner?: React.ReactNode }) {
   // Barstool format: most posts OPEN with an embed. When the body's first
   // block is the hero image itself, the hero is not drawn twice.
   const firstImage = body == null ? null : /^\s*(?:<!--[\s\S]*?-->\s*)*!\[[^\]]*\]\(([^)\s]+)/.exec(body)?.[1] ?? null;
   const showHero = !!post.hero && (body == null || firstImage !== post.hero);
-  const related = visiblePosts().filter((p) => p.slug !== post.slug && p.tags.some((t) => post.tags.includes(t))).slice(0, 3);
   const g = post.game;
 
   return (
     <article className="post">
-      {post.draft && (
+      {banner ?? (post.draft && (
         <div className="post-draft" role="note">
           <b>Draft preview.</b> Not public: drafts are left out of production builds, the sitemap and RSS. Owner-beat notes show only here.
         </div>
-      )}
+      ))}
       <header className="post-head">
         <div className="kicker">{post.tags.map(tagWords).join(" · ")}</div>
         <h1 className="post-title">{post.title}</h1>
