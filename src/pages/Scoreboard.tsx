@@ -3209,7 +3209,7 @@ function ScoreboardPage() {
             {/* The redesigned board (2026-10-12), live beside this one for a
                 side-by-side read; same season/week via the URL. */}
             <a
-              href={`/cfb/scoreboard2${typeof window !== "undefined" ? window.location.search : ""}`}
+              href={`/cfb/scoreboard${typeof window !== "undefined" ? window.location.search : ""}`}
               className="ui-btn"
               data-on="true"
               style={{ padding: "4px 10px", fontSize: 12, whiteSpace: "nowrap", textDecoration: "none" }}

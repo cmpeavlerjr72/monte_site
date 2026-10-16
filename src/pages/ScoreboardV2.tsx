@@ -1,5 +1,6 @@
 // src/pages/ScoreboardV2.tsx — the sportsbook-grammar board, live beside the
-// classic one at /cfb/scoreboard2 so the owner can flip between them (2026-10-12).
+// classic one (since 2026-10-16 the V2 board IS /cfb/scoreboard; the classic
+// board lives at /cfb/scoreboard-classic so the owner can still flip).
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import * as Papa from "papaparse";
 import SlateSearch from "../components/SlateSearch";
@@ -3275,7 +3276,7 @@ function ScoreboardPage() {
           </span>
           {/* Flip to the classic board, same season/week (the URL carries them). */}
           <a
-            href={`/cfb/scoreboard${typeof window !== "undefined" ? window.location.search : ""}`}
+            href={`/cfb/scoreboard-classic${typeof window !== "undefined" ? window.location.search : ""}`}
             className="ui-btn"
             style={{ padding: "4px 10px", fontSize: 11.5, whiteSpace: "nowrap", textDecoration: "none" }}
           >

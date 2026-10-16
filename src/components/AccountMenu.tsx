@@ -71,11 +71,11 @@ export default function AccountMenu() {
   if (!supabaseEnabled) return null;
 
   const signedIn = Boolean(session && profile);
-  const label = loading
-    ? "…"
-    : signedIn
-      ? `${profile?.avatar_emoji || "🏈"} ${profile?.handle}`
-      : "Log in";
+  // A small person icon + a word (2026-10-16: the account control is quiet,
+  // not a pill competing with the nav). The word hides on a phone; the
+  // aria-label always says what the button does.
+  const label = loading ? "" : signedIn ? `@${profile?.handle}` : "Log in";
+  const aria = signedIn ? `Account menu for @${profile?.handle}` : "Log in or sign up";
 
   return (
     <div className="acct-wrap" ref={wrapRef}>
@@ -84,10 +84,14 @@ export default function AccountMenu() {
         className="acct-trigger"
         aria-haspopup="true"
         aria-expanded={open}
+        aria-label={aria}
         onClick={() => setOpen((v) => !v)}
       >
-        {label}
-        {!signedIn && !loading && <span className="acct-signup"> / Sign up</span>}
+        <svg className="acct-icon" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="6.5" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M3 18c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+        <span className="acct-label">{label}</span>
       </button>
 
       {open && (

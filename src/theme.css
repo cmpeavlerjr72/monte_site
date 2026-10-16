@@ -2821,28 +2821,89 @@ a.fr-person:hover, a.fr-person:focus-visible {
   .bets-pick > .bets-act { flex-basis: 100%; justify-content: flex-start; }
 }
 
-/* ─── Site footer (SiteFooter.tsx, 2026-10-16) ──────────────────────────────
-   Small, muted disclaimer line on every route. Tokens only, so it follows
-   both themes. The bottom safe-area inset matters in the installed PWA. */
+/* ============================================================== footer ===
+   Navy, like the header, so every page is bracketed by the brand. Gold
+   column heads; links in the header's muted ink, white on hover. */
 .site-footer {
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
+  margin-top: var(--sp-7);
+  background: var(--header-bg);
+  color: var(--header-muted);
+  border-top: 2px solid var(--gold);
+  font-size: var(--fs-sm);
   line-height: 1.5;
-  padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  padding: var(--sp-6) 0 calc(var(--sp-5) + env(safe-area-inset-bottom, 0px));
 }
-.site-footer__inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 16px;
+.site-footer__inner { max-width: var(--content-max); margin: 0 auto; padding: 0 16px; display: grid; gap: var(--sp-4); }
+.site-footer__cols {
+  display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: var(--sp-5);
+  padding-bottom: var(--sp-5); border-bottom: 1px solid color-mix(in oklab, var(--header-fg) 18%, transparent);
 }
+.site-footer__col { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.site-footer__word {
+  font-family: var(--font-display); font-weight: 800; font-size: 28px; letter-spacing: 0.04em;
+  color: var(--header-fg); line-height: 1;
+}
+.site-footer__tag { margin: 0 0 var(--sp-2); }
+.site-footer__head {
+  font-family: var(--font-display); font-weight: 700; font-size: var(--fs-sm);
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); margin-bottom: 2px;
+}
+.site-footer__head a { color: var(--gold) !important; text-decoration: none !important; }
 .site-footer p { margin: 0; overflow-wrap: anywhere; }
-.site-footer a {
-  color: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.site-footer a { color: var(--header-muted); text-decoration: none; }
+.site-footer a:hover { color: var(--header-fg); text-decoration: underline; text-underline-offset: 2px; }
+.site-footer__disclaimer a { text-decoration: underline; text-underline-offset: 2px; }
+.site-footer__linkbtn {
+  all: unset; cursor: pointer; color: var(--header-muted); font-size: var(--fs-sm);
 }
-.site-footer a:hover { color: var(--text); }
+.site-footer__linkbtn:hover { color: var(--header-fg); text-decoration: underline; text-underline-offset: 2px; }
+.site-footer__linkbtn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.site-footer__meta { font-size: var(--fs-xs); }
+.site-footer a:focus-visible, .theme-toggle__opt:focus-visible { outline-color: var(--gold); }
+
+.theme-toggle {
+  display: inline-flex; width: max-content; border: 1px solid color-mix(in oklab, var(--header-fg) 28%, transparent);
+  border-radius: var(--r); overflow: hidden;
+}
+.theme-toggle__opt {
+  appearance: none; background: transparent; border: 0; padding: 5px 12px; cursor: pointer;
+  color: var(--header-muted); font: inherit; font-size: var(--fs-xs); font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.theme-toggle__opt + .theme-toggle__opt { border-left: 1px solid color-mix(in oklab, var(--header-fg) 28%, transparent); }
+.theme-toggle__opt.is-on { background: var(--gold); color: var(--navy); }
+button.theme-toggle__opt:hover:not(:disabled) { color: var(--header-fg); }
+button.theme-toggle__opt.is-on:hover:not(:disabled) { color: var(--navy); }
+@media (max-width: 720px) {
+  .site-footer__cols { grid-template-columns: 1fr 1fr; }
+  .site-footer__brand { grid-column: 1 / -1; }
+}
+
+/* ---------------------------------------------------- support dialog ---- */
+.support-trigger { all: unset; cursor: pointer; }
+.support-scrim {
+  position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in oklab, var(--navy) 70%, transparent);
+}
+.support-dialog {
+  width: min(620px, 100%); max-height: calc(100vh - 32px); overflow-y: auto;
+  background: var(--card); color: var(--text); border: var(--rule); border-top: 4px solid var(--gold);
+  border-radius: var(--r-lg); padding: var(--sp-5); display: grid; gap: var(--sp-3);
+  box-shadow: 0 20px 60px var(--shadow);
+}
+.support-dialog__head { display: flex; gap: var(--sp-3); align-items: flex-start; justify-content: space-between; }
+.support-dialog__title { margin: 0 0 4px; font-size: var(--fs-xl); }
+.support-dialog__lede { margin: 0; color: var(--muted); }
+.support-dialog__x {
+  flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center;
+  border: var(--rule); border-radius: var(--r); background: var(--card); color: var(--text);
+}
+.support-dialog__label { font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.support-dialog__chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.support-dialog__fields { display: grid; grid-template-columns: 1fr 2fr; gap: var(--sp-3); }
+@media (max-width: 520px) { .support-dialog__fields { grid-template-columns: 1fr; } }
+.support-dialog__field { display: grid; gap: 4px; }
+.support-dialog__field input { min-height: 40px; padding: 8px 10px; border: var(--rule); border-radius: var(--r); background: var(--card); color: var(--text); font: inherit; }
+.support-dialog__hint { font-size: var(--fs-xs); color: var(--muted); }
+.support-dialog__cta { justify-content: center; }
+.support-dialog__alt { text-align: center; font-size: var(--fs-xs); color: var(--muted); text-decoration: underline; }

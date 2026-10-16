@@ -1,6 +1,8 @@
 // src/App.tsx
 import { Suspense } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { SeasonGate } from "./pages/site/SeasonGate";
+import { GATES } from "./lib/seasons";
 import Header from "./components/Header";
 import InstallPrompt from "./components/InstallPrompt";
 import SiteFooter from "./components/SiteFooter";
@@ -62,7 +64,15 @@ const CollegeBaseballGame = lazyPage(() => import("./pages/CollegeBaseballGame")
 
 // New pages
 const HubHome = lazyPage(() => import("./pages/HubHome"));
-const CBBComingSoon = lazyPage(() => import("./pages/CBBComingSoon"));
+// Site pages (2026-10-16 refresh)
+const Labs = lazyPage(() => import("./pages/site/Labs"));
+const NotFound = lazyPage(() => import("./pages/site/NotFound"));
+
+/** A redirect that keeps the query string (?season=&week= on the boards). */
+function RedirectKeepSearch({ to }: { to: string }) {
+  const { search, hash } = useLocation();
+  return <Navigate to={`${to}${search}${hash}`} replace />;
+}
 
 // DEV-ONLY routes. The test harnesses (and the unlinked 2025 CLV / Combo
 // pages) are registered only in `vite dev` or a build made with
@@ -92,7 +102,7 @@ function RouteFallback() {
 export default function App() {
   const { pathname } = useLocation();
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)", color: "var(--text)" }}>
       {/* ✅ your branded header (logo, colors) */}
       <Header />
 
@@ -102,25 +112,37 @@ export default function App() {
           never once installed (standalone or a detected related app). */}
       <InstallPrompt />
 
-      <main style={{ maxWidth: 1200, margin: "20px auto", padding: "0 16px 40px" }}>
+      <main id="main" style={{ flex: "1 0 auto", width: "100%", maxWidth: "var(--content-max)", margin: "24px auto 0", padding: "0 16px" }}>
         <RouteErrorBoundary resetKey={pathname}>
         <Suspense fallback={<RouteFallback />}>
         {/* Hub */}
         <Routes>
           <Route path="/" element={<HubHome />} />
 
-          {/* CFB (namespaced) */}
-          <Route path="/cfb" element={<Home />} />
-          <Route path="/cfb/scoreboard" element={<Scoreboard />} />
-          <Route path="/cfb/scoreboard2" element={<ScoreboardV2 />} />
+          {/* CFB (namespaced). The V2 board IS the scoreboard (2026-10-16);
+              the classic board stays one more stretch at -classic, and the
+              old /scoreboard2 URL forwards with its query string. /cfb
+              itself goes to the board; the old /cfb guide is now
+              /about/how-it-works. */}
+          <Route path="/cfb" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
+          <Route path="/cfb/scoreboard" element={<ScoreboardV2 />} />
+          <Route path="/cfb/scoreboard-classic" element={<Scoreboard />} />
+          <Route path="/cfb/scoreboard2" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
           <Route path="/cfb/results" element={<Results />} />
           <Route path="/cfb/record" element={<RecordPage />} />
           <Route path="/cfb/quads" element={<QuadsPage />} />
-          <Route path="/cfb/trends-clv" element={<TrendsCLV />} />
+          {/* Trends reads 2025 CSVs that 2026 does not publish: hidden (dev
+              builds only) until it is rebuilt on the 2026 JSON. */}
+          {TEST_ROUTES && <Route path="/cfb/trends-clv" element={<TrendsCLV />} />}
           <Route path="/cfb/game/*" element={<GameCenter />} />
           {TEST_ROUTES && <Route path="/cfb/clv/*" element={<CLVPage />} />}
           {TEST_ROUTES && <Route path="/cfb/combo/*" element={<ComboTrend />} />}
-          <Route path="/cfb/bracket/*" element={<Bracket />} />
+          <Route path="/cfb/bracket/*" element={
+            <SeasonGate gate={GATES.cfbBracket} title="The CFP bracket opens on Selection Sunday"
+              body={<p>Last season's bracket is retired. The 2026-27 field, our simulated odds for every team and the pick-your-bracket tool come back the day the committee reveals the 12.</p>}>
+              <Bracket />
+            </SeasonGate>
+          } />
           {/* THE ACCOUNT PAGES REDIRECT UP. They were under /cfb until
               2026-09-08; an account is sport-agnostic (same login, same Kalshi
               book, same friends when CBB arrives), so they now live at the
@@ -147,14 +169,23 @@ export default function App() {
           {/* Legacy redirects to preserve old links */}
           <Route path="/scoreboard" element={<Navigate to="/cfb/scoreboard" replace />} />
           <Route path="/results" element={<Navigate to="/cfb/results" replace />} />
-          <Route path="/trends-clv" element={<Navigate to="/cfb/trends-clv" replace />} />
           <Route path="/game/*" element={<Navigate to="/cfb/game" replace />} />
 
-          {/* CBB placeholder */}
-          <Route path="/cbb" element={<CBBComingSoon />} />
+          {/* CBB */}
+          <Route path="/cbb" element={<RedirectKeepSearch to="/cbb/scoreboard" />} />
           <Route path="/cbb/scoreboard" element={<CBB_Sims />} />
-          <Route path="/cbb/results" element={<ResultsCBB />} />  
-          <Route path="/cbb/bracket" element={<CBB_Bracket />} />        
+          <Route path="/cbb/results" element={<ResultsCBB />} />
+          <Route path="/cbb/bracket" element={
+            <SeasonGate gate={GATES.cbbBracket} archive title="March 2026 bracket (archive)"
+              body={<p>This is last season's tournament, frozen as of March 17, 2026. The 2027 bracket goes live on Selection Sunday, March 14.</p>}>
+              <CBB_Bracket />
+            </SeasonGate>
+          } />
+
+          {/* Labs: side projects. Old URLs below are unchanged. */}
+          <Route path="/labs" element={<Labs />} />
+          {/* The old /cfb guide (refreshed in the About section). */}
+          <Route path="/about/how-it-works" element={<Home />} />
           {/* MLB */}
           <Route path="/mlb" element={<MLBScoreboard />} />
           <Route path="/mlb/scoreboard" element={<MLBScoreboard />} />
@@ -183,8 +214,8 @@ export default function App() {
               on a real published week against a DECLARED fixture book */}
           {TEST_ROUTES && <Route path="/test-bets" element={<TestBets />} />}
 
-          {/* 404 -> hub */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* A real 404 (it used to bounce every unknown path to the hub). */}
+          <Route path="*" element={<NotFound />} />
         </Routes>
         </Suspense>
         </RouteErrorBoundary>
