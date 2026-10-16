@@ -1,69 +1,95 @@
 // src/App.tsx
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Suspense } from "react";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import Header from "./components/Header";
 import InstallPrompt from "./components/InstallPrompt";
+import { Skeleton, SkeletonLines } from "./components/Skeleton";
+import { lazyPage, RouteErrorBoundary } from "./lib/lazyPage";
 
-// ✅ restore your theme files
-import "./theme.css";
-import "./index.css";
+// theme.css and index.css are imported ONCE, in main.tsx, ahead of App so
+// they stay first in the cascade (they were also imported here until
+// 2026-10-16; the second import was a no-op).
+
+// Every page is its own chunk (React.lazy via lazyPage, which also reloads a
+// stale tab once when a post-deploy chunk is missing). See src/lib/lazyPage.tsx.
 
 // CFB pages (existing)
-import Home from "./pages/Home";
-import Scoreboard from "./pages/Scoreboard";
-import ScoreboardV2 from "./pages/ScoreboardV2";
-import Results from "./pages/Results";
+const Home = lazyPage(() => import("./pages/Home"));
+const Scoreboard = lazyPage(() => import("./pages/Scoreboard"));
+const ScoreboardV2 = lazyPage(() => import("./pages/ScoreboardV2"));
+const Results = lazyPage(() => import("./pages/Results"));
 // The 2026 record. A SEPARATE page from Results (which is the 2025 season and
 // stays exactly as it was): 2026 publishes thousands of priced rungs a week
 // across Kalshi team markets and game lines, so its record is a filtered view
 // over a published ledger rather than one spread/ML/total per game.
-import RecordPage from "./pages/Record";
-import QuadsPage from "./pages/Quads";
-import TrendsCLV from "./pages/Trends_CLV";
-import GameCenter from "./pages/GameCenter";
-import CLVPage from "./pages/CLV";
-import ComboTrend from "./pages/combo_trend";
-import Bracket from "./pages/CFB_Bracket"
+const RecordPage = lazyPage(() => import("./pages/Record"));
+const QuadsPage = lazyPage(() => import("./pages/Quads"));
+const TrendsCLV = lazyPage(() => import("./pages/Trends_CLV"));
+const GameCenter = lazyPage(() => import("./pages/GameCenter"));
+const CLVPage = lazyPage(() => import("./pages/CLV"));
+const ComboTrend = lazyPage(() => import("./pages/combo_trend"));
+const Bracket = lazyPage(() => import("./pages/CFB_Bracket"));
 // Accounts (Supabase). Both pages render an "accounts are not configured"
 // line when VITE_SUPABASE_URL/ANON_KEY are absent, so the routes are safe to
 // register unconditionally.
-import Profile from "./pages/Profile";
-import BookDashboard from "./pages/BookDashboard";
-import FeedPage from "./pages/FeedPage";
-import FriendPage from "./pages/FriendPage";
+const Profile = lazyPage(() => import("./pages/Profile"));
+const BookDashboard = lazyPage(() => import("./pages/BookDashboard"));
+const FeedPage = lazyPage(() => import("./pages/FeedPage"));
+const FriendPage = lazyPage(() => import("./pages/FriendPage"));
 
 // CBB Pages
 
-import CBB_Sims from "./pages/CBB_sims";
-import ResultsCBB from "./pages/ResultsCBB";
-import CBB_Bracket from "./pages/CBB_Bracket";
+const CBB_Sims = lazyPage(() => import("./pages/CBB_sims"));
+const ResultsCBB = lazyPage(() => import("./pages/ResultsCBB"));
+const CBB_Bracket = lazyPage(() => import("./pages/CBB_Bracket"));
 
 // MLB Pages
-import MLBScoreboard from "./pages/MLBScoreboard";
-import MLBGameDetail from "./pages/MLBGameDetail";
+const MLBScoreboard = lazyPage(() => import("./pages/MLBScoreboard"));
+const MLBGameDetail = lazyPage(() => import("./pages/MLBGameDetail"));
 
 // NASCAR Pages
-import NascarPredictions from "./pages/NascarPredictions";
-import NascarScanner from "./pages/NascarScanner";
-import NascarLive from "./pages/NascarLive";
+const NascarPredictions = lazyPage(() => import("./pages/NascarPredictions"));
+const NascarScanner = lazyPage(() => import("./pages/NascarScanner"));
+const NascarLive = lazyPage(() => import("./pages/NascarLive"));
 
 // Tennis Pages
-import TennisPredictions from "./pages/TennisPredictions";
+const TennisPredictions = lazyPage(() => import("./pages/TennisPredictions"));
 
 // College Baseball Pages
-import CollegeBaseballScoreboard from "./pages/CollegeBaseballScoreboard";
-import CollegeBaseballGame from "./pages/CollegeBaseballGame";
+const CollegeBaseballScoreboard = lazyPage(() => import("./pages/CollegeBaseballScoreboard"));
+const CollegeBaseballGame = lazyPage(() => import("./pages/CollegeBaseballGame"));
 
 // New pages
-import HubHome from "./pages/HubHome";
-import CBBComingSoon from "./pages/CBBComingSoon";
+const HubHome = lazyPage(() => import("./pages/HubHome"));
+const CBBComingSoon = lazyPage(() => import("./pages/CBBComingSoon"));
+
+// DEV-ONLY routes. The test harnesses (and the unlinked 2025 CLV / Combo
+// pages) are registered only in `vite dev` or a build made with
+// VITE_ENABLE_TEST_ROUTES=1. In a normal production build their paths fall
+// through to the catch-all: /test-bets exposed the owner's sizing rules and
+// Combo shows small-sample "true edge" ROI. Files are kept, not deleted.
+const TEST_ROUTES =
+  import.meta.env.DEV || import.meta.env.VITE_ENABLE_TEST_ROUTES === "1";
 
 // Hidden pages (no nav entry — direct URL only)
-import TestVisual from "./pages/TestVisual";
-import TestGamecast from "./pages/TestGamecast";
-import TestBets from "./pages/TestBets";
+const TestVisual = lazyPage(() => import("./pages/TestVisual"));
+const TestGamecast = lazyPage(() => import("./pages/TestGamecast"));
+const TestBets = lazyPage(() => import("./pages/TestBets"));
 
+
+/** Shown while a route's chunk downloads (usually a few hundred ms). */
+function RouteFallback() {
+  return (
+    <div aria-busy="true" aria-label="Loading page" style={{ display: "grid", gap: 16 }}>
+      <Skeleton height={32} width="40%" />
+      <SkeletonLines rows={3} height={14} />
+      <Skeleton height={240} />
+    </div>
+  );
+}
 
 export default function App() {
+  const { pathname } = useLocation();
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
       {/* ✅ your branded header (logo, colors) */}
@@ -76,6 +102,8 @@ export default function App() {
       <InstallPrompt />
 
       <main style={{ maxWidth: 1200, margin: "20px auto", padding: "0 16px 40px" }}>
+        <RouteErrorBoundary resetKey={pathname}>
+        <Suspense fallback={<RouteFallback />}>
         {/* Hub */}
         <Routes>
           <Route path="/" element={<HubHome />} />
@@ -89,8 +117,8 @@ export default function App() {
           <Route path="/cfb/quads" element={<QuadsPage />} />
           <Route path="/cfb/trends-clv" element={<TrendsCLV />} />
           <Route path="/cfb/game/*" element={<GameCenter />} />
-          <Route path="/cfb/clv/*" element={<CLVPage />} />
-          <Route path="/cfb/combo/*" element={<ComboTrend />} />
+          {TEST_ROUTES && <Route path="/cfb/clv/*" element={<CLVPage />} />}
+          {TEST_ROUTES && <Route path="/cfb/combo/*" element={<ComboTrend />} />}
           <Route path="/cfb/bracket/*" element={<Bracket />} />
           {/* THE ACCOUNT PAGES REDIRECT UP. They were under /cfb until
               2026-09-08; an account is sport-agnostic (same login, same Kalshi
@@ -146,17 +174,19 @@ export default function App() {
           <Route path="/college-baseball/scoreboard" element={<CollegeBaseballScoreboard />} />
           <Route path="/college-baseball/game/:id" element={<CollegeBaseballGame />} />
 
-          {/* Hidden: sim-test scoreboard (direct URL only, no nav link) */}
-          <Route path="/test-visual" element={<TestVisual />} />
-          {/* Hidden: live-gamecast component harness vs any ESPN event */}
-          <Route path="/test-gamecast" element={<TestGamecast />} />
-          {/* Hidden: Bets-panel harness — the week-2 decision rules on a real
-              published week against a DECLARED fixture book */}
-          <Route path="/test-bets" element={<TestBets />} />
+          {/* Hidden, DEV-ONLY (see TEST_ROUTES): sim-test scoreboard */}
+          {TEST_ROUTES && <Route path="/test-visual" element={<TestVisual />} />}
+          {/* Hidden, DEV-ONLY: live-gamecast component harness vs any ESPN event */}
+          {TEST_ROUTES && <Route path="/test-gamecast" element={<TestGamecast />} />}
+          {/* Hidden, DEV-ONLY: Bets-panel harness — the week-2 decision rules
+              on a real published week against a DECLARED fixture book */}
+          {TEST_ROUTES && <Route path="/test-bets" element={<TestBets />} />}
 
           {/* 404 -> hub */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
+        </RouteErrorBoundary>
       </main>
     </div>
   );
