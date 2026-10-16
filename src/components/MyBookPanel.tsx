@@ -119,7 +119,9 @@ export default function MyBookPanel({
           My Book
         </span>
         <span style={{ fontSize: 10.5, color: "var(--muted)" }}>{note}</span>
-        {(token || signedIn) && !ordersLive && (
+        {/* Staged badge only for a CONNECTED trader: a signed-in friend with
+            no Kalshi behind them has no orders to stage (2026-10-16). */}
+        {connected && !ordersLive && (
           <span style={{ marginLeft: "auto" }}>
             <DryRunBadge title="Order entry is staged for this account: the server validates, caps, re-checks the book and logs — and submits nothing." />
           </span>
@@ -161,7 +163,7 @@ export default function MyBookPanel({
         )}
       </Row>
 
-      {(token || signedIn) && (
+      {connected && (
         <Row label="Book">
           {/* THE STRIP'S ONE MONEY LINE: what is still working, what it is
               worth, and the switch that pulls it. Everything else about the

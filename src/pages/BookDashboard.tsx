@@ -41,9 +41,11 @@ import { useBookGames, usePlacedTimes } from "../lib/bookGames";
 import { settledBets } from "../lib/bookTree";
 import BookTree from "../components/BookTree";
 import { fetchMySettings, localSettings } from "../lib/userSettings";
+import { useIsOwner } from "../lib/useOwner";
 
 export default function BookDashboard() {
   const { session, loading } = useSession();
+  const isOwner = useIsOwner(session?.user?.id ?? null);
   const { profile, loading: profileLoading } = useProfile(session);
   const signedIn = Boolean(session && profile);
 
@@ -123,6 +125,7 @@ export default function BookDashboard() {
           accountLabel={portal.payload?.account_label}
           ordersLive={portal.payload?.orders_live === true}
           slugTeams={pricing.names}
+          isOwner={isOwner}
         />
       </Section>
 
@@ -155,9 +158,12 @@ export default function BookDashboard() {
 
 function Positions({
   token, onToken, status, bets, totals, accountLabel, ordersLive, pricingReady,
-  slugTeams,
+  slugTeams, isOwner,
 }: {
   token: string;
+  /** The server confirmed this uid is an OWNER (CFB_PORTAL_OWNERS). Only an
+   *  owner is offered the legacy portal-password box (2026-10-16). */
+  isOwner: boolean;
   /** slug -> the game's real names, from the same pricing load. What lets a
    *  row draw the team as its LOGO instead of the ticker's letter code. */
   slugTeams: Map<string, BetGameNames>;
@@ -204,10 +210,10 @@ function Positions({
         )}
         <Muted>
           No Kalshi account on this login yet. Link your own on{" "}
-          <Link to="/me">your profile</Link> — or, if you have the site's
-          portal password, connect with it.
+          <Link to="/me">your profile</Link>
+          {isOwner ? " — or connect with the portal password." : "."}
         </Muted>
-        <form
+        {isOwner && <form
           style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
           onSubmit={(e) => {
             e.preventDefault();
@@ -219,7 +225,7 @@ function Positions({
                  className="ui-sel" autoComplete="current-password"
                  style={{ fontSize: 12 }} />
           <button type="submit" className="ui-btn" style={BTN}>Connect</button>
-        </form>
+        </form>}
       </div>
     );
   }

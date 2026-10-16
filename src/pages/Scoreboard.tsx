@@ -3350,7 +3350,9 @@ function ScoreboardPage() {
           index. Profile, friends, the network feed, unit size and Kalshi
           linking moved to the My Book dashboard (/cfb/mybook) — they are about
           the person, not about this board. */}
-      {(portalToken || signedIn) && (
+      {/* A signed-in reader with no Kalshi behind them (403 not_a_trader) or
+          a server with no portal gets no money strip at all (2026-10-16). */}
+      {(portalToken || (signedIn && portal.status !== "forbidden" && portal.status !== "unconfigured")) && (
         <MyBookPanel
           token={portalToken}
           signedIn={signedIn}

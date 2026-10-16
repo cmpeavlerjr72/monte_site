@@ -2824,6 +2824,17 @@ function portalLinkedOf(req: Request): PortalAccount | "unreadable" | null {
 // portal family does.
 app.use("/api/me", supabaseAuth);
 
+/* WHO IS THIS, FOR THE UI ONLY (2026-10-16). The legacy portal-password box
+   must show only to an owner (a uid named in CFB_PORTAL_OWNERS); a signed-in
+   friend should never be offered it. This answers that one boolean. It grants
+   nothing: every portfolio route still runs portalGate, which re-derives the
+   account from the password or the verified uid on each request. */
+app.get("/api/me/role", (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  const uid = supaUserOf(req)?.id ?? null;
+  res.json({ signed_in: Boolean(uid), owner: Boolean(uid && PORTAL_OWNER_UIDS.has(uid)) });
+});
+
 /** 503 / 401 in one place, so no linking route can forget either. */
 function linkGate(req: Request, res: Response): SupaUser | null {
   res.set("Cache-Control", "no-store");

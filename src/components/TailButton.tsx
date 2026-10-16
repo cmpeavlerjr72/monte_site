@@ -145,7 +145,11 @@ export default function TailButton(
   // NOT A BET ANYONE CAN COPY: no pricing context on this page, no contract on
   // the row (a legacy hand-typed pick), or it is the reader's own bet.
   if (!ctx || !target.ticker || !target.side) return null;
-  if (ctx.viewerId && ctx.viewerId === target.userId) return null;
+  // SIGNED OUT = NO TAIL AFFORDANCE AT ALL (2026-10-16, public-audience
+  // safety): a reader who is not signed in sees the bet, never a muted
+  // "sign in to tail" order button.
+  if (!ctx.viewerId) return null;
+  if (ctx.viewerId === target.userId) return null;
 
   const reason = ctx.blocked ?? (gate.ok ? null : gate.why);
   const ready = reason === null && group !== null;
