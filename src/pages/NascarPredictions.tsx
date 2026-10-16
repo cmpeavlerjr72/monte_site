@@ -190,6 +190,16 @@ function SortArrow({ col, sortKey, sortAsc }: { col: SortKey; sortKey: SortKey; 
   return <span style={{ marginLeft: 2 }}>{sortAsc ? "\u25B2" : "\u25BC"}</span>;
 }
 
+/** Short y-axis label for a driver: "Kyle Larson (C)" -> "K. Larson",
+ *  "Ricky Stenhouse Jr." -> "R. Stenhouse Jr.". The feed appends status
+ *  suffixes like "(C)" (playoff/champion-eligible); taking the LAST word put
+ *  "(C)" on most bars. First initial keeps Austin and Ty Dillon apart. */
+function chartLabel(fullName: string): string {
+  const parts = fullName.replace(/\s*\([^)]*\)\s*/g, " ").trim().split(/\s+/);
+  if (parts.length < 2) return parts[0] || fullName;
+  return `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
+}
+
 /* ── Main Component ────────────────────────────────────────── */
 
 export default function NascarPredictions() {
@@ -318,7 +328,7 @@ export default function NascarPredictions() {
 
   // Chart data (top 15)
   const chartData = drivers.slice(0, 15).map((d) => ({
-    name: d.driver_name.split(" ").pop() ?? d.driver_name,
+    name: chartLabel(d.driver_name),
     fullName: d.driver_name,
     value: d[chartMetric] * 100,
     manufacturer: d.manufacturer,
