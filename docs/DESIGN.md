@@ -85,7 +85,7 @@ pill), the amber star `#f0b429`, `--accent: #c59b2b`, and the unused
 | `Tabs` | text tabs with a gold underline; route tabs (`to`) or local `role="tablist"` |
 | `DataTable` | agate table, scrolls in its own box, `empty` cell defaults to "—" |
 | `EmptyState` | gold-ruled panel that says what is happening and where to go |
-| `TeamCell` | logo + school name (decorative logo, name read once) |
+| `TeamCell` | logo + school name (decorative logo, name read once). Import from `components/ui/TeamCell`: it carries the team table, so it is kept out of the shared index |
 | `ButtonLink` | primary (navy), gold, or quiet link-button |
 
 ## Avoid (the AI-site tells)

@@ -8,7 +8,8 @@
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ButtonLink, Card, Pill, Stat, TeamCell, signedTone } from "../../components/ui";
+import { ButtonLink, Card, Pill, Stat, signedTone } from "../../components/ui";
+import { TeamCell } from "../../components/ui/TeamCell";
 import { Skeleton } from "../../components/Skeleton";
 import { useDocumentMeta } from "../../lib/useDocumentMeta";
 import { loadRecordHeadline, type RecordHeadline } from "../../lib/recordHeadline";

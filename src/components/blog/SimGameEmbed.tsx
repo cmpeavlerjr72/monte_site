@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { TeamCell } from "../ui";
+import { TeamCell } from "../ui/TeamCell";
 import { getJsonWeekIndex, getGameSummaryCached } from "../../lib/cfbJson";
 import { displayTeamColor } from "../../utils/teamColors";
 import { useIsDark } from "../../lib/usePrefs";

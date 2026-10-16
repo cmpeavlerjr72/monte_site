@@ -1426,6 +1426,9 @@ against a brute-force solve with the REAL rounded fee, the maxRiskMultiple
 guard, `book`'s 50¢ switch, and the static proof that ONE function sizes and
 ONE function declares the per-order cap — whenever sizeContracts /
 sizeSuggestion / ownerPrefs sizing / placeOrders moves) ·
+`node scripts/check_no_new_hex.mjs` (no new hex colours in src; tokens only,
+identity colours marked `// identity-color`) · `npm run blog:check` (every post
+valid; also runs inside `npm run build`) ·
 SSR words-screenshot for UI changes · no hardcoded colors · report ≤300 words
 + gate table unless findings warrant more.
 
