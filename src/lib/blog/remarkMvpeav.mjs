@@ -9,6 +9,10 @@
 //   ::sim-game{season week game}       -> <sim-game>     (read-only game card)
 //   ::record-card{frozen}              -> <record-card>  (record tile)
 //   ::x-post{url img}                  -> <x-post>       (tweet screenshot, linked)
+//   ::photo{src alt caption credit license licenseurl source} -> <post-photo>  (figure + credit/license line)
+//   ::x-embed{url author text}         -> <x-embed>      (real X post: card + link; widget loads on tap)
+//   ::youtube{id title start}          -> <youtube-embed> (lite: thumbnail, youtube-nocookie player on tap)
+//   ::getty{id et sig w h caption credit page} -> <getty-embed> (Getty viewer iframe when scrolled into view; editorial only)
 //   any other ::directive              -> a visible "unknown embed" note, never a crash
 //   an unknown :text directive         -> put back as the literal text it was
 //                                         ("Note:this" must not vanish)
@@ -16,7 +20,9 @@
 //   <!-- OWNER BEAT: ... -->           -> <owner-beat> (drafts show it, published hides it)
 //   any other raw HTML                 -> dropped (posts never render raw HTML)
 
-const KNOWN_LEAF = new Set(["sim-game", "record-card", "x-post"]);
+const KNOWN_LEAF = new Set(["sim-game", "record-card", "x-post", "photo", "x-embed", "youtube", "getty"]);
+// directive name -> element name (where they differ: "photo" must not collide with the image <figure>s)
+const LEAF_TAG = { photo: "post-photo", youtube: "youtube-embed", getty: "getty-embed" };
 
 function textOf(node) {
   if (!node) return "";
@@ -61,7 +67,7 @@ function transform(parent) {
     if (node.type === "leafDirective") {
       const a = attrs(node);
       if (KNOWN_LEAF.has(node.name)) {
-        node.data = { hName: node.name, hProperties: a };
+        node.data = { hName: LEAF_TAG[node.name] || node.name, hProperties: a };
         node.children = [];
       } else {
         node.data = { hName: "div", hProperties: { className: ["directive-unknown"], dataName: node.name } };

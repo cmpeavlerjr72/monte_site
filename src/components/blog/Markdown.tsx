@@ -11,6 +11,7 @@ import remarkDirective from "remark-directive";
 import remarkMvpeav from "../../lib/blog/remarkMvpeav.mjs";
 import { SimGameEmbed } from "./SimGameEmbed";
 import { RecordEmbed } from "./RecordEmbed";
+import { GettyEmbed, PhotoEmbed, XEmbed, YouTubeEmbed } from "./MediaEmbeds";
 
 type P = Record<string, unknown> & { node?: unknown; children?: React.ReactNode };
 const str = (v: unknown) => (v == null ? "" : String(v));
@@ -37,6 +38,10 @@ export default function Markdown({ body, draft }: { body: string; draft: boolean
         <figcaption><a href={str(url)} target="_blank" rel="noopener noreferrer">View on X →</a></figcaption>
       </figure>
     ),
+    "post-photo": ({ node: _n, ...p }: P) => <PhotoEmbed {...p} />,
+    "x-embed": ({ node: _n, ...p }: P) => <XEmbed {...p} />,
+    "youtube-embed": ({ node: _n, ...p }: P) => <YouTubeEmbed {...p} />,
+    "getty-embed": ({ node: _n, ...p }: P) => <GettyEmbed {...p} />,
     "owner-beat": ({ note }: P) =>
       draft ? (
         <aside className="owner-beat" aria-label="Owner beat (draft only)">

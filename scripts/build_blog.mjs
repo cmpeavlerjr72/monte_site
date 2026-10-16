@@ -96,6 +96,22 @@ for (const p of posts) {
     if (m[2].startsWith("/") && !imgExists(m[2])) err(f, `image ${m[2]} is missing from public/`);
   }
   for (const m of p.body.matchAll(/::x-post\{[^}]*img="([^"]+)"/g)) if (!imgExists(m[1])) err(f, `x-post image ${m[1]} is missing from public/`);
+  for (const m of p.body.matchAll(/::photo\{([^}]*)\}/g)) {
+    const src = /src="([^"]*)"/.exec(m[1])?.[1], alt = /alt="([^"]*)"/.exec(m[1])?.[1], credit = /credit="([^"]*)"/.exec(m[1])?.[1];
+    if (!src || !imgExists(src)) err(f, `photo ${src || "(no src)"} is missing from public/`);
+    if (!alt) warn(f, `photo ${src} has no alt text`);
+    if (!credit) err(f, `photo ${src} has no credit (every photo carries its credit/license)`);
+    const lic = /license="([^"]*)"/.exec(m[1])?.[1] || "";
+    if (/\b(NC|ND)\b|NonCommercial|NoDerivs/i.test(lic)) err(f, `photo ${src}: license "${lic}" does not allow reuse here`);
+  }
+  for (const m of p.body.matchAll(/::x-embed\{([^}]*)\}/g)) if (!/url="https:\/\/(?:www\.)?(?:x|twitter)\.com\/\w+\/status\/\d+"/.test(m[1])) err(f, "x-embed needs url=\"https://x.com/<user>/status/<id>\"");
+  // Getty Images Embedded Viewer: editorial use only, only inside Getty's viewer (their terms), never hero / og_image
+  for (const k of ["hero", "og_image"]) if (d[k] && /getty/i.test(String(d[k]))) err(f, `${k} ${d[k]}: a Getty image may only appear inside Getty's embed viewer, never as ${k}`);
+  const gettys = [...p.body.matchAll(/::getty\{([^}]*)\}/g)];
+  for (const m of gettys) if (!/id="\d{5,}"/.test(m[1]) || !/et="[^"]+"/.test(m[1]) || !/sig="[^"]+"/.test(m[1])) err(f, "getty needs id, et and sig from Getty's embed code");
+  const promo = d.sponsored === true || (Array.isArray(d.tags) && d.tags.some((t) => /sponsor|promo|advert/i.test(String(t))));
+  if (gettys.length && promo) err(f, "Getty embeds are editorial-only: not allowed in a sponsored / promotional post");
+  for (const m of p.body.matchAll(/::youtube\{([^}]*)\}/g)) if (!/id="[A-Za-z0-9_-]{11}"/.test(m[1])) err(f, "youtube needs id=\"<11-character video id>\"");
 
   if (d.game !== undefined) {
     const g = d.game;
@@ -162,6 +178,30 @@ function rehypeCrawlerEmbeds() {
       if (c.tagName === "record-card") {
         return [{ type: "element", tagName: "p", properties: {}, children: [
           { type: "element", tagName: "a", properties: { href: "/cfb/record" }, children: [{ type: "text", value: "The full record" }] }] }];
+      }
+      if (c.tagName === "post-photo") {
+        const credit = p.credit ? (/mvpeav/i.test(p.credit) ? String(p.credit) : `Photo: ${p.credit} / Wikimedia Commons${p.license ? `, ${p.license}` : ""}`) : "";
+        const cap = [p.caption, credit].filter(Boolean).join(" · ");
+        return [{ type: "element", tagName: "figure", properties: {}, children: [
+          { type: "element", tagName: "img", properties: { src: p.src, alt: p.alt || "" }, children: [] },
+          ...(cap ? [{ type: "element", tagName: "figcaption", properties: {}, children: [{ type: "text", value: cap }] }] : [])] }];
+      }
+      if (c.tagName === "x-embed") {
+        return [{ type: "element", tagName: "blockquote", properties: { cite: p.url }, children: [
+          ...(p.text ? [{ type: "element", tagName: "p", properties: {}, children: [{ type: "text", value: String(p.text) }] }] : []),
+          { type: "element", tagName: "p", properties: {}, children: [
+            { type: "element", tagName: "a", properties: { href: p.url || "#" }, children: [{ type: "text", value: `${p.author || "Post"} on X` }] }] }] }];
+      }
+      if (c.tagName === "getty-embed") {
+        const page = p.page || `https://www.gettyimages.com/detail/${p.id || ""}`;
+        return [{ type: "element", tagName: "figure", properties: {}, children: [
+          { type: "element", tagName: "figcaption", properties: {}, children: [
+            { type: "text", value: `${p.caption ? `${p.caption} · ` : ""}${p.credit || "Getty Images"} · ` },
+            { type: "element", tagName: "a", properties: { href: page }, children: [{ type: "text", value: "View on Getty Images" }] }] }] }];
+      }
+      if (c.tagName === "youtube-embed") {
+        return [{ type: "element", tagName: "p", properties: {}, children: [
+          { type: "element", tagName: "a", properties: { href: `https://www.youtube.com/watch?v=${p.id || ""}` }, children: [{ type: "text", value: `Watch on YouTube: ${p.title || "video"}` }] }] }];
       }
       if (c.tagName === "x-post") {
         const kids = p.img ? [{ type: "element", tagName: "img", properties: { src: p.img, alt: "Post on X" }, children: [] }] : [{ type: "text", value: "Post on X" }];
