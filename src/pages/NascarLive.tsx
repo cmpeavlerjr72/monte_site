@@ -45,8 +45,8 @@ function formatDelta(d: number) {
 function posChange(start: number, current: number) {
   const diff = start - current;
   if (diff === 0) return { label: "-", color: "var(--muted)" };
-  if (diff > 0) return { label: `+${diff}`, color: "#16a34a" };
-  return { label: `${diff}`, color: "#dc2626" };
+  if (diff > 0) return { label: `+${diff}`, color: "var(--pos)" };
+  return { label: `${diff}`, color: "var(--neg)" };
 }
 
 function totalLapsLed(v: LiveVehicle): number {
@@ -113,7 +113,7 @@ function FlagBadge({ state }: { state: number }) {
       padding: "4px 12px", borderRadius: 6,
       background: f.bg, color: f.color,
       fontWeight: 800, fontSize: 13, letterSpacing: 0.5,
-      border: state === 4 ? "2px solid #555" : state === 8 ? "2px solid #999" : "none",
+      border: state === 4 ? "2px solid var(--text)" : state === 8 ? "2px solid var(--muted)" : "none",
     }}>
       {state === 4 && <span style={{ fontSize: 16 }}>{"\u2691"}</span>}
       {f.label.toUpperCase()}
@@ -131,7 +131,7 @@ function ProgressBar({ lap, total, stage }: { lap: number; total: number; stage:
     <div style={{ position: "relative", height: 18, background: "var(--border)", borderRadius: 9, overflow: "hidden", flex: 1, minWidth: 120 }}>
       <div style={{
         height: "100%", borderRadius: 9,
-        background: "linear-gradient(90deg, var(--brand) 0%, #16a34a 100%)",
+        background: "linear-gradient(90deg, var(--navy) 0%, var(--gold) 100%)",
         width: `${pct}%`, transition: "width 0.5s ease",
       }} />
       {stagePct != null && (
@@ -143,7 +143,7 @@ function ProgressBar({ lap, total, stage }: { lap: number; total: number; stage:
       <span style={{
         position: "absolute", top: 0, left: 0, right: 0,
         textAlign: "center", fontSize: 11, fontWeight: 700,
-        lineHeight: "18px", color: "#fff",
+        lineHeight: "18px", color: "var(--header-fg)",
         textShadow: "0 1px 2px rgba(0,0,0,0.6)",
       }}>
         Lap {lap} / {total}
@@ -186,7 +186,7 @@ function PitPanel({ pitData, driverFilter }: { pitData: LivePitEntry[]; driverFi
         <tbody>
           {filtered.slice(0, 50).map((p, i) => {
             const posGain = p.positions_gained_lost;
-            const posColor = posGain > 0 ? "#16a34a" : posGain < 0 ? "#dc2626" : "var(--muted)";
+            const posColor = posGain > 0 ? "var(--pos)" : posGain < 0 ? "var(--neg)" : "var(--muted)";
             const posLabel = posGain > 0 ? `+${posGain}` : posGain === 0 ? "-" : `${posGain}`;
             return (
               <tr key={i} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "var(--card)" : "var(--bg)" }}>
@@ -256,7 +256,7 @@ export default function NascarLive() {
           Check back during race weekend for live data.
         </p>
         {error && (
-          <p style={{ color: "#b91c1c", fontSize: 13, marginTop: 12 }}>{error}</p>
+          <p style={{ color: "var(--neg)", fontSize: 13, marginTop: 12 }}>{error}</p>
         )}
         {lastUpdate && (
           <p style={{ color: "var(--muted)", fontSize: 12, marginTop: 12 }}>
@@ -279,9 +279,9 @@ export default function NascarLive() {
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
           <FlagBadge state={feed!.flag_state} />
           <div style={{ flex: 1, minWidth: 200 }}>
-            <h1 style={{ margin: 0, fontWeight: 900, fontSize: 20, lineHeight: 1.2 }}>
+            <h2 style={{ margin: 0, fontWeight: 900, fontSize: 20, lineHeight: 1.2 }}>
               {feed!.run_name || "Live Race"}
-            </h1>
+            </h2>
             <p style={{ margin: "2px 0 0", color: "var(--muted)", fontSize: 13 }}>
               {seriesName} &middot; {feed!.track_name}
               {feed!.track_length > 0 && ` (${feed!.track_length} mi)`}
@@ -476,8 +476,8 @@ function LeaderboardRow({ v, i, seriesId, viewMode, onPitClick }: {
             {statusLabel && (
               <span style={{
                 padding: "1px 6px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                background: v.is_on_dvp ? "#dc262620" : "#55555520",
-                color: v.is_on_dvp ? "#dc2626" : "var(--muted)",
+                background: v.is_on_dvp ? "color-mix(in oklab, var(--neg) 14%, transparent)" : "var(--fill)",
+                color: v.is_on_dvp ? "var(--neg)" : "var(--muted)",
               }}>
                 {statusLabel}
               </span>
@@ -496,7 +496,7 @@ function LeaderboardRow({ v, i, seriesId, viewMode, onPitClick }: {
           <td style={{ ...tdSm, textAlign: "right" }}>{v.quality_passes}</td>
           <td style={{
             ...tdSm, textAlign: "right", fontWeight: 600,
-            color: v.passing_differential > 0 ? "#16a34a" : v.passing_differential < 0 ? "#dc2626" : "var(--muted)",
+            color: v.passing_differential > 0 ? "var(--pos)" : v.passing_differential < 0 ? "var(--neg)" : "var(--muted)",
           }}>
             {v.passing_differential > 0 ? `+${v.passing_differential}` : v.passing_differential}
           </td>
@@ -505,7 +505,7 @@ function LeaderboardRow({ v, i, seriesId, viewMode, onPitClick }: {
           </td>
           <td style={{
             ...tdSm, textAlign: "right",
-            color: v.position_differential_last_10_percent > 0 ? "#16a34a" : v.position_differential_last_10_percent < 0 ? "#dc2626" : "var(--muted)",
+            color: v.position_differential_last_10_percent > 0 ? "var(--pos)" : v.position_differential_last_10_percent < 0 ? "var(--neg)" : "var(--muted)",
             fontWeight: 600,
           }}>
             {v.position_differential_last_10_percent > 0 ? `+${v.position_differential_last_10_percent}` : v.position_differential_last_10_percent || "-"}

@@ -88,9 +88,9 @@ type ProbKey = "p_won" | "p_top3" | "p_top5" | "p_top10";
 /* ── Constants ─────────────────────────────────────────────── */
 
 const MFR_CHART_COLORS: Record<string, string> = {
-  Chevrolet: "#d4a50a",
-  Ford: "#003478",
-  Toyota: "#c8102e",
+  Chevrolet: "#d4a50a", // identity-color
+  Ford: "#003478", // identity-color
+  Toyota: "#c8102e", // identity-color
 };
 
 const PROB_LABELS: Record<ProbKey, string> = {
@@ -354,9 +354,9 @@ export default function NascarPredictions() {
             gap: 12,
           }}
         >
-          <h1 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>
+          <h2 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>
             NASCAR Predictions
-          </h1>
+          </h2>
 
           {/* Series pills */}
           <div style={{ display: "flex", gap: 4 }}>
@@ -422,7 +422,7 @@ export default function NascarPredictions() {
         )}
 
         {error && !prediction && raceOptions.length > 0 && (
-          <p style={{ margin: "12px 0 0", color: "#b91c1c", fontSize: 14 }}>
+          <p style={{ margin: "12px 0 0", color: "var(--neg)", fontSize: 14 }}>
             {error} — predictions may not be available for this race yet.
           </p>
         )}
@@ -593,8 +593,8 @@ export default function NascarPredictions() {
                         ? d.predicted_position - d.actual_position
                         : null;
                       const color = diff == null ? "var(--muted)"
-                        : diff > 0 ? "#16a34a"
-                        : diff < 0 ? "#dc2626"
+                        : diff > 0 ? "var(--pos)"
+                        : diff < 0 ? "var(--neg)"
                         : "var(--muted)";
                       const label = diff == null ? "-"
                         : diff > 0 ? `+${diff}`

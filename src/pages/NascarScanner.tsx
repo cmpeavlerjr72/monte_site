@@ -358,7 +358,7 @@ export default function NascarScanner() {
       {/* Header card */}
       <section className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-          <h1 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>NASCAR Scanner</h1>
+          <h2 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>NASCAR Scanner</h2>
           <div style={{ display: "flex", gap: 4 }}>
             {SERIES_KEYS.map((key) => (
               <button
@@ -383,7 +383,7 @@ export default function NascarScanner() {
           {mapping && <> &middot; Race ID: {mapping.historical_race_id} &middot; {configs.length} channels</>}
         </p>
         {disabled && (
-          <p style={{ margin: "8px 0 0", color: "#b91c1c", fontWeight: 600, fontSize: 14 }}>
+          <p style={{ margin: "8px 0 0", color: "var(--neg)", fontWeight: 600, fontSize: 14 }}>
             Scanner is currently disabled for this session.
           </p>
         )}
@@ -506,9 +506,9 @@ export default function NascarScanner() {
                 padding: "8px 12px",
                 marginBottom: 4,
                 borderRadius: 10,
-                border: `2px solid ${isLoudest ? "#e10600" : isSpeaking ? "var(--brand)" : "var(--border)"}`,
+                border: `2px solid ${isLoudest ? "var(--gold)" : isSpeaking ? "var(--brand)" : "var(--border)"}`,
                 background: isLoudest
-                  ? "color-mix(in oklab, #e10600 8%, var(--card))"
+                  ? "color-mix(in oklab, var(--gold) 8%, var(--card))"
                   : isSpeaking
                   ? "color-mix(in oklab, var(--brand) 6%, var(--card))"
                   : "var(--card)",
@@ -534,7 +534,7 @@ export default function NascarScanner() {
                     left: 0,
                     right: 0,
                     height: `${Math.min(lvl * 250, 100)}%`,
-                    background: isLoudest ? "#e10600" : "var(--brand)",
+                    background: isLoudest ? "var(--gold)" : "var(--brand)",
                     borderRadius: 2,
                     transition: "height 0.1s",
                   }}
@@ -545,7 +545,7 @@ export default function NascarScanner() {
               <span
                 style={{
                   width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-                  background: isLoudest ? "#e10600" : isSpeaking ? "var(--brand)" : "var(--border)",
+                  background: isLoudest ? "var(--gold)" : isSpeaking ? "var(--brand)" : "var(--border)",
                   animation: isLoudest ? "scanner-pulse 0.8s infinite" : "none",
                   transition: "background 0.15s",
                 }}
@@ -556,7 +556,7 @@ export default function NascarScanner() {
                 fontWeight: isLoudest ? 800 : 600,
                 fontSize: 14,
                 minWidth: 140,
-                color: isLoudest ? "#e10600" : "var(--text)",
+                color: isLoudest ? "var(--accent-ink)" : "var(--text)",
                 transition: "color 0.15s",
               }}>
                 {streamLabel(s.entry)}
@@ -617,10 +617,10 @@ export default function NascarScanner() {
             </button>
 
             {txEnabled && (
-              <span style={{ fontSize: 12, color: tx.online ? "var(--muted)" : "#b91c1c", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: tx.online ? "var(--muted)" : "var(--neg)", display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{
                   width: 8, height: 8, borderRadius: "50%",
-                  background: tx.online ? "#16a34a" : "#b91c1c",
+                  background: tx.online ? "var(--pos)" : "var(--neg)",
                   display: "inline-block",
                 }} />
                 {tx.status}
@@ -709,7 +709,7 @@ export default function NascarScanner() {
       )}
 
       {error && !loading && (
-        <p style={{ color: "#b91c1c", padding: "12px 0", fontSize: 14 }}>{error}</p>
+        <p style={{ color: "var(--neg)", padding: "12px 0", fontSize: 14 }}>{error}</p>
       )}
 
       {/* Special channels */}
@@ -725,7 +725,7 @@ export default function NascarScanner() {
                 onClick={() => toggleStream(c)}
                 style={{
                   padding: "10px 20px", borderRadius: 10,
-                  border: `2px solid ${isSpeaking ? "#e10600" : isActive ? "var(--brand)" : "var(--border)"}`,
+                  border: `2px solid ${isSpeaking ? "var(--gold)" : isActive ? "var(--brand)" : "var(--border)"}`,
                   background: isActive ? "var(--brand)" : "var(--card)",
                   color: isActive ? "var(--brand-contrast)" : "var(--text)",
                   cursor: streams.length >= MAX_STREAMS && !isActive ? "not-allowed" : "pointer",
@@ -769,9 +769,9 @@ export default function NascarScanner() {
                 style={{
                   padding: 12, cursor: atMax ? "not-allowed" : "pointer",
                   opacity: atMax ? 0.5 : 1,
-                  border: `2px solid ${isLoudest ? "#e10600" : isSpeaking ? "color-mix(in oklab, var(--brand) 70%, #e10600)" : isActive ? "var(--brand)" : "var(--border)"}`,
+                  border: `2px solid ${isLoudest ? "var(--gold)" : isSpeaking ? "color-mix(in oklab, var(--brand) 70%, var(--gold))" : isActive ? "var(--brand)" : "var(--border)"}`,
                   background: isLoudest
-                    ? "color-mix(in oklab, #e10600 10%, var(--card))"
+                    ? "color-mix(in oklab, var(--gold) 10%, var(--card))"
                     : isActive
                     ? "color-mix(in oklab, var(--brand) 10%, var(--card))"
                     : "var(--card)",
@@ -800,7 +800,7 @@ export default function NascarScanner() {
                 )}
                 <span style={{
                   fontWeight: 600, fontSize: 14,
-                  color: isLoudest ? "#e10600" : "var(--text)",
+                  color: isLoudest ? "var(--accent-ink)" : "var(--text)",
                   transition: "color 0.15s",
                 }}>
                   {c.driver_name}
@@ -810,7 +810,7 @@ export default function NascarScanner() {
                     style={{
                       marginLeft: "auto", width: 8, height: 8,
                       borderRadius: "50%", flexShrink: 0,
-                      background: isLoudest ? "#e10600" : isSpeaking ? "var(--brand)" : "var(--border)",
+                      background: isLoudest ? "var(--gold)" : isSpeaking ? "var(--brand)" : "var(--border)",
                       animation: isLoudest ? "scanner-pulse 0.8s infinite" : "none",
                       transition: "background 0.15s",
                     }}

@@ -2265,8 +2265,8 @@ function getLastPlayInfo(
     const MAX_DELTA = 30;
     const t = Math.min(Math.abs(d) / MAX_DELTA, 1); // 0..1
 
-    const good = "#16a34a";
-    const bad = "#ef4444";
+    const good = "var(--pos)";
+    const bad = "var(--neg)";
     const base = d >= 0 ? good : bad;
     const strength = 25 + 50 * t; // 25% → 75% as we move away from the line
 
@@ -2565,7 +2565,7 @@ function getLastPlayInfo(
       style={{
         padding: 12,
         borderRadius: 12,
-        border: liveInProgress ? "2px solid #0b63f6" : "1px solid var(--border)",
+        border: liveInProgress ? "2px solid var(--gold)" : "1px solid var(--border)",
         background: "var(--surface)",
         display: "grid",
         gridTemplateRows: "auto auto auto",
@@ -2605,7 +2605,7 @@ function getLastPlayInfo(
               style={{
                 fontSize: 11,
                 fontWeight: 600,
-                color: liveInProgress ? "#b91c1c" : "var(--muted)",
+                color: liveInProgress ? "var(--neg)" : "var(--muted)",
               }}
             >
               {card.liveStatusText}
@@ -2874,12 +2874,12 @@ function getLastPlayInfo(
           style={{
             margin: "6px 0 10px",
             padding: "6px 10px",
-            background: "#f5f7fb",
-            border: "1px solid #e6ebf5",
+            background: "var(--fill)",
+            border: "1px solid var(--border)",
             borderRadius: 8,
             fontSize: 13,
             lineHeight: 1.3,
-            color: "#24324a",
+            color: "var(--text)",
             display: "flex",
             alignItems: "center",
             gap: 8,
@@ -2910,7 +2910,7 @@ function getLastPlayInfo(
                 alignItems: "center",
                 gap: 6,
                 fontSize: 12,
-                color: "#0b1f4a",
+                color: "var(--text)",
                 whiteSpace: "nowrap",
                 flex: "0 0 auto",
               }}
@@ -3039,8 +3039,8 @@ function getLastPlayInfo(
             style={{
               padding: "6px 10px",
               borderRadius: 8,
-              border: "1px solid #0b63f6", // same blue as live outline
-              background: "#0b63f6",
+              border: "1px solid var(--gold)", // same as the live outline
+              background: "var(--gold)",
               color: "white",
               fontWeight: 800,
               display: "flex",
@@ -3781,7 +3781,7 @@ function LiveStatsModal(props: {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   {/* Team A bar */}
                   <div>
-                    <div style={{ height: 18, background: "#f1f5f9", borderRadius: 9999, overflow: "hidden" }}>
+                    <div style={{ height: 18, background: "var(--fill)", borderRadius: 9999, overflow: "hidden" }}>
                       <div style={{ width: `${Math.min(100, r.A_pct)}%`, height: "100%", background: r.Acolor ?? "var(--brand)" }} />
                     </div>
                     <div style={{ fontSize: 12, marginTop: 4 }}>
@@ -3791,7 +3791,7 @@ function LiveStatsModal(props: {
 
                   {/* Team B bar */}
                   <div>
-                    <div style={{ height: 18, background: "#f1f5f9", borderRadius: 9999, overflow: "hidden" }}>
+                    <div style={{ height: 18, background: "var(--fill)", borderRadius: 9999, overflow: "hidden" }}>
                       <div style={{ width: `${Math.min(100, r.B_pct)}%`, height: "100%", background: r.Bcolor ?? "var(--accent)" }} />
                     </div>
                     <div style={{ fontSize: 12, marginTop: 4, textAlign: "right" }}>
@@ -3803,7 +3803,7 @@ function LiveStatsModal(props: {
             ))}
 
             {/* Team Leaders */}
-            <div style={{ marginTop: 4, borderTop: "1px solid #eef2f7", paddingTop: 10 }}>
+            <div style={{ marginTop: 4, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>Team Leaders</div>
 
               {[
@@ -3822,7 +3822,7 @@ function LiveStatsModal(props: {
                       columnGap: 12,
                       rowGap: 6,
                       fontSize: 12,
-                      color: "#334155",
+                      color: "var(--muted)",
                       alignItems: "center",
                     }}
                   >
@@ -3842,7 +3842,7 @@ function LiveStatsModal(props: {
               })}
             </div>
             {/* Team Stats */}
-            <div style={{ marginTop: 10, borderTop: "1px solid #eef2f7", paddingTop: 10 }}>
+            <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>Team Stats</div>
 
               {[
@@ -3863,7 +3863,7 @@ function LiveStatsModal(props: {
                       columnGap: 12,
                       rowGap: 6,
                       fontSize: 12,
-                      color: "#334155",
+                      color: "var(--muted)",
                       alignItems: "center",
                     }}
                   >

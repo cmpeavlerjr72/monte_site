@@ -175,7 +175,7 @@ function OverlayModal({
         style={{
           width: "min(920px, 96vw)",
           maxHeight: "min(80vh, 760px)",
-          background: "var(--card, #fff)",
+          background: "var(--card)",
           border: "1px solid rgba(0,0,0,0.12)",
           borderRadius: 16,
           boxShadow: "0 24px 80px rgba(0,0,0,0.25)",
@@ -202,7 +202,7 @@ function OverlayModal({
               padding: "6px 10px",
               borderRadius: 10,
               border: "1px solid rgba(0,0,0,0.12)",
-              background: "var(--card, #fff)",
+              background: "var(--card)",
               fontWeight: 800,
               cursor: "pointer",
             }}
@@ -543,7 +543,7 @@ function MatchCard({
     <div
       style={{
         borderRadius: 14,
-        background: "var(--card, #fff)",
+        background: "var(--card)",
         border: "1px solid rgba(0,0,0,0.10)",
         boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
         padding: 12,
@@ -1456,7 +1456,7 @@ export default function Bracket() {
           borderRadius: 14,
           border: "1px solid rgba(0,0,0,0.10)",
           boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
-          background: "var(--card, #fff)",
+          background: "var(--card)",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>

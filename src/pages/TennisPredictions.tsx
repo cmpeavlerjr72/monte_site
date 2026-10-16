@@ -111,17 +111,24 @@ type ViewTab = "predictions" | "performance";
 
 /* -- Helpers ------------------------------------------------- */
 
-const CONFIDENCE_COLORS: Record<string, string> = {
-  high: "#16a34a",
-  medium: "#ca8a04",
-  low: "#9ca3af",
+/* Confidence is not money, so it is not green/red (DESIGN.md): navy for
+   high, gold for medium, a neutral fill for low. Tokens only. */
+const CONFIDENCE_STYLE: Record<string, { bg: string; fg: string }> = {
+  high: { bg: "var(--navy)", fg: "var(--header-fg)" },
+  medium: { bg: "var(--gold)", fg: "var(--navy)" },
+  low: { bg: "var(--fill)", fg: "var(--text)" },
 };
+/* Chart-tier colour for an accuracy %: a data mark, not money. */
+const tierColor = (acc: number) => (acc >= 60 ? "var(--chart-line)" : acc >= 50 ? "var(--accent)" : "var(--muted)");
 
+/* COURT SURFACES are identity colours (like team colours, the one allowed
+   literal): the conventional hard-blue / clay-orange / grass-green, darkened
+   so white text clears 4.5:1. */
 const SURFACE_COLORS: Record<string, string> = {
-  Hard: "#3b82f6",
-  Clay: "#ea580c",
-  Grass: "#22c55e",
-  Carpet: "#8b5cf6",
+  Hard: "#1d4ed8",   // identity-color
+  Clay: "#c2410c",   // identity-color
+  Grass: "#15803d",  // identity-color
+  Carpet: "#6d28d9", // identity-color
 };
 
 function formatPct(v: number) {
@@ -202,8 +209,8 @@ function ConfBadge({ level }: { level: string }) {
         borderRadius: 4,
         fontSize: 11,
         fontWeight: 600,
-        color: "#fff",
-        background: CONFIDENCE_COLORS[level] ?? CONFIDENCE_COLORS.low,
+        color: (CONFIDENCE_STYLE[level] ?? CONFIDENCE_STYLE.low).fg,
+        background: (CONFIDENCE_STYLE[level] ?? CONFIDENCE_STYLE.low).bg,
       }}
     >
       {level}
@@ -222,7 +229,7 @@ function SurfacePill({ surface }: { surface: string }) {
         borderRadius: 4,
         fontSize: 11,
         fontWeight: 600,
-        color: "#fff",
+        color: "#ffffff", // identity-color (white on a surface colour)
         background: SURFACE_COLORS[surface] ?? "var(--muted)",
       }}
     >
@@ -244,8 +251,8 @@ function ResultBadge({ result }: { result: MatchResult }) {
         borderRadius: 4,
         fontSize: 11,
         fontWeight: 700,
-        color: "#fff",
-        background: result.correct ? "#16a34a" : "#dc2626",
+        color: "var(--card)",
+        background: result.correct ? "var(--pos)" : "var(--neg)",
       }}
     >
       {result.correct ? "W" : "L"}
@@ -262,7 +269,7 @@ function ResultBadge({ result }: { result: MatchResult }) {
 
 function ValueCell({ value }: { value: number | null }) {
   if (value == null) return <span style={{ color: "var(--muted)" }}>-</span>;
-  const color = value > 3 ? "#16a34a" : value < -3 ? "#dc2626" : "var(--muted)";
+  const color = value > 3 ? "var(--pos)" : value < -3 ? "var(--neg)" : "var(--muted)";
   return (
     <span style={{ color, fontWeight: 600 }}>
       {value > 0 ? "+" : ""}{value.toFixed(1)}%
@@ -294,9 +301,9 @@ function ProbBar({ probA, result }: { probA: number; result?: MatchResult }) {
         style={{
           width: `${probA}%`,
           background: result
-            ? winnerA ? "#16a34a" : "#ef4444"
-            : favA ? "var(--brand)" : "#e2e8f0",
-          color: result || favA ? "#fff" : "var(--text)",
+            ? winnerA ? "var(--pos)" : "var(--neg)"
+            : favA ? "var(--brand)" : "var(--fill)",
+          color: result ? "var(--card)" : favA ? "var(--brand-contrast)" : "var(--text)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -309,9 +316,9 @@ function ProbBar({ probA, result }: { probA: number; result?: MatchResult }) {
         style={{
           width: `${probB}%`,
           background: result
-            ? winnerB ? "#16a34a" : "#ef4444"
-            : !favA ? "var(--brand)" : "#e2e8f0",
-          color: result || !favA ? "#fff" : "var(--text)",
+            ? winnerB ? "var(--pos)" : "var(--neg)"
+            : !favA ? "var(--brand)" : "var(--fill)",
+          color: result ? "var(--card)" : !favA ? "var(--brand-contrast)" : "var(--text)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -477,7 +484,7 @@ function PerformanceDashboard({
             style={{
               fontSize: 28,
               fontWeight: 900,
-              color: stats.totalPnl >= 0 ? "#16a34a" : "#dc2626",
+              color: stats.totalPnl >= 0 ? "var(--pos)" : "var(--neg)",
             }}
           >
             {stats.totalPnl >= 0 ? "+" : ""}${stats.totalPnl.toFixed(0)}
@@ -500,8 +507,8 @@ function PerformanceDashboard({
               fontWeight: 900,
               color:
                 stats.betsPlaced > 0 && stats.totalPnl / stats.betsPlaced > 0
-                  ? "#16a34a"
-                  : "#dc2626",
+                  ? "var(--pos)"
+                  : "var(--neg)",
             }}
           >
             {stats.betsPlaced > 0
@@ -540,7 +547,7 @@ function PerformanceDashboard({
               <Line
                 type="monotone"
                 dataKey="cumPnl"
-                stroke="#3b82f6"
+                stroke="var(--chart-line)"
                 strokeWidth={2}
                 dot={{ r: 4 }}
                 name="Cumulative PnL"
@@ -581,7 +588,7 @@ function PerformanceDashboard({
                 {stats.days.map((d, i) => (
                   <Cell
                     key={i}
-                    fill={d.accuracy >= 60 ? "#16a34a" : d.accuracy >= 50 ? "#ca8a04" : "#dc2626"}
+                    fill={tierColor(d.accuracy)}
                   />
                 ))}
               </Bar>
@@ -623,7 +630,7 @@ function PerformanceDashboard({
                         textAlign: "right",
                         padding: "4px 0",
                         fontWeight: 600,
-                        color: d.pnl >= 0 ? "#16a34a" : "#dc2626",
+                        color: d.pnl >= 0 ? "var(--pos)" : "var(--neg)",
                       }}
                     >
                       {d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(0)}
@@ -664,7 +671,7 @@ function PerformanceDashboard({
                           textAlign: "right",
                           padding: "4px 0",
                           fontWeight: 600,
-                          color: d.pnl >= 0 ? "#16a34a" : "#dc2626",
+                          color: d.pnl >= 0 ? "var(--pos)" : "var(--neg)",
                         }}
                       >
                         {d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(0)}
@@ -701,7 +708,7 @@ function PerformanceDashboard({
                   style={{
                     textAlign: "right",
                     padding: "6px 0",
-                    color: d.accuracy >= 60 ? "#16a34a" : d.accuracy >= 50 ? "#ca8a04" : "#dc2626",
+                    color: d.accuracy >= 60 ? "var(--text)" : d.accuracy >= 50 ? "var(--accent-ink)" : "var(--muted)",
                     fontWeight: 600,
                   }}
                 >
@@ -712,7 +719,7 @@ function PerformanceDashboard({
                     textAlign: "right",
                     padding: "6px 0",
                     fontWeight: 600,
-                    color: d.pnl >= 0 ? "#16a34a" : "#dc2626",
+                    color: d.pnl >= 0 ? "var(--pos)" : "var(--neg)",
                   }}
                 >
                   {d.pnl >= 0 ? "+" : ""}${d.pnl.toFixed(0)}
@@ -722,7 +729,7 @@ function PerformanceDashboard({
                     textAlign: "right",
                     padding: "6px 0",
                     fontWeight: 600,
-                    color: d.cumPnl >= 0 ? "#16a34a" : "#dc2626",
+                    color: d.cumPnl >= 0 ? "var(--pos)" : "var(--neg)",
                   }}
                 >
                   {d.cumPnl >= 0 ? "+" : ""}${d.cumPnl.toFixed(0)}
@@ -887,9 +894,9 @@ export default function TennisPredictions() {
       {/* Header card */}
       <section className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-          <h1 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>
+          <h2 style={{ margin: 0, fontWeight: 900, fontSize: 24 }}>
             Tennis Predictions
-          </h1>
+          </h2>
 
           {/* View tabs */}
           <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
@@ -945,7 +952,7 @@ export default function TennisPredictions() {
         )}
 
         {error && (
-          <p style={{ margin: "12px 0 0", color: "#b91c1c", fontSize: 14 }}>{error}</p>
+          <p style={{ margin: "12px 0 0", color: "var(--neg)", fontSize: 14 }}>{error}</p>
         )}
       </section>
 
@@ -1076,9 +1083,9 @@ export default function TennisPredictions() {
                       marginBottom: 10,
                       cursor: "pointer",
                       borderLeft: m.result
-                        ? `4px solid ${m.result.correct ? "#16a34a" : "#dc2626"}`
+                        ? `4px solid ${m.result.correct ? "var(--pos)" : "var(--neg)"}`
                         : hasValue
-                          ? "4px solid #16a34a"
+                          ? "4px solid var(--pos)"
                           : "4px solid transparent",
                     }}
                     onClick={() => setExpandedMatch(expanded ? null : i)}

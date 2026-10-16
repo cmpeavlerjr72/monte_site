@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { SeasonGate } from "./pages/site/SeasonGate";
 import { GATES } from "./lib/seasons";
+// The shared Labs header (tiny; eager so a Labs page never flashes headerless).
+import LabsFrame from "./pages/site/LabsFrame";
 import Header from "./components/Header";
 import InstallPrompt from "./components/InstallPrompt";
 import SiteFooter from "./components/SiteFooter";
@@ -201,24 +203,24 @@ export default function App() {
           {/* Labs: side projects. Old URLs below are unchanged. */}
           <Route path="/labs" element={<Labs />} />
           {/* MLB */}
-          <Route path="/mlb" element={<MLBScoreboard />} />
-          <Route path="/mlb/scoreboard" element={<MLBScoreboard />} />
-          <Route path="/mlb/game/*" element={<MLBGameDetail />} />
+          <Route path="/mlb" element={<LabsFrame><MLBScoreboard /></LabsFrame>} />
+          <Route path="/mlb/scoreboard" element={<LabsFrame><MLBScoreboard /></LabsFrame>} />
+          <Route path="/mlb/game/*" element={<LabsFrame><MLBGameDetail /></LabsFrame>} />
 
           {/* NASCAR */}
-          <Route path="/nascar" element={<NascarLive />} />
-          <Route path="/nascar/live" element={<NascarLive />} />
-          <Route path="/nascar/predictions" element={<NascarPredictions />} />
-          <Route path="/nascar/scanner" element={<NascarScanner />} />
+          <Route path="/nascar" element={<LabsFrame><NascarLive /></LabsFrame>} />
+          <Route path="/nascar/live" element={<LabsFrame><NascarLive /></LabsFrame>} />
+          <Route path="/nascar/predictions" element={<LabsFrame><NascarPredictions /></LabsFrame>} />
+          <Route path="/nascar/scanner" element={<LabsFrame><NascarScanner /></LabsFrame>} />
 
           {/* Tennis */}
-          <Route path="/tennis" element={<TennisPredictions />} />
-          <Route path="/tennis/predictions" element={<TennisPredictions />} />
+          <Route path="/tennis" element={<LabsFrame><TennisPredictions /></LabsFrame>} />
+          <Route path="/tennis/predictions" element={<LabsFrame><TennisPredictions /></LabsFrame>} />
 
           {/* College Baseball */}
-          <Route path="/college-baseball" element={<CollegeBaseballScoreboard />} />
-          <Route path="/college-baseball/scoreboard" element={<CollegeBaseballScoreboard />} />
-          <Route path="/college-baseball/game/:id" element={<CollegeBaseballGame />} />
+          <Route path="/college-baseball" element={<LabsFrame><CollegeBaseballScoreboard /></LabsFrame>} />
+          <Route path="/college-baseball/scoreboard" element={<LabsFrame><CollegeBaseballScoreboard /></LabsFrame>} />
+          <Route path="/college-baseball/game/:id" element={<LabsFrame><CollegeBaseballGame /></LabsFrame>} />
 
           {/* Hidden, DEV-ONLY (see TEST_ROUTES): sim-test scoreboard */}
           {TEST_ROUTES && <Route path="/test-visual" element={<TestVisual />} />}

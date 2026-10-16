@@ -222,7 +222,7 @@ export default function MLBGameDetail() {
               borderRadius: 8,
               border: `2px solid ${tab === t ? "var(--accent)" : "var(--border)"}`,
               background: tab === t ? "var(--accent)" : "var(--card)",
-              color: tab === t ? "#fff" : "var(--text)",
+              color: tab === t ? "var(--accent-contrast)" : "var(--text)",
               fontWeight: 700,
               fontSize: 14,
               cursor: "pointer",
@@ -461,13 +461,13 @@ function PitcherSummaryRow({
           gap: 8,
           padding: "8px 16px",
           cursor: "pointer",
-          background: "#1e3a5f0a",
+          background: "var(--fill)",
         }}
       >
         <span
           style={{
             fontSize: 10, fontWeight: 700, padding: "2px 6px",
-            borderRadius: 4, background: "#dbeafe", color: "#1e40af",
+            borderRadius: 4, background: "var(--fill)", color: "var(--brand-text)",
           }}
         >
           SP
@@ -548,7 +548,7 @@ function BatterRow({
                 fontWeight: 800,
                 fontSize: 14,
                 color: highlight
-                  ? (bestOu!.val > 0.6 ? "#16a34a" : "#dc2626")
+                  ? (bestOu!.val > 0.6 ? "var(--pos)" : "var(--neg)")
                   : "var(--text)",
               }}>
                 {fmt(s.mean)}
@@ -654,7 +654,7 @@ function PitcherBoxScore({
                     <span
                       style={{
                         fontSize: 10, fontWeight: 700, padding: "2px 6px",
-                        borderRadius: 4, background: "#dbeafe", color: "#1e40af",
+                        borderRadius: 4, background: "var(--fill)", color: "var(--brand-text)",
                       }}
                     >
                       SP
@@ -758,7 +758,7 @@ function PlayerDetailPanel({
                       <Tooltip formatter={(v: number) => `${v}%`} contentStyle={{ fontSize: 12 }} />
                       <Bar dataKey="over" name="Over %">
                         {ous.map((ou, i) => (
-                          <Cell key={i} fill={ou.val > 0.5 ? "#16a34a" : "#94a3b8"} />
+                          <Cell key={i} fill={ou.val > 0.5 ? "var(--chart-line)" : "var(--muted)"} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -787,9 +787,9 @@ function OverUnderPill({ line, val }: { line: string; val: number }) {
         borderRadius: 6,
         fontSize: 11,
         fontWeight: 700,
-        background: isOver ? "#dcfce7" : "#fee2e2",
-        color: isOver ? "#166534" : "#991b1b",
-        border: `1px solid ${isOver ? "#bbf7d0" : "#fecaca"}`,
+        background: isOver ? "color-mix(in oklab, var(--pos) 14%, var(--card))" : "color-mix(in oklab, var(--neg) 14%, var(--card))",
+        color: isOver ? "var(--pos)" : "var(--neg)",
+        border: `1px solid ${isOver ? "var(--pos)" : "var(--neg)"}`,
       }}
     >
       <span style={{ fontSize: 10, opacity: 0.7 }}>o{line}</span>
@@ -890,7 +890,7 @@ function FlatPitcherList({ data }: { data: PlayerProps }) {
             onMouseLeave={(e) => { if (expandedPlayer !== name) e.currentTarget.style.background = ""; }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "#dbeafe", color: "#1e40af" }}>SP</span>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "var(--fill)", color: "var(--brand-text)" }}>SP</span>
               <span style={{ fontWeight: 700, fontSize: 14 }}>{name}</span>
             </div>
             {PITCHER_BOX_COLS.map((col) => {

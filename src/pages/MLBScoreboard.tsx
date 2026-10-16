@@ -94,8 +94,8 @@ function pct(n: number): string {
   return (n * 100).toFixed(0) + "%";
 }
 function mlColor(ml: string): string {
-  if (ml.startsWith("-")) return "#16a34a";
-  if (ml.startsWith("+")) return "#dc2626";
+  if (ml.startsWith("-")) return "var(--pos)";
+  if (ml.startsWith("+")) return "var(--neg)";
   return "var(--text)";
 }
 
@@ -243,7 +243,7 @@ export default function MLBScoreboard() {
     <div>
       {/* Page header */}
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>MLB Simulations</h1>
+        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>MLB Simulations</h2>
         <input
           type="date"
           value={date}
@@ -265,7 +265,7 @@ export default function MLBScoreboard() {
               borderRadius: 8,
               border: `2px solid ${viewMode === "full" ? "var(--accent)" : "var(--border)"}`,
               background: viewMode === "full" ? "var(--accent)" : "var(--card)",
-              color: viewMode === "full" ? "#fff" : "var(--text)",
+              color: viewMode === "full" ? "var(--brand-contrast)" : "var(--text)",
               fontWeight: 700,
               cursor: "pointer",
             }}
@@ -277,9 +277,9 @@ export default function MLBScoreboard() {
             style={{
               padding: "6px 14px",
               borderRadius: 8,
-              border: `2px solid ${viewMode === "f5" ? "#2563eb" : "var(--border)"}`,
-              background: viewMode === "f5" ? "#2563eb" : "var(--card)",
-              color: viewMode === "f5" ? "#fff" : "var(--text)",
+              border: `2px solid ${viewMode === "f5" ? "var(--gold)" : "var(--border)"}`,
+              background: viewMode === "f5" ? "var(--gold)" : "var(--card)",
+              color: viewMode === "f5" ? "var(--navy)" : "var(--text)",
               fontWeight: 700,
               cursor: "pointer",
             }}
@@ -290,7 +290,7 @@ export default function MLBScoreboard() {
       </div>
 
       {loading && <p style={{ color: "var(--muted)" }}>Loading simulations...</p>}
-      {error && <p style={{ color: "#dc2626" }}>{error}</p>}
+      {error && <p style={{ color: "var(--neg)" }}>{error}</p>}
 
       {/* Game cards */}
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -367,8 +367,8 @@ function GameCard({
       {/* Top bar: mode indicator */}
       <div
         style={{
-          background: isF5 ? "#2563eb" : "var(--brand)",
-          color: "#fff",
+          background: isF5 ? "var(--gold)" : "var(--brand)",
+          color: isF5 ? "var(--navy)" : "var(--brand-contrast)",
           padding: "6px 16px",
           fontSize: 12,
           fontWeight: 700,
@@ -568,8 +568,8 @@ function PitcherKSection({
                         fontWeight: 600,
                         padding: "2px 6px",
                         borderRadius: 6,
-                        background: val > 0.55 ? "#dcfce7" : val < 0.45 ? "#fee2e2" : "#f3f4f6",
-                        color: val > 0.55 ? "#166534" : val < 0.45 ? "#991b1b" : "#374151",
+                        background: val > 0.55 ? "color-mix(in oklab, var(--pos) 14%, var(--card))" : val < 0.45 ? "color-mix(in oklab, var(--neg) 14%, var(--card))" : "var(--fill)",
+                        color: val > 0.55 ? "var(--pos)" : val < 0.45 ? "var(--neg)" : "var(--text)",
                       }}
                     >
                       {label}: {pct(val)}

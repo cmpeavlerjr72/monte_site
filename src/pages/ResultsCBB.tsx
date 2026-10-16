@@ -1225,8 +1225,8 @@ export default function ResultsCBB_alt() {
                   {candles.map((d, i) => (
                     <Cell
                       key={i}
-                      fill={d.up ? "#16a34a" : "#ef4444"}
-                      stroke={d.up ? "#0f7a33" : "#b92a2a"}
+                      fill={d.up ? "var(--pos)" : "var(--neg)"}
+                      stroke={d.up ? "var(--pos)" : "var(--neg)"}
                       strokeWidth={0.6}
                       rx={3}
                       ry={3}
