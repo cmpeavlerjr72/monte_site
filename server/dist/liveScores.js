@@ -262,17 +262,21 @@ function normGroups(raw) {
         return undefined;
     return /^[0-9]{1,4}(,[0-9]{1,4}){0,8}$/.test(g) ? g : undefined;
 }
-function clampLimit(raw, dflt = 3000) {
+// ESPN silently answers an over-cap `limit` with its default page of 25 events
+// (limit=500 -> 46 FBS games on 2026-10-10; 900, 1000 or 3000 -> 25), and
+// page=2 just repeats page 1. At 3000, every Saturday lost its late games.
+const ESPN_MAX_LIMIT = 500;
+function clampLimit(raw, dflt = ESPN_MAX_LIMIT) {
     const n = Number(raw ?? dflt);
     if (!Number.isFinite(n))
         return dflt;
-    return Math.min(3000, Math.max(1, Math.trunc(n)));
+    return Math.min(ESPN_MAX_LIMIT, Math.max(1, Math.trunc(n)));
 }
 // replace the existing espnUrl with:
 function espnUrl(sport, dateYYYYMMDD, opts) {
     const d = String(dateYYYYMMDD).replace(/-/g, "");
     const groups = opts?.groups;
-    const limit = String(opts?.limit ?? 3000); // default high
+    const limit = String(Math.min(opts?.limit ?? ESPN_MAX_LIMIT, ESPN_MAX_LIMIT));
     if (sport === "cbb") {
         const g = groups ?? "50"; // Men's D-I
         return `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${d}&groups=${g}&limit=${limit}`;
@@ -4772,7 +4776,7 @@ app.get(["/blog", "/blog/", "/blog/tag/:tag", "/blog/:slug"], (req, res, next) =
         const title = tag ? `${tag} posts | MVPEAV` : "Blog | MVPEAV";
         res.set("Cache-Control", "public, max-age=300");
         res.type("html").send(injectHead(html, {
-            title, description: "Sports sims with receipts: game previews built on 10,000 sims, the weekly record, losses included.",
+            title, description: "Write-ups from MVPeav's projects: sim-driven game previews, the fantasy AI experiment, and whatever's next.",
             url: `${SITE_ORIGIN}/blog${tag ? `/tag/${encodeURIComponent(tag)}` : ""}`,
             image: `${SITE_ORIGIN}/og-default.png`, imageAlt: "MVPEAV", type: "website",
         }, `<main class="blog-ssr"><h1>${escHtml(title)}</h1><ul>${items}</ul></main>`));
