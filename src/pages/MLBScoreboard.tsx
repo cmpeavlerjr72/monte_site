@@ -99,9 +99,18 @@ function mlColor(ml: string): string {
   return "var(--text)";
 }
 
+// Today's date in America/New_York (the MLB slate's day), as YYYY-MM-DD.
+// toISOString() is UTC, which rolled the board to TOMORROW every evening
+// after 8 PM ET (2026-10-16 fix). en-CA formats as YYYY-MM-DD.
 function todayStr(): string {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+  } catch {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
 }
 
 function espnDateStr(iso: string): string {
