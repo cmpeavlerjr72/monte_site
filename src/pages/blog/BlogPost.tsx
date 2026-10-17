@@ -14,6 +14,7 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ButtonLink, EmptyState, Pill } from "../../components/ui";
 import { PostCard } from "../../components/blog/PostCard";
+import { ShareBar } from "../../components/blog/ShareBar";
 import { loadFinal } from "../../components/blog/SimGameEmbed";
 import { Skeleton, SkeletonLines } from "../../components/Skeleton";
 import {
@@ -120,6 +121,7 @@ export function PostArticle({ post, body, related = [], banner, edit }: { post: 
           </div>
         )}
         <PickResult post={post} />
+        {!post.draft && <ShareBar post={post} />}
       </header>
 
       {showHero && (
@@ -137,6 +139,7 @@ export function PostArticle({ post, body, related = [], banner, edit }: { post: 
       )}
 
       <footer className="post-foot">
+        {!post.draft && body != null && <ShareBar post={post} />}
         <a className="btn-link btn-link--primary" href={`https://x.com/${post.author_x}`} target="_blank" rel="noopener noreferrer">Follow @{post.author_x}</a>
         {post.sources.length > 0 && (
           <section className="receipts" aria-label="Receipts">

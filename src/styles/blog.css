@@ -198,6 +198,22 @@
 }
 .post-preview-banner b { color: var(--gold); }
 
+/* ------------------------------------------------ share bar (2026-10-17) -- */
+.share-bar { position: relative; display: flex; flex-wrap: wrap; gap: 8px; margin-top: var(--sp-3); }
+.post-foot .share-bar { margin-top: 0; }
+.share-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 12px;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none;
+  background: var(--card); border: var(--rule); border-radius: 999px; cursor: pointer;
+}
+.share-btn:hover { border-color: var(--gold); }
+.share-btn svg { flex: none; }
+.share-toast {
+  position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 50;
+  max-width: min(520px, calc(100vw - 32px)); padding: 10px 14px; border-radius: var(--r);
+  background: var(--navy); color: #fff; font-size: var(--fs-sm); box-shadow: 0 6px 24px rgb(0 0 0 / .25);
+}
+
 /* ------------------------------------------------ editing in the preview (2026-10-17) -- */
 .pe-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; text-transform: none; letter-spacing: 0; font-family: inherit; }
 .post-body--editing .pe-block { cursor: text; border-radius: var(--r-sm); transition: background-color .15s; -webkit-tap-highlight-color: transparent; }
