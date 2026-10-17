@@ -5,13 +5,13 @@
 // sport's posts).
 
 import { Link } from "react-router-dom";
-import { fmtPostDate, tagWords, type BlogMeta } from "../../lib/blog/posts";
+import { fmtPostDate, tagLine, tagWords, type BlogMeta } from "../../lib/blog/posts";
 
 function Kicker({ post }: { post: BlogMeta }) {
   return (
     <div className="pcard__kicker">
       {post.draft && <span className="pcard__draft">Draft</span>}
-      {post.tags.slice(0, 2).map(tagWords).join(" · ")}
+      {tagLine(post.tags, 2)}
     </div>
   );
 }

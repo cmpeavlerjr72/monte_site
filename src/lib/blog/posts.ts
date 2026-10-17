@@ -90,6 +90,16 @@ export const TAG_WORDS: Record<string, string> = {
 };
 export const tagWords = (t: string) => TAG_WORDS[t] ?? t.replace(/-/g, " ");
 
+/** A post's tags as words, each said once (cfb and college-football both read "College football"), at most `max`. */
+export function tagLine(tags: string[], max = Infinity): string {
+  const seen = new Set<string>(), out: string[] = [];
+  for (const t of tags) {
+    const w = tagWords(t), k = w.toLowerCase();
+    if (!seen.has(k) && out.length < max) { seen.add(k); out.push(w); }
+  }
+  return out.join(" · ");
+}
+
 export const fmtPostDate = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });

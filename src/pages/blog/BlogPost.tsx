@@ -18,7 +18,7 @@ import { ShareBar } from "../../components/blog/ShareBar";
 import { loadFinal } from "../../components/blog/SimGameEmbed";
 import { Skeleton, SkeletonLines } from "../../components/Skeleton";
 import {
-  fmtPostDate, gameCardHref, loadBody, postBySlug, tagWords, visiblePosts, type BlogMeta,
+  fmtPostDate, gameCardHref, loadBody, postBySlug, tagLine, visiblePosts, type BlogMeta,
 } from "../../lib/blog/posts";
 import { useDocumentMeta } from "../../lib/useDocumentMeta";
 import type { BlockEdit } from "../../components/blog/Markdown";
@@ -108,7 +108,7 @@ export function PostArticle({ post, body, related = [], banner, edit }: { post: 
         </div>
       ))}
       <header className="post-head">
-        <div className="kicker">{post.tags.map(tagWords).join(" · ")}</div>
+        <div className="kicker">{tagLine(post.tags)}</div>
         <h1 className="post-title">{post.title}</h1>
         <div className="post-by">
           By <b>{post.author}</b> · <a href={`https://x.com/${post.author_x}`} target="_blank" rel="noopener noreferrer">@{post.author_x}</a>

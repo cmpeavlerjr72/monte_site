@@ -4,7 +4,7 @@
 
 import { Link } from "react-router-dom";
 import type { BlogMeta } from "../../lib/blog/posts";
-import { fmtPostDate, tagWords } from "../../lib/blog/posts";
+import { fmtPostDate, tagLine } from "../../lib/blog/posts";
 
 export function PostCard({ post, lead = false }: { post: BlogMeta; lead?: boolean }) {
   return (
@@ -17,7 +17,7 @@ export function PostCard({ post, lead = false }: { post: BlogMeta; lead?: boolea
       <div className="pcard__words">
         <div className="pcard__kicker">
           {post.draft && <span className="pcard__draft">Draft</span>}
-          {post.tags.slice(0, 2).map(tagWords).join(" · ")}
+          {tagLine(post.tags, 2)}
         </div>
         <h3 className="pcard__title"><Link to={`/blog/${post.slug}`}>{post.title}</Link></h3>
         {lead && <p className="pcard__dek">{post.description}</p>}
