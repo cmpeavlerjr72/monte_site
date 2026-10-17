@@ -4475,7 +4475,26 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
                finalA: pf.A, finalB: pf.B } as CardGame;
     });
     if (!nLive) return null;
-    return { rec: computeLineRecord(asFinal, weekLines, weekLinesFcs, frame), nLive };
+    const lineRec = computeLineRecord(asFinal, weekLines, weekLinesFcs, frame);
+    const n = (r: MarketAgg) => r.win + r.loss + r.push;
+    if (n(lineRec.ats) + n(lineRec.tot) + n(lineRec.ml) > 0) {
+      return { rec: lineRec, nLive, priced: true };
+    }
+    // No lines.json for this week: grade exactly like the plain Record
+    // tally -- finals as graded on the card, live games via the card's own
+    // grading at its own lines against the projected final. No units.
+    const ats = mkMarketAgg(), tot = mkMarketAgg(), ml = mkMarketAgg();
+    for (const c of asFinal) {
+      const orig = cards.find((o) => o.key === c.key)!;
+      const r = orig !== c
+        ? gradeAgainstFinals(c.finalA as number, c.finalB as number, c.teamA, c.teamB,
+            c.medA, c.medB, c.oddsSpread, c.oddsTotal, c.mlPickTeam)
+        : { spreadResult: c.spreadResult, totalResult: c.totalResult, mlResult: c.mlResult };
+      if (r.spreadResult) ats[r.spreadResult]++;
+      if (r.totalResult) tot[r.totalResult]++;
+      if (r.mlResult) ml[r.mlResult]++;
+    }
+    return { rec: { ats, tot, ml, provisionalGames: 0 }, nLive, priced: false };
   }, [cards, liveGrids, weekLines, weekLinesFcs, frame]);
 
   const anyLines = weekLines !== null || weekLinesFcs !== null;
@@ -4494,14 +4513,71 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
       rec.ml.win + rec.ml.loss + rec.ml.push > 0
     : false;
 
+  const frameToggle = (
+    <span style={{ display: "inline-flex", gap: 2, flex: "none" }}>
+      <button
+        type="button" className="ui-btn" data-on={frame === "open" ? "true" : "false"}
+        onClick={() => setFrame("open")} style={{ padding: "2px 8px", fontSize: 11 }}
+      >
+        Open
+      </button>
+      <button
+        type="button" className="ui-btn" data-on={frame === "close" ? "true" : "false"}
+        onClick={() => setFrame("close")} style={{ padding: "2px 8px", fontSize: 11 }}
+      >
+        Close
+      </button>
+    </span>
+  );
+
+  const projRowFor = (withToggle: boolean): React.ReactNode => {
+  if (!projected) return null;
+  {
+    const pr = projected.rec;
+    const prow: { label: string; record: string }[] = [];
+    const a = fmtMarketRecord(pr.ats); if (a) prow.push({ label: "ATS", record: a });
+    const t = fmtMarketRecord(pr.tot); if (t) prow.push({ label: "Totals", record: t });
+    const m = fmtMarketRecord(pr.ml); if (m) prow.push({ label: "ML", record: m });
+    const pp = fmtPnl(pr.ats.pnl + pr.tot.pnl + pr.ml.pnl);
+    if (prow.length) {
+      return (
+        <div
+          className="slate-tally-bar"
+          title={`Finals plus ${projected.nLive} live game${projected.nLive === 1 ? "" : "s"} graded at the ${frame} lines against each game's projected final (current score + the sim's expected points still to come).`}
+          style={{ ...(condensed ? { fontSize: 11, padding: "5px 10px" } : undefined), flexWrap: "wrap", gap: "2px 6px" }}
+        >
+          <b>Projected</b>
+          {prow.map((r) => (
+            <Fragment key={r.label}>
+              <span style={{ color: "var(--muted)" }}>·</span>
+              <span>{r.label} {r.record}</span>
+            </Fragment>
+          ))}
+          {projected.priced && (
+            <>
+              <span style={{ color: "var(--muted)" }}>·</span>
+              <span style={{ color: pp.color, fontWeight: 800 }}>{pp.text}</span>
+            </>
+          )}
+          <span className="slate-tally-bar__dim">({projected.nLive} live)</span>
+          {withToggle && projected.priced && <span style={{ marginLeft: "auto" }}>{frameToggle}</span>}
+        </div>
+      );
+    }
+  }
+  return null;
+  };
+
   if (!anyLines || !rec || !recPriced) {
     const parts: string[] = [];
     const ats = fmtMarketRecord(tally.ats); if (ats) parts.push(`ATS ${ats}`);
     const tot = fmtMarketRecord(tally.tot); if (tot) parts.push(`Totals ${tot}`);
     const ml = fmtMarketRecord(tally.ml); if (ml) parts.push(`ML ${ml}`);
-    if (!parts.length) return null;
+    const projOnly = projRowFor(true);
+    if (!parts.length) return projOnly ? <>{projOnly}</> : null;
 
     return (
+      <>
       <div className="slate-tally-bar" style={condensed ? { fontSize: 11, padding: "5px 10px" } : undefined}>
         <b>Record</b>
         <span>{parts.join(" · ")}</span>
@@ -4515,6 +4591,8 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
           </span>
         )}
       </div>
+      {projOnly}
+      </>
     );
   }
 
@@ -4522,42 +4600,16 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
   const atsRec = fmtMarketRecord(rec.ats); if (atsRec) rows.push({ label: "ATS", record: atsRec, pnl: rec.ats.pnl });
   const totRec = fmtMarketRecord(rec.tot); if (totRec) rows.push({ label: "Totals", record: totRec, pnl: rec.tot.pnl });
   const mlRec = fmtMarketRecord(rec.ml); if (mlRec) rows.push({ label: "ML", record: mlRec, pnl: rec.ml.pnl });
-  if (!rows.length) return null;
+  if (!rows.length) {
+    const projOnly = projRowFor(true);
+    return projOnly ? <>{projOnly}</> : null;
+  }
+  const projRow = projRowFor(false);
 
   /* ONE line: the record per market, then the slate's units, then the frame
      toggle at the right. The pricing footnote is a tooltip, not a line. */
   const totalPnl = rows.reduce((t, r) => t + r.pnl, 0);
   const tp = fmtPnl(totalPnl);
-
-  let projRow: React.ReactNode = null;
-  if (projected) {
-    const pr = projected.rec;
-    const prow: { label: string; record: string }[] = [];
-    const a = fmtMarketRecord(pr.ats); if (a) prow.push({ label: "ATS", record: a });
-    const t = fmtMarketRecord(pr.tot); if (t) prow.push({ label: "Totals", record: t });
-    const m = fmtMarketRecord(pr.ml); if (m) prow.push({ label: "ML", record: m });
-    const pp = fmtPnl(pr.ats.pnl + pr.tot.pnl + pr.ml.pnl);
-    if (prow.length) {
-      projRow = (
-        <div
-          className="slate-tally-bar"
-          title={`Finals plus ${projected.nLive} live game${projected.nLive === 1 ? "" : "s"} graded at the ${frame} lines against each game's projected final (current score + the sim's expected points still to come).`}
-          style={{ ...(condensed ? { fontSize: 11, padding: "5px 10px" } : undefined), flexWrap: "wrap", gap: "2px 6px" }}
-        >
-          <b>Projected</b>
-          {prow.map((r) => (
-            <Fragment key={r.label}>
-              <span style={{ color: "var(--muted)" }}>·</span>
-              <span>{r.label} {r.record}</span>
-            </Fragment>
-          ))}
-          <span style={{ color: "var(--muted)" }}>·</span>
-          <span style={{ color: pp.color, fontWeight: 800 }}>{pp.text}</span>
-          <span className="slate-tally-bar__dim">({projected.nLive} live)</span>
-        </div>
-      );
-    }
-  }
 
   return (
     <>

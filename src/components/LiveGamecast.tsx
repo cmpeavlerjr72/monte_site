@@ -675,6 +675,29 @@ function fmtProj(k: string, v: number): string {
   return v >= 10 ? v.toFixed(0) : v.toFixed(1);
 }
 
+/** One stat as a thermometer: the track ends at the projected final
+ *  (labelled at its right end), the fill is where the player is now (bold
+ *  number at the left). A stat already past its projection is a full bar. */
+function StatThermo({ cur, proj, label, color }: {
+  cur: number; proj: number; label: string; color: string;
+}) {
+  const frac = proj > 0 ? Math.max(0, Math.min(1, cur / proj)) : cur > 0 ? 1 : 0;
+  return (
+    <div
+      title={`Now ${cur} · projected final ${label}`}
+      style={{ display: "grid", gap: 2, minWidth: 44 }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6, lineHeight: 1 }}>
+        <span style={{ fontWeight: 800, fontSize: 12 }}>{cur}</span>
+        <span style={{ color: "var(--muted)", fontWeight: 600, fontSize: 10 }}>{label}</span>
+      </div>
+      <div style={{ height: 5, borderRadius: 999, background: "var(--fill)", overflow: "hidden" }}>
+        <div style={{ width: `${frac * 100}%`, height: "100%", borderRadius: 999, background: color }} />
+      </div>
+    </div>
+  );
+}
+
 function PlayerBox({ box, livePlayers, bits, flipToEspnHome, state }: {
   box: BoxTeam[];
   livePlayers: LivePlayers | null;
@@ -737,6 +760,7 @@ function PlayerBox({ box, livePlayers, bits, flipToEspnHome, state }: {
 
   const abbrev = side === "home" ? bits.homeAbbrev : bits.awayAbbrev;
   const logo = side === "home" ? bits.homeLogo : bits.awayLogo;
+  const teamColor = (side === "home" ? bits.homeColor : bits.awayColor) ?? "var(--brand)";
   const groups = teams[side];
   const note = !livePlayers
     ? "Live stats from ESPN. No sim projection is published for this game."
@@ -744,7 +768,7 @@ function PlayerBox({ box, livePlayers, bits, flipToEspnHome, state }: {
       ? "Final."
       : state?.ot
         ? "Overtime: showing actual stats only."
-        : "Live stat → projected final (the live number plus what the sim expects from here, given the clock and score).";
+        : "Bold = live stat. The bar ends at the projected final (live plus what the sim expects from here, given the clock and score).";
 
   const tabBtn = (s: "away" | "home") => (
     <button key={s} type="button" className="ui-btn" data-on={side === s ? "true" : "false"}
@@ -762,7 +786,7 @@ function PlayerBox({ box, livePlayers, bits, flipToEspnHome, state }: {
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color: "var(--muted)" }}>
-          PLAYER STATS{projecting ? " · LIVE → PROJECTED" : ""}
+          PLAYER STATS{projecting ? " · LIVE VS PROJECTED FINAL" : ""}
         </span>
         {logo && <img src={logo} alt="" width={16} height={16} style={{ objectFit: "contain" }} />}
         <span style={{ fontSize: 13, fontWeight: 800 }}>{abbrev ?? ""}</span>
@@ -793,14 +817,14 @@ function PlayerBox({ box, livePlayers, bits, flipToEspnHome, state }: {
                         {r.name}
                       </td>
                       {g.cols.map((c) => {
+                        const cur = r.actual[c.k] ?? 0;
                         const pv = r.proj?.[c.k];
                         return (
                           <td key={c.k} style={{ padding: "4px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
-                            <span style={{ fontWeight: 700 }}>{r.actual[c.k] ?? 0}</span>
-                            {pv !== undefined && (
-                              <span style={{ color: "var(--brand)", fontWeight: 700, fontSize: 11 }}>
-                                {" → "}{fmtProj(c.k, pv)}
-                              </span>
+                            {pv === undefined ? (
+                              <span style={{ fontWeight: 700 }}>{cur}</span>
+                            ) : (
+                              <StatThermo cur={cur} proj={pv} label={fmtProj(c.k, pv)} color={teamColor} />
                             )}
                           </td>
                         );
