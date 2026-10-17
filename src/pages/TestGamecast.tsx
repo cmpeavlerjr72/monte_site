@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
 import { gamecastSnapshot, parseSummaryLite, type LiveSituation } from "../lib/espnGame";
 import { parseLiveGrid, type LiveGrid } from "../lib/liveGrid";
+import { parseLivePlayers, type LivePlayers } from "../lib/livePlayers";
 
 const SUMMARY =
   "https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=";
@@ -34,6 +35,23 @@ export default function TestGamecast() {
   const [raw, setRaw] = useState<any | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [liveGrid, setLiveGrid] = useState<LiveGrid | null>(null);
+  // ?players=<url of a live_players.json> -> the projected player box.
+  const playersUrl = useMemo(
+    () => new URLSearchParams(window.location.search).get("players"),
+    []
+  );
+  const [livePlayers, setLivePlayers] = useState<LivePlayers | null>(null);
+  useEffect(() => {
+    if (!playersUrl) return;
+    let cancelled = false;
+    fetch(playersUrl, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j) => !cancelled && setLivePlayers(parseLivePlayers(j)))
+      .catch(() => !cancelled && setLivePlayers(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [playersUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +152,7 @@ export default function TestGamecast() {
           bits={bits}
           simHomeWinPct={62}
           liveGrid={liveGrid}
+          livePlayers={livePlayers}
         />
       </section>
     </div>

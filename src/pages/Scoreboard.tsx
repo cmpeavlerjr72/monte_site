@@ -73,6 +73,7 @@ import LiveProgressStrip from "../components/LiveProgress";
 import { parseSituation, useGameTeamStats, type LiveSituation } from "../lib/espnGame";
 import { progressBetsOf } from "../lib/liveProgress";
 import { useLiveGrid } from "../lib/liveGrid";
+import { useLivePlayers } from "../lib/livePlayers";
 import {
   useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML,
   type Frame, type WeekLines,
@@ -4547,6 +4548,11 @@ function CardPanelHost({
     wantLiveGrid ? weekId : null,
     wantLiveGrid ? jsonRow!.slug : null
   );
+  const livePlayers = useLivePlayers(
+    wantLiveGrid ? card.ns : null,
+    wantLiveGrid ? weekId : null,
+    wantLiveGrid ? jsonRow!.slug : null
+  );
 
   const title =
     kind === "scores" ? "Simulated Scores"
@@ -4636,6 +4642,7 @@ function CardPanelHost({
           }
           liveGrid={liveGrid}
           flipToEspnHome={!espnHomeIsA}
+          livePlayers={livePlayers}
         />
       )}
       {/* The bet that sent the reader here, placeable without navigating back.

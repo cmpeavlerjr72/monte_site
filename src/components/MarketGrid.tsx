@@ -37,12 +37,15 @@ import {
 // number on this block — the sim price, the fair odds, the edge in cents —
 // and lose only the claim that the site is recommending them.
 import { displayOnly, decisionReason } from "../lib/edgeRules";
-import { type KalshiGame } from "../lib/kalshi";
+import { type KalshiGame, type KalshiRung } from "../lib/kalshi";
 import {
   buildMarketRows, makeSeedCounts, americanOdds, pctText, signedNum,
   type MarketRow,
 } from "../lib/marketEdge";
 import type { Season } from "../lib/cfbData";
+import {
+  pCoverA, pCoverB, pOver, pWinA, type LiveGrid, type SimState,
+} from "../lib/liveGrid";
 import { Skeleton } from "./Skeleton";
 
 /** Which of the two team rows a graded pick sits on. "B" = away (top). */
@@ -83,7 +86,44 @@ type Props = {
   /** Rendered straight under the grid, inside the same positioned box, so the
    *  verdict popover can sit over it (the win-prob bar). */
   children?: ReactNode;
+  /** The game is under way and its live grid is loaded: the cells switch to
+   *  live pricing. `st` is the current state in the sim's A/B orientation;
+   *  `label` names it for the popover ("Q3 7:12, 24-17"). */
+  live?: { grid: LiveGrid; st: SimState; label: string } | null;
+  /** "picks": live P(our PREGAME pick hits), green over 50%, red under.
+   *  "value": live sim vs the CURRENT Kalshi board at its ~50/50 lines. */
+  liveView?: "picks" | "value";
 };
+
+/** One live cell: which row it sits on, what it prints, and its numbers. */
+type LiveCell = {
+  slot: GridSlot;
+  line: string;
+  /** The opposite side's line, printed muted on the other row. */
+  otherLine: string;
+  /** Sim P(this bet hits) from the live state, 0..1. */
+  p: number;
+  /** Kalshi cost of this side (value view only), 0..1. */
+  cost?: number;
+  words: string;
+};
+
+/** Cost of buying one side of a Kalshi rung: the ask when quoted, else the
+ *  last/mid price. yes = buy YES; else buy NO (1 - YES bid). */
+function sideCost(r: KalshiRung, yes: boolean): number {
+  if (yes) return typeof r.yes_ask === "number" ? r.yes_ask : r.yes_price;
+  return typeof r.yes_bid === "number" ? 1 - r.yes_bid : 1 - r.yes_price;
+}
+
+/** The rung priced closest to 50 cents: the market's live "main" line. */
+function fiftyFifty(ladder: KalshiRung[] | undefined): KalshiRung | null {
+  let best: KalshiRung | null = null;
+  for (const r of ladder ?? []) {
+    if (typeof r.yes_price !== "number") continue;
+    if (!best || Math.abs(r.yes_price - 0.5) < Math.abs(best.yes_price - 0.5)) best = r;
+  }
+  return best;
+}
 
 type MktKey = "spread" | "total" | "win";
 /** Column order, sportsbook convention. */
@@ -158,6 +198,7 @@ const rowEdgeOf = (r: MarketRow): number | null =>
 export default function MarketGrid({
   row, season, teamA, teamB, bookSpread, bookTotal, simMargin, simTotal, pHome, kalshi,
   engine = null, condensed = false, teamCellA, teamCellB, grades, settled = false, children,
+  live = null, liveView = "picks",
 }: Props) {
   const [compact, setCompact] = useState<CompactJson | null>(null);
   const [failed, setFailed] = useState(false);
@@ -297,7 +338,124 @@ export default function MarketGrid({
     );
   };
 
-  const anyMarket = rows.length > 0 || (!compact && !failed);
+  /* ------------------------------ LIVE ------------------------------ */
+  const liveOn = Boolean(live) && !settled;
+  const liveCells = useMemo(() => {
+    const out = new Map<MktKey, LiveCell>();
+    if (!live || settled) return out;
+    const { grid, st } = live;
+    const clamp01 = (v: number | null) => (v === null ? null : Math.min(1, Math.max(0, v)));
+    if (liveView === "picks") {
+      // Our PREGAME picks (the resting rows), priced at the current state.
+      for (const [key, r] of byKey) {
+        const slot = simSlot(key, r);
+        if (!slot) continue;
+        let p: number | null = null;
+        if (key === "win") {
+          const a = pWinA(grid, st);
+          p = a === null ? null : slot === "A" ? a : 1 - a;
+        } else if (key === "spread" && typeof r.line === "number") {
+          p = slot === "A" ? pCoverA(grid, st, r.line) : pCoverB(grid, st, r.line);
+        } else if (key === "total" && typeof r.line === "number") {
+          const o = pOver(grid, st, r.line);
+          p = o === null ? null : r.side === "under" ? 1 - o : o;
+        }
+        p = clamp01(p);
+        if (p === null) continue;
+        const other: GridSlot = slot === "A" ? "B" : "A";
+        out.set(key, {
+          slot, line: lineFor(key, r, slot) || "ML", otherLine: key === "win" ? "" : lineFor(key, r, other),
+          p, words: betWords(r).long,
+        });
+      }
+      return out;
+    }
+    // VALUE: the live sim against the CURRENT Kalshi board, best side of each.
+    const sp = fiftyFifty(kalshi?.spread_ladder);
+    if (sp) {
+      const pA = clamp01(pCoverA(grid, st, sp.line)); // rung YES = home (A) covers
+      if (pA !== null) {
+        const eA = pA - sideCost(sp, true);
+        const eB = 1 - pA - sideCost(sp, false);
+        const a = eA >= eB;
+        out.set("spread", {
+          slot: a ? "A" : "B",
+          line: spreadText(a ? sp.line : -sp.line),
+          otherLine: spreadText(a ? -sp.line : sp.line),
+          p: a ? pA : 1 - pA, cost: sideCost(sp, a),
+          words: `${a ? teamA : teamB} ${signedNum(a ? sp.line : -sp.line)}`,
+        });
+      }
+    }
+    const tl = fiftyFifty(kalshi?.total_ladder);
+    if (tl) {
+      const po = clamp01(pOver(grid, st, tl.line));
+      if (po !== null) {
+        const eO = po - sideCost(tl, true);
+        const eU = 1 - po - sideCost(tl, false);
+        const o = eO >= eU;
+        out.set("total", {
+          slot: o ? "B" : "A", line: `${o ? "O" : "U"} ${tl.line}`,
+          otherLine: `${o ? "U" : "O"} ${tl.line}`,
+          p: o ? po : 1 - po, cost: sideCost(tl, o),
+          words: `${o ? "Over" : "Under"} ${tl.line} points`,
+        });
+      }
+    }
+    const wa = kalshi?.winner.teamA_price;
+    const wb = kalshi?.winner.teamB_price;
+    const pa = clamp01(pWinA(grid, st));
+    if (pa !== null && (typeof wa === "number" || typeof wb === "number")) {
+      const eA = typeof wa === "number" ? pa - wa : -Infinity;
+      const eB = typeof wb === "number" ? 1 - pa - wb : -Infinity;
+      const a = eA >= eB;
+      out.set("win", {
+        slot: a ? "A" : "B", line: "ML", otherLine: "", p: a ? pa : 1 - pa,
+        cost: (a ? wa : wb) as number, words: `${a ? teamA : teamB} to win`,
+      });
+    }
+    return out;
+    // simSlot / lineFor read only props already listed here
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, liveView, settled, byKey, kalshi, teamA, teamB, bookTotal, bookSpread]);
+
+  const liveText = (key: MktKey): string => {
+    const c = liveCells.get(key);
+    if (!c || !live) return "";
+    const now = `Sim now: ${pctText(c.p)} (${live.label})`;
+    if (c.cost === undefined) {
+      return `Pregame pick: ${c.words}. ${now}. Green = above 50% to hit from here, red = below.`;
+    }
+    return `${c.words}. ${now} · Kalshi live: ${cents(c.cost)} · Edge: ${signedCents(c.p - c.cost)}. ` +
+      "Priced at Kalshi's ~50/50 line right now; edge is before Kalshi's taker fee.";
+  };
+
+  const liveCell = (key: MktKey, slot: GridSlot) => {
+    const c = liveCells.get(key);
+    const mine = c?.slot === slot;
+    const value = c && mine && c.cost !== undefined ? c.p - c.cost : null;
+    return (
+      <MarketCell
+        key={`${key}${slot}`}
+        line={c ? (mine ? c.line : c.otherLine) : ""}
+        filled={mine}
+        chip={mine}
+        edge={value}
+        liveP={mine && c!.cost === undefined ? c!.p : undefined}
+        hasRow={Boolean(c)}
+        refOnly={false}
+        grade={null}
+        on={open === key && mine}
+        pending={false}
+        h={cellH}
+        dotted={false}
+        onClick={c ? () => setOpen((k) => (k === key ? null : key)) : undefined}
+        label={c ? liveText(key) : undefined}
+      />
+    );
+  };
+
+  const anyMarket = rows.length > 0 || (!compact && !failed) || liveCells.size > 0;
 
   return (
     <div ref={hostRef} data-market-block style={{ display: "grid", gap: condensed ? 6 : 8 }}>
@@ -329,11 +487,32 @@ export default function MarketGrid({
         ))}
 
         {teamCellB}
-        {COLS.map((c) => cell(c.key, "B"))}
+        {COLS.map((c) => (liveOn ? liveCell(c.key, "B") : cell(c.key, "B")))}
         {teamCellA}
-        {COLS.map((c) => cell(c.key, "A"))}
+        {COLS.map((c) => (liveOn ? liveCell(c.key, "A") : cell(c.key, "A")))}
         {/* ONE popover surface, under the grid, over whatever sits below it. */}
-        {openRow && (
+        {open && liveOn && liveCells.has(open) && (
+          <div
+            role="status"
+            data-stop
+            style={{
+              position: "absolute", left: 0, right: 0, zIndex: 5,
+              top: "calc(100% + 4px)",
+              background: "var(--card)", border: "1px solid var(--brand)",
+              borderRadius: 8, padding: "8px 10px", fontSize: 11.5, lineHeight: 1.5,
+              color: "var(--text)", boxShadow: "0 4px 14px var(--shadow)",
+            }}
+          >
+            {liveText(open)}
+            <button
+              type="button" className="ui-btn" onClick={() => setOpen(null)}
+              style={{ marginLeft: 8, padding: "1px 7px", fontSize: 10.5 }}
+            >
+              Close
+            </button>
+          </div>
+        )}
+        {openRow && !liveOn && (
           <div
             role="status"
             data-stop
@@ -374,9 +553,12 @@ export default function MarketGrid({
  * other side: the line alone, muted. Unquoted cells stay tappable.
  */
 function MarketCell({
-  line, filled, chip, edge, hasRow, refOnly, grade, on, pending, h, dotted, onClick, label,
+  line, filled, chip, edge, hasRow, refOnly, grade, on, pending, h, dotted, onClick, label, liveP,
 }: {
   line: string;
+  /** Live P(pick hits), 0..1: the chip prints a % instead of an edge, green
+   *  above 50% and red below. */
+  liveP?: number;
   filled: boolean;
   /** Show the edge chip under the line (the filled side, pre-final). */
   chip: boolean;
@@ -392,6 +574,8 @@ function MarketCell({
   onClick?: () => void;
   label?: string;
 }) {
+  // A live % rides the same tone/fill path as an edge, centred on 50%.
+  if (liveP !== undefined) edge = liveP - 0.5;
   const whole = edge === null ? null : Math.round(edge * 100);
   // A rounded-to-zero edge is not a direction; it wears the neutral token so a
   // green "+0¢" never reads as a bet.
@@ -432,7 +616,7 @@ function MarketCell({
           )}
           {chip && edge !== null && (
             <span style={{ fontSize: 12, fontWeight: 800, lineHeight: "14px", color: tone }}>
-              {whole === 0 ? "0¢" : signedCents(edge)}
+              {liveP !== undefined ? `${Math.round(liveP * 100)}%` : whole === 0 ? "0¢" : signedCents(edge)}
             </span>
           )}
         </>

@@ -75,7 +75,9 @@ import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
 import LiveProgressStrip from "../components/LiveProgress";
 import { parseSituation, useGameTeamStats, type LiveSituation } from "../lib/espnGame";
 import { progressBetsOf } from "../lib/liveProgress";
-import { useLiveGrid } from "../lib/liveGrid";
+import { useLiveGrid, useLiveGrids, type LiveGrid } from "../lib/liveGrid";
+import { projectedFinal, simStateOf } from "../lib/liveRecord";
+import { useLivePlayers } from "../lib/livePlayers";
 import {
   useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML,
   type Frame, type WeekLines,
@@ -105,6 +107,9 @@ type LiveGame = {
   noContest?: boolean;
   /** Ball spot / down & distance / possession — present only while live. */
   situation?: LiveSituation;
+  /** Quarter (5+ = OT) and seconds left in it, while live. */
+  period?: number;
+  clockSec?: number;
   /** Kickoff-window stadium weather, straight off the SAME scoreboard event
    *  the rest of this join reads (`event.weather`). ESPN populates it inside
    *  roughly 5 days of kick and omits it entirely otherwise → null. No new
@@ -219,6 +224,9 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
       awayNames: nameForms(away?.team),
       noContest: noContest || undefined,
       situation: state === "in" ? parseSituation(comp) : undefined,
+      period: Number.isFinite(Number(period)) ? Number(period) : undefined,
+      clockSec: Number.isFinite(Number(comp?.status?.clock ?? e?.status?.clock))
+        ? Number(comp?.status?.clock ?? e?.status?.clock) : undefined,
       weather: parseEventWeather(e?.weather),
       indoor: comp?.venue?.indoor === true,
       broadcast: parseEventBroadcast(comp),
@@ -1419,6 +1427,16 @@ function ScoreboardPage() {
   const [sortBy, setSortBy] = useState<SortBy>("kickoff");
 
   const [useMean, setUseMean] = useState(false); // false = show medians (current), true = show means
+  /* LIVE CARDS (owner 2026-10-17): once a game is under way its lines block
+     shows either our PREGAME picks priced at the live state (default) or the
+     live sim against the CURRENT Kalshi board. Remembered per viewer. */
+  const [liveView, setLiveViewRaw] = useState<"picks" | "value">(() => {
+    try { return localStorage.getItem("sb.liveView") === "value" ? "value" : "picks"; } catch { return "picks"; }
+  });
+  const setLiveView = (v: "picks" | "value") => {
+    setLiveViewRaw(v);
+    try { localStorage.setItem("sb.liveView", v); } catch { /* storage blocked */ }
+  };
 
   // ---- Conference dictionary + filter (from team_info.csv) ----
   const [teamToConf, setTeamToConf] = useState<Record<string, string>>({});
@@ -2972,6 +2990,16 @@ function ScoreboardPage() {
    * results; provisionalGames counts distinct graded cards that are live-only
    * so far, for the "(n provisional)" suffix.
    */
+  /* LIVE GRIDS for every in-progress card on screen: priced on the cards
+     (live picks / live value) and in the record's Projected row. */
+  const liveGridReqs = useMemo(
+    () => filteredCards
+      .filter((c) => c.liveInProgress && c.jsonRow && weekId)
+      .map((c) => ({ key: c.key, ns: c.ns, weekId: weekId as string, slug: c.jsonRow!.slug })),
+    [filteredCards, weekId]
+  );
+  const liveGrids = useLiveGrids(liveGridReqs);
+
   const slateTally = useMemo(() => {
     const mk = () => ({ win: 0, loss: 0, push: 0 });
     const ats = mk(), tot = mk(), ml = mk();
@@ -3035,6 +3063,8 @@ function ScoreboardPage() {
             card={c}
             gdata={games[c.key]}
             useMean={useMean}
+            liveView={liveView}
+            liveGrid={liveGrids.get(c.key) ?? null}
             kalshi={c.jsonRow ? kalshiBySlug.get(c.key) : undefined}
             book={portalBook.bySlug.get(c.key)}
             // Owner only, and only for the per-order ✕ on a resting row
@@ -3371,6 +3401,17 @@ function ScoreboardPage() {
               <option value="mean">Mean</option>
             </select>
 
+            <label style={LBL}>Live cards</label>
+            <select
+              value={liveView}
+              onChange={(e)=>setLiveView(e.target.value === "value" ? "value" : "picks")}
+              className="ui-sel"
+              title="Once a game is live: our pregame picks' chance to hit from here, or live value vs the current Kalshi board"
+            >
+              <option value="picks">Our picks, live %</option>
+              <option value="value">Live value vs Kalshi</option>
+            </select>
+
             <label style={LBL}>Density</label>
             <button
               type="button"
@@ -3593,8 +3634,9 @@ function ScoreboardPage() {
           2026-08-29). Reserving the slot turns that into an in-place fill.
           Past weeks grade in the same render as the cards, so the
           placeholder never paints there. */}
-      {slateTally.anyGraded ? (
-        <SlateTallyBar tally={slateTally} cards={filteredCards} weekLines={weekLines} weekLinesFcs={weekLinesFcs} condensed={condensed} />
+      {slateTally.anyGraded || liveGrids.size > 0 ? (
+        <SlateTallyBar tally={slateTally} cards={filteredCards} weekLines={weekLines} weekLinesFcs={weekLinesFcs}
+          condensed={condensed} liveGrids={liveGrids} />
       ) : filteredCards.length > 0 ? (
         /* Reserved, never read: same class (same height) with no words, so
            the record filling in later is an in-place change, not a shift. */
@@ -3787,8 +3829,12 @@ function KickWeatherChip({
 export function GameCard({
   card, gdata, useMean = false, kalshi, book, bookToken = "", parlayOpen,
   openKind, onToggle, weekLabel, condensed = false, onAddLeg, season,
-  flash = false, bets, engine = null, footer,
+  flash = false, bets, engine = null, footer, liveView = "picks", liveGrid: cardLiveGrid = null,
 }: {
+  /** Live lines view (page toggle): pregame picks' live % or live value. */
+  liveView?: "picks" | "value";
+  /** This game's live grid (page-level fetch, live cards only), or null. */
+  liveGrid?: LiveGrid | null;
   /** Optional last row (2026-10-16: "Read the preview →" when a published
    *  blog post exists for this game). Undefined/null renders nothing, so a
    *  card with no post is exactly as it was. */
@@ -3905,6 +3951,22 @@ export function GameCard({
     () => new Map([[card.key, { teamA: card.teamA, teamB: card.teamB }]]),
     [card.key, card.teamA, card.teamB],
   );
+  /* LIVE LINES: the game's sim-conditional grid, fetched once per live card
+     (static pregame file, no polling), priced at the scoreboard's current
+     clock + score, which re-render every poll. */
+  const liveLines = useMemo(() => {
+    if (!liveNow || !cardLiveGrid) return null;
+    const st = simStateOf(card.finalA, card.finalB, lv?.period, lv?.clockSec);
+    if (!st) return null;
+    const a = card.finalA, b = card.finalB;
+    return {
+      grid: cardLiveGrid,
+      st,
+      label: `${card.liveStatusText || "live"}, ${card.teamB} ${b} - ${card.teamA} ${a}`,
+    };
+  }, [liveNow, cardLiveGrid, card.finalA, card.finalB, lv?.period, lv?.clockSec,
+      card.liveStatusText, card.teamA, card.teamB]);
+
   const trackable = progressBets.length > 0 && (liveNow || lv?.state === "final");
   const liveStats = useGameTeamStats(trackable ? lv?.id : undefined, liveNow);
 
@@ -4103,6 +4165,8 @@ export function GameCard({
             teamCellB={cellB}
             grades={grades}
             settled={cardIsFinal}
+            live={liveLines}
+            liveView={liveView}
           >
             <WinProbBar card={card} aColor={aColor} bColor={bColor} condensed={condensed} />
           </MarketGrid>
@@ -4382,14 +4446,37 @@ function fmtPnl(pnl: number): { text: string; color: string } {
  *    view where it never publishes) -> EXACTLY the prior simple tally, no
  *    PnL, no toggle, so those weeks keep working unchanged.
  */
-function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed }: {
+function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed, liveGrids }: {
   tally: { ats: SlateResultCount; tot: SlateResultCount; ml: SlateResultCount; provisionalGames: number };
   cards: CardGame[];
   weekLines: WeekLines | null;
   weekLinesFcs?: WeekLines | null;
   condensed?: boolean;
+  /** Live grids by card key (in-progress games only). */
+  liveGrids?: Map<string, LiveGrid>;
 }) {
   const [frame, setFrame] = useState<Frame>("open");
+
+  /* PROJECTED (owner 2026-10-17): the same record, with every live game
+     graded at the same frame's lines against its PROJECTED FINAL (current
+     score + the sim's expected points still to come from this state). The
+     live games ride through computeLineRecord as if final, so the picks,
+     lines and payouts are the record's own. */
+  const projected = useMemo(() => {
+    if (!liveGrids || liveGrids.size === 0) return null;
+    let nLive = 0;
+    const asFinal = cards.map((c) => {
+      const g = c.liveInProgress ? liveGrids.get(c.key) : undefined;
+      const st = g ? simStateOf(c.finalA, c.finalB, c.live?.period, c.live?.clockSec) : null;
+      const pf = g && st ? projectedFinal(g, st) : null;
+      if (!pf) return c;
+      nLive++;
+      return { ...c, scoreSource: "CSV_FINALS", resultsProvisional: false, noContest: false,
+               finalA: pf.A, finalB: pf.B } as CardGame;
+    });
+    if (!nLive) return null;
+    return { rec: computeLineRecord(asFinal, weekLines, weekLinesFcs, frame), nLive };
+  }, [cards, liveGrids, weekLines, weekLinesFcs, frame]);
 
   const anyLines = weekLines !== null || weekLinesFcs !== null;
   const rec = useMemo(
@@ -4441,7 +4528,39 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
      toggle at the right. The pricing footnote is a tooltip, not a line. */
   const totalPnl = rows.reduce((t, r) => t + r.pnl, 0);
   const tp = fmtPnl(totalPnl);
+
+  let projRow: React.ReactNode = null;
+  if (projected) {
+    const pr = projected.rec;
+    const prow: { label: string; record: string }[] = [];
+    const a = fmtMarketRecord(pr.ats); if (a) prow.push({ label: "ATS", record: a });
+    const t = fmtMarketRecord(pr.tot); if (t) prow.push({ label: "Totals", record: t });
+    const m = fmtMarketRecord(pr.ml); if (m) prow.push({ label: "ML", record: m });
+    const pp = fmtPnl(pr.ats.pnl + pr.tot.pnl + pr.ml.pnl);
+    if (prow.length) {
+      projRow = (
+        <div
+          className="slate-tally-bar"
+          title={`Finals plus ${projected.nLive} live game${projected.nLive === 1 ? "" : "s"} graded at the ${frame} lines against each game's projected final (current score + the sim's expected points still to come).`}
+          style={{ ...(condensed ? { fontSize: 11, padding: "5px 10px" } : undefined), flexWrap: "wrap", gap: "2px 6px" }}
+        >
+          <b>Projected</b>
+          {prow.map((r) => (
+            <Fragment key={r.label}>
+              <span style={{ color: "var(--muted)" }}>·</span>
+              <span>{r.label} {r.record}</span>
+            </Fragment>
+          ))}
+          <span style={{ color: "var(--muted)" }}>·</span>
+          <span style={{ color: pp.color, fontWeight: 800 }}>{pp.text}</span>
+          <span className="slate-tally-bar__dim">({projected.nLive} live)</span>
+        </div>
+      );
+    }
+  }
+
   return (
+    <>
     <div
       className="slate-tally-bar"
       title="Spread/total priced −110 · ML at consensus price · 1u flat"
@@ -4488,6 +4607,8 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
         </button>
       </div>
     </div>
+    {projRow}
+    </>
   );
 }
 
@@ -4644,6 +4765,11 @@ function CardPanelHost({
     wantLiveGrid ? weekId : null,
     wantLiveGrid ? jsonRow!.slug : null
   );
+  const livePlayers = useLivePlayers(
+    wantLiveGrid ? card.ns : null,
+    wantLiveGrid ? weekId : null,
+    wantLiveGrid ? jsonRow!.slug : null
+  );
 
   const title =
     kind === "scores" ? "Simulated Scores"
@@ -4790,6 +4916,7 @@ function CardPanelHost({
           }
           liveGrid={liveGrid}
           flipToEspnHome={!espnHomeIsA}
+          livePlayers={livePlayers}
         />
       )}
       {/* The bet that sent the reader here, placeable without navigating back.

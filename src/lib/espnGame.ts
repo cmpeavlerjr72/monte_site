@@ -146,7 +146,63 @@ export type GameSummaryLite = {
   pickDetails?: string;
   spread?: number;
   overUnder?: number;
+  /** Live player box score, one entry per ESPN team (empty pregame). */
+  box: BoxTeam[];
 };
+
+/** One player's live line. Missing stat = the player has none in that group. */
+export type BoxPlayer = {
+  id?: string;
+  name: string;
+  /** our sim stat keys -> value (pass_comp, pass_att, pass_yds, ...). */
+  stats: Record<string, number>;
+};
+export type BoxTeam = { teamId: string; abbrev?: string; players: BoxPlayer[] };
+
+// ESPN box-score group/key -> sim stat key. "completions/passingAttempts"
+// is a combined "11/19" string, split into pass_comp + pass_att.
+const BOX_MAP: Record<string, Record<string, string>> = {
+  passing: { passingYards: "pass_yds", passingTouchdowns: "pass_td", interceptions: "int" },
+  rushing: { rushingAttempts: "rush_att", rushingYards: "rush_yds", rushingTouchdowns: "rush_td" },
+  receiving: { receptions: "rec", receivingYards: "rec_yds", receivingTouchdowns: "rec_td" },
+};
+
+export function parseBox(json: any): BoxTeam[] {
+  const teams: any[] = Array.isArray(json?.boxscore?.players) ? json.boxscore.players : [];
+  return teams.map((t: any) => {
+    const byKey = new Map<string, BoxPlayer>();
+    for (const g of t?.statistics ?? []) {
+      const map = BOX_MAP[g?.name];
+      if (!map) continue;
+      const keys: string[] = g.keys ?? [];
+      for (const a of g.athletes ?? []) {
+        const name = a?.athlete?.displayName;
+        if (typeof name !== "string" || !name) continue;
+        const id = idOrU(a?.athlete?.id);
+        const k = id ?? name;
+        let bp = byKey.get(k);
+        if (!bp) { bp = { id, name, stats: {} }; byKey.set(k, bp); }
+        keys.forEach((key, i) => {
+          const raw = a?.stats?.[i];
+          if (key === "completions/passingAttempts") {
+            const [c, at] = String(raw ?? "").split("/").map(Number);
+            if (Number.isFinite(c)) bp!.stats.pass_comp = c;
+            if (Number.isFinite(at)) bp!.stats.pass_att = at;
+            return;
+          }
+          const sk = map[key];
+          const v = Number(String(raw ?? "").replace(/,/g, ""));
+          if (sk && Number.isFinite(v)) bp!.stats[sk] = v;
+        });
+      }
+    }
+    return {
+      teamId: String(t?.team?.id ?? ""),
+      abbrev: t?.team?.abbreviation || undefined,
+      players: [...byKey.values()],
+    };
+  });
+}
 
 function parseDrive(d: any): CurrentDrive | undefined {
   if (!d) return undefined;
@@ -237,6 +293,7 @@ export function parseSummaryLite(json: any): GameSummaryLite {
     pickDetails: pc?.details || undefined,
     spread: numOrU(pc?.spread),
     overUnder: numOrU(pc?.overUnder),
+    box: parseBox(json),
   };
 }
 

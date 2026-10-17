@@ -13,16 +13,22 @@
 // goal line at 0. Home renders on the RIGHT (TV convention), so
 // x = X0 + (100 - yardLine) in a 0–120 viewBox with 10-unit endzones.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import type {
-  AttackDir, CurrentDrive, LiveSituation, ProbPoint, GameSummaryLite,
+  AttackDir, CurrentDrive, LiveSituation, ProbPoint, GameSummaryLite, BoxTeam,
 } from "../lib/espnGame";
 import { useGameProbabilities, useGameSummary } from "../lib/espnGame";
 import type { LiveGrid, GridLookup } from "../lib/liveGrid";
-import { lookupGrid } from "../lib/liveGrid";
+import { lookupGrid, pCoverA, pCoverB, pOver } from "../lib/liveGrid";
+import type { LivePlayers } from "../lib/livePlayers";
+import { playerKey, remainingFor } from "../lib/livePlayers";
+
+/** A grid lookup in ESPN orientation, plus the sim's P(cover) / P(over) at
+ *  the same lines ESPN's own Cover % / Over % curves use (0..1). */
+type SimPoint = GridLookup & { pCoverHome?: number | null; pOver?: number | null };
 
 const X0 = 10; // endzone width in viewBox units
 const xOf = (yardLine: number) => X0 + (100 - Math.max(0, Math.min(100, yardLine)));
@@ -292,24 +298,31 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId, liveGrid, si
   liveGrid?: LiveGrid | null;
   /** One grid lookup per `points` entry (same index), or null where the
    *  point has no lookup (OT, missing play join). Built by LiveGamePanel. */
-  simPoints?: (GridLookup | null)[] | null;
+  simPoints?: (SimPoint | null)[] | null;
 }) {
   const [mode, setMode] = useState<ProbMode>("win");
   const hasCover = points.some((p) => p.coverHome !== undefined);
   const hasOver = points.some((p) => p.overPct !== undefined);
   const effMode: ProbMode = mode === "cover" && !hasCover ? "win" : mode === "over" && !hasOver ? "win" : mode;
 
-  const hasSimSeries = Boolean(simPoints && simPoints.some((c) => c !== null));
+  const simOf = (c: SimPoint | null | undefined): number | undefined => {
+    if (!c) return undefined;
+    const v = effMode === "win" ? c.pHomeWin : effMode === "cover" ? c.pCoverHome : c.pOver;
+    return typeof v === "number" ? v * 100 : undefined;
+  };
+  const hasSimSeries = Boolean(simPoints && simPoints.some((c) => simOf(c) !== undefined));
 
   const data = useMemo(
     () =>
       points.map((p, i) => ({
         i,
         v: effMode === "win" ? p.homeWin : effMode === "cover" ? p.coverHome : p.overPct,
-        sim: simPoints?.[i] ? simPoints[i]!.pHomeWin * 100 : undefined,
+        sim: simOf(simPoints?.[i]),
         playId: p.playId,
         secondsLeft: p.secondsLeft,
       })),
+    // simOf reads only effMode + its argument
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [points, effMode, simPoints]
   );
 
@@ -409,6 +422,19 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId, liveGrid, si
             {(lastSimCell.pHomeWin >= 0.5 ? 100 * lastSimCell.pHomeWin : 100 * (1 - lastSimCell.pHomeWin)).toFixed(1)}%
           </span>
         )}
+        {effMode === "cover" && typeof lastSimCell?.pCoverHome === "number" && (
+          <span
+            title="Sim P(cover) at this line for the current game state (push counts half)."
+            style={{
+              fontSize: 11, fontWeight: 800, color: "var(--brand)",
+              border: "1px solid var(--brand)", borderRadius: 999, padding: "2px 8px",
+              fontVariantNumeric: "tabular-nums", cursor: "help",
+            }}
+          >
+            SIM {(lastSimCell.pCoverHome >= 0.5 ? bits.homeAbbrev : bits.awayAbbrev) ?? ""}{" "}
+            {(100 * Math.max(lastSimCell.pCoverHome, 1 - lastSimCell.pCoverHome)).toFixed(1)}%
+          </span>
+        )}
         {effMode === "over" && liveGrid && (lastSimCell || liveGrid.uncond.mean_total !== undefined) && (
           <span
             title="Sim-conditional fair total for the current game state (falls back to the pregame fair total once regulation ends)."
@@ -419,6 +445,7 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId, liveGrid, si
             }}
           >
             SIM total {(lastSimCell?.meanTotal ?? liveGrid.uncond.mean_total).toFixed(1)}
+            {typeof lastSimCell?.pOver === "number" && ` · over ${(100 * lastSimCell.pOver).toFixed(1)}%`}
           </span>
         )}
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
@@ -488,6 +515,9 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId, liveGrid, si
                   }}>
                     <div style={{ fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
                       {Number(row.v).toFixed(1)}%
+                      {typeof row.sim === "number" && (
+                        <span style={{ color: "var(--brand)" }}> · SIM {Number(row.sim).toFixed(1)}%</span>
+                      )}
                       {ref?.home !== undefined && ref?.away !== undefined && (
                         <span style={{ color: "var(--muted)", fontWeight: 600 }}>
                           {"  "}{bits.awayAbbrev} {ref.away}–{ref.home} {bits.homeAbbrev}
@@ -510,10 +540,11 @@ function ProbChart({ points, summary, bits, simHomeWinPct, eventId, liveGrid, si
               fill={stroke} fillOpacity={0.16}
               dot={false} isAnimationActive={false}
             />
-            {effMode === "win" && hasSimSeries && (
+            {hasSimSeries && (
               <Line
                 type="stepAfter" dataKey="sim"
-                stroke="var(--brand)" strokeWidth={1.6} strokeDasharray="6 3"
+                stroke={effMode === "over" ? "var(--text)" : "var(--brand)"}
+                strokeWidth={1.6} strokeDasharray="6 3"
                 dot={false} isAnimationActive={false} connectNulls={false}
                 legendType="none"
               />
@@ -602,10 +633,195 @@ function DriveLog({ drives, bits, isLive }: {
   );
 }
 
+/* -------------------------------- PlayerBox -------------------------------- */
+
+type BoxState = { final: boolean; ot: boolean; elapsed: number; espnMargin: number } | null;
+
+type Group = {
+  key: "passing" | "rushing" | "receiving";
+  title: string;
+  /** First column is the sort stat. */
+  cols: { k: string; h: string }[];
+  /** Sim pregame floor for listing a player who has no box line yet. */
+  include: (pre: Record<string, number>) => boolean;
+  max: number;
+};
+
+const GROUPS: Group[] = [
+  { key: "passing", title: "Passing", max: 2,
+    cols: [{ k: "pass_yds", h: "YDS" }, { k: "pass_comp", h: "C" }, { k: "pass_att", h: "ATT" },
+      { k: "pass_td", h: "TD" }, { k: "int", h: "INT" }],
+    include: (p) => (p.pass_att ?? 0) >= 8 },
+  { key: "rushing", title: "Rushing", max: 5,
+    cols: [{ k: "rush_yds", h: "YDS" }, { k: "rush_att", h: "CAR" }, { k: "rush_td", h: "TD" }],
+    include: (p) => (p.rush_att ?? 0) >= 3 },
+  { key: "receiving", title: "Receiving", max: 6,
+    cols: [{ k: "rec_yds", h: "YDS" }, { k: "rec", h: "REC" }, { k: "rec_td", h: "TD" }],
+    include: (p) => (p.tgt ?? 0) >= 2 },
+];
+
+type BoxRow = {
+  name: string;
+  actual: Record<string, number>;
+  /** Projected final, same keys; undefined = no sim match for this player. */
+  proj?: Record<string, number>;
+  /** Sim pregame means (only for sim players with no ESPN line yet). */
+  pre?: Record<string, number>;
+  inBox: boolean;
+};
+
+function fmtProj(k: string, v: number): string {
+  if (k.endsWith("yds")) return Math.round(v).toString();
+  return v >= 10 ? v.toFixed(0) : v.toFixed(1);
+}
+
+function PlayerBox({ box, livePlayers, bits, flipToEspnHome, state }: {
+  box: BoxTeam[];
+  livePlayers: LivePlayers | null;
+  bits: TeamBits;
+  flipToEspnHome: boolean;
+  state: BoxState;
+}) {
+  const [side, setSide] = useState<"away" | "home">("away");
+  const projecting = Boolean(livePlayers && state && !state.final && !state.ot);
+
+  const teams = useMemo(() => {
+    const out: Record<"home" | "away", Partial<Record<Group["key"], BoxRow[]>>> = { home: {}, away: {} };
+    for (const which of ["home", "away"] as const) {
+      const espnId = which === "home" ? bits.homeId : bits.awayId;
+      const bt = box.find((t) => t.teamId === String(espnId ?? ""));
+      // ESPN home is sim side A unless the caller says the two disagree.
+      const simSide = (which === "home") !== flipToEspnHome ? "A" : "B";
+      const simPlayers = (livePlayers?.players ?? []).filter((p) => p.side === simSide);
+      const simByKey = new Map(simPlayers.map((p) => [playerKey(p.player), p]));
+      const simMargin = state ? (flipToEspnHome ? -state.espnMargin : state.espnMargin) : 0;
+
+      const projOf = (sp: (typeof simPlayers)[number] | undefined, actual: Record<string, number>) => {
+        if (!sp || !projecting) return undefined;
+        const rem = remainingFor(livePlayers!, sp, state!.elapsed, simMargin);
+        const pr: Record<string, number> = {};
+        sp.stats.forEach((k, i) => { pr[k] = (actual[k] ?? 0) + (rem[i] ?? 0); });
+        return pr;
+      };
+
+      const seen = new Set<string>();
+      const rows: BoxRow[] = [];
+      for (const bp of bt?.players ?? []) {
+        const key = playerKey(bp.name);
+        seen.add(key);
+        rows.push({ name: bp.name, actual: bp.stats, proj: projOf(simByKey.get(key), bp.stats), inBox: true });
+      }
+      // Sim regulars who have not touched the ball yet still get a line.
+      if (projecting) {
+        for (const sp of simPlayers) {
+          const key = playerKey(sp.player);
+          if (seen.has(key)) continue;
+          rows.push({
+            name: sp.player, actual: {}, proj: projOf(sp, {}), inBox: false,
+            pre: Object.fromEntries(sp.stats.map((k, i) => [k, sp.pregame[i]])),
+          });
+        }
+      }
+
+      for (const g of GROUPS) {
+        const lead = g.cols[0].k;
+        const list = rows.filter((r) =>
+          r.inBox ? g.cols.some((c) => r.actual[c.k] !== undefined) : g.include(r.pre ?? {}));
+        const sortVal = (r: BoxRow) => r.proj?.[lead] ?? r.actual[lead] ?? 0;
+        list.sort((a, b) => sortVal(b) - sortVal(a));
+        out[which][g.key] = list.slice(0, g.max);
+      }
+    }
+    return out;
+  }, [box, livePlayers, bits.homeId, bits.awayId, flipToEspnHome, state, projecting]);
+
+  const abbrev = side === "home" ? bits.homeAbbrev : bits.awayAbbrev;
+  const logo = side === "home" ? bits.homeLogo : bits.awayLogo;
+  const groups = teams[side];
+  const note = !livePlayers
+    ? "Live stats from ESPN. No sim projection is published for this game."
+    : state?.final
+      ? "Final."
+      : state?.ot
+        ? "Overtime: showing actual stats only."
+        : "Live stat → projected final (the live number plus what the sim expects from here, given the clock and score).";
+
+  const tabBtn = (s: "away" | "home") => (
+    <button key={s} type="button" className="ui-btn" data-on={side === s ? "true" : "false"}
+      onClick={() => setSide(s)} style={{ padding: "3px 10px", fontSize: 12 }}>
+      {(s === "home" ? bits.homeAbbrev : bits.awayAbbrev) ?? s}
+    </button>
+  );
+
+  const th: CSSProperties = {
+    textAlign: "right", fontSize: 10, fontWeight: 800, color: "var(--muted)",
+    letterSpacing: 0.4, padding: "4px 6px",
+  };
+  const any = GROUPS.some((g) => (groups[g.key] ?? []).length > 0);
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: 0.6, color: "var(--muted)" }}>
+          PLAYER STATS{projecting ? " · LIVE → PROJECTED" : ""}
+        </span>
+        {logo && <img src={logo} alt="" width={16} height={16} style={{ objectFit: "contain" }} />}
+        <span style={{ fontSize: 13, fontWeight: 800 }}>{abbrev ?? ""}</span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+          {tabBtn("away")}
+          {tabBtn("home")}
+        </span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--muted)" }}>{note}</div>
+      {any && (
+        <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
+            {GROUPS.map((g) => {
+              const rows = groups[g.key] ?? [];
+              if (!rows.length) return null;
+              return (
+                <tbody key={g.key}>
+                  <tr style={{ background: "var(--fill)" }}>
+                    <th style={{ ...th, textAlign: "left" }}>{g.title.toUpperCase()}</th>
+                    {g.cols.map((c) => <th key={c.k} style={th}>{c.h}</th>)}
+                  </tr>
+                  {rows.map((r) => (
+                    <tr key={r.name} style={{ borderTop: "1px solid var(--border)" }}>
+                      <td style={{
+                        padding: "4px 6px", whiteSpace: "nowrap",
+                        color: r.inBox ? "var(--text)" : "var(--muted)",
+                      }}>
+                        {r.name}
+                      </td>
+                      {g.cols.map((c) => {
+                        const pv = r.proj?.[c.k];
+                        return (
+                          <td key={c.k} style={{ padding: "4px 6px", textAlign: "right", whiteSpace: "nowrap" }}>
+                            <span style={{ fontWeight: 700 }}>{r.actual[c.k] ?? 0}</span>
+                            {pv !== undefined && (
+                              <span style={{ color: "var(--brand)", fontWeight: 700, fontSize: 11 }}>
+                                {" → "}{fmtProj(c.k, pv)}
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              );
+            })}
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------ LiveGamePanel ----------------------------- */
 
 export function LiveGamePanel({
   eventId, isLive, situation, bits, simHomeWinPct, liveGrid = null, flipToEspnHome = false,
+  livePlayers = null,
 }: {
   eventId: string;
   isLive: boolean;
@@ -626,6 +842,8 @@ export function LiveGamePanel({
    * margin back out so the overlay lines up with the axes it's drawn on.
    */
   flipToEspnHome?: boolean;
+  /** Sim remaining-production table (live_players.json), or null. */
+  livePlayers?: LivePlayers | null;
 }) {
   const summary = useGameSummary(eventId, isLive);
   const probs = useGameProbabilities(eventId, isLive);
@@ -640,8 +858,10 @@ export function LiveGamePanel({
   // One grid lookup per probability point, aligned by index: regulation only
   // (secondsLeft < 0 = OT, no axis for it on the grid) and only where the
   // point's play joins to a scored PlayRef (summary.playText).
-  const simPoints = useMemo<(GridLookup | null)[] | null>(() => {
+  const simPoints = useMemo<(SimPoint | null)[] | null>(() => {
     if (!liveGrid || !probs || !summary) return null;
+    const spread = summary.spread;
+    const ou = summary.overUnder;
     return probs.map((p) => {
       if (p.secondsLeft < 0) return null;
       const ref = p.playId ? summary.playText.get(p.playId) : undefined;
@@ -650,13 +870,41 @@ export function LiveGamePanel({
       const simMargin = flipToEspnHome ? -espnMargin : espnMargin;
       const cell = lookupGrid(liveGrid, 3600 - p.secondsLeft, simMargin);
       if (!cell) return null;
+      // Cover/over at ESPN's own line (the one its Cover %/Over % curves use),
+      // priced off the CURRENT score + the sim's points still to come.
+      // ESPN's spread is ESPN-home perspective; ESPN home = sim A unless flipped.
+      const st = {
+        elapsed: 3600 - p.secondsLeft,
+        scoreA: flipToEspnHome ? ref.away : ref.home,
+        scoreB: flipToEspnHome ? ref.home : ref.away,
+      };
+      const pCoverHome = spread === undefined ? null
+        : flipToEspnHome ? pCoverB(liveGrid, st, spread) : pCoverA(liveGrid, st, spread);
+      const pOverV = ou === undefined ? null : pOver(liveGrid, st, ou);
       // Cell is in the SIM's home/away orientation; flip back to ESPN's so
       // it matches every other number already on this chart.
       return flipToEspnHome
-        ? { ...cell, pHomeWin: 1 - cell.pHomeWin, meanMargin: -cell.meanMargin }
-        : cell;
+        ? { ...cell, pHomeWin: 1 - cell.pHomeWin, meanMargin: -cell.meanMargin, pCoverHome, pOver: pOverV }
+        : { ...cell, pCoverHome, pOver: pOverV };
     });
   }, [liveGrid, probs, summary, flipToEspnHome]);
+
+  // Current game state for the player projections: the latest probability
+  // point that joins to a scored play (regulation elapsed + ESPN margin).
+  const liveState = useMemo<BoxState>(() => {
+    if (summary?.state === "post") return { final: true, ot: false, elapsed: 3600, espnMargin: 0 };
+    if (!probs || !summary) return null;
+    for (let i = probs.length - 1; i >= 0; i--) {
+      const p = probs[i];
+      const ref = p.playId ? summary.playText.get(p.playId) : undefined;
+      if (!ref || ref.home === undefined || ref.away === undefined) continue;
+      return {
+        final: false, ot: p.secondsLeft < 0,
+        elapsed: Math.max(0, 3600 - p.secondsLeft), espnMargin: ref.home - ref.away,
+      };
+    }
+    return { final: false, ot: false, elapsed: 0, espnMargin: 0 };
+  }, [probs, summary]);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -683,6 +931,11 @@ export function LiveGamePanel({
         <ProbChart points={probs} summary={summary} bits={bits}
           simHomeWinPct={simHomeWinPct} eventId={eventId}
           liveGrid={liveGrid} simPoints={simPoints} />
+      )}
+
+      {summary && (livePlayers || summary.box.some((t) => t.players.length > 0)) && (
+        <PlayerBox box={summary.box} livePlayers={livePlayers} bits={bits}
+          flipToEspnHome={flipToEspnHome} state={liveState} />
       )}
 
       {drives.length > 0 && <DriveLog drives={drives} bits={bits} isLive={isLive} />}

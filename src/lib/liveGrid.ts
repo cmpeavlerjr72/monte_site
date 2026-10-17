@@ -41,6 +41,23 @@ export type LiveGrid = {
     mean_total: number;
     mean_margin: number;
   };
+  /** Points still to come from a live state (exports from 2026-10-17). */
+  remaining?: Remaining;
+};
+
+/** Survival of an integer quantity: v[j] = P(X >= k0 + j) in 0..1; 1 below
+ *  k0, 0 past the end (the exporter publishes the full observed range). */
+export type Curve = { k0: number; v: number[] };
+
+export type Remaining = {
+  time_bin_s: number;
+  n_time: number;
+  margin_edges: number[];
+  /** [time bin][margin bin], null = thin -> use the time row. */
+  margin_sf: (Curve | null)[][];
+  total_sf: (Curve | null)[][];
+  time_margin_sf: (Curve | null)[];
+  time_total_sf: (Curve | null)[];
 };
 
 /** One resolved grid cell, home win probability in 0..1 (NOT 0..100). */
@@ -92,7 +109,121 @@ export function parseLiveGrid(raw: any): LiveGrid | null {
       n: g.n,
     },
     uncond: { p_home_win: u.p_home_win, mean_total: u.mean_total, mean_margin: u.mean_margin },
+    remaining: parseRemaining(raw?.remaining),
   };
+}
+
+const toCurve = (c: any): Curve | null =>
+  c && isNum(c.k0) && Array.isArray(c.v) ? { k0: c.k0, v: c.v.map((x: number) => x / 1000) } : null;
+
+function parseRemaining(r: any): Remaining | undefined {
+  if (!r || !isNum(r.time_bin_s) || !isNum(r.n_time) || !Array.isArray(r.margin_edges)) return undefined;
+  const grid = (g: any) => (Array.isArray(g) ? g.map((row: any) => (Array.isArray(row) ? row.map(toCurve) : [])) : []);
+  const row = (g: any) => (Array.isArray(g) ? g.map(toCurve) : []);
+  return {
+    time_bin_s: r.time_bin_s, n_time: r.n_time, margin_edges: r.margin_edges,
+    margin_sf: grid(r.margin_sf), total_sf: grid(r.total_sf),
+    time_margin_sf: row(r.time_margin_sf), time_total_sf: row(r.time_total_sf),
+  };
+}
+
+/* ---------------------- live cover / over / ML pricing ---------------------
+ * All in the SIM's orientation: teamA = sim home, margin = A - B.
+ *   final = current score + points still to come from this state.
+ * Push counts half, the same convention p_home_win uses for a tie. */
+
+function sfAt(c: Curve, k: number): number {
+  const j = k - c.k0;
+  return j < 0 ? 1 : j >= c.v.length ? 0 : c.v[j];
+}
+/** P(X > x) + P(X == x)/2 for integer X. */
+function pAbove(c: Curve, x: number): number {
+  const fl = Math.floor(x);
+  const above = sfAt(c, fl + 1);
+  return fl === x ? above + 0.5 * (sfAt(c, fl) - above) : above;
+}
+
+function marginBin(edges: number[], m: number): number {
+  let i = 0;
+  while (i < edges.length && m >= edges[i]) i++;
+  return i;
+}
+
+/** Evaluate f on the curves at the two time-bin midpoints around `elapsed`
+ *  and blend linearly. Null when the game has no remaining block. */
+const ZERO: Curve = { k0: 0, v: [1] }; // "nothing more is scored"
+
+function atState(
+  rem: Remaining, elapsed: number, simMargin: number,
+  f: (m: Curve, t: Curve) => number, ot = false,
+): number | null {
+  const mb = marginBin(rem.margin_edges, simMargin);
+  const val = (tb: number): number | null => {
+    const m = rem.margin_sf[tb]?.[mb] ?? rem.time_margin_sf[tb];
+    const t = rem.total_sf[tb]?.[mb] ?? rem.time_total_sf[tb];
+    return m && t ? f(m, t) : null;
+  };
+  const w = rem.time_bin_s;
+  const pos = clamp((elapsed - w / 2) / w, 0, rem.n_time - 1);
+  const lo = Math.floor(pos);
+  const a = val(lo);
+  // Past the last bin midpoint the data stops a minute short of the gun:
+  // fade the remaining-points distribution into "nothing more is scored"
+  // by 60:00. Not for a tied game or OT, where overtime points are real
+  // (the tied late cells carry them).
+  const lastMid = (rem.n_time - 1) * w + w / 2;
+  if (elapsed > lastMid && a !== null && simMargin !== 0 && !ot) {
+    const keep = clamp((rem.n_time * w - elapsed) / (rem.n_time * w - lastMid), 0, 1);
+    return keep * a + (1 - keep) * f(ZERO, ZERO);
+  }
+  if (lo === pos || lo + 1 >= rem.n_time) return a;
+  const b = val(lo + 1);
+  if (a === null || b === null) return a ?? b;
+  return a + (pos - lo) * (b - a);
+}
+
+/** Live state for pricing, sim orientation. OT has no clock axis: it is
+ *  priced as the last regulation bin (the tied-late cells carry OT). */
+export type SimState = { elapsed: number; scoreA: number; scoreB: number; ot?: boolean };
+
+/** P(team A covers `lineA`) — lineA in A's perspective (−3.5 = A favored). */
+export function pCoverA(g: LiveGrid, st: SimState, lineA: number): number | null {
+  if (!g.remaining) return null;
+  const cur = st.scoreA - st.scoreB;
+  return atState(g.remaining, st.elapsed, cur, (m) => pAbove(m, -lineA - cur), st.ot);
+}
+/** P(team B covers `lineB`) — lineB in B's perspective. */
+export function pCoverB(g: LiveGrid, st: SimState, lineB: number): number | null {
+  if (!g.remaining) return null;
+  const cur = st.scoreA - st.scoreB;
+  return atState(g.remaining, st.elapsed, cur, (m) => 1 - pAbove(m, lineB - cur), st.ot);
+}
+/** P(final total over `line`). */
+export function pOver(g: LiveGrid, st: SimState, line: number): number | null {
+  if (!g.remaining) return null;
+  const cur = st.scoreA + st.scoreB;
+  return atState(g.remaining, st.elapsed, st.scoreA - st.scoreB, (_m, t) => pAbove(t, line - cur), st.ot);
+}
+/** Mean of an integer variable from its survival curve. The curve starts at
+ *  the observed minimum (P = 1 there), so E[X] = k0 + sum_{j>=1} P(X >= k0+j). */
+function curveMean(c: Curve): number {
+  let s = c.k0;
+  for (let j = 1; j < c.v.length; j++) s += c.v[j];
+  return s;
+}
+
+/** Expected points still to come from this state: margin (A - B) and total. */
+export function expectedRemaining(g: LiveGrid, st: SimState): { margin: number; total: number } | null {
+  if (!g.remaining) return null;
+  const cur = st.scoreA - st.scoreB;
+  const margin = atState(g.remaining, st.elapsed, cur, (m) => curveMean(m), st.ot);
+  const total = atState(g.remaining, st.elapsed, cur, (_m, t) => curveMean(t), st.ot);
+  return margin === null || total === null ? null : { margin, total };
+}
+
+/** P(team A wins) off the same remaining-margin curves (tie = half). */
+export function pWinA(g: LiveGrid, st: SimState): number | null {
+  return pCoverA(g, st, 0);
 }
 
 /**
@@ -226,4 +357,39 @@ export function useLiveGrid(
   }, [ns, weekId, slug]);
 
   return grid;
+}
+
+/* -------------------- many games at once (live slate) --------------------
+ * The scoreboard prices every LIVE card (and the projected record) off its
+ * grid, so the page fetches them once here and hands each card its own.
+ * One cached request per game for the life of the page: the file is a static
+ * pregame publish, and a quiet null is cached too (unpublished = expected). */
+const gridCache = new Map<string, Promise<LiveGrid | null>>();
+
+export type LiveGridReq = { key: string; ns: Season; weekId: string; slug: string };
+
+export function useLiveGrids(reqs: LiveGridReq[]): Map<string, LiveGrid> {
+  const [grids, setGrids] = useState<Map<string, LiveGrid>>(() => new Map());
+  // Primitive dependency (rule 4): the request list as one string.
+  const sig = reqs.map((r) => `${r.key}|${r.ns}|${r.weekId}|${r.slug}`).join(",");
+  useEffect(() => {
+    let alive = true;
+    const list = sig ? sig.split(",").map((s) => s.split("|")) : [];
+    Promise.all(list.map(async ([key, ns, weekId, slug]) => {
+      const ck = `${ns}|${weekId}|${slug}`;
+      let p = gridCache.get(ck);
+      if (!p) {
+        p = fetchLiveGrid(ns as Season, weekId, slug);
+        gridCache.set(ck, p);
+      }
+      return [key, await p] as const;
+    })).then((pairs) => {
+      if (!alive) return;
+      const m = new Map<string, LiveGrid>();
+      for (const [k, g] of pairs) if (g) m.set(k, g);
+      setGrids(m);
+    });
+    return () => { alive = false; };
+  }, [sig]);
+  return grids;
 }
