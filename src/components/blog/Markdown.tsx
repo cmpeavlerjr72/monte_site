@@ -5,6 +5,7 @@
 // in a post is never rendered. Embeds map to read-only components: nothing in
 // a post can show an order, Tail or price button.
 
+import { createContext, createElement, useContext, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkDirective from "remark-directive";
@@ -16,8 +17,61 @@ import { GettyEmbed, PhotoEmbed, XEmbed, YouTubeEmbed } from "./MediaEmbeds";
 type P = Record<string, unknown> & { node?: unknown; children?: React.ReactNode };
 const str = (v: unknown) => (v == null ? "" : String(v));
 
-export default function Markdown({ body, draft }: { body: string; draft: boolean }) {
-  const components = {
+/** Tap-to-edit in the owner's private preview (src/pages/blog/PreviewPost.tsx). Off everywhere else. A block is a
+ *  top-level paragraph, heading, list or quote, addressed by its [start, end) offsets in `body`. */
+export type BlockEdit = {
+  active: number | null;
+  onTap: (start: number, end: number) => void;
+  render: (start: number, end: number) => React.ReactNode;
+};
+
+// Only these top-level blocks can be tapped. Embeds, figures, callouts and owner beats are directives or wrappers and are
+// changed from the bot.
+const EDITABLE = new Set(["p", "h2", "h3", "ul", "ol", "blockquote"]);
+
+type HastNode = { type: string; tagName?: string; position?: { start: { offset?: number }; end: { offset?: number } }; properties?: Record<string, unknown>; children?: HastNode[] };
+
+/** rehype: stamp each editable top-level block with its source span (data-blk="start:end"). */
+function rehypeBlockSpans() {
+  return (tree: HastNode) => {
+    for (const c of tree.children || []) {
+      const s = c.position?.start.offset, e = c.position?.end.offset;
+      if (c.type === "element" && EDITABLE.has(c.tagName || "") && s != null && e != null) {
+        c.properties = { ...(c.properties || {}), dataBlk: `${s}:${e}` };
+      }
+    }
+  };
+}
+
+// The blocks read the edit hooks from context, so their component identity never changes between renders (a new identity
+// would remount the open editor and drop what's being typed).
+const EditCtx = createContext<BlockEdit | null>(null);
+
+function editable(Tag: string) {
+  return function EditableBlock({ node: _n, ...props }: P) {
+    const edit = useContext(EditCtx);
+    const span = str(props["data-blk"]);
+    if (!span || !edit) return createElement(Tag, props);
+    const [s, e] = span.split(":").map(Number);
+    if (edit.active === s) return <>{edit.render(s, e)}</>;
+    return createElement(Tag, {
+      ...props,
+      className: [str(props.className), "pe-block"].filter(Boolean).join(" "),
+      onClick: (ev: React.MouseEvent) => {
+        if ((ev.target as HTMLElement).closest("a")) return;          // links still work
+        edit.onTap(s, e);
+      },
+    });
+  };
+}
+
+const EDITABLE_COMPONENTS = Object.fromEntries([...EDITABLE].map((t) => [t, editable(t)]));
+
+export default function Markdown({ body, draft, edit }: { body: string; draft: boolean; edit?: BlockEdit }) {
+  const editing = !!edit;
+  // Memoized: a fresh map would give every embed a new component type on each render and remount it (a Getty iframe
+  // reloading on every keystroke in the preview editor).
+  const components = useMemo(() => ({
     img: ({ node: _n, src, alt, title: _t, ...rest }: P & { src?: string; alt?: string; title?: string }) => (
       <img src={src} alt={alt ?? ""} loading="lazy" decoding="async" {...(rest as object)} />
     ),
@@ -48,13 +102,16 @@ export default function Markdown({ body, draft }: { body: string; draft: boolean
           <span className="owner-beat__tag">Owner beat</span> {str(note)}
         </aside>
       ) : null,
-  } as unknown as Components;
+    ...(editing ? EDITABLE_COMPONENTS : {}),
+  }) as unknown as Components, [draft, editing]);
 
   return (
-    <div className="post-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkDirective, remarkMvpeav]} skipHtml components={components}>
-        {body}
-      </ReactMarkdown>
-    </div>
+    <EditCtx.Provider value={edit ?? null}>
+      <div className={edit ? "post-body post-body--editing" : "post-body"}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkDirective, remarkMvpeav]} rehypePlugins={edit ? [rehypeBlockSpans] : []} skipHtml components={components}>
+          {body}
+        </ReactMarkdown>
+      </div>
+    </EditCtx.Provider>
   );
 }

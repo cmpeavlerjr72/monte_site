@@ -20,6 +20,7 @@ import {
   fmtPostDate, gameCardHref, loadBody, postBySlug, tagWords, visiblePosts, type BlogMeta,
 } from "../../lib/blog/posts";
 import { useDocumentMeta } from "../../lib/useDocumentMeta";
+import type { BlockEdit } from "../../components/blog/Markdown";
 
 const Markdown = lazy(() => import("../../components/blog/Markdown"));
 
@@ -91,7 +92,7 @@ export default function BlogPost() {
 
 /** The article itself, shared by /blog/:slug and the private draft preview (/preview/:token). `banner` replaces the
  *  draft note; `related` is left out of previews. */
-export function PostArticle({ post, body, related = [], banner }: { post: BlogMeta; body: string | null; related?: BlogMeta[]; banner?: React.ReactNode }) {
+export function PostArticle({ post, body, related = [], banner, edit }: { post: BlogMeta; body: string | null; related?: BlogMeta[]; banner?: React.ReactNode; edit?: BlockEdit }) {
   // Barstool format: most posts OPEN with an embed. When the body's first
   // block is the hero image itself, the hero is not drawn twice.
   const firstImage = body == null ? null : /^\s*(?:<!--[\s\S]*?-->\s*)*!\[[^\]]*\]\(([^)\s]+)/.exec(body)?.[1] ?? null;
@@ -131,7 +132,7 @@ export function PostArticle({ post, body, related = [], banner }: { post: BlogMe
         <div className="post-body" aria-busy="true"><SkeletonLines rows={6} height={16} /><Skeleton height={200} style={{ marginTop: 16 }} /></div>
       ) : (
         <Suspense fallback={<div className="post-body"><SkeletonLines rows={6} height={16} /></div>}>
-          <Markdown body={body} draft={post.draft} />
+          <Markdown body={body} draft={post.draft} edit={edit} />
         </Suspense>
       )}
 

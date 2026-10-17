@@ -197,3 +197,33 @@
   font-family: var(--font-display); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase;
 }
 .post-preview-banner b { color: var(--gold); }
+
+/* ------------------------------------------------ editing in the preview (2026-10-17) -- */
+.pe-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; text-transform: none; letter-spacing: 0; font-family: inherit; }
+.post-body--editing .pe-block { cursor: text; border-radius: var(--r-sm); transition: background-color .15s; -webkit-tap-highlight-color: transparent; }
+.post-body--editing .pe-block:hover, .post-body--editing .pe-block:active { background: color-mix(in oklab, var(--gold) 12%, transparent); }
+.pe-editor { margin: 1em 0; }
+.pe-editor textarea {
+  display: block; width: 100%; box-sizing: border-box; resize: vertical; min-height: 5em; padding: 10px 12px;
+  font: inherit; font-size: 17px; line-height: 1.55; color: var(--text); background: var(--card);
+  border: 2px solid var(--gold); border-radius: var(--r); outline: none;
+}
+.pe-editor--heading textarea { min-height: 0; font-family: var(--font-display); font-size: 22px; text-transform: uppercase; }
+.pe-editor__err { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--neg); }
+.pe-editor__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.pe-editor__hint { font-size: var(--fs-xs); color: var(--muted); margin-left: auto; }
+.pe-btn {
+  min-height: 40px; padding: 0 14px; font: inherit; font-size: 15px; font-weight: 600; border-radius: var(--r);
+  border: var(--rule); background: var(--card); color: var(--text); cursor: pointer;
+}
+.pe-btn:disabled { opacity: .6; cursor: default; }
+.pe-btn--primary { background: var(--gold); border-color: var(--gold); color: var(--navy); }
+.pe-btn--danger { color: var(--neg); }
+.pe-btn--small { min-height: 30px; padding: 0 10px; font-size: 13px; background: transparent; color: var(--gold); border: 1px solid var(--gold); }
+.pe-status {
+  position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: 10px; max-width: min(560px, calc(100vw - 32px)); padding: 10px 14px;
+  border-radius: var(--r); background: var(--navy); color: #fff; font-size: var(--fs-sm); box-shadow: 0 6px 24px rgb(0 0 0 / .25);
+}
+.pe-status--bad { background: color-mix(in oklab, var(--neg) 85%, #000); }
+.pe-status__x { margin-left: auto; padding: 0 4px; border: 0; background: none; color: inherit; font-size: 20px; line-height: 1; cursor: pointer; }

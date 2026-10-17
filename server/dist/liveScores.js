@@ -4675,14 +4675,30 @@ function previewNotFound(res) {
     previewHeaders(res);
     res.status(404).type("text/plain").send("Not found");
 }
+/** One object from the private bucket, or null. Read with a cache-busting query string: Supabase's CDN kept serving
+ *  the OLD preview.json for minutes after the bot overwrote it (found 2026-10-17: the bucket had v7, a plain read
+ *  still answered v5), and the bot overwrites preview.json in place on every change. */
+async function previewObject(key) {
+    if (!supa)
+        return null;
+    try {
+        const r = await fetch(`${SUPABASE_URL}/storage/v1/object/authenticated/${PREVIEW_BUCKET}/${key}?cb=${Date.now()}`, {
+            headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, apikey: SUPABASE_SERVICE_ROLE_KEY },
+        });
+        return r.ok ? Buffer.from(await r.arrayBuffer()) : null;
+    }
+    catch {
+        return null;
+    }
+}
 async function previewDoc(token) {
     if (!supa || !PREVIEW_TOKEN_RE.test(token))
         return null;
-    const { data, error } = await supa.storage.from(PREVIEW_BUCKET).download(`${token}/preview.json`);
-    if (error || !data)
+    const data = await previewObject(`${token}/preview.json`);
+    if (!data)
         return null;
     try {
-        const doc = JSON.parse(await data.text());
+        const doc = JSON.parse(data.toString("utf8"));
         if (!doc || typeof doc.body !== "string" || !doc.meta)
             return null;
         if (!doc.expires || !(Date.parse(doc.expires) > Date.now()))
@@ -4700,7 +4716,109 @@ app.get("/api/preview/:token", asyncRoute(async (req, res) => {
         return;
     }
     previewHeaders(res);
-    res.json({ meta: doc.meta, body: doc.body, version: doc.version ?? null, held: Boolean(doc.held), hold: doc.hold ?? null });
+    res.json({
+        meta: doc.meta, body: doc.body, version: doc.version ?? null, held: Boolean(doc.held), hold: doc.hold ?? null,
+        editable: req.get("x-preview-edit") ? previewEditAllowed(doc, req) : false,
+    });
+}));
+// ---- Editing in the preview (2026-10-17) ----
+// The owner taps a paragraph or heading on /preview/<token> and edits it in place. Writes need a SECOND secret: the bot
+// puts sha256(edit secret) in preview.json as edit_hash and sends the owner an edit link (/preview/<token>#edit=<secret>;
+// a fragment never reaches a server, a log or a referrer), and the page sends the secret back in X-Preview-Edit. The view
+// token alone can never write. An accepted edit is only QUEUED here (_edits/<ms>-<hex>.json in the same private bucket):
+// the owner's PC (BlogBot) pulls it within seconds, saves it as a new draft version, rebuilds the preview and writes
+// _edit_results/<id>.json, which GET .../edits/:id hands back to the page. Nothing here changes a draft by itself.
+const PREVIEW_EDIT_MAX = 20000;
+const PREVIEW_EDIT_ID_RE = /^\d{13}-[a-f0-9]{8}$/;
+// A paragraph edit can't sneak in a heading (it would shift every section), an embed or raw HTML; the bot checks again.
+const PREVIEW_BAD_BLOCK_LINE = /^\s{0,3}(#{1,6}\s|::|<!--)/m;
+const PREVIEW_HEADING_RE = /^#{2,3}\s+\S[^\n]*$/;
+const previewEditHits = new Map();
+function previewEditAllowed(doc, req) {
+    const secret = String(req.get("x-preview-edit") || "");
+    const want = typeof doc.edit_hash === "string" ? doc.edit_hash : "";
+    if (!secret || secret.length > 128 || !/^[a-f0-9]{64}$/.test(want))
+        return false;
+    return crypto.timingSafeEqual(crypto.createHash("sha256").update(secret).digest(), Buffer.from(want, "hex"));
+}
+/** 60 edits per 10 minutes per preview: far beyond tapping, well short of a flood into the bucket. */
+function previewEditRateOk(token) {
+    const now = Date.now();
+    const hits = (previewEditHits.get(token) || []).filter((t) => now - t < 10 * 60_000);
+    const ok = hits.length < 60;
+    if (ok)
+        hits.push(now);
+    previewEditHits.set(token, hits);
+    return ok;
+}
+app.post("/api/preview/:token/edits", asyncRoute(async (req, res) => {
+    const token = String(req.params.token || "");
+    const doc = await previewDoc(token);
+    if (!doc) {
+        previewNotFound(res);
+        return;
+    }
+    previewHeaders(res);
+    if (!previewEditAllowed(doc, req)) {
+        res.status(403).json({ error: "edit_forbidden", message: "This page can't take edits. Open the ✏️ Edit link from the bot again." });
+        return;
+    }
+    if (!previewEditRateOk(token)) {
+        res.status(429).json({ error: "rate_limited", message: "That's a lot of edits at once. Give it a minute." });
+        return;
+    }
+    const b = (req.body || {});
+    const kind = b.kind === "heading" ? "heading" : "block";
+    const oldText = typeof b.old === "string" ? b.old : "";
+    const newText = typeof b.new === "string" ? b.new : "";
+    const nth = Number.isInteger(b.nth) && b.nth >= 0 && b.nth < 1000 ? b.nth : 0;
+    const base = Number.isInteger(b.base_version) ? b.base_version : null;
+    const bad = (message) => res.status(400).json({ error: "bad_edit", message });
+    if (!oldText.trim() || oldText.length > PREVIEW_EDIT_MAX || newText.length > PREVIEW_EDIT_MAX) {
+        bad("That edit is empty or too long.");
+        return;
+    }
+    if (kind === "heading" && !(PREVIEW_HEADING_RE.test(oldText.trim()) && PREVIEW_HEADING_RE.test(newText.trim()))) {
+        bad("A heading has to stay one line.");
+        return;
+    }
+    if (kind === "block" && PREVIEW_BAD_BLOCK_LINE.test(newText)) {
+        bad("Headings, embeds and HTML can't go into a paragraph edit. Use the bot for those.");
+        return;
+    }
+    const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const edit = { id, token, kind, old: oldText, new: newText, nth, base_version: base, at: new Date().toISOString() };
+    const { error } = await supa.storage
+        .from(PREVIEW_BUCKET)
+        .upload(`_edits/${id}.json`, Buffer.from(JSON.stringify(edit)), { contentType: "application/json", upsert: false });
+    if (error) {
+        res.status(502).json({ error: "queue_failed", message: "Couldn't save that edit. Try again." });
+        return;
+    }
+    res.status(202).json({ id });
+}));
+app.get("/api/preview/:token/edits/:id", asyncRoute(async (req, res) => {
+    const token = String(req.params.token || ""), id = String(req.params.id || "");
+    const doc = PREVIEW_EDIT_ID_RE.test(id) ? await previewDoc(token) : null;
+    if (!doc || !previewEditAllowed(doc, req)) {
+        previewNotFound(res);
+        return;
+    }
+    previewHeaders(res);
+    const data = await previewObject(`_edit_results/${id}.json`);
+    if (data) {
+        try {
+            const r = JSON.parse(data.toString("utf8"));
+            if (r.token === token) {
+                res.json({ id, status: r.status, version: r.version ?? null, error: r.error ?? null });
+                return;
+            }
+        }
+        catch {
+            /* a half-written result reads as still working */
+        }
+    }
+    res.json({ id, status: "working" });
 }));
 app.get("/api/preview/:token/img/:file", asyncRoute(async (req, res) => {
     const token = String(req.params.token || ""), file = String(req.params.file || "");
@@ -4712,14 +4830,14 @@ app.get("/api/preview/:token/img/:file", asyncRoute(async (req, res) => {
         previewNotFound(res);
         return;
     }
-    const { data, error } = await supa.storage.from(PREVIEW_BUCKET).download(`${token}/img/${file}`);
-    if (error || !data) {
+    const data = await previewObject(`${token}/img/${file}`);
+    if (!data) {
         previewNotFound(res);
         return;
     }
     previewHeaders(res);
     res.type(path.extname(file) || "application/octet-stream");
-    res.send(Buffer.from(await data.arrayBuffer()));
+    res.send(data);
 }));
 // The /preview/:token page itself is the SPA; it just carries the same headers.
 app.get("/preview/:token", (_req, res, next) => {
