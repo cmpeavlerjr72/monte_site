@@ -76,7 +76,7 @@ import LiveProgressStrip from "../components/LiveProgress";
 import { parseSituation, useGameTeamStats, type LiveSituation } from "../lib/espnGame";
 import { progressBetsOf } from "../lib/liveProgress";
 import { useLiveGrid, useLiveGrids, type LiveGrid } from "../lib/liveGrid";
-import { projectedFinal, simStateOf } from "../lib/liveRecord";
+import { ballFromSituation, projectedFinal, simStateOf } from "../lib/liveRecord";
 import { useLivePlayers } from "../lib/livePlayers";
 import {
   useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML,
@@ -3956,7 +3956,8 @@ export function GameCard({
      clock + score, which re-render every poll. */
   const liveLines = useMemo(() => {
     if (!liveNow || !cardLiveGrid) return null;
-    const st = simStateOf(card.finalA, card.finalB, lv?.period, lv?.clockSec);
+    const st = simStateOf(card.finalA, card.finalB, lv?.period, lv?.clockSec,
+      ballFromSituation(lv?.situation, lv?.homeId, lv?.awayId, espnHomeIsA));
     if (!st) return null;
     const a = card.finalA, b = card.finalB;
     return {
@@ -3965,7 +3966,8 @@ export function GameCard({
       label: `${card.liveStatusText || "live"}, ${card.teamB} ${b} - ${card.teamA} ${a}`,
     };
   }, [liveNow, cardLiveGrid, card.finalA, card.finalB, lv?.period, lv?.clockSec,
-      card.liveStatusText, card.teamA, card.teamB]);
+      card.liveStatusText, card.teamA, card.teamB, lv?.situation, lv?.homeId, lv?.awayId,
+      espnHomeIsA]);
 
   const trackable = progressBets.length > 0 && (liveNow || lv?.state === "final");
   const liveStats = useGameTeamStats(trackable ? lv?.id : undefined, liveNow);
@@ -4467,7 +4469,10 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
     let nLive = 0;
     const asFinal = cards.map((c) => {
       const g = c.liveInProgress ? liveGrids.get(c.key) : undefined;
-      const st = g ? simStateOf(c.finalA, c.finalB, c.live?.period, c.live?.clockSec) : null;
+      const lvc = c.live;
+      const st = g ? simStateOf(c.finalA, c.finalB, lvc?.period, lvc?.clockSec,
+        ballFromSituation(lvc?.situation, lvc?.homeId, lvc?.awayId,
+          lvc ? nameMatches(lvc.homeNames, lvc.homeTeam, c.teamA) : true)) : null;
       const pf = g && st ? projectedFinal(g, st) : null;
       if (!pf) return c;
       nLive++;

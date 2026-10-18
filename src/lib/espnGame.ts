@@ -133,6 +133,11 @@ export type PlayRef = {
   away?: number;
   period?: number;
   clock?: string;
+  /** State AFTER the play: offense team id, its yards to the end zone, down
+   *  (0 / -1 on timeouts, scores, PATs -> not a scrimmage state). */
+  endTeamId?: string;
+  endYtg?: number;
+  endDown?: number;
 };
 
 export type GameSummaryLite = {
@@ -264,6 +269,9 @@ export function parseSummaryLite(json: any): GameSummaryLite {
         away: numOrU(pl.awayScore),
         period: numOrU(pl.period?.number),
         clock: pl.clock?.displayValue || undefined,
+        endTeamId: idOrU(pl.end?.team?.id),
+        endYtg: numOrU(pl.end?.yardsToEndzone),
+        endDown: numOrU(pl.end?.down),
       });
     }
   }

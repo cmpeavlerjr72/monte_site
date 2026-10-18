@@ -58,7 +58,23 @@ export type Remaining = {
   total_sf: (Curve | null)[][];
   time_margin_sf: (Curve | null)[];
   time_total_sf: (Curve | null)[];
+  /** Same, given WHO HAS THE BALL and WHERE (exports from 2026-10-17 pm,
+   *  INV-162). Absent on older files -> the clock+score cells above. */
+  fp?: RemainingFp;
 };
+
+/** [time bin][margin bin][possession 0=A,1=B][field zone] and the
+ *  possession-only fallback [time bin][margin bin][possession]. */
+export type RemainingFp = {
+  zone_edges: number[];
+  margin_sf: (Curve | null)[][][][];
+  total_sf: (Curve | null)[][][][];
+  poss_margin_sf: (Curve | null)[][][];
+  poss_total_sf: (Curve | null)[][][];
+};
+
+/** The offense, in the SIM's orientation, and its yards to the end zone. */
+export type Ball = { side: "A" | "B"; ytg: number };
 
 /** One resolved grid cell, home win probability in 0..1 (NOT 0..100). */
 export type GridLookup = {
@@ -109,7 +125,7 @@ export function parseLiveGrid(raw: any): LiveGrid | null {
       n: g.n,
     },
     uncond: { p_home_win: u.p_home_win, mean_total: u.mean_total, mean_margin: u.mean_margin },
-    remaining: parseRemaining(raw?.remaining),
+    remaining: parseRemaining(raw?.remaining && { ...raw.remaining, fp_block: raw?.remaining_fp }),
   };
 }
 
@@ -124,6 +140,38 @@ function parseRemaining(r: any): Remaining | undefined {
     time_bin_s: r.time_bin_s, n_time: r.n_time, margin_edges: r.margin_edges,
     margin_sf: grid(r.margin_sf), total_sf: grid(r.total_sf),
     time_margin_sf: row(r.time_margin_sf), time_total_sf: row(r.time_total_sf),
+    fp: parseRemainingFp(r.fp_block),
+  };
+}
+
+/** Packed curve [k0, code]: code = [v0, v0-v1, v1-v2, ...] per-mille, one
+ *  char per value (index in `alph`) when < 62, else '-' + 2 base-64 chars. */
+function unpackCurve(c: any, alph: string): Curve | null {
+  if (!Array.isArray(c) || !isNum(c[0]) || typeof c[1] !== "string") return null;
+  const s: string = c[1];
+  const v: number[] = [];
+  let cur = 0;
+  for (let i = 0; i < s.length; ) {
+    let x: number;
+    if (s[i] === "-") { x = alph.indexOf(s[i + 1]) * 64 + alph.indexOf(s[i + 2]); i += 3; }
+    else { x = alph.indexOf(s[i]); i += 1; }
+    if (x < 0) return null;
+    cur = v.length === 0 ? x : cur - x;
+    v.push(cur / 1000);
+  }
+  return v.length ? { k0: c[0], v } : null;
+}
+
+function parseRemainingFp(r: any): RemainingFp | undefined {
+  if (!r || typeof r.alph !== "string" || !Array.isArray(r.zone_edges) ||
+      !Array.isArray(r.margin_sf) || !Array.isArray(r.poss_margin_sf)) return undefined;
+  const a: string = r.alph;
+  const deep = (g: any, depth: number): any =>
+    depth === 0 ? unpackCurve(g, a) : Array.isArray(g) ? g.map((x: any) => deep(x, depth - 1)) : [];
+  return {
+    zone_edges: r.zone_edges,
+    margin_sf: deep(r.margin_sf, 4), total_sf: deep(r.total_sf, 4),
+    poss_margin_sf: deep(r.poss_margin_sf, 3), poss_total_sf: deep(r.poss_total_sf, 3),
   };
 }
 
@@ -155,10 +203,22 @@ const ZERO: Curve = { k0: 0, v: [1] }; // "nothing more is scored"
 
 function atState(
   rem: Remaining, elapsed: number, simMargin: number,
-  f: (m: Curve, t: Curve) => number, ot = false,
+  f: (m: Curve, t: Curve) => number, ot = false, ball?: Ball,
 ): number | null {
   const mb = marginBin(rem.margin_edges, simMargin);
+  // Ball known (scrimmage down, spot, offense): price off who has it and
+  // where -- the field-zone cell, else the possession-only cell. Otherwise
+  // (kickoffs, breaks, older files) the clock + score cells.
+  const fp = !ot && ball && ball.ytg >= 1 && ball.ytg <= 99 ? rem.fp : undefined;
+  const pi = ball?.side === "B" ? 1 : 0;
+  const zi = fp && ball ? marginBin(fp.zone_edges, ball.ytg) : 0;
   const val = (tb: number): number | null => {
+    if (fp) {
+      const fm = fp.margin_sf[tb]?.[mb]?.[pi]?.[zi], ft = fp.total_sf[tb]?.[mb]?.[pi]?.[zi];
+      if (fm && ft) return f(fm, ft);
+      const pm = fp.poss_margin_sf[tb]?.[mb]?.[pi], pt = fp.poss_total_sf[tb]?.[mb]?.[pi];
+      if (pm && pt) return f(pm, pt);
+    }
     const m = rem.margin_sf[tb]?.[mb] ?? rem.time_margin_sf[tb];
     const t = rem.total_sf[tb]?.[mb] ?? rem.time_total_sf[tb];
     return m && t ? f(m, t) : null;
@@ -184,25 +244,25 @@ function atState(
 
 /** Live state for pricing, sim orientation. OT has no clock axis: it is
  *  priced as the last regulation bin (the tied-late cells carry OT). */
-export type SimState = { elapsed: number; scoreA: number; scoreB: number; ot?: boolean };
+export type SimState = { elapsed: number; scoreA: number; scoreB: number; ot?: boolean; ball?: Ball };
 
 /** P(team A covers `lineA`) — lineA in A's perspective (−3.5 = A favored). */
 export function pCoverA(g: LiveGrid, st: SimState, lineA: number): number | null {
   if (!g.remaining) return null;
   const cur = st.scoreA - st.scoreB;
-  return atState(g.remaining, st.elapsed, cur, (m) => pAbove(m, -lineA - cur), st.ot);
+  return atState(g.remaining, st.elapsed, cur, (m) => pAbove(m, -lineA - cur), st.ot, st.ball);
 }
 /** P(team B covers `lineB`) — lineB in B's perspective. */
 export function pCoverB(g: LiveGrid, st: SimState, lineB: number): number | null {
   if (!g.remaining) return null;
   const cur = st.scoreA - st.scoreB;
-  return atState(g.remaining, st.elapsed, cur, (m) => 1 - pAbove(m, lineB - cur), st.ot);
+  return atState(g.remaining, st.elapsed, cur, (m) => 1 - pAbove(m, lineB - cur), st.ot, st.ball);
 }
 /** P(final total over `line`). */
 export function pOver(g: LiveGrid, st: SimState, line: number): number | null {
   if (!g.remaining) return null;
   const cur = st.scoreA + st.scoreB;
-  return atState(g.remaining, st.elapsed, st.scoreA - st.scoreB, (_m, t) => pAbove(t, line - cur), st.ot);
+  return atState(g.remaining, st.elapsed, st.scoreA - st.scoreB, (_m, t) => pAbove(t, line - cur), st.ot, st.ball);
 }
 /** Mean of an integer variable from its survival curve. The curve starts at
  *  the observed minimum (P = 1 there), so E[X] = k0 + sum_{j>=1} P(X >= k0+j). */
@@ -216,8 +276,8 @@ function curveMean(c: Curve): number {
 export function expectedRemaining(g: LiveGrid, st: SimState): { margin: number; total: number } | null {
   if (!g.remaining) return null;
   const cur = st.scoreA - st.scoreB;
-  const margin = atState(g.remaining, st.elapsed, cur, (m) => curveMean(m), st.ot);
-  const total = atState(g.remaining, st.elapsed, cur, (_m, t) => curveMean(t), st.ot);
+  const margin = atState(g.remaining, st.elapsed, cur, (m) => curveMean(m), st.ot, st.ball);
+  const total = atState(g.remaining, st.elapsed, cur, (_m, t) => curveMean(t), st.ot, st.ball);
   return margin === null || total === null ? null : { margin, total };
 }
 

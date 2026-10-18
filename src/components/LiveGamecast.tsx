@@ -22,7 +22,7 @@ import type {
 } from "../lib/espnGame";
 import { useGameProbabilities, useGameSummary } from "../lib/espnGame";
 import type { LiveGrid, GridLookup } from "../lib/liveGrid";
-import { lookupGrid, pCoverA, pCoverB, pOver } from "../lib/liveGrid";
+import { lookupGrid, pCoverA, pCoverB, pOver, pWinA, type Ball } from "../lib/liveGrid";
 import type { LivePlayers } from "../lib/livePlayers";
 import { playerKey, remainingFor } from "../lib/livePlayers";
 
@@ -892,16 +892,30 @@ export function LiveGamePanel({
       if (!ref || ref.home === undefined || ref.away === undefined) return null;
       const espnMargin = ref.home - ref.away; // ESPN home - ESPN away
       const simMargin = flipToEspnHome ? -espnMargin : espnMargin;
-      const cell = lookupGrid(liveGrid, 3600 - p.secondsLeft, simMargin);
+      let cell = lookupGrid(liveGrid, 3600 - p.secondsLeft, simMargin);
       if (!cell) return null;
       // Cover/over at ESPN's own line (the one its Cover %/Over % curves use),
       // priced off the CURRENT score + the sim's points still to come.
       // ESPN's spread is ESPN-home perspective; ESPN home = sim A unless flipped.
+      // Ball after the play (INV-162): offense + yards to go, scrimmage downs
+      // only; otherwise the price falls back to clock + score.
+      let ball: Ball | undefined;
+      if (ref.endDown !== undefined && ref.endDown >= 1 && ref.endDown <= 4 &&
+          ref.endYtg !== undefined && ref.endYtg >= 1 && ref.endYtg <= 99 &&
+          ref.endTeamId && (ref.endTeamId === bits.homeId || ref.endTeamId === bits.awayId)) {
+        const espnHomeBall = ref.endTeamId === bits.homeId;
+        ball = { side: espnHomeBall !== flipToEspnHome ? "A" : "B", ytg: ref.endYtg };
+      }
       const st = {
         elapsed: 3600 - p.secondsLeft,
         scoreA: flipToEspnHome ? ref.away : ref.home,
         scoreB: flipToEspnHome ? ref.home : ref.away,
+        ball,
       };
+      // Sim win line off the same remaining-points curves as cover/over, so
+      // it moves with the ball, not only when points go up.
+      const pw = pWinA(liveGrid, st);
+      if (pw !== null) cell = { ...cell, pHomeWin: pw };
       const pCoverHome = spread === undefined ? null
         : flipToEspnHome ? pCoverB(liveGrid, st, spread) : pCoverA(liveGrid, st, spread);
       const pOverV = ou === undefined ? null : pOver(liveGrid, st, ou);
@@ -911,7 +925,7 @@ export function LiveGamePanel({
         ? { ...cell, pHomeWin: 1 - cell.pHomeWin, meanMargin: -cell.meanMargin, pCoverHome, pOver: pOverV }
         : { ...cell, pCoverHome, pOver: pOverV };
     });
-  }, [liveGrid, probs, summary, flipToEspnHome]);
+  }, [liveGrid, probs, summary, flipToEspnHome, bits.homeId, bits.awayId]);
 
   // Current game state for the player projections: the latest probability
   // point that joins to a scored play (regulation elapsed + ESPN margin).
