@@ -6,9 +6,9 @@ date: 2026-10-18T15:16:32-04:00
 author: MVPeav
 author_x: MVPeav
 tags: [cfb, rankings, ap-top-25, quads, byu, georgia]
-hero: /blog/ap-top-25-week-8-poll-reaction-quads/hero.jpg
-hero_alt: "The AP Top 25 for week 8 of the 2026 college football season"
-og_image: /blog/ap-top-25-week-8-poll-reaction-quads/og.jpg
+hero: /blog/ap-top-25-week-8-poll-reaction-quads/hero-quads.jpg
+hero_alt: "The MVPeav Quads résumé Top 25 for week 8 of the 2026 college football season"
+og_image: /blog/ap-top-25-week-8-poll-reaction-quads/og-quads.jpg
 draft: false
 sources:
   - "AP Top 25, week 8 (via ESPN)"
