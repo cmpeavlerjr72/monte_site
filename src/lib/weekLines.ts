@@ -36,6 +36,16 @@ export type MlMarket = {
   n_close: number;
 };
 
+/** The sim's OWN probabilities at each frame's line (export_week_lines
+ *  `sim`, from 2026-10-17). Spread/total sides exclude the push, so the two
+ *  can sum below 1 on an integer line. Absent on older files. */
+export type SimLineProbs = {
+  n: number;
+  spread: { open: { home: number; away: number } | null; close: { home: number; away: number } | null };
+  total: { open: { over: number; under: number } | null; close: { over: number; under: number } | null };
+  ml: { home: number; away: number };
+};
+
 export type WeekLinesGame = {
   game_id: number;
   teamA: string; // home
@@ -43,6 +53,7 @@ export type WeekLinesGame = {
   spread: LineMarket; // home-perspective, negative = home favored
   total: LineMarket;
   ml: MlMarket; // american sign
+  sim?: SimLineProbs;
 };
 
 export type WeekLines = {
@@ -87,7 +98,20 @@ function parseGame(raw: any): WeekLinesGame | null {
   const total = parseLineMarket(raw.total);
   const ml = parseMlMarket(raw.ml);
   if (!spread || !total || !ml) return null;
-  return { game_id: raw.game_id, teamA: raw.teamA, teamB: raw.teamB, spread, total, ml };
+  return { game_id: raw.game_id, teamA: raw.teamA, teamB: raw.teamB, spread, total, ml,
+           sim: parseSim(raw.sim) };
+}
+
+function parseSim(raw: any): SimLineProbs | undefined {
+  if (!raw || typeof raw !== "object" || !raw.ml || !isNum(raw.ml.home) || !isNum(raw.ml.away)) return undefined;
+  const pair = (o: any, a: string, b: string) =>
+    o && isNum(o[a]) && isNum(o[b]) ? o : null;
+  return {
+    n: isNum(raw.n) ? raw.n : 0,
+    spread: { open: pair(raw.spread?.open, "home", "away"), close: pair(raw.spread?.close, "home", "away") },
+    total: { open: pair(raw.total?.open, "over", "under"), close: pair(raw.total?.close, "over", "under") },
+    ml: { home: raw.ml.home, away: raw.ml.away },
+  };
 }
 
 /** Parse + shape-check a raw lines.json payload. Malformed -> null (treated like unpublished). */
@@ -286,4 +310,101 @@ export function pickAndGradeML(
 
   const pnl = result === "win" ? mlWinPnl(p) : result === "loss" ? LOSS_PNL : 0;
   return { side, result, pnl };
+}
+
+/* ============================================================================
+ * VALUE grading (owner 2026-10-17): the record counts only bets we would
+ * actually make -- a side whose sim probability beats the price's break-even
+ * by at least MIN_EDGE. Default also requires the side to be the sim's
+ * >50% side; `dogs` adds value underdogs (market 25%, us 35%). A game with
+ * value on neither side is NO BET. Spread/total at the file's fixed price
+ * (-110), push excluded from the probability; ML at the frame's real price.
+ * ========================================================================== */
+
+export const MIN_EDGE = 0.03;
+
+export type ValueGrade = GradeResult<string> & {
+  /** Sim probability of the side (push-excluded for spread/total). */
+  prob: number;
+  /** prob minus the price's break-even probability. */
+  edge: number;
+  /** The sim gives this side under 50%. */
+  dog: boolean;
+};
+
+/** Break-even probability of an american price. */
+export function breakEven(price: number): number {
+  return price < 0 ? -price / (-price + 100) : 100 / (price + 100);
+}
+
+type Cand = { side: string; prob: number; price: number };
+
+function bestValue(cands: Cand[], dogs: boolean, minEdge: number) {
+  let best: (Cand & { edge: number }) | null = null;
+  for (const c of cands) {
+    const edge = c.prob - breakEven(c.price);
+    if (edge < minEdge - EPS) continue;
+    if (!dogs && c.prob <= 0.5) continue;
+    if (!best || edge > best.edge) best = { ...c, edge };
+  }
+  return best;
+}
+
+function gradeSide(won: boolean | null, price: number): { result: "win" | "loss" | "push"; pnl: number } {
+  if (won === null) return { result: "push", pnl: 0 };
+  return won ? { result: "win", pnl: mlWinPnl(price) } : { result: "loss", pnl: LOSS_PNL };
+}
+
+/** The value pick for one market of one game at one frame, or null (no bet).
+ *  finals null = pick only (no-contest / pre-grade): result is a push. */
+export function pickValue(
+  market: "spread" | "total" | "ml",
+  g: WeekLinesGame,
+  frame: Frame,
+  stPrice: number | null,
+  finals: { A: number; B: number } | null,
+  dogs: boolean,
+  minEdge = MIN_EDGE,
+): ValueGrade | null {
+  const sim = g.sim;
+  if (!sim) return null;
+  const st = isNum(stPrice) ? (stPrice as number) : -110;
+  if (market === "spread") {
+    const line = frame === "open" ? g.spread.open : g.spread.close;
+    const pr = frame === "open" ? sim.spread.open : sim.spread.close;
+    if (!isNum(line) || !pr || pr.home + pr.away <= 0) return null;
+    const d = pr.home + pr.away;
+    const b = bestValue([{ side: "home", prob: pr.home / d, price: st }, { side: "away", prob: pr.away / d, price: st }], dogs, minEdge);
+    if (!b) return null;
+    let won: boolean | null = null;
+    if (finals) {
+      const c = finals.A + (line as number) - finals.B;
+      won = Math.abs(c) < EPS ? null : (c > 0) === (b.side === "home");
+    }
+    return { side: b.side, prob: b.prob, edge: b.edge, dog: b.prob < 0.5, ...gradeSide(won, st) };
+  }
+  if (market === "total") {
+    const line = frame === "open" ? g.total.open : g.total.close;
+    const pr = frame === "open" ? sim.total.open : sim.total.close;
+    if (!isNum(line) || !pr || pr.over + pr.under <= 0) return null;
+    const d = pr.over + pr.under;
+    const b = bestValue([{ side: "over", prob: pr.over / d, price: st }, { side: "under", prob: pr.under / d, price: st }], dogs, minEdge);
+    if (!b) return null;
+    let won: boolean | null = null;
+    if (finals) {
+      const c = finals.A + finals.B - (line as number);
+      won = Math.abs(c) < EPS ? null : (c > 0) === (b.side === "over");
+    }
+    return { side: b.side, prob: b.prob, edge: b.edge, dog: b.prob < 0.5, ...gradeSide(won, st) };
+  }
+  const ph = frame === "open" ? g.ml.home_open : g.ml.home_close;
+  const pa = frame === "open" ? g.ml.away_open : g.ml.away_close;
+  const cands: Cand[] = [];
+  if (isNum(ph)) cands.push({ side: "home", prob: sim.ml.home, price: ph as number });
+  if (isNum(pa)) cands.push({ side: "away", prob: sim.ml.away, price: pa as number });
+  const b = bestValue(cands, dogs, minEdge);
+  if (!b) return null;
+  let won: boolean | null = null;
+  if (finals) won = finals.A === finals.B ? null : (finals.A > finals.B) === (b.side === "home");
+  return { side: b.side, prob: b.prob, edge: b.edge, dog: b.prob < 0.5, ...gradeSide(won, b.price) };
 }

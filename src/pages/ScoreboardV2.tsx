@@ -79,7 +79,7 @@ import { useLiveGrid, useLiveGrids, type LiveGrid } from "../lib/liveGrid";
 import { ballFromSituation, projectedFinal, simStateOf } from "../lib/liveRecord";
 import { useLivePlayers } from "../lib/livePlayers";
 import {
-  useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML,
+  useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML, pickValue, MIN_EDGE,
   type Frame, type WeekLines,
 } from "../lib/weekLines";
 
@@ -4351,6 +4351,22 @@ type SlateResultCount = { win: number; loss: number; push: number };
 type MarketAgg = { win: number; loss: number; push: number; pnl: number };
 const mkMarketAgg = (): MarketAgg => ({ win: 0, loss: 0, push: 0, pnl: 0 });
 
+/** How the record picks its bets. "value" (default, owner 2026-10-17): only
+ *  sides whose sim probability beats the price's break-even by MIN_EDGE, and
+ *  (unless `dogs`) only the sim's >50% side. "leans": the old every-game
+ *  lean, one side per market, flat. */
+type RecordMode = { kind: "value" | "leans"; dogs: boolean };
+type Bucket = { n: number; pnl: number };
+type ValueSplits = {
+  /** edge 3-6 pts / 6-10 / 10+ */
+  edge: [Bucket, Bucket, Bucket];
+  fav: Bucket;
+  dog: Bucket;
+  /** games the value grader could price (lines.json carries `sim`) */
+  games: number;
+};
+const mkBucket = (): Bucket => ({ n: 0, pnl: 0 });
+
 /**
  * ATS/Total/ML record + PnL for the currently filtered slate, at one frame
  * (open/close). Pure aggregation over `computeLineRecord`'s own inputs —
@@ -4364,10 +4380,13 @@ function computeLineRecord(
   cards: CardGame[],
   linesFbs: WeekLines | null,
   linesFcs: WeekLines | null,
-  frame: Frame
-): { ats: MarketAgg; tot: MarketAgg; ml: MarketAgg; provisionalGames: number } {
+  frame: Frame,
+  mode: RecordMode = { kind: "leans", dogs: false },
+): { ats: MarketAgg; tot: MarketAgg; ml: MarketAgg; provisionalGames: number; splits: ValueSplits } {
   const ats = mkMarketAgg(), tot = mkMarketAgg(), ml = mkMarketAgg();
   let provisionalGames = 0;
+  const splits: ValueSplits = { edge: [mkBucket(), mkBucket(), mkBucket()], fav: mkBucket(), dog: mkBucket(), games: 0 };
+  const value = mode.kind === "value";
 
   for (const c of cards) {
     const graded = c.scoreSource === "CSV_FINALS" || c.resultsProvisional === true;
@@ -4380,6 +4399,27 @@ function computeLineRecord(
     const slug = c.jsonRow?.slug;
     const lg = slug ? wl.games[slug] : undefined;
     if (!lg) continue;
+
+    if (value) {
+      // VALUE: a bet only where the sim beats the price; no-contest = push.
+      if (!lg.sim) continue;
+      splits.games++;
+      const fin = c.noContest ? null
+        : typeof c.finalA === "number" && typeof c.finalB === "number" ? { A: c.finalA, B: c.finalB } : undefined;
+      if (fin === undefined) continue;
+      let contributed = false;
+      for (const [mk, agg] of [["spread", ats], ["total", tot], ["ml", ml]] as const) {
+        const v = pickValue(mk, lg, frame, wl.spread_total_price, fin, mode.dogs);
+        if (!v) continue;
+        agg[v.result]++; agg.pnl += v.pnl; contributed = true;
+        const b = splits.edge[v.edge >= 0.10 ? 2 : v.edge >= 0.06 ? 1 : 0];
+        b.n++; b.pnl += v.pnl;
+        const fd = v.dog ? splits.dog : splits.fav;
+        fd.n++; fd.pnl += v.pnl;
+      }
+      if (contributed && (c.resultsProvisional || c.noContest)) provisionalGames++;
+      continue;
+    }
 
     if (c.noContest) {
       // Canceled/postponed: every market this frame could have priced is a
@@ -4419,7 +4459,7 @@ function computeLineRecord(
     if (contributed && c.resultsProvisional) provisionalGames++;
   }
 
-  return { ats, tot, ml, provisionalGames };
+  return { ats, tot, ml, provisionalGames, splits };
 }
 
 const fmtMarketRecord = (r: SlateResultCount): string | null => {
@@ -4458,6 +4498,12 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
   liveGrids?: Map<string, LiveGrid>;
 }) {
   const [frame, setFrame] = useState<Frame>("open");
+  /* VALUE by default (owner 2026-10-17): the record counts only bets we would
+     make. Value underdogs (sim under 50% but above the price's break-even)
+     are opt-in; "All leans" keeps the old every-game view. */
+  const [modeKind, setModeKind] = useState<"value" | "leans">("value");
+  const [dogs, setDogs] = useState(false);
+  const mode = useMemo<RecordMode>(() => ({ kind: modeKind, dogs }), [modeKind, dogs]);
 
   /* PROJECTED (owner 2026-10-17): the same record, with every live game
      graded at the same frame's lines against its PROJECTED FINAL (current
@@ -4480,7 +4526,7 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
                finalA: pf.A, finalB: pf.B } as CardGame;
     });
     if (!nLive) return null;
-    const lineRec = computeLineRecord(asFinal, weekLines, weekLinesFcs, frame);
+    const lineRec = computeLineRecord(asFinal, weekLines, weekLinesFcs, frame, mode);
     const n = (r: MarketAgg) => r.win + r.loss + r.push;
     if (n(lineRec.ats) + n(lineRec.tot) + n(lineRec.ml) > 0) {
       return { rec: lineRec, nLive, priced: true };
@@ -4500,12 +4546,12 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
       if (r.mlResult) ml[r.mlResult]++;
     }
     return { rec: { ats, tot, ml, provisionalGames: 0 }, nLive, priced: false };
-  }, [cards, liveGrids, weekLines, weekLinesFcs, frame]);
+  }, [cards, liveGrids, weekLines, weekLinesFcs, frame, mode]);
 
   const anyLines = weekLines !== null || weekLinesFcs !== null;
   const rec = useMemo(
-    () => (anyLines ? computeLineRecord(cards, weekLines, weekLinesFcs, frame) : null),
-    [cards, weekLines, weekLinesFcs, frame, anyLines]
+    () => (anyLines ? computeLineRecord(cards, weekLines, weekLinesFcs, frame, mode) : null),
+    [cards, weekLines, weekLinesFcs, frame, anyLines, mode]
   );
 
   // A lines file can resolve while pricing ZERO displayed games (an FCS view
@@ -4515,8 +4561,36 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
   const recPriced = rec
     ? rec.ats.win + rec.ats.loss + rec.ats.push +
       rec.tot.win + rec.tot.loss + rec.tot.push +
-      rec.ml.win + rec.ml.loss + rec.ml.push > 0
+      rec.ml.win + rec.ml.loss + rec.ml.push > 0 || (modeKind === "value" && rec.splits.games > 0)
     : false;
+
+  const modeToggle = (
+    <span style={{ display: "inline-flex", gap: 2, flex: "none", flexWrap: "wrap" }}>
+      <button
+        type="button" className="ui-btn" data-on={modeKind === "value" ? "true" : "false"}
+        title={`Only bets with value: the sim's probability beats the price's break-even by ${Math.round(MIN_EDGE * 100)}+ points`}
+        onClick={() => setModeKind("value")} style={{ padding: "2px 8px", fontSize: 11 }}
+      >
+        Value
+      </button>
+      {modeKind === "value" && (
+        <button
+          type="button" className="ui-btn" data-on={dogs ? "true" : "false"}
+          title="Also count value underdogs: sides the sim gives under 50% but above the price's break-even (market 25%, us 35%)"
+          onClick={() => setDogs((d) => !d)} style={{ padding: "2px 8px", fontSize: 11 }}
+        >
+          + Dogs
+        </button>
+      )}
+      <button
+        type="button" className="ui-btn" data-on={modeKind === "leans" ? "true" : "false"}
+        title="Every game, the side the sim leans, value or not"
+        onClick={() => setModeKind("leans")} style={{ padding: "2px 8px", fontSize: 11 }}
+      >
+        All leans
+      </button>
+    </span>
+  );
 
   const frameToggle = (
     <span style={{ display: "inline-flex", gap: 2, flex: "none" }}>
@@ -4615,12 +4689,29 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
      toggle at the right. The pricing footnote is a tooltip, not a line. */
   const totalPnl = rows.reduce((t, r) => t + r.pnl, 0);
   const tp = fmtPnl(totalPnl);
+  const nBets = [rec.ats, rec.tot, rec.ml].reduce((t, r) => t + r.win + r.loss + r.push, 0);
+  const sp = rec.splits;
+  const bk = (label: string, b: Bucket) => {
+    if (!b.n) return null;
+    const f = fmtPnl(b.pnl);
+    return (
+      <span key={label} style={{ whiteSpace: "nowrap" }}>
+        {label} <span style={{ color: f.color, fontWeight: 700 }}>{f.text}</span> ({b.n})
+      </span>
+    );
+  };
+  const splitParts = modeKind === "value"
+    ? [bk("edge 3–6", sp.edge[0]), bk("6–10", sp.edge[1]), bk("10+", sp.edge[2]),
+       ...(dogs ? [bk("favs", sp.fav), bk("dogs", sp.dog)] : [])].filter(Boolean)
+    : [];
 
   return (
     <>
     <div
       className="slate-tally-bar"
-      title="Spread/total priced −110 · ML at consensus price · 1u flat"
+      title={modeKind === "value"
+        ? `Value bets only: sim probability ≥ ${Math.round(MIN_EDGE * 100)} pts over the price's break-even${dogs ? " (value underdogs included)" : ", sim's >50% side only"} · spread/total −110 · ML at consensus price · 1u flat · ${nBets} bets across ${sp.games} games`
+        : "Every game, the sim's lean · spread/total −110 · ML at consensus price · 1u flat"}
       style={{
         ...(condensed ? { fontSize: 11, padding: "5px 10px" } : undefined),
         flexWrap: "nowrap", gap: 10,
@@ -4639,6 +4730,9 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
         })}
         <span style={{ color: "var(--muted)" }}>·</span>
         <span style={{ color: tp.color, fontWeight: 800 }}>{tp.text}</span>
+        {modeKind === "value" && (
+          <span className="slate-tally-bar__dim">({nBets} bet{nBets === 1 ? "" : "s"} / {sp.games} games)</span>
+        )}
         {rec.provisionalGames > 0 && (
           <span
             className="slate-tally-bar__dim"
@@ -4649,7 +4743,9 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
           </span>
         )}
       </div>
-      <div style={{ display: "inline-flex", gap: 2, marginLeft: "auto", flex: "none" }}>
+      <div style={{ display: "inline-flex", gap: 6, marginLeft: "auto", flex: "none", flexWrap: "wrap", justifyContent: "flex-end" }}>
+        {modeToggle}
+        <span style={{ display: "inline-flex", gap: 2 }}>
         <button
           type="button" className="ui-btn" data-on={frame === "open" ? "true" : "false"}
           onClick={() => setFrame("open")} style={{ padding: "2px 8px", fontSize: 11 }}
@@ -4662,8 +4758,19 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
         >
           Close
         </button>
+        </span>
       </div>
     </div>
+    {splitParts.length > 0 && (
+      <div
+        className="slate-tally-bar"
+        style={{ ...(condensed ? { fontSize: 11, padding: "4px 10px" } : { fontSize: 12, padding: "4px 12px" }),
+                 flexWrap: "wrap", gap: "2px 10px", color: "var(--muted)" }}
+      >
+        <span>By edge:</span>
+        {splitParts}
+      </div>
+    )}
     {projRow}
     </>
   );
