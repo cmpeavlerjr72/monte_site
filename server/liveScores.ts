@@ -2840,6 +2840,197 @@ app.get("/api/me/role", (req: Request, res: Response) => {
   res.json({ signed_in: Boolean(uid), owner: Boolean(uid && PORTAL_OWNER_UIDS.has(uid)) });
 });
 
+// ============================================================================
+// FIRST-PARTY TRAFFIC ANALYTICS (owner 2026-10-18)
+//
+// POST /api/t          the browser reports one page view or key click (no auth).
+// GET  /api/me/traffic owner-only summary for the hidden /stats page.
+//
+// Rows land in public.page_events (supabase/migrations/20261018_page_events.sql:
+// RLS on, no policies, so ONLY this server's service role touches it). Stored:
+// path, ?src= tag, referrer HOST, a random per-device id + per-tab session id,
+// device class, Cloudflare's 2-letter country. NEVER stored: IP, user-agent,
+// name, email, user id. Bots are dropped by user-agent; a device is capped at
+// T_RATE_MAX events per 10 minutes. The endpoint always answers 204 at once and
+// never reports an error to the page: analytics must not be able to break it.
+// ============================================================================
+const T_BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|headless|lighthouse|python-requests|curl\/|wget|httpclient|axios|node-fetch/i;
+const T_RATE_MAX = 150;
+const tRate = new Map<string, { at: number; n: number }>();
+
+function tClip(v: unknown, n: number): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s ? s.slice(0, n) : null;
+}
+
+function tDevice(ua: string): "mobile" | "tablet" | "desktop" {
+  if (/iPad|Tablet|PlayBook|Silk|(Android(?!.*Mobile))/i.test(ua)) return "tablet";
+  if (/Mobi|iPhone|iPod|Android|IEMobile|Opera Mini/i.test(ua)) return "mobile";
+  return "desktop";
+}
+
+function tRefHost(r: unknown): string | null {
+  const s = tClip(r, 500);
+  if (!s) return null;
+  try {
+    const h = new URL(s).hostname.toLowerCase().replace(/^www\./, "").replace(/^(old|m|np|amp)\.reddit\.com$/, "reddit.com");
+    if (!h || /(^|\.)mvpeav\.com$/.test(h) || h === "localhost") return null;
+    return h.slice(0, 120);
+  } catch { return null; }
+}
+
+app.post("/api/t", (req: Request, res: Response) => {
+  res.status(204).end();
+  try {
+    if (!supa) return;
+    const ua = String(req.header("user-agent") || "");
+    if (!ua || T_BOT_UA.test(ua)) return;
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const kind = b.k === "click" ? "click" : b.k === "view" ? "view" : null;
+    const vid = tClip(b.v, 40), sid = tClip(b.s, 40), path = tClip(b.p, 300);
+    if (!kind || !vid || !sid || !path || !path.startsWith("/")) return;
+    const now = Date.now();
+    const r = tRate.get(vid);
+    if (r && now - r.at < 600_000) { if (++r.n > T_RATE_MAX) return; }
+    else { if (tRate.size > 20_000) tRate.clear(); tRate.set(vid, { at: now, n: 1 }); }
+    const country = tClip(req.header("cf-ipcountry"), 2);
+    const row = {
+      kind, path,
+      label: kind === "click" ? tClip(b.l, 120) : null,
+      src: tClip(b.c, 60)?.toLowerCase().replace(/[^a-z0-9_.-]/g, "") || null,
+      ref_host: tRefHost(b.r),
+      vid, sid,
+      is_new: b.n === true,
+      device: tDevice(ua),
+      country: country && /^[A-Z]{2}$/.test(country) && country !== "XX" ? country : null,
+      signed_in: b.a === true,
+    };
+    void supa.from("page_events").insert(row).then(({ error }) => {
+      if (error) console.warn("[traffic] insert failed:", error.message);
+    });
+  } catch (err: any) {
+    console.warn("[traffic] dropped event:", err?.message ?? err);
+  }
+});
+
+type TRow = { ts: string; kind: string; path: string; label: string | null; src: string | null;
+  ref_host: string | null; vid: string; sid: string; is_new: boolean; device: string | null;
+  country: string | null; signed_in: boolean };
+
+/** Group a path for the "pages" table: blog posts by slug, game pages by game,
+ *  query strings dropped. */
+function tPageKey(p: string): string {
+  const path = p.split("?")[0].split("#")[0].replace(/\/+$/, "") || "/";
+  return path.length > 120 ? path.slice(0, 120) : path;
+}
+
+/** A session's SOURCE: its first tagged ?src= if any, else the first external
+ *  referrer host, else "direct". Labels group the hosts people recognise. */
+function tSourceOf(src: string | null, host: string | null): string {
+  if (src) return `tag:${src}`;
+  if (!host) return "direct / unknown";
+  if (host === "t.co" || host === "x.com" || host === "twitter.com") return "x.com";
+  if (host.endsWith("reddit.com")) return "reddit.com";
+  if (/^(google|bing|duckduckgo|search\.yahoo|yandex)\./.test(host) || host.includes("google.")) return `search: ${host}`;
+  return host;
+}
+
+app.get("/api/me/traffic", asyncRoute(async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  const uid = supaUserOf(req)?.id ?? null;
+  if (!supa) { res.status(503).json({ error: "not_configured" }); return; }
+  if (!uid) { res.status(401).json({ error: "sign_in_required" }); return; }
+  if (!PORTAL_OWNER_UIDS.has(uid)) { res.status(403).json({ error: "owner_only" }); return; }
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const rows: TRow[] = [];
+  const PAGE = 1000, MAX = 300_000;
+  for (let from = 0; from < MAX; from += PAGE) {
+    const { data, error } = await supa.from("page_events")
+      .select("ts,kind,path,label,src,ref_host,vid,sid,is_new,device,country,signed_in")
+      .gte("ts", since).order("ts", { ascending: true }).range(from, from + PAGE - 1);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    rows.push(...((data ?? []) as TRow[]));
+    if (!data || data.length < PAGE) break;
+  }
+
+  // ---- sessions: source + landing page = the session's first event
+  const sess = new Map<string, { source: string; landing: string; vid: string; views: number; clicks: number; betClicks: number }>();
+  for (const r of rows) {
+    let s = sess.get(r.sid);
+    if (!s) {
+      s = { source: tSourceOf(r.src, r.ref_host), landing: tPageKey(r.path), vid: r.vid, views: 0, clicks: 0, betClicks: 0 };
+      sess.set(r.sid, s);
+    } else if (s.source === "direct / unknown" && (r.src || r.ref_host)) {
+      s.source = tSourceOf(r.src, r.ref_host);
+    }
+    if (r.kind === "view") s.views++;
+    else { s.clicks++; if (r.label && /bet|kalshi|dk|draftkings|order|buy/i.test(r.label)) s.betClicks++; }
+  }
+
+  const views = rows.filter((r) => r.kind === "view");
+  const clicks = rows.filter((r) => r.kind === "click");
+  const uniq = (xs: string[]) => new Set(xs).size;
+
+  // ---- by day (ET calendar day)
+  const dayKey = (ts: string) => new Date(ts).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const byDay = new Map<string, { views: number; vids: Set<string> }>();
+  for (const r of views) {
+    const k = dayKey(r.ts);
+    const d = byDay.get(k) ?? { views: 0, vids: new Set<string>() };
+    d.views++; d.vids.add(r.vid); byDay.set(k, d);
+  }
+
+  // ---- pages
+  const pages = new Map<string, { views: number; vids: Set<string>; landings: number }>();
+  for (const r of views) {
+    const k = tPageKey(r.path);
+    const p = pages.get(k) ?? { views: 0, vids: new Set<string>(), landings: 0 };
+    p.views++; p.vids.add(r.vid); pages.set(k, p);
+  }
+  for (const s of sess.values()) { const p = pages.get(s.landing); if (p) p.landings++; }
+
+  // ---- sources
+  const sources = new Map<string, { sessions: number; vids: Set<string>; views: number; clicks: number; betClicks: number }>();
+  for (const s of sess.values()) {
+    const x = sources.get(s.source) ?? { sessions: 0, vids: new Set<string>(), views: 0, clicks: 0, betClicks: 0 };
+    x.sessions++; x.vids.add(s.vid); x.views += s.views; x.clicks += s.clicks; x.betClicks += s.betClicks;
+    sources.set(s.source, x);
+  }
+
+  const count = (xs: (string | null)[]) => {
+    const m = new Map<string, number>();
+    for (const x of xs) m.set(x ?? "unknown", (m.get(x ?? "unknown") ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([key, n]) => ({ key, n }));
+  };
+
+  // device / country per VISITOR (their first view), not per view
+  const firstByVid = new Map<string, TRow>();
+  for (const r of views) if (!firstByVid.has(r.vid)) firstByVid.set(r.vid, r);
+
+  res.json({
+    days, since, generated: new Date().toISOString(), rows: rows.length, truncated: rows.length >= MAX,
+    totals: {
+      views: views.length, visitors: uniq(views.map((r) => r.vid)), sessions: sess.size,
+      new_visitors: uniq(views.filter((r) => r.is_new).map((r) => r.vid)),
+      clicks: clicks.length,
+      signed_in_visitors: uniq(views.filter((r) => r.signed_in).map((r) => r.vid)),
+    },
+    by_day: [...byDay.entries()].sort().map(([day, d]) => ({ day, views: d.views, visitors: d.vids.size })),
+    pages: [...pages.entries()].map(([path, p]) => ({ path, views: p.views, visitors: p.vids.size, landings: p.landings }))
+      .sort((a, b) => b.views - a.views).slice(0, 100),
+    sources: [...sources.entries()].map(([source, x]) => ({ source, sessions: x.sessions, visitors: x.vids.size,
+      views: x.views, pages_per_session: x.sessions ? +(x.views / x.sessions).toFixed(2) : 0,
+      clicks: x.clicks, bet_clicks: x.betClicks }))
+      .sort((a, b) => b.sessions - a.sessions),
+    clicks: count(clicks.map((r) => r.label)).slice(0, 40),
+    click_pages: count(clicks.map((r) => `${r.label ?? "?"} @ ${tPageKey(r.path)}`)).slice(0, 40),
+    devices: count([...firstByVid.values()].map((r) => r.device)),
+    countries: count([...firstByVid.values()].map((r) => r.country)).slice(0, 20),
+  });
+}));
+
 /** 503 / 401 in one place, so no linking route can forget either. */
 function linkGate(req: Request, res: Response): SupaUser | null {
   res.set("Cache-Control", "no-store");

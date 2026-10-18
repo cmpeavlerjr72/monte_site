@@ -2401,7 +2401,7 @@ export function ConfirmSlip({
 
         <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
           {!resp && (
-            <button type="button" className="ui-btn" data-on="true" onClick={send}
+            <button type="button" className="ui-btn" data-on="true" data-track="bet:place-order" onClick={send}
                     disabled={busy || !canSend}
                     title={canSend ? undefined : "Tick a rung and give it a whole contract count"}
                     style={{

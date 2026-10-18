@@ -5036,6 +5036,7 @@ function CardPanelHost({
                 type="button"
                 role="tab"
                 aria-selected={on}
+                data-track={`tab:${t.kind}`}
                 onClick={() => { if (!on) onTab?.(t.kind); }}
                 style={{
                   flex: "none", border: "none", background: "transparent",

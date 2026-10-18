@@ -163,6 +163,7 @@ export default function TailButton(
         type="button"
         className="ui-btn"
         data-primary="true"
+        data-track="tail"
         data-on={ready ? "true" : undefined}
         disabled={!ready}
         onClick={() => setSlip({ idem: newIdempotencyKey() })}

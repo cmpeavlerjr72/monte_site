@@ -299,7 +299,7 @@ function CredentialsForm({ prompt, compact, startMode }: {
         <span style={{ fontSize: 10.5, color: "var(--neg)" }}>{error}</span>
       )}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        <button type="submit" className="ui-btn" data-primary="true" disabled={!canSubmit || busy} style={BTN}>
+        <button type="submit" className="ui-btn" data-primary="true" data-track={mode === "signin" ? "auth:login" : "auth:signup"} disabled={!canSubmit || busy} style={BTN}>
           {busy ? "One sec…" : mode === "signin" ? "Log in" : "Sign up"}
         </button>
         {mode === "signin" && (

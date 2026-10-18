@@ -11,6 +11,7 @@ import { SiteTicker } from "./components/site/ScoreTicker";
 import SiteFooter from "./components/SiteFooter";
 import { Skeleton, SkeletonLines } from "./components/Skeleton";
 import { lazyPage, RouteErrorBoundary } from "./lib/lazyPage";
+import { useTrafficTracking } from "./lib/track";
 
 // theme.css and index.css are imported ONCE, in main.tsx, ahead of App so
 // they stay first in the cascade (they were also imported here until
@@ -101,6 +102,8 @@ const TEST_ROUTES =
 const TestVisual = lazyPage(() => import("./pages/TestVisual"));
 const TestGamecast = lazyPage(() => import("./pages/TestGamecast"));
 const TestBets = lazyPage(() => import("./pages/TestBets"));
+// Owner-only traffic stats (2026-10-18): no nav entry; the server gates the data.
+const TrafficStats = lazyPage(() => import("./pages/TrafficStats"));
 
 
 /** Shown while a route's chunk downloads (usually a few hundred ms). */
@@ -116,6 +119,7 @@ function RouteFallback() {
 
 export default function App() {
   const { pathname } = useLocation();
+  useTrafficTracking();
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)", color: "var(--text)" }}>
       <a className="skip-link" href="#main">Skip to content</a>
@@ -239,6 +243,7 @@ export default function App() {
 
           {/* Hidden, DEV-ONLY (see TEST_ROUTES): sim-test scoreboard */}
           {TEST_ROUTES && <Route path="/test-visual" element={<TestVisual />} />}
+          <Route path="/stats" element={<TrafficStats />} />
           {/* Hidden, DEV-ONLY: live-gamecast component harness vs any ESPN event */}
           {TEST_ROUTES && <Route path="/test-gamecast" element={<TestGamecast />} />}
           {/* Hidden, DEV-ONLY: Bets-panel harness — the week-2 decision rules
