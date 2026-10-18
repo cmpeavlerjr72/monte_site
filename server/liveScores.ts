@@ -2856,6 +2856,15 @@ app.get("/api/me/role", (req: Request, res: Response) => {
 // ============================================================================
 const T_BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|headless|lighthouse|python-requests|curl\/|wget|httpclient|axios|node-fetch/i;
 const T_RATE_MAX = 150;
+/** Who may read /api/me/traffic besides CFB_PORTAL_OWNERS. CFB_PORTAL_OWNERS
+ *  drops an entry whose portal account is not registered on this host (seen on
+ *  prod 2026-10-18: the owner's `mvpeav` login got "owner only"), so the stats
+ *  page keys on the owner's Supabase uid directly. TRAFFIC_VIEWERS (comma list
+ *  of uids) overrides the default. A uid is not a secret but cannot be forged:
+ *  it comes from a JWT the server verified. */
+const TRAFFIC_VIEWER_UIDS = new Set(
+  (process.env.TRAFFIC_VIEWERS || "fe22741b-0e66-4ab6-ac40-5b2722a1faf0")   // mvpeav (owner)
+    .split(",").map((x) => x.trim()).filter(Boolean));
 const tRate = new Map<string, { at: number; n: number }>();
 
 function tClip(v: unknown, n: number): string | null {
@@ -2941,8 +2950,8 @@ app.get("/api/me/traffic", asyncRoute(async (req: Request, res: Response) => {
   const uid = supaUserOf(req)?.id ?? null;
   if (!supa) { res.status(503).json({ error: "not_configured" }); return; }
   if (!uid) { res.status(401).json({ error: "sign_in_required" }); return; }
-  if (!PORTAL_OWNER_UIDS.has(uid)) { res.status(403).json({ error: "owner_only" }); return; }
-  const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
+  if (!PORTAL_OWNER_UIDS.has(uid) && !TRAFFIC_VIEWER_UIDS.has(uid)) { res.status(403).json({ error: "owner_only" }); return; }
+  const days =Math.min(90, Math.max(1, Number(req.query.days) || 7));
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const rows: TRow[] = [];
   const PAGE = 1000, MAX = 300_000;
