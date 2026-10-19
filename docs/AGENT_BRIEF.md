@@ -4,6 +4,39 @@ Read this before touching the scoreboard. It replaces inheriting a prior
 agent's transcript. Keep it current: if you change a contract below, update
 this file in the same commit.
 
+## The Sim Book (`/simbook`, 2026-10-19) — the sim is the house
+
+A PRIVATE sportsbook: an invited friend bets units on DraftKings' lines at the
+house's prices, the server grades every ticket, the owner reads whether "ball
+knowledge" beat the sim. No nav entry. Code: `server/simbook.ts` (routes,
+pricing, grading; mounted from liveScores.ts behind `supabaseAuth`),
+`src/pages/SimBook.tsx`, `src/styles/simbook.css`. Tables:
+`supabase/migrations/20261019_simbook.sql` (APPLIED; RLS on, NO client policy,
+server-only via the service role).
+
+- **Who.** `simbook_players` (invited uids, `max_stake`, `active`) + the owner
+  (`CFB_PORTAL_OWNERS`). The owner is the house and cannot bet; he invites by
+  site username on the "All bets" tab. Everyone else gets 403.
+- **Lines** = DraftKings SPORTSBOOK via SportsGameOdds (`SGO_API_KEY` on
+  Render; the "DK" elsewhere on this site is DK Predictions, a different
+  venue). Plan cap 2,500 games/month: a game's board is fetched only when it is
+  opened (1 game, cached 2 min), never the whole slate; the server checks
+  `/account/usage` and refuses new reads above `SIMBOOK_SGO_MONTH_CAP` (2300).
+  10 requests/min is queued, not 429'd.
+- **Price** (owner decision): worst-for-him of DK's price, `(1-H)/p_house` and
+  `(1-0.03)/q_sim`, where `p_house` = mean(sim, DK no-vig). H = 4.5% game lines,
+  6% props, compounding per parlay leg. Sim probabilities come from `seeds.json`
+  (parlays use the joint over the same seeds). DK lists prop OVERS only; the
+  under is ours, priced off the over's no-vig. Whole-number lines can't go in a
+  parlay (no push math in parlays).
+- **Trust.** The browser sends leg KEYS, never a price; `/bet` re-fetches DK
+  (45s), re-prices, refuses after kickoff, and answers 409 `price_changed` when
+  his price got worse. Bettor payloads never carry `q_sim`/`p_mkt`/`house_ev`.
+- **Grading**: every 15 min (and owner "Grade now"), legs whose game kicked off
+  3h+ ago are graded from the SGO event (`results.game`, finalized); a player
+  missing from results = DNP = void; a void leg voids a parlay. Closing line =
+  SGO consensus close, kept per leg.
+
 ## A handle is a door (2026-09-10)
 
 `/u/:handle` (src/pages/FriendPage.tsx) = one person's open positions with

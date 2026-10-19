@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 // Pure, so scripts/check_fcs_names.mjs can verify the Kalshi join against the
 // real FBS + FCS school lists without booting this server.
 import { cfbNameKey, pairKeyOf } from "./cfbNames.js";
+import { registerSimbook } from "./simbook.js";
 // ACCOUNTS (docs/ACCOUNTS_DESIGN.md): the SERVICE-ROLE client. It exists to do
 // three things and nothing else — verify JWTs, write app_orders rows, and read
 // allowlists. It is never exposed to a client and its key is never logged.
@@ -2387,6 +2388,15 @@ app.get("/api/me/role", (req, res) => {
     res.set("Cache-Control", "no-store");
     const uid = supaUserOf(req)?.id ?? null;
     res.json({ signed_in: Boolean(uid), owner: Boolean(uid && PORTAL_OWNER_UIDS.has(uid)) });
+    // THE SIM BOOK (owner 2026-10-19): a private sportsbook where the sim is the
+    // house. Routes, pricing and grading live in server/simbook.ts.
+    app.use("/api/simbook", supabaseAuth);
+    registerSimbook(app, {
+        supa,
+        userOf: supaUserOf,
+        isOwner: (uid) => PORTAL_OWNER_UIDS.has(uid),
+        hfOwner: HF_OWNER,
+    });
 });
 // ============================================================================
 // FIRST-PARTY TRAFFIC ANALYTICS (owner 2026-10-18)
