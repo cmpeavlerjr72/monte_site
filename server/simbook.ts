@@ -722,8 +722,17 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     try {
       const week = Number(req.query.week) || (await currentWeek(deps));
       const games = await slate(deps, week);
-      res.json({ season: SEASON, week, games: games.map((g) => ({ slug: g.slug, home: g.home, away: g.away, kickoff: g.kickoff,
-        started: Date.now() >= Date.parse(g.kickoff) - 60_000 })) });
+      // the card's at-rest line (consensus, from our own lines.json: no SGO read).
+      // House prices only come with the game's board, fetched when he opens it.
+      const ww = String(week).padStart(2, "0");
+      const lines = await hfJson(deps, `${SEASON}/weeks/week${ww}/lines.json`).catch(() => null);
+      const num = (x: any) => (x == null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x));
+      res.json({ season: SEASON, week, games: games.map((g) => {
+        const L = lines?.games?.[g.slug];
+        return { slug: g.slug, home: g.home, away: g.away, kickoff: g.kickoff,
+          started: Date.now() >= Date.parse(g.kickoff) - 60_000,
+          spread: num(L?.spread?.close ?? L?.spread?.open), total: num(L?.total?.close ?? L?.total?.open) };
+      }) });
     } catch (err) { fail(res, err); }
   });
 

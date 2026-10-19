@@ -31,6 +31,13 @@ server-only via the service role).
   price, and no long ladders: per market only the line(s) DK prices nearest
   50/50 (closest + up to 2 more within 45-55%; `nearEven`). Whole-number lines
   can't go in a parlay (no push math in parlays).
+- **Layout** (owner 2026-10-19): the scoreboard's grammar, NOT a DK skin. One
+  card per game (logos, away on top, Spread/Total/ML cells; consensus line at
+  rest from lines.json, house prices once the game is opened, since SGO is metered
+  per game). Tapping a card opens a full-width drawer after its row with tabs
+  (Game Lines, Team Totals, one per prop stat). The slip reuses the global
+  `.parlay-*` classes: 2+ legs default to COMBO (house wants parlays), with a
+  Singles toggle (same stake per leg, one ticket each) and Clear.
 - **Trust.** The browser sends leg KEYS, never a price; `/bet` re-fetches DK
   (45s), re-prices, refuses after kickoff, and answers 409 `price_changed` when
   his price got worse. Bettor payloads never carry `q_sim`/`p_mkt`/`house_ev`.

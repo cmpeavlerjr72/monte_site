@@ -6,25 +6,42 @@
 // No nav entry: the page answers only for invited players and the owner.
 // Server + pricing rules: server/simbook.ts. Tables: 20261019_simbook.sql.
 //
+// LAYOUT (owner 2026-10-19): the scoreboard's grammar. One card per game (logos,
+// away row on top, Spread / Total / ML cells); tapping a card opens a full-width
+// drawer with tabs for every bet type and prop stat. The slip is the
+// scoreboard's parlay slip: 2+ legs default to a COMBO (the house wants parlays:
+// juice compounds per leg), with a Singles toggle and Clear.
+//
 // The bettor NEVER sees the sim's or the market's probability, only prices.
 // The owner additionally sees, per ticket, the sim %, DK's no-vig % and the
 // house's expected value, so "did the sim beat him" can be read off one card.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSession, getAccessToken, supabaseEnabled } from "../lib/supabase";
+import { getTeamLogo } from "../utils/teamLogo";
+import { displayTeamColor } from "../utils/teamColors";
+import { useIsDark } from "../lib/usePrefs";
 import AuthPanel from "../components/AuthPanel";
 import "../styles/simbook.css";
 
 type Me = { allowed: boolean; owner: boolean; player: { name: string; max_stake: number } | null; lines: boolean; preview?: boolean };
-type SlateGame = { slug: string; home: string; away: string; kickoff: string; started: boolean };
+type SlateGame = {
+  slug: string; home: string; away: string; kickoff: string; started: boolean;
+  /** consensus line for the closed card: home handicap, game total */
+  spread?: number | null; total?: number | null;
+};
 type Offer = {
   key: string; label: string; group: string; sub: string; main: boolean; market: string; side: string;
   line: number | null; american: number; dec: number; parlay_ok: boolean;
   dk_american?: number; q_sim?: number; p_mkt?: number; house_ev?: number;
 };
 type Board = { slug: string; home: string; away: string; kickoff: string; started: boolean; has_lines: boolean; offers: Offer[] };
-type SlipLeg = { key: string; label: string; american: number; game: string; parlay_ok: boolean };
+type BoardState = { board?: Board; err?: string; loading?: boolean };
+type SlipLeg = {
+  key: string; label: string; american: number; dec: number; parlay_ok: boolean;
+  slug: string; home: string; away: string; market: string; side: string;
+};
 type Ticket = {
   id: string; user_id: string; created_at: string; week: number; kind: "single" | "parlay"; stake: number; american: number;
   decimal_odds: number; status: "open" | "won" | "lost" | "push" | "void"; payout: number | null; settled_at: string | null;
@@ -35,19 +52,21 @@ type Ticket = {
 type Player = { user_id: string; name: string; active: boolean; max_stake: number };
 
 const am = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+const sgn = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 const u = (n: number, sign = false) => `${sign && n > 0 ? "+" : ""}${(Math.round(n * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}u`;
 const pct = (p?: number) => (p == null ? "—" : `${(p * 100).toFixed(1)}%`);
+const amToDec = (a: number) => (a > 0 ? 1 + a / 100 : 1 + 100 / -a);
 const kick = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) + " ET";
+  new Date(iso).toLocaleString("en-US", { weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).replace(",", " ·") + " ET";
 
 const ERRORS: Record<string, string> = {
   not_invited: "This book is invite-only.",
   started: "That game has kicked off. Bets are closed.",
-  leg_gone: "That line just moved off the board. The menu refreshed, pick again.",
-  parlay_push: "Whole-number lines can push, so they can't go in a parlay.",
-  same_market: "Two sides of the same bet can't go in one parlay.",
-  parlay_dead: "The house won't write that parlay.",
-  parlay_short: "That parlay is too short a price to write.",
+  leg_gone: "That line just moved off the board. Reopen the game and pick again.",
+  parlay_push: "Whole-number lines can push, so they can't go in a combo. Switch to singles or swap that leg.",
+  same_market: "Two sides of the same bet can't go in one combo.",
+  parlay_dead: "The house won't write that combo.",
+  parlay_short: "That combo is too short a price to write.",
   bad_stake: "Check the stake: it has to be above 0 and under your limit (max payout 250u).",
   budget: "The line feed is paused for the rest of the month.",
   no_lines: "The line feed isn't connected yet.",
@@ -69,32 +88,48 @@ async function api(path: string, init?: RequestInit) {
   return { ok: r.ok, status: r.status, body };
 }
 
-/* ----------------------------------------------------------------- board */
-// DraftKings-style board (owner 2026-10-19): a Spread / Total / Moneyline grid
-// with the away team on top, category pills for props, one row per player.
-// The server already trims each market to the line(s) nearest 50/50.
+/** Logo, or a team-colored square when we have no logo. */
+function Logo({ team, px = 22 }: { team: string; px?: number }) {
+  const isDark = useIsDark();
+  const src = getTeamLogo(team);
+  return src
+    ? <img src={src} alt="" width={px} height={px} loading="lazy" className="sbx-logo" />
+    : <span className="sbx-logo sbx-logo--blank" style={{ width: px, height: px, background: displayTeamColor(team, isDark) ?? "var(--brand)" }} aria-hidden />;
+}
 
+/** Which teams a leg is about, for the slip's logos. */
+function legTeams(l: SlipLeg): string[] {
+  if (l.market === "total" || l.market === "prop") return [l.away, l.home];
+  return [l.side.startsWith("home") ? l.home : l.away];
+}
+
+/* ----------------------------------------------------------------- board */
 const PROP_ORDER = ["Anytime TD", "Passing yards", "Passing TDs", "Completions", "Pass attempts", "Interceptions thrown",
   "Rushing yards", "Carries", "Receiving yards", "Receptions", "Pass + rush yards", "Rush + rec yards", "Touchdowns scored"];
-const sgn = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
-function Cell({ o, top, slipKeys, toggle, owner }: {
-  o?: Offer; top?: string; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean;
+/** One price cell: the line on top, the house price under it. Same footprint as the scoreboard's market cell. */
+function Cell({ o, top, slipKeys, toggle, owner, wide = false }: {
+  o?: Offer; top?: string; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean; wide?: boolean;
 }) {
-  if (!o) return <div className="sb-cell sb-cell--empty" aria-hidden>—</div>;
+  if (!o) return <div className="sbx-cell sbx-cell--empty" aria-hidden />;
   const on = slipKeys.has(o.key);
   return (
-    <button type="button" className="sb-cell" data-on={on ? "true" : undefined} onClick={() => toggle(o)} aria-pressed={on}
-            aria-label={`${o.label} ${am(o.american)}`}
+    <button type="button" className={wide ? "sbx-cell sbx-cell--wide" : "sbx-cell"} data-on={on ? "true" : undefined}
+            onClick={() => toggle(o)} aria-pressed={on} aria-label={`${o.label} ${am(o.american)}`}
             title={owner ? `sim ${pct(o.q_sim)} · DK no-vig ${pct(o.p_mkt)} · DK ${o.dk_american != null ? am(o.dk_american) : "—"} · house EV ${pct(o.house_ev)}` : undefined}>
-      {top ? <span className="sb-cell__line">{top}</span> : null}
-      <span className="sb-cell__price">{am(o.american)}</span>
-      {owner && <span className="sb-cell__own">sim {pct(o.q_sim)} · DK {o.dk_american != null ? am(o.dk_american) : "—"}</span>}
+      {top ? <span className="sbx-cell__line">{top}</span> : null}
+      <span className="sbx-cell__price">{am(o.american)}</span>
+      {owner && <span className="sbx-cell__own">sim {pct(o.q_sim)}</span>}
     </button>
   );
 }
 
-/** Distinct lines of one two-sided market, DK's main line first. */
+/** A muted line with no price yet (the card at rest, before the board loads). */
+function RestCell({ text }: { text?: string }) {
+  return <div className="sbx-cell sbx-cell--rest">{text ? <span className="sbx-cell__line">{text}</span> : null}</div>;
+}
+
+/** Distinct lines of a two-sided market, DK's main line first. */
 function linesOf(os: Offer[], refSide: (o: Offer) => boolean, refLine: (o: Offer) => number) {
   const seen: number[] = [];
   const refs = os.filter(refSide).sort((x, y) => Number(y.main) - Number(x.main));
@@ -102,244 +137,415 @@ function linesOf(os: Offer[], refSide: (o: Offer) => boolean, refLine: (o: Offer
   return seen;
 }
 
-function GameLines({ game, offers, slipKeys, toggle, owner }: {
-  game: SlateGame; offers: Offer[]; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean;
-}) {
-  const [alts, setAlts] = useState(false);
+/** Spread / total / ML pickers off a board, shared by the card and the drawer. */
+function gameMarkets(offers: Offer[]) {
   const sp = offers.filter((o) => o.market === "spread");
   const to = offers.filter((o) => o.market === "total");
   const ml = offers.filter((o) => o.market === "ml");
-  // spread lines keyed by the AWAY handicap; totals by the number
-  const spLines = linesOf(sp, (o) => o.side === "away", (o) => (o.side === "away" ? o.line! : -o.line!));
+  const spLines = linesOf(sp, (o) => o.side === "away", (o) => (o.side === "away" ? o.line! : -o.line!)); // keyed by AWAY handicap
   const toLines = linesOf(to, (o) => o.side === "over", (o) => o.line!);
   const spAt = (side: "away" | "home", awayLine?: number) =>
     awayLine == null ? undefined : sp.find((o) => o.side === side && o.line === (side === "away" ? awayLine : -awayLine));
   const toAt = (side: "over" | "under", line?: number) => (line == null ? undefined : to.find((o) => o.side === side && o.line === line));
-  const c = (o: Offer | undefined, top?: string) => <Cell o={o} top={top} slipKeys={slipKeys} toggle={toggle} owner={owner} />;
-  const spTop = (o?: Offer) => (o ? sgn(o.line!) : undefined);
-  const altCount = Math.max(0, spLines.length - 1) + Math.max(0, toLines.length - 1);
+  const mlAt = (side: "away" | "home") => ml.find((o) => o.side === side);
+  return { sp, to, ml, spLines, toLines, spAt, toAt, mlAt };
+}
 
-  const tt = offers.filter((o) => o.market === "tt");
-  const ttTeam = (who: "home" | "away") => {
-    const os = tt.filter((o) => o.side.startsWith(who));
-    return linesOf(os, (o) => o.side.endsWith("over"), (o) => o.line!).map((line) => ({
-      line, over: os.find((o) => o.side.endsWith("over") && o.line === line), under: os.find((o) => o.side.endsWith("under") && o.line === line),
-    }));
+function GameCard({ g, st, open, onOpen, slipKeys, toggle, owner }: {
+  g: SlateGame; st?: BoardState; open: boolean; onOpen: () => void;
+  slipKeys: Set<string>; toggle: (o: Offer, g: SlateGame) => void; owner: boolean;
+}) {
+  const board = st?.board && !st.board.started && st.board.has_lines ? st.board : null;
+  const m = board ? gameMarkets(board.offers) : null;
+  const t = (o: Offer) => toggle(o, g);
+  const onArea = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button, a, input")) return;
+    if (!g.started) onOpen();
   };
-  const ttRows = [{ team: game.away, rows: ttTeam("away") }, { team: game.home, rows: ttTeam("home") }].filter((r) => r.rows.length);
-
-  if (!sp.length && !to.length && !ml.length && !ttRows.length) return <p className="sb-note">No game lines posted yet.</p>;
+  const inSlip = board ? board.offers.filter((o) => slipKeys.has(o.key)).length : 0;
+  const row = (side: "away" | "home") => {
+    const team = side === "away" ? g.away : g.home;
+    if (m) {
+      const s0 = m.spAt(side, m.spLines[0]);
+      const t0 = m.toAt(side === "away" ? "over" : "under", m.toLines[0]);
+      return (
+        <>
+          <div className="sbx-team"><Logo team={team} /><span className="sbx-team__name" title={team}>{team}</span></div>
+          <Cell o={s0} top={s0 ? sgn(s0.line!) : undefined} slipKeys={slipKeys} toggle={t} owner={owner} />
+          <Cell o={t0} top={t0 ? `${side === "away" ? "O" : "U"} ${t0.line}` : undefined} slipKeys={slipKeys} toggle={t} owner={owner} />
+          <Cell o={m.mlAt(side)} slipKeys={slipKeys} toggle={t} owner={owner} />
+        </>
+      );
+    }
+    const hs = g.spread;
+    const spText = hs == null ? undefined : sgn(side === "home" ? hs : -hs);
+    const toText = g.total == null ? undefined : `${side === "away" ? "O" : "U"} ${g.total}`;
+    return (
+      <>
+        <div className="sbx-team"><Logo team={team} /><span className="sbx-team__name" title={team}>{team}</span></div>
+        <RestCell text={spText} /><RestCell text={toText} /><RestCell />
+      </>
+    );
+  };
   return (
-    <div className="sb-lines">
-      {sp.length || to.length || ml.length ? (
-        <div className="sb-table" role="table" aria-label="Game lines">
-          <div className="sb-table__head" role="row">
-            <span role="columnheader">Game</span><span role="columnheader">Spread</span><span role="columnheader">Total</span><span role="columnheader">Moneyline</span>
-          </div>
-          {(["away", "home"] as const).map((side) => {
-            const s0 = spAt(side, spLines[0]);
-            const t0 = toAt(side === "away" ? "over" : "under", toLines[0]);
-            return (
-              <div key={side} className="sb-table__row" role="row">
-                <span className="sb-table__team" role="rowheader">{side === "away" ? game.away : game.home}</span>
-                {c(s0, spTop(s0))}
-                {c(t0, t0 ? `${side === "away" ? "O" : "U"} ${t0.line}` : undefined)}
-                {c(ml.find((o) => o.side === side))}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-      {altCount > 0 && (
-        <div className="sb-alts">
-          <button type="button" className="sb-more" onClick={() => setAlts((v) => !v)} aria-expanded={alts}>
-            {alts ? "Hide other lines" : `Other lines near even (${altCount})`}
-          </button>
-          {alts && (
-            <div className="sb-table sb-table--two" role="table" aria-label="Other lines">
-              <div className="sb-table__head" role="row"><span role="columnheader" /><span role="columnheader">{game.away} / Over</span><span role="columnheader">{game.home} / Under</span></div>
-              {spLines.slice(1).map((l) => {
-                const a = spAt("away", l), h = spAt("home", l);
-                return <div key={`s${l}`} className="sb-table__row" role="row"><span className="sb-table__team" role="rowheader">Spread</span>{c(a, spTop(a))}{c(h, spTop(h))}</div>;
-              })}
-              {toLines.slice(1).map((l) => (
-                <div key={`t${l}`} className="sb-table__row" role="row"><span className="sb-table__team" role="rowheader">Total</span>
-                  {c(toAt("over", l), `O ${l}`)}{c(toAt("under", l), `U ${l}`)}</div>
-              ))}
-            </div>
+    <article className="card sbx-card" data-open={open ? "true" : undefined} id={`sb-${g.slug}`}>
+      <div onClick={onArea} className="sbx-card__tap">
+        <div className="sbx-context">
+          <span className="sbx-context__when">{g.started ? "Closed" : kick(g.kickoff)}</span>
+          {inSlip > 0 && <span className="parlay-chip">{inSlip} on slip</span>}
+          {st?.loading && <span className="sbx-dim">loading prices…</span>}
+          {!g.started && (
+            <button type="button" className="sbx-chev" onClick={onOpen} aria-expanded={open} aria-label={`Open ${g.away} at ${g.home}`}
+                    data-open={open ? "true" : undefined}>›</button>
           )}
         </div>
-      )}
-      {ttRows.length > 0 && (
-        <div className="sb-table sb-table--two" role="table" aria-label="Team totals">
-          <div className="sb-table__head" role="row"><span role="columnheader">Team total</span><span role="columnheader">Over</span><span role="columnheader">Under</span></div>
-          {ttRows.flatMap(({ team, rows }) => rows.map((r) => (
-            <div key={`${team}${r.line}`} className="sb-table__row" role="row">
-              <span className="sb-table__team" role="rowheader">{team}</span>
-              {c(r.over, `O ${r.line}`)}{c(r.under, `U ${r.line}`)}
-            </div>
-          )))}
+        <div className="sbx-grid">
+          <div />
+          <div className="sbx-cap">Spread</div><div className="sbx-cap">Total</div><div className="sbx-cap">ML</div>
+          {row("away")}
+          {row("home")}
         </div>
-      )}
-    </div>
+        {!board && !g.started && !st?.loading && (
+          <div className="sbx-dim sbx-card__hint">{st?.err ? st.err : "Tap for the house's prices and every prop."}</div>
+        )}
+      </div>
+    </article>
   );
 }
 
-function PropList({ sub, offers, slipKeys, toggle, owner, needle }: {
-  sub: string; offers: Offer[]; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean; needle: string;
+type Tab = { id: string; label: string };
+
+function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
+  g: SlateGame; st?: BoardState; onClose: () => void; onRetry: () => void;
+  slipKeys: Set<string>; toggle: (o: Offer, g: SlateGame) => void; owner: boolean;
 }) {
-  const byPlayer = new Map<string, Offer[]>();
-  for (const o of offers) if (o.sub === sub) byPlayer.set(o.group, [...(byPlayer.get(o.group) || []), o]);
-  const atd = sub === "Anytime TD";
-  // DK order: biggest line first (the QB1 / RB1 / WR1 up top); anytime TD by shortest price
-  const lead = (os: Offer[]) => (atd ? -Math.min(...os.map((o) => o.american)) : Math.max(...os.map((o) => o.line ?? 0)));
-  const rows = [...byPlayer.entries()].filter(([n]) => !needle || n.toLowerCase().includes(needle))
-    .sort((x, y) => lead(y[1]) - lead(x[1]) || x[0].localeCompare(y[0]));
-  if (!rows.length) return <p className="sb-note">{needle ? "No player by that name here." : "Nothing posted."}</p>;
-  return (
-    <div className="sb-table sb-table--props" role="table" aria-label={sub}>
-      <div className="sb-table__head" role="row"><span role="columnheader">Player</span><span role="columnheader">{atd ? "Anytime" : "Over"}</span></div>
-      {rows.map(([name, os]) => (
-        <div key={name} className="sb-table__row" role="row">
-          <span className="sb-table__team" role="rowheader">{name}</span>
-          <div className="sb-prop-cells">
-            {[...os].sort((x, y) => (x.line ?? 0) - (y.line ?? 0)).map((o) => (
-              <Cell key={o.key} o={o} top={atd ? undefined : `O ${o.line}`} slipKeys={slipKeys} toggle={toggle} owner={owner} />
+  const [tab, setTab] = useState("lines");
+  const [q, setQ] = useState("");
+  const board = st?.board;
+  const offers = board?.offers || [];
+  const props = offers.filter((o) => o.market === "prop");
+  const tt = offers.filter((o) => o.market === "tt");
+  const rank = (x: string) => (PROP_ORDER.indexOf(x) < 0 ? 99 : PROP_ORDER.indexOf(x));
+  const tabs: Tab[] = [
+    { id: "lines", label: "Game Lines" },
+    ...(tt.length ? [{ id: "tt", label: "Team Totals" }] : []),
+    ...[...new Set(props.map((o) => o.sub))].sort((x, y) => rank(x) - rank(y)).map((s) => ({ id: `p:${s}`, label: s })),
+  ];
+  const active = tabs.some((x) => x.id === tab) ? tab : "lines";
+  const t = (o: Offer) => toggle(o, g);
+  const c = (o: Offer | undefined, top?: string) => <Cell o={o} top={top} slipKeys={slipKeys} toggle={t} owner={owner} wide />;
+
+  let body: React.ReactNode;
+  if (st?.err) body = <div className="sbx-empty"><p className="sb-note sb-note--neg">{st.err}</p><button type="button" className="ui-btn" onClick={onRetry}>Try again</button></div>;
+  else if (!board) body = <p className="sb-note">Loading DraftKings' board…</p>;
+  else if (board.started) body = <p className="sb-note">This game has kicked off. Bets are closed.</p>;
+  else if (!board.has_lines || !offers.length) body = <p className="sb-note">No DraftKings lines on this game yet. They usually post by midweek.</p>;
+  else if (active === "lines") {
+    const m = gameMarkets(offers);
+    body = (
+      <div className="sbx-sections">
+        {m.ml.length > 0 && (
+          <section className="sbx-section">
+            <h4>Moneyline</h4>
+            <div className="sbx-pairs">
+              <div className="sbx-pair">
+                <div className="sbx-pair__who"><Logo team={g.away} px={18} />{g.away}</div>{c(m.mlAt("away"))}
+              </div>
+              <div className="sbx-pair">
+                <div className="sbx-pair__who"><Logo team={g.home} px={18} />{g.home}</div>{c(m.mlAt("home"))}
+              </div>
+            </div>
+          </section>
+        )}
+        {m.spLines.length > 0 && (
+          <section className="sbx-section">
+            <h4>Spread</h4>
+            <div className="sbx-two sbx-two--head"><span><Logo team={g.away} px={16} />{g.away}</span><span><Logo team={g.home} px={16} />{g.home}</span></div>
+            {m.spLines.map((l) => {
+              const a = m.spAt("away", l), h = m.spAt("home", l);
+              return <div key={l} className="sbx-two">{c(a, a ? sgn(a.line!) : undefined)}{c(h, h ? sgn(h.line!) : undefined)}</div>;
+            })}
+          </section>
+        )}
+        {m.toLines.length > 0 && (
+          <section className="sbx-section">
+            <h4>Total points</h4>
+            <div className="sbx-two sbx-two--head"><span>Over</span><span>Under</span></div>
+            {m.toLines.map((l) => <div key={l} className="sbx-two">{c(m.toAt("over", l), `O ${l}`)}{c(m.toAt("under", l), `U ${l}`)}</div>)}
+          </section>
+        )}
+      </div>
+    );
+  } else if (active === "tt") {
+    body = (
+      <div className="sbx-sections">
+        {(["away", "home"] as const).map((who) => {
+          const team = who === "away" ? g.away : g.home;
+          const os = tt.filter((o) => o.side.startsWith(who));
+          if (!os.length) return null;
+          const lines = linesOf(os, (o) => o.side.endsWith("over"), (o) => o.line!);
+          return (
+            <section key={who} className="sbx-section">
+              <h4><Logo team={team} px={18} />{team}</h4>
+              <div className="sbx-two sbx-two--head"><span>Over</span><span>Under</span></div>
+              {lines.map((l) => (
+                <div key={l} className="sbx-two">
+                  {c(os.find((o) => o.side.endsWith("over") && o.line === l), `O ${l}`)}
+                  {c(os.find((o) => o.side.endsWith("under") && o.line === l), `U ${l}`)}
+                </div>
+              ))}
+            </section>
+          );
+        })}
+      </div>
+    );
+  } else {
+    const sub = active.slice(2);
+    const atd = sub === "Anytime TD";
+    const needle = q.trim().toLowerCase();
+    const byPlayer = new Map<string, Offer[]>();
+    for (const o of props) if (o.sub === sub) byPlayer.set(o.group, [...(byPlayer.get(o.group) || []), o]);
+    // biggest line first (QB1 / RB1 / WR1 up top); anytime TD by shortest price
+    const lead = (os: Offer[]) => (atd ? -Math.min(...os.map((o) => o.american)) : Math.max(...os.map((o) => o.line ?? 0)));
+    const rows = [...byPlayer.entries()].filter(([n]) => !needle || n.toLowerCase().includes(needle))
+      .sort((x, y) => lead(y[1]) - lead(x[1]) || x[0].localeCompare(y[0]));
+    body = (
+      <div className="sbx-sections">
+        <input className="sb-search" placeholder="Find a player" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a player" />
+        {rows.length ? (
+          <div className="sbx-props">
+            <div className="sbx-prop sbx-prop--head"><span>Player</span><span>{atd ? "Scores a TD" : "Over"}</span></div>
+            {rows.map(([name, os]) => (
+              <div key={name} className="sbx-prop">
+                <span className="sbx-prop__name">{name}</span>
+                <div className="sbx-prop__cells">
+                  {[...os].sort((x, y) => (x.line ?? 0) - (y.line ?? 0)).map((o) => (
+                    <Cell key={o.key} o={o} top={atd ? undefined : `O ${o.line}`} slipKeys={slipKeys} toggle={t} owner={owner} wide />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
+        ) : <p className="sb-note">{needle ? "No player by that name here." : "Nothing posted."}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <section className="sbx-drawer" aria-label={`${g.away} at ${g.home}`}>
+      <div className="sbx-drawer__head">
+        <span className="sbx-drawer__teams"><Logo team={g.away} px={20} />{g.away}<span className="sbx-at">@</span><Logo team={g.home} px={20} />{g.home}</span>
+        <span className="sbx-dim sbx-drawer__when">{kick(g.kickoff)}</span>
+        <button type="button" className="ui-btn sbx-close" onClick={onClose}>Close</button>
+      </div>
+      {board && board.has_lines && !board.started && tabs.length > 1 && (
+        <div className="sbx-tabs" role="tablist" aria-label="Bet types">
+          {tabs.map((x) => (
+            <button key={x.id} type="button" role="tab" aria-selected={x.id === active} data-on={x.id === active ? "true" : undefined}
+                    onClick={() => setTab(x.id)}>{x.label}</button>
+          ))}
         </div>
+      )}
+      {body}
+      <p className="sb-note sbx-foot">Lines are DraftKings'. Prices are the house's, refreshed when you open a game. Bets lock at kickoff.</p>
+    </section>
+  );
+}
+
+/** Columns the auto-fit card grid is drawing right now (so the drawer lands after the open card's row). */
+const CARD_MIN = 320, CARD_GAP = 16;
+function useCols(ref: React.RefObject<HTMLElement | null>) {
+  const [cols, setCols] = useState(1);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const measure = () => setCols(Math.max(1, Math.floor((el.clientWidth + CARD_GAP) / (CARD_MIN + CARD_GAP))));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure); ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return cols;
+}
+
+function DayGrid({ games, openSlug, setOpen, boards, loadBoard, slipKeys, toggle, owner }: {
+  games: SlateGame[]; openSlug: string | null; setOpen: (s: string | null) => void;
+  boards: Record<string, BoardState>; loadBoard: (slug: string, force?: boolean) => void;
+  slipKeys: Set<string>; toggle: (o: Offer, g: SlateGame) => void; owner: boolean;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const cols = Math.min(useCols(ref), games.length);
+  const openIdx = games.findIndex((g) => g.slug === openSlug);
+  const rowEnd = openIdx < 0 ? -1 : Math.min(games.length - 1, Math.floor(openIdx / cols) * cols + cols - 1);
+  return (
+    <div ref={ref} className="sbx-cards">
+      {games.map((g, i) => (
+        <Fragment key={g.slug}>
+          <GameCard g={g} st={boards[g.slug]} open={openSlug === g.slug} slipKeys={slipKeys} toggle={toggle} owner={owner}
+                    onOpen={() => { if (openSlug === g.slug) setOpen(null); else { setOpen(g.slug); loadBoard(g.slug); } }} />
+          {i === rowEnd && openIdx >= 0 && (
+            <div className="sbx-drawer-slot">
+              <Drawer g={games[openIdx]} st={boards[games[openIdx].slug]} onClose={() => setOpen(null)}
+                      onRetry={() => loadBoard(games[openIdx].slug, true)} slipKeys={slipKeys} toggle={toggle} owner={owner} />
+            </div>
+          )}
+        </Fragment>
       ))}
     </div>
   );
 }
 
-function GameMenu({ week, game, slipKeys, toggle, owner }: {
-  week: number; game: SlateGame; slipKeys: Set<string>; toggle: (o: Offer, g: SlateGame) => void; owner: boolean;
-}) {
-  const [b, setB] = useState<Board | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("Game lines");
-  const load = useCallback(async () => {
-    setErr(null);
-    const r = await api(`/api/simbook/game/${encodeURIComponent(game.slug)}?week=${week}`);
-    if (!r.ok) { setErr(ERRORS[r.body?.error] || `Couldn't load lines (${r.status}).`); return; }
-    setB(r.body);
-  }, [game.slug, week]);
-  useEffect(() => { load(); }, [load]);
-
-  const props = useMemo(() => (b?.offers || []).filter((o) => o.market === "prop"), [b]);
-  const cats = useMemo(() => {
-    const rank = (x: string) => (PROP_ORDER.indexOf(x) < 0 ? 99 : PROP_ORDER.indexOf(x));
-    return ["Game lines", ...[...new Set(props.map((o) => o.sub))].sort((x, y) => rank(x) - rank(y))];
-  }, [props]);
-  const needle = q.trim().toLowerCase();
-
-  if (err) return <div className="sb-menu"><p className="sb-note sb-note--neg">{err}</p><button type="button" className="ui-btn" onClick={load}>Try again</button></div>;
-  if (!b) return <div className="sb-menu"><p className="sb-note">Loading DraftKings' board…</p></div>;
-  if (b.started) return <div className="sb-menu"><p className="sb-note">This game has kicked off. Bets are closed.</p></div>;
-  if (!b.has_lines || !b.offers.length) return <div className="sb-menu"><p className="sb-note">No DraftKings lines on this game yet. They usually post by midweek.</p></div>;
-  const t = (o: Offer) => toggle(o, game);
-  const active = cats.includes(cat) ? cat : "Game lines";
-  return (
-    <div className="sb-menu">
-      {cats.length > 1 && (
-        <div className="sb-pills" role="tablist" aria-label="Markets">
-          {cats.map((c) => (
-            <button key={c} type="button" role="tab" className="sb-pill" data-on={c === active ? "true" : undefined} aria-selected={c === active} onClick={() => setCat(c)}>{c}</button>
-          ))}
-        </div>
-      )}
-      {active === "Game lines"
-        ? <GameLines game={game} offers={b.offers.filter((o) => o.market !== "prop")} slipKeys={slipKeys} toggle={t} owner={owner} />
-        : (
-          <>
-            <input className="sb-search" placeholder="Find a player" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a player" />
-            <PropList sub={active} offers={props} slipKeys={slipKeys} toggle={t} owner={owner} needle={needle} />
-          </>
-        )}
-      <p className="sb-note">Lines are DraftKings'. Prices are the house's, refreshed when you open a game. Bets lock at kickoff.</p>
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ slip */
-function Slip({ week, legs, remove, clear, maxStake, onPlaced }: {
-  week: number; legs: SlipLeg[]; remove: (k: string) => void; clear: () => void; maxStake: number; onPlaced: () => void;
+// The scoreboard's parlay slip, as a betting slip. 2+ legs open as a COMBO;
+// he can flip to Singles (one bet per leg, same stake each) or clear it.
+function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }: {
+  week: number; legs: SlipLeg[]; remove: (k: string) => void; clear: () => void; maxStake: number; owner: boolean;
+  onPlaced: (placedKeys: string[], note?: string) => void; onHeight: (h: number) => void;
 }) {
+  const [mode, setMode] = useState<"combo" | "singles">("combo");
+  const [picked, setPicked] = useState(false);           // he chose a mode himself
   const [stake, setStake] = useState("1");
   const [quote, setQuote] = useState<{ american: number; dec: number } | null>(null);
+  const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "neg" | "pos" | "muted"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(true);
+  const rootRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => onHeight(el.getBoundingClientRect().height));
+    ro.observe(el); onHeight(el.getBoundingClientRect().height);
+    return () => { ro.disconnect(); onHeight(0); };
+  }, [onHeight, legs.length > 0]);
+
+  // default: combo whenever there are 2+ legs, until he picks for himself; an emptied slip forgets the pick
+  useEffect(() => { if (!legs.length) { setPicked(false); setMode("combo"); } }, [legs.length]);
+  const combo = legs.length >= 2 && mode === "combo";
+
   const keysSig = legs.map((l) => l.key).join(",");
   useEffect(() => {
-    setQuote(null); setMsg(null);
-    if (!legs.length) return;
+    setQuote(null); setQuoteErr(null);
+    if (!combo) return;
     let alive = true;
     const t = setTimeout(async () => {
       const r = await api("/api/simbook/quote", { method: "POST", body: JSON.stringify({ week, legs: legs.map((l) => l.key) }) });
       if (!alive) return;
       if (r.ok) setQuote({ american: r.body.american, dec: r.body.dec });
-      else setMsg({ tone: "neg", text: ERRORS[r.body?.error] || `Couldn't price that (${r.status}).` });
+      else setQuoteErr(ERRORS[r.body?.error] || `Couldn't price that (${r.status}).`);
     }, 250);
     return () => { alive = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keysSig, week]);
+  }, [keysSig, week, combo]);
 
   if (!legs.length) return null;
   const s = Number(stake);
-  const toWin = quote && s > 0 ? s * (quote.dec - 1) : null;
-  async function place(expect?: number) {
+  const okStake = s > 0 && s <= maxStake;
+  const singleDec = legs.length === 1 ? legs[0].dec : null;
+  const toWin = combo
+    ? (quote && s > 0 ? s * (quote.dec - 1) : null)
+    : s > 0 ? legs.reduce((a, l) => a + s * (l.dec - 1), 0) : null;
+  const risk = combo || legs.length === 1 ? s : s * legs.length;
+  const choose = (m: "combo" | "singles") => { setMode(m); setPicked(true); setMsg(null); };
+
+  async function placeCombo(expect?: number) {
     if (!quote) return;
     setBusy(true); setMsg(null);
     const r = await api("/api/simbook/bet", { method: "POST", body: JSON.stringify({ week, legs: legs.map((l) => l.key), stake: s, expect_american: expect ?? quote.american }) });
     setBusy(false);
-    if (r.ok) {
-      setMsg({ tone: "pos", text: `Bet placed: ${u(r.body.stake)} at ${am(r.body.american)} to win ${u(r.body.to_win)}.` });
-      clear(); onPlaced();
-      return;
-    }
+    if (r.ok) { onPlaced(legs.map((l) => l.key), `Combo placed: ${u(r.body.stake)} at ${am(r.body.american)} to win ${u(r.body.to_win)}.`); return; }
     if (r.body?.error === "price_changed") {
       setQuote({ american: r.body.american, dec: r.body.dec });
-      setMsg({ tone: "muted", text: `The price moved to ${am(r.body.american)}. Tap Place bet again to take it.` });
+      setMsg({ tone: "muted", text: `The price moved to ${am(r.body.american)}. Tap Place again to take it.` });
       return;
     }
     setMsg({ tone: "neg", text: ERRORS[r.body?.error] || `Couldn't place it (${r.status}).` });
   }
+  async function placeSingles() {
+    setBusy(true); setMsg(null);
+    const placed: string[] = []; let won = 0;
+    for (const l of legs) {
+      const r = await api("/api/simbook/bet", { method: "POST", body: JSON.stringify({ week, legs: [l.key], stake: s, expect_american: l.american }) });
+      if (r.ok) { placed.push(l.key); won += r.body.to_win; continue; }
+      const why = r.body?.error === "price_changed"
+        ? `${l.label} moved to ${am(r.body.american)}. Reopen the game to take the new price.`
+        : `${l.label}: ${ERRORS[r.body?.error] || `couldn't place it (${r.status})`}`;
+      setMsg({ tone: placed.length ? "muted" : "neg", text: `${placed.length ? `Placed ${placed.length} of ${legs.length}. ` : ""}${why}` });
+      break;
+    }
+    setBusy(false);
+    if (placed.length === legs.length) onPlaced(placed, `${placed.length === 1 ? "Bet" : `${placed.length} bets`} placed: ${u(s * placed.length)} risked to win ${u(won)}.`);
+    else if (placed.length) onPlaced(placed);
+  }
+
+  // legs grouped by game, as the scoreboard's slip does
+  const games = new Map<string, SlipLeg[]>();
+  for (const l of legs) games.set(l.slug, [...(games.get(l.slug) || []), l]);
+  const title = legs.length === 1 ? "Single" : combo ? `${legs.length}-leg combo` : `${legs.length} singles`;
+  const price = combo ? (quote ? am(quote.american) : quoteErr ? "—" : "…") : singleDec ? am(legs[0].american) : "";
+
   return (
-    <aside className="sb-slip" aria-label="Bet slip">
-      <button type="button" className="sb-slip__bar" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <b>{legs.length === 1 ? "Single" : `${legs.length}-leg parlay`}</b>
-        <span>{quote ? am(quote.american) : "…"}</span>
-      </button>
+    <aside ref={rootRef} className="parlay-slip sbx-slip" aria-label="Bet slip">
+      <div className="parlay-slip__head">
+        <button type="button" className="sbx-slip__title" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          <span style={{ fontWeight: 800, color: "var(--brand-text)" }}>Bet slip</span>
+          <span className="parlay-chip" style={{ fontSize: 11 }}>{legs.length} leg{legs.length === 1 ? "" : "s"}</span>
+          {price && <b className="sbx-slip__price">{price}</b>}
+        </button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+          <button type="button" className="ui-btn" onClick={clear} style={{ padding: "4px 10px", fontSize: 12 }}>Clear</button>
+          <button type="button" className="ui-btn" onClick={() => setOpen((o) => !o)} style={{ padding: "4px 10px", fontSize: 12 }}>{open ? "Hide" : "Show"}</button>
+        </div>
+      </div>
       {open && (
-        <div className="sb-slip__body">
-          <ul className="sb-slip__legs">
-            {legs.map((l) => (
-              <li key={l.key}>
-                <div><div>{l.label}</div><div className="sb-dim">{l.game}</div></div>
-                <span className="sb-slip__px">{legs.length === 1 && quote ? am(quote.american) : am(l.american)}</span>
-                <button type="button" className="sb-x" onClick={() => remove(l.key)} aria-label={`Remove ${l.label}`}>×</button>
-              </li>
-            ))}
-          </ul>
-          <div className="sb-slip__row">
-            <label>Stake (units)
+        <div className="sbx-slip__body">
+          {legs.length >= 2 && (
+            <div className="sbx-mode" role="radiogroup" aria-label="Bet type">
+              <button type="button" role="radio" aria-checked={combo} data-on={combo ? "true" : undefined} onClick={() => choose("combo")}>Combo</button>
+              <button type="button" role="radio" aria-checked={!combo} data-on={!combo ? "true" : undefined} onClick={() => choose("singles")}>Singles</button>
+            </div>
+          )}
+          {[...games.entries()].map(([slug, ls]) => (
+            <section key={slug} className="parlay-group">
+              <header className="parlay-group__head">
+                <span className="sbx-pairlogos"><Logo team={ls[0].away} px={16} /><Logo team={ls[0].home} px={16} /></span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)" }}>{ls[0].away} @ {ls[0].home}</span>
+                {combo && ls.length > 1 && <span className="parlay-chip" style={{ marginLeft: "auto", fontSize: 10 }}>same game</span>}
+              </header>
+              {ls.map((l) => (
+                <div key={l.key} className="parlay-leg">
+                  <span className="sbx-pairlogos">{legTeams(l).map((tm) => <Logo key={tm} team={tm} px={16} />)}</span>
+                  <span className="parlay-leg__text">{l.label}</span>
+                  <span className="sbx-slip__legpx">{am(l.american)}</span>
+                  <button type="button" className="parlay-leg__x" onClick={() => remove(l.key)} aria-label={`Remove ${l.label}`}>×</button>
+                </div>
+              ))}
+            </section>
+          ))}
+          {combo && quoteErr && (
+            <div className="parlay-notice sbx-slip__err">
+              <span>{quoteErr}</span>
+              <button type="button" className="ui-btn" onClick={() => choose("singles")}>Bet as singles</button>
+            </div>
+          )}
+          <div className="sbx-slip__stake">
+            <label>{combo || legs.length === 1 ? "Stake (units)" : "Stake per bet (units)"}
               <input type="number" inputMode="decimal" min={0.5} max={maxStake} step={0.5} value={stake} onChange={(e) => setStake(e.target.value)} />
             </label>
-            <div className="sb-slip__win">{toWin != null ? <>To win <b>{u(toWin)}</b></> : null}</div>
+            <div className="sbx-slip__win">
+              {toWin != null && <>To win <b>{u(toWin)}</b></>}
+              {!combo && legs.length > 1 && s > 0 && <div className="sbx-dim">{u(risk)} total risk</div>}
+            </div>
           </div>
-          <div className="sb-slip__row">
-            <button type="button" className="sb-more" onClick={clear}>Clear</button>
-            <button type="button" className="ui-btn sb-place" disabled={!quote || busy || !(s > 0) || s > maxStake} onClick={() => place()}>
-              {busy ? "Placing…" : `Place bet${quote ? ` ${am(quote.american)}` : ""}`}
-            </button>
-          </div>
-          <div className="sb-dim">Max {u(maxStake)} per bet.</div>
+          <button type="button" className="ui-btn primary sbx-place"
+                  disabled={owner || busy || !okStake || (combo ? !quote : false)}
+                  onClick={() => (combo ? placeCombo() : placeSingles())}>
+            {owner ? "You're the house" : busy ? "Placing…" : combo ? `Place combo${quote ? ` ${am(quote.american)}` : ""}` : legs.length === 1 ? `Place bet ${am(legs[0].american)}` : `Place ${legs.length} bets`}
+          </button>
+          <div className="sbx-dim">Max {u(maxStake)} per bet.{!picked && legs.length >= 2 ? " Combos pay more; one miss loses it." : ""}</div>
+          {msg && <p className={`sb-note sb-note--${msg.tone}`} role="status">{msg.text}</p>}
         </div>
       )}
-      {msg && <p className={`sb-note sb-note--${msg.tone}`} role="status">{msg.text}</p>}
     </aside>
   );
 }
@@ -448,11 +654,13 @@ export default function SimBook() {
   const [week, setWeek] = useState<number>(0);
   const [games, setGames] = useState<SlateGame[] | null>(null);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  const [boards, setBoards] = useState<Record<string, BoardState>>({});
   const [slip, setSlip] = useState<SlipLeg[]>([]);
+  const [slipH, setSlipH] = useState(0);
+  const [note, setNote] = useState<string | null>(null);
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!session) { setMe(null); return; }
@@ -461,11 +669,23 @@ export default function SimBook() {
 
   useEffect(() => {
     if (!me?.allowed) return;
+    setBoards({});
     api(`/api/simbook/slate${week ? `?week=${week}` : ""}`).then((r) => {
       if (!r.ok) { setErr(ERRORS[r.body?.error] || `Couldn't load the slate (${r.status}).`); return; }
       setGames(r.body.games); if (!week) setWeek(r.body.week);
     });
   }, [me?.allowed, week]);
+
+  /** A game's board (DK lines at the house's prices). Read once per open; the
+   *  server caches DK for 2 minutes, and the SGO plan is metered per game. */
+  const boardsRef = useRef(boards); boardsRef.current = boards;
+  const loadBoard = useCallback(async (slug: string, force = false) => {
+    const cur = boardsRef.current[slug];
+    if (!force && (cur?.loading || cur?.board)) return;
+    setBoards((b) => ({ ...b, [slug]: { ...b[slug], loading: true, err: undefined } }));
+    const r = await api(`/api/simbook/game/${encodeURIComponent(slug)}?week=${week}`);
+    setBoards((b) => ({ ...b, [slug]: r.ok ? { board: r.body } : { err: ERRORS[r.body?.error] || `Couldn't load lines (${r.status}).` } }));
+  }, [week]);
 
   const loadTickets = useCallback(() => {
     api("/api/simbook/tickets").then((r) => {
@@ -476,8 +696,10 @@ export default function SimBook() {
 
   const slipKeys = useMemo(() => new Set(slip.map((l) => l.key)), [slip]);
   const toggle = useCallback((o: Offer, g: SlateGame) => {
+    setNote(null);
     setSlip((s) => s.some((l) => l.key === o.key) ? s.filter((l) => l.key !== o.key)
-      : s.length >= 8 ? s : [...s, { key: o.key, label: o.label, american: o.american, game: `${g.away} at ${g.home}`, parlay_ok: o.parlay_ok }]);
+      : s.length >= 8 ? s : [...s, { key: o.key, label: o.label, american: o.american, dec: o.dec || amToDec(o.american), parlay_ok: o.parlay_ok,
+                                     slug: g.slug, home: g.home, away: g.away, market: o.market, side: o.side }]);
   }, []);
   const playerNames = useMemo(() => new Map(players.map((p) => [p.user_id, p.name])), [players]);
 
@@ -505,7 +727,7 @@ export default function SimBook() {
   }
 
   return (
-    <div className="sb-page" data-slip={slip.length ? "true" : undefined}>
+    <div className="sb-page" style={slip.length ? { paddingBottom: slipH + 24 } : undefined}>
       <header className="sb-head">
         <div>
           <div className="sb-kicker">{me.owner ? "The house" : `${me.player?.name ?? "Player"} vs the sim`}</div>
@@ -523,6 +745,7 @@ export default function SimBook() {
         <p className="sb-preview" role="status"><b>Preview.</b> Sample lines built from our consensus numbers, not live DraftKings. Betting is off until the DraftKings feed (SGO_API_KEY) is connected.</p>
       )}
       {err && <p className="sb-note sb-note--neg">{err}</p>}
+      {note && <p className="sb-note sb-note--pos" role="status">{note}</p>}
 
       {tab === "board" && (
         <>
@@ -535,20 +758,8 @@ export default function SimBook() {
           {[...byDay.entries()].map(([day, gs]) => (
             <section key={day} className="sb-day">
               <h2>{day}</h2>
-              {gs.map((g) => (
-                <div key={g.slug} className="ui-card sb-game" data-open={openSlug === g.slug ? "true" : undefined}>
-                  <button type="button" className="sb-game__row" aria-expanded={openSlug === g.slug}
-                          onClick={() => setOpenSlug((s) => (s === g.slug ? null : g.slug))} disabled={g.started}>
-                    <span className="sb-game__teams"><span>{g.away}</span><span>{g.home}</span></span>
-                    <span className="sb-game__time">{g.started ? "Closed" : kick(g.kickoff)}<span className="sb-chev" aria-hidden>{openSlug === g.slug ? "▴" : "▾"}</span></span>
-                  </button>
-                  {openSlug === g.slug && (
-                    <div ref={menuRef}>
-                      <GameMenu week={week} game={g} slipKeys={slipKeys} toggle={toggle} owner={me.owner} />
-                    </div>
-                  )}
-                </div>
-              ))}
+              <DayGrid games={gs} openSlug={openSlug} setOpen={setOpenSlug} boards={boards} loadBoard={loadBoard}
+                       slipKeys={slipKeys} toggle={toggle} owner={me.owner} />
             </section>
           ))}
         </>
@@ -562,10 +773,9 @@ export default function SimBook() {
         </>
       )}
 
-      {me.player && (
-        <Slip week={week} legs={slip} remove={(k) => setSlip((s) => s.filter((l) => l.key !== k))} clear={() => setSlip([])}
-              maxStake={me.player.max_stake} onPlaced={loadTickets} />
-      )}
+      <Slip week={week} legs={slip} owner={me.owner} maxStake={me.player?.max_stake ?? 5} onHeight={setSlipH}
+            remove={(k) => setSlip((s) => s.filter((l) => l.key !== k))} clear={() => setSlip([])}
+            onPlaced={(keys, text) => { setSlip((s) => s.filter((l) => !keys.includes(l.key))); if (text) setNote(text); loadTickets(); }} />
     </div>
   );
 }
