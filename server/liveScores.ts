@@ -2839,6 +2839,7 @@ app.get("/api/me/role", (req: Request, res: Response) => {
   res.set("Cache-Control", "no-store");
   const uid = supaUserOf(req)?.id ?? null;
   res.json({ signed_in: Boolean(uid), owner: Boolean(uid && PORTAL_OWNER_UIDS.has(uid)) });
+});
 
 // THE SIM BOOK (owner 2026-10-19): a private sportsbook where the sim is the
 // house. Routes, pricing and grading live in server/simbook.ts.
@@ -2848,7 +2849,6 @@ registerSimbook(app, {
   userOf: supaUserOf,
   isOwner: (uid: string) => PORTAL_OWNER_UIDS.has(uid),
   hfOwner: HF_OWNER,
-});
 });
 
 // ============================================================================

@@ -519,6 +519,7 @@ function closeOf(leg: any, ev: SgoEvent): { close_line: number | null; close_ame
 }
 
 let grading = false;
+let registered = false;
 async function gradeOpenTickets(deps: SimbookDeps): Promise<{ settled: number; checked: number }> {
   if (!deps.supa || !SGO_KEY || grading) return { settled: 0, checked: 0 };
   grading = true;
@@ -575,6 +576,8 @@ async function gradeOpenTickets(deps: SimbookDeps): Promise<{ settled: number; c
 
 /* ------------------------------------------------------------------ routes */
 export function registerSimbook(app: Express, deps: SimbookDeps) {
+  if (registered) return;               // once per process: routes + the grading timer
+  registered = true;
   const playerCache = new Map<string, { at: number; row: any }>();
   async function playerRow(uid: string): Promise<any | null> {
     const hit = playerCache.get(uid);

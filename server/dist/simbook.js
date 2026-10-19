@@ -584,6 +584,7 @@ function closeOf(leg, ev) {
         close_american: parseAm(o.closeBookOdds) };
 }
 let grading = false;
+let registered = false;
 async function gradeOpenTickets(deps) {
     if (!deps.supa || !SGO_KEY || grading)
         return { settled: 0, checked: 0 };
@@ -672,6 +673,9 @@ async function gradeOpenTickets(deps) {
 }
 /* ------------------------------------------------------------------ routes */
 export function registerSimbook(app, deps) {
+    if (registered)
+        return; // once per process: routes + the grading timer
+    registered = true;
     const playerCache = new Map();
     async function playerRow(uid) {
         const hit = playerCache.get(uid);
