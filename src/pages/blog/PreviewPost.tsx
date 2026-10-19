@@ -39,8 +39,6 @@ type SheetState =
 
 const secretKey = (token: string) => `mvpeav:pvedit:${token}`;
 const HEADING = /^#{1,6}\s+/;
-const FAST_MS = 3000;
-const SLOW_MS = 15000;
 const STUCK_MS = 90_000;
 
 /** The edit secret: from the #edit= fragment (stored, then wiped from the address bar) or from an earlier visit. */
@@ -139,7 +137,6 @@ export default function PreviewPost() {
   const [sending, setSending] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetState>(null);
-  const [, setTick] = useState(0);
   const holdBody = useRef(false);                 // an editor is open or an edit is in flight: don't swap the body under it
   const bodyDue = useRef(false);
 
@@ -181,18 +178,16 @@ export default function PreviewPost() {
     return () => { alive = false; };
   }, [token, fetchDoc, apply]);
 
-  // The workspace keeps itself current: fast while the bot is busy or something is queued, slow otherwise, never while
-  // the tab is hidden.
+  // No timer: the page reloads when something HE started changes (useJobs above) and when he comes back to the tab
+  // (e.g. from a Telegram ping: outline ready, draft ready). Owner 2026-10-19.
   const ws = doc?.editable && secret ? doc.ws : undefined;
-  const fast = !!ws?.busy || working;
   useEffect(() => {
     if (!ws) return;
-    const t = window.setInterval(() => {
-      if (document.visibilityState === "visible") reload();
-      setTick((n) => n + 1);
-    }, fast ? FAST_MS : SLOW_MS);
-    return () => window.clearInterval(t);
-  }, [!!ws, fast, reload]);
+    const back = () => { if (document.visibilityState === "visible") reload(); };
+    document.addEventListener("visibilitychange", back);
+    window.addEventListener("focus", back);
+    return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); };
+  }, [!!ws, reload]);
 
   // A body that arrived while he was editing goes in once he's done.
   useEffect(() => {
