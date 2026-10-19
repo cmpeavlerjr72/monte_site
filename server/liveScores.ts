@@ -2843,11 +2843,16 @@ app.get("/api/me/role", (req: Request, res: Response) => {
 
 // THE SIM BOOK (owner 2026-10-19): a private sportsbook where the sim is the
 // house. Routes, pricing and grading live in server/simbook.ts.
+const SIMBOOK_OWNER_UIDS = new Set(
+  (process.env.SIMBOOK_OWNERS || "fe22741b-0e66-4ab6-ac40-5b2722a1faf0")   // mvpeav (owner)
+    .split(",").map((x) => x.trim()).filter(Boolean));
 app.use("/api/simbook", supabaseAuth);
 registerSimbook(app, {
   supa,
   userOf: supaUserOf,
-  isOwner: (uid: string) => PORTAL_OWNER_UIDS.has(uid),
+  // CFB_PORTAL_OWNERS drops the owner's `mvpeav` login on prod (see the
+  // TRAFFIC_VIEWERS note), so the house is also named by Supabase uid.
+  isOwner: (uid: string) => PORTAL_OWNER_UIDS.has(uid) || SIMBOOK_OWNER_UIDS.has(uid),
   hfOwner: HF_OWNER,
 });
 
