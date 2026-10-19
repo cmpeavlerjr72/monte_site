@@ -32,9 +32,14 @@ server-only via the service role).
   50/50 (closest + up to 2 more within 45-55%; `nearEven`). Whole-number lines
   can't go in a parlay (no push math in parlays).
 - **Layout** (owner 2026-10-19): the scoreboard's grammar, NOT a DK skin. One
-  card per game (logos, away on top, Spread/Total/ML cells; consensus line at
-  rest from lines.json, house prices once the game is opened, since SGO is metered
-  per game). Tapping a card opens a full-width drawer after its row with tabs
+  card per game (logos, away on top, Spread/Total/ML cells, house prices on
+  load). **Card prices** (owner: "load automatically"): SGO bills EVERY event
+  read (re-reads too) against 2,500/month, so the slate's boards are a SNAPSHOT
+  in `simbook_events` (survives redeploys), re-read in one batched pass at most
+  every `SIMBOOK_CARD_TTL_H` (20h) under a pro-rated monthly pacing guard
+  (`warmSlate`). A pass with >5 id-less games is ONE league query (the DK filter
+  returns only DK-listed games). Opening a game re-reads it if >10 min old; a bet
+  always re-prices fresh (45s). Tapping a card opens a full-width drawer after its row with tabs
   (Game Lines, Team Totals, one per prop stat). The slip reuses the global
   `.parlay-*` classes: 2+ legs default to COMBO (house wants parlays), with a
   Singles toggle (same stake per leg, one ticket each) and Clear.
