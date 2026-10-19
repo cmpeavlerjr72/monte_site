@@ -186,7 +186,10 @@ function etLabel(date: string, time: string): string {
 /** Pick when it goes live: the bot's quick picks, or any day + time (Eastern). -> publish_prepare {when}. */
 function SchedulePicker({ ws, act, busy }: { ws: Ws; act: Act; busy: boolean }) {
   const now = etNow();
-  const [date, setDate] = useState(now.date);
+  // Default: the next 9:00 AM Eastern (today before 9, else tomorrow) so it never opens on a time that's passed.
+  const next9 = now.time < "09:00" ? now.date
+    : new Date(Date.parse(`${now.date}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  const [date, setDate] = useState(next9);
   const [time, setTime] = useState("09:00");
   const past = !!date && !!time && `${date}T${time}` <= `${now.date}T${now.time}`;
   const quick = ws.publish?.quick || [];
