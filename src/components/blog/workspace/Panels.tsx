@@ -23,7 +23,7 @@ export function TopBar({ ws, version, onPublish, onMenu }: { ws: Ws; version: nu
       <span className={`ws-chip ws-chip--${stage}`}>{STAGE_LABEL[stage] || stage}{version != null && stage !== "planning" && stage !== "outline" ? ` · v${version}` : ""}</span>
       <span className="ws-bar__busy" aria-live="polite">
         {busy ? <><span className="ws-spin" aria-hidden="true" />{busy.label || busy.what || "Working"}… {elapsed(busy.since)}</>
-          : pub.scheduled_at ? <>Scheduled {fmtTime(pub.scheduled_at)}</> : null}
+          : pub.scheduled_at ? <>🗓 {pub.scheduled_label || fmtTime(pub.scheduled_at)}</> : null}
       </span>
       {stage === "drafted" && (
         <button type="button" className="pe-btn pe-btn--primary ws-bar__pub" onClick={onPublish}>{pub.scheduled_at ? "Scheduled" : "Publish"}</button>

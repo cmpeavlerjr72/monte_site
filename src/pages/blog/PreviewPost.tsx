@@ -34,7 +34,7 @@ import { AddSheet, FactsSheet, HeroSheet, ImageSheet, MenuSheet, PublishSheet, S
 
 type Preview = { meta: BlogMeta; body: string; version: number | null; held: boolean; hold: string | null; editable?: boolean; ws?: Ws };
 type SheetState =
-  | { kind: "image"; iid: string } | { kind: "hero" } | { kind: "add"; anchor: Anchor } | { kind: "publish" }
+  | { kind: "image"; iid: string } | { kind: "hero" } | { kind: "add"; anchor: Anchor } | { kind: "publish"; schedule?: boolean }
   | { kind: "menu" } | { kind: "facts" } | { kind: "section"; anchor: Anchor } | null;
 
 const secretKey = (token: string) => `mvpeav:pvedit:${token}`;
@@ -373,8 +373,9 @@ export default function PreviewPost() {
       )}
       {sheet?.kind === "hero" && <HeroSheet ws={ws} act={act} upload={upload} onClose={close} />}
       {sheet?.kind === "add" && <AddSheet anchor={sheet.anchor} ws={ws} act={act} upload={upload} onClose={close} />}
-      {sheet?.kind === "publish" && <PublishSheet ws={ws} act={act} onClose={close} />}
-      {sheet?.kind === "menu" && <MenuSheet ws={ws} act={act} onClose={close} onFacts={() => setSheet({ kind: "facts" })} onHero={() => setSheet({ kind: "hero" })} />}
+      {sheet?.kind === "publish" && <PublishSheet ws={ws} act={act} onClose={close} startWith={sheet.schedule ? "schedule" : "now"} />}
+      {sheet?.kind === "menu" && <MenuSheet ws={ws} act={act} onClose={close} onFacts={() => setSheet({ kind: "facts" })} onHero={() => setSheet({ kind: "hero" })}
+        onSchedule={() => setSheet({ kind: "publish", schedule: true })} />}
       {sheet?.kind === "facts" && <FactsSheet ws={ws} act={act} onClose={close} />}
       {sheet?.kind === "section" && <SectionSheet anchor={sheet.anchor} act={act} onClose={close} />}
       {toast}

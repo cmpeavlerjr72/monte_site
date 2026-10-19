@@ -37,9 +37,10 @@ export type Ws = {
     notes?: string[];
   } | null;
   publish?: {
-    live_url?: string | null; scheduled_at?: string | null;
-    pending?: { when?: string | null; url?: string; x_text?: string; warns?: string[] } | null;
+    live_url?: string | null; scheduled_at?: string | null; scheduled_label?: string | null;
+    pending?: { when?: string | null; when_label?: string | null; url?: string; x_text?: string; warns?: string[] } | null;
     blocks?: string[]; no_hero_ok?: boolean;
+    quick?: { label: string; when: string }[];          // schedule quick picks from the bot (Eastern time)
   } | null;
   feed?: { at?: string; text: string; level?: "info" | "warn" | "done" | "error" }[];
   can_undo?: boolean;

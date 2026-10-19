@@ -375,3 +375,14 @@
 .ws .pe-btn, .ws-sheet .pe-btn { white-space: nowrap; overflow-wrap: normal; }
 .ws-inline .pe-btn { flex: none; }
 .ws a.pe-btn, .ws-sheet a.pe-btn { display: inline-flex; align-items: center; text-decoration: none; }
+
+/* Publish or schedule (owner 2026-10-19: "we need something so that we can schedule a draft") */
+.ws-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 4px 0 12px; border: 1px solid var(--line, #c9d1da); border-radius: 10px; overflow: hidden; }
+.ws-tab { min-height: 44px; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.ws-tab + .ws-tab { border-left: 1px solid var(--line, #c9d1da); }
+.ws-tab--on { background: var(--gold, #c2a35a); color: #0b2d4b; }
+.ws-sched { display: grid; gap: 10px; margin-top: 8px; }
+.ws-sched__quick { display: flex; flex-wrap: wrap; gap: 8px; }
+.ws-sched__quick .pe-btn { min-height: 44px; }
+.ws-sched__pick { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
+.ws-sched__pick .ws-input { min-width: 0; min-height: 44px; }

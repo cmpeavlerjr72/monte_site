@@ -168,27 +168,81 @@ export function AddSheet({ anchor, ws, act, upload, onClose }: { anchor: Anchor;
 }
 
 /** ET wall time from a datetime-local value: sent as a naive "YYYY-MM-DDTHH:MM" (the PC runs on Eastern time). */
-export function PublishSheet({ ws, act, onClose }: { ws: Ws; act: Act; onClose: () => void }) {
-  const p = ws.publish || {};
-  const [when, setWhen] = useState("");
-  const [sched, setSched] = useState(false);
-  const busy = !!ws.busy;
+/** Today's date and the time right now in Eastern time, as the strings a date / time input uses. */
+function etNow(): { date: string; time: string } {
+  const f = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const p = Object.fromEntries(f.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+}
+
+/** "2026-10-20" + "09:00" -> "Tue Oct 20, 9:00 AM ET" (no time-zone math: these ARE Eastern). */
+function etLabel(date: string, time: string): string {
+  if (!date || !time) return "";
+  const day = new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  const [h, m] = time.split(":").map(Number);
+  return `${day}, ${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"} ET`;
+}
+
+/** Pick when it goes live: the bot's quick picks, or any day + time (Eastern). -> publish_prepare {when}. */
+function SchedulePicker({ ws, act, busy }: { ws: Ws; act: Act; busy: boolean }) {
+  const now = etNow();
+  const [date, setDate] = useState(now.date);
+  const [time, setTime] = useState("09:00");
+  const past = !!date && !!time && `${date}T${time}` <= `${now.date}T${now.time}`;
+  const quick = ws.publish?.quick || [];
   return (
-    <Sheet title="Publish" onClose={onClose}>
+    <div className="ws-sched">
+      {quick.length > 0 && (
+        <div className="ws-sched__quick">
+          {quick.map((q) => (
+            <button key={q.when} type="button" className="pe-btn" disabled={busy}
+              onClick={() => act("publish_prepare", { when: q.when }, `Getting it ready for ${q.label}`)}>{q.label}</button>
+          ))}
+        </div>
+      )}
+      <p className="ws-label">Or pick a day and time (Eastern)</p>
+      <div className="ws-sched__pick">
+        <input className="ws-input" type="date" aria-label="Day" value={date} min={now.date} onChange={(e) => setDate(e.target.value)} />
+        <input className="ws-input" type="time" aria-label="Time (Eastern)" value={time} step={300} onChange={(e) => setTime(e.target.value)} />
+      </div>
+      <p className={past ? "ws-small ws-flag" : "ws-small"}>{past ? "That time has already passed." : <>Goes live <b>{etLabel(date, time)}</b>, and posts to X then.</>}</p>
+      <button type="button" className="pe-btn pe-btn--primary ws-big" disabled={busy || past || !date || !time}
+        onClick={() => act("publish_prepare", { when: `${date}T${time}` }, "Getting it ready")}>🗓 Check &amp; schedule</button>
+    </div>
+  );
+}
+
+export function PublishSheet({ ws, act, onClose, startWith = "now" }: { ws: Ws; act: Act; onClose: () => void; startWith?: "now" | "schedule" }) {
+  const p = ws.publish || {};
+  const [mode, setMode] = useState<"now" | "schedule">(startWith);
+  const [repick, setRepick] = useState(false);
+  const busy = !!ws.busy;
+  const tabs = (
+    <div className="ws-tabs" role="tablist" aria-label="When">
+      <button type="button" role="tab" aria-selected={mode === "now"} className={mode === "now" ? "ws-tab ws-tab--on" : "ws-tab"} onClick={() => setMode("now")}>Publish now</button>
+      <button type="button" role="tab" aria-selected={mode === "schedule"} className={mode === "schedule" ? "ws-tab ws-tab--on" : "ws-tab"} onClick={() => setMode("schedule")}>🗓 Schedule</button>
+    </div>
+  );
+  return (
+    <Sheet title={p.live_url ? "Live" : p.scheduled_at ? "Scheduled" : "Publish or schedule"} onClose={onClose}>
       {p.live_url ? (
         <p>✅ Live: <a href={p.live_url} target="_blank" rel="noopener noreferrer">{p.live_url}</a></p>
-      ) : p.scheduled_at ? (
+      ) : p.scheduled_at && !p.pending ? (
         <>
-          <p>🗓 Scheduled for <b>{fmtTime(p.scheduled_at)}</b> ET. It publishes and posts to X by itself.</p>
-          <div className="ws-row"><button type="button" className="pe-btn pe-btn--danger" onClick={() => act("schedule_cancel", {}, "Cancelling the schedule")}>Cancel the schedule</button></div>
+          <p>🗓 Goes live <b>{p.scheduled_label || `${fmtTime(p.scheduled_at)} ET`}</b>. It publishes and posts to X by itself; you don't need the page open.</p>
+          <div className="ws-row">
+            <button type="button" className="pe-btn" onClick={() => setRepick(!repick)}>Change the time</button>
+            <button type="button" className="pe-btn pe-btn--danger" onClick={() => act("schedule_cancel", {}, "Cancelling the schedule")}>Cancel the schedule</button>
+          </div>
+          {repick && <SchedulePicker ws={ws} act={act} busy={busy} />}
         </>
       ) : p.pending ? (
         <>
-          <p><b>{p.pending.when ? `Scheduled for ${fmtTime(p.pending.when)} ET` : "Goes live now"}</b> (live 5–10 min after the deploy)</p>
+          <p><b>{p.pending.when ? `🗓 Goes live ${p.pending.when_label || `${fmtTime(p.pending.when)} ET`}` : "Goes live now"}</b>{p.pending.when ? "" : " (5–10 min after the deploy)"}</p>
           {p.pending.url && <p className="ws-small ws-break">{p.pending.url}</p>}
           {p.pending.x_text && (
             <>
-              <h3 className="ws-sub">Also posts to X</h3>
+              <h3 className="ws-sub">{p.pending.when ? "Posts to X at the same time" : "Also posts to X"}</h3>
               <blockquote className="ws-x">{p.pending.x_text}</blockquote>
             </>
           )}
@@ -200,6 +254,8 @@ export function PublishSheet({ ws, act, onClose }: { ws: Ws; act: Act; onClose: 
             <button type="button" className="pe-btn" onClick={() => act("publish_cancel", {}, "Cancelled")}>Cancel</button>
           </div>
           <p className="ws-small ws-muted">One tap does both. No second approval.</p>
+          <button type="button" className="ws-link" onClick={() => setRepick(!repick)}>{p.pending.when ? "Pick a different time" : "🗓 Schedule it for later instead"}</button>
+          {repick && <SchedulePicker ws={ws} act={act} busy={busy} />}
         </>
       ) : (
         <>
@@ -216,19 +272,17 @@ export function PublishSheet({ ws, act, onClose }: { ws: Ws; act: Act; onClose: 
               </div>
             </>
           )}
-          <p className="ws-small ws-muted">I'll run the checks and show you exactly what goes live and what posts to X before anything happens.</p>
-          <div className="ws-row ws-row--big">
-            <button type="button" className="pe-btn pe-btn--primary ws-big" disabled={busy} onClick={() => act("publish_prepare", {}, "Getting it ready")}>Publish now…</button>
-            <button type="button" className="pe-btn" onClick={() => setSched(!sched)}>Schedule…</button>
-          </div>
-          {sched && (
-            <div className="ws-fields">
-              <label className="ws-label" htmlFor="ws-when">When (Eastern time)</label>
-              <div className="ws-inline">
-                <input id="ws-when" className="ws-input" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
-                <button type="button" className="pe-btn pe-btn--primary" disabled={!when} onClick={() => act("publish_prepare", { when: when.slice(0, 16) }, "Getting it ready")}>Check</button>
-              </div>
-            </div>
+          {tabs}
+          {mode === "now" ? (
+            <>
+              <p className="ws-small ws-muted">I'll run the checks and show you exactly what goes live and what posts to X before anything happens.</p>
+              <button type="button" className="pe-btn pe-btn--primary ws-big" disabled={busy} onClick={() => act("publish_prepare", {}, "Getting it ready")}>Check &amp; publish now…</button>
+            </>
+          ) : (
+            <>
+              <p className="ws-small ws-muted">Pick when it goes live. I'll run the checks and show you what goes live and what posts to X; it then publishes by itself at that time.</p>
+              <SchedulePicker ws={ws} act={act} busy={busy} />
+            </>
           )}
         </>
       )}
@@ -236,7 +290,7 @@ export function PublishSheet({ ws, act, onClose }: { ws: Ws; act: Act; onClose: 
   );
 }
 
-export function MenuSheet({ ws, act, onFacts, onHero, onClose }: { ws: Ws; act: Act; onFacts: () => void; onHero: () => void; onClose: () => void }) {
+export function MenuSheet({ ws, act, onFacts, onHero, onSchedule, onClose }: { ws: Ws; act: Act; onFacts: () => void; onHero: () => void; onSchedule?: () => void; onClose: () => void }) {
   const [mode, setMode] = useState<"" | "all">("");
   const drafted = ws.stage === "drafted";
   const go = async (type: string, args: Record<string, unknown>, label: string) => {
@@ -258,6 +312,7 @@ export function MenuSheet({ ws, act, onFacts, onHero, onClose }: { ws: Ws; act: 
           {drafted && <button type="button" className="ws-menu__item" onClick={() => go("tone_down", {}, "Toning it down")}>🔉 Tone it down</button>}
           {drafted && <button type="button" className="ws-menu__item" onClick={() => go("stool", {}, "Turning it up")}>🔊 Turn it up (Barstool pass)</button>}
           {drafted && <button type="button" className="ws-menu__item" disabled={ws.can_undo === false} onClick={() => go("undo_last", {}, "Undoing the last change")}>↩️ Undo last change</button>}
+          {drafted && onSchedule && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onSchedule(); }}>🗓 Schedule it{ws.publish?.scheduled_label ? ` · ${ws.publish.scheduled_label}` : ""}</button>}
           {drafted && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onHero(); }}>🖼 Hero image</button>}
           {drafted && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onFacts(); }}>🔎 Facts{ws.facts?.summary ? ` · ${ws.facts.summary}` : ""}</button>}
           <button type="button" className="ws-menu__item" onClick={() => go("refresh", {}, "Refreshing")}>🔄 Refresh the page from the bot</button>
