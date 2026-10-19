@@ -26,9 +26,11 @@ server-only via the service role).
 - **Price** (owner decision): worst-for-him of DK's price, `(1-H)/p_house` and
   `(1-0.03)/q_sim`, where `p_house` = mean(sim, DK no-vig). H = 4.5% game lines,
   6% props, compounding per parlay leg. Sim probabilities come from `seeds.json`
-  (parlays use the joint over the same seeds). DK lists prop OVERS only; the
-  under is ours, priced off the over's no-vig. Whole-number lines can't go in a
-  parlay (no push math in parlays).
+  (parlays use the joint over the same seeds). DK lists prop OVERS only, so
+  props are overs only (no unders). Owner 2026-10-19: no market without a DK
+  price, and no long ladders: per market only the line(s) DK prices nearest
+  50/50 (closest + up to 2 more within 45-55%; `nearEven`). Whole-number lines
+  can't go in a parlay (no push math in parlays).
 - **Trust.** The browser sends leg KEYS, never a price; `/bet` re-fetches DK
   (45s), re-prices, refuses after kickoff, and answers 409 `price_changed` when
   his price got worse. Bettor payloads never carry `q_sim`/`p_mkt`/`house_ev`.

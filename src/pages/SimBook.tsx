@@ -70,46 +70,141 @@ async function api(path: string, init?: RequestInit) {
 }
 
 /* ----------------------------------------------------------------- board */
-const GROUP_ORDER = ["Moneyline", "Spread", "Total", "Team totals"];
+// DraftKings-style board (owner 2026-10-19): a Spread / Total / Moneyline grid
+// with the away team on top, category pills for props, one row per player.
+// The server already trims each market to the line(s) nearest 50/50.
 
-function OfferButton({ o, on, toggle, owner }: { o: Offer; on: boolean; toggle: (o: Offer) => void; owner: boolean }) {
-  const short = o.market === "prop"
-    ? (o.sub === "Anytime TD" ? "Anytime TD" : `${o.side === "over" ? "Over" : "Under"} ${o.line}`)
-    : o.label;
+const PROP_ORDER = ["Anytime TD", "Passing yards", "Passing TDs", "Completions", "Pass attempts", "Interceptions thrown",
+  "Rushing yards", "Carries", "Receiving yards", "Receptions", "Pass + rush yards", "Rush + rec yards", "Touchdowns scored"];
+const sgn = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+
+function Cell({ o, top, slipKeys, toggle, owner }: {
+  o?: Offer; top?: string; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean;
+}) {
+  if (!o) return <div className="sb-cell sb-cell--empty" aria-hidden>—</div>;
+  const on = slipKeys.has(o.key);
   return (
-    <button type="button" className="sb-offer" data-on={on ? "true" : undefined} onClick={() => toggle(o)} aria-pressed={on}
+    <button type="button" className="sb-cell" data-on={on ? "true" : undefined} onClick={() => toggle(o)} aria-pressed={on}
+            aria-label={`${o.label} ${am(o.american)}`}
             title={owner ? `sim ${pct(o.q_sim)} · DK no-vig ${pct(o.p_mkt)} · DK ${o.dk_american != null ? am(o.dk_american) : "—"} · house EV ${pct(o.house_ev)}` : undefined}>
-      <span className="sb-offer__label">{short}</span>
-      <span className="sb-offer__price">{am(o.american)}</span>
-      {owner && <span className="sb-offer__own">sim {pct(o.q_sim)} · DK {o.dk_american != null ? am(o.dk_american) : "—"}</span>}
+      {top ? <span className="sb-cell__line">{top}</span> : null}
+      <span className="sb-cell__price">{am(o.american)}</span>
+      {owner && <span className="sb-cell__own">sim {pct(o.q_sim)} · DK {o.dk_american != null ? am(o.dk_american) : "—"}</span>}
     </button>
   );
 }
 
-function OfferGroup({ title, offers, slipKeys, toggle, owner }: {
-  title: string; offers: Offer[]; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean;
+/** Distinct lines of one two-sided market, DK's main line first. */
+function linesOf(os: Offer[], refSide: (o: Offer) => boolean, refLine: (o: Offer) => number) {
+  const seen: number[] = [];
+  const refs = os.filter(refSide).sort((x, y) => Number(y.main) - Number(x.main));
+  for (const o of [...refs, ...os]) { const l = refLine(o); if (!seen.includes(l)) seen.push(l); }
+  return seen;
+}
+
+function GameLines({ game, offers, slipKeys, toggle, owner }: {
+  game: SlateGame; offers: Offer[]; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean;
 }) {
-  const [more, setMore] = useState(false);
-  const mains = offers.filter((o) => o.main);
-  const shown = more ? offers : mains.length ? mains : offers.slice(0, 4);
-  const subs = [...new Set(shown.map((o) => o.sub))];
-  const sorted = (xs: Offer[]) => [...xs].sort((a, b) => (a.side < b.side ? -1 : a.side > b.side ? 1 : (a.line ?? 0) - (b.line ?? 0)));
+  const [alts, setAlts] = useState(false);
+  const sp = offers.filter((o) => o.market === "spread");
+  const to = offers.filter((o) => o.market === "total");
+  const ml = offers.filter((o) => o.market === "ml");
+  // spread lines keyed by the AWAY handicap; totals by the number
+  const spLines = linesOf(sp, (o) => o.side === "away", (o) => (o.side === "away" ? o.line! : -o.line!));
+  const toLines = linesOf(to, (o) => o.side === "over", (o) => o.line!);
+  const spAt = (side: "away" | "home", awayLine?: number) =>
+    awayLine == null ? undefined : sp.find((o) => o.side === side && o.line === (side === "away" ? awayLine : -awayLine));
+  const toAt = (side: "over" | "under", line?: number) => (line == null ? undefined : to.find((o) => o.side === side && o.line === line));
+  const c = (o: Offer | undefined, top?: string) => <Cell o={o} top={top} slipKeys={slipKeys} toggle={toggle} owner={owner} />;
+  const spTop = (o?: Offer) => (o ? sgn(o.line!) : undefined);
+  const altCount = Math.max(0, spLines.length - 1) + Math.max(0, toLines.length - 1);
+
+  const tt = offers.filter((o) => o.market === "tt");
+  const ttTeam = (who: "home" | "away") => {
+    const os = tt.filter((o) => o.side.startsWith(who));
+    return linesOf(os, (o) => o.side.endsWith("over"), (o) => o.line!).map((line) => ({
+      line, over: os.find((o) => o.side.endsWith("over") && o.line === line), under: os.find((o) => o.side.endsWith("under") && o.line === line),
+    }));
+  };
+  const ttRows = [{ team: game.away, rows: ttTeam("away") }, { team: game.home, rows: ttTeam("home") }].filter((r) => r.rows.length);
+
+  if (!sp.length && !to.length && !ml.length && !ttRows.length) return <p className="sb-note">No game lines posted yet.</p>;
   return (
-    <div className="sb-group">
-      <div className="sb-group__head">
-        <h3>{title}</h3>
-        {offers.length > shown.length || more ? (
-          <button type="button" className="sb-more" onClick={() => setMore((m) => !m)}>
-            {more ? "Main lines only" : `More lines (${offers.length - shown.length})`}
+    <div className="sb-lines">
+      {sp.length || to.length || ml.length ? (
+        <div className="sb-table" role="table" aria-label="Game lines">
+          <div className="sb-table__head" role="row">
+            <span role="columnheader">Game</span><span role="columnheader">Spread</span><span role="columnheader">Total</span><span role="columnheader">Moneyline</span>
+          </div>
+          {(["away", "home"] as const).map((side) => {
+            const s0 = spAt(side, spLines[0]);
+            const t0 = toAt(side === "away" ? "over" : "under", toLines[0]);
+            return (
+              <div key={side} className="sb-table__row" role="row">
+                <span className="sb-table__team" role="rowheader">{side === "away" ? game.away : game.home}</span>
+                {c(s0, spTop(s0))}
+                {c(t0, t0 ? `${side === "away" ? "O" : "U"} ${t0.line}` : undefined)}
+                {c(ml.find((o) => o.side === side))}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      {altCount > 0 && (
+        <div className="sb-alts">
+          <button type="button" className="sb-more" onClick={() => setAlts((v) => !v)} aria-expanded={alts}>
+            {alts ? "Hide other lines" : `Other lines near even (${altCount})`}
           </button>
-        ) : null}
-      </div>
-      {subs.map((s) => (
-        <div key={s} className="sb-sub">
-          {subs.length > 1 || (s !== title && s !== "Spread" && s !== "Total" && s !== "Moneyline") ? <div className="sb-sub__title">{s}</div> : null}
-          <div className="sb-offers">
-            {sorted(shown.filter((o) => o.sub === s)).map((o) => (
-              <OfferButton key={o.key} o={o} on={slipKeys.has(o.key)} toggle={toggle} owner={owner} />
+          {alts && (
+            <div className="sb-table sb-table--two" role="table" aria-label="Other lines">
+              <div className="sb-table__head" role="row"><span role="columnheader" /><span role="columnheader">{game.away} / Over</span><span role="columnheader">{game.home} / Under</span></div>
+              {spLines.slice(1).map((l) => {
+                const a = spAt("away", l), h = spAt("home", l);
+                return <div key={`s${l}`} className="sb-table__row" role="row"><span className="sb-table__team" role="rowheader">Spread</span>{c(a, spTop(a))}{c(h, spTop(h))}</div>;
+              })}
+              {toLines.slice(1).map((l) => (
+                <div key={`t${l}`} className="sb-table__row" role="row"><span className="sb-table__team" role="rowheader">Total</span>
+                  {c(toAt("over", l), `O ${l}`)}{c(toAt("under", l), `U ${l}`)}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {ttRows.length > 0 && (
+        <div className="sb-table sb-table--two" role="table" aria-label="Team totals">
+          <div className="sb-table__head" role="row"><span role="columnheader">Team total</span><span role="columnheader">Over</span><span role="columnheader">Under</span></div>
+          {ttRows.flatMap(({ team, rows }) => rows.map((r) => (
+            <div key={`${team}${r.line}`} className="sb-table__row" role="row">
+              <span className="sb-table__team" role="rowheader">{team}</span>
+              {c(r.over, `O ${r.line}`)}{c(r.under, `U ${r.line}`)}
+            </div>
+          )))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PropList({ sub, offers, slipKeys, toggle, owner, needle }: {
+  sub: string; offers: Offer[]; slipKeys: Set<string>; toggle: (o: Offer) => void; owner: boolean; needle: string;
+}) {
+  const byPlayer = new Map<string, Offer[]>();
+  for (const o of offers) if (o.sub === sub) byPlayer.set(o.group, [...(byPlayer.get(o.group) || []), o]);
+  const atd = sub === "Anytime TD";
+  // DK order: biggest line first (the QB1 / RB1 / WR1 up top); anytime TD by shortest price
+  const lead = (os: Offer[]) => (atd ? -Math.min(...os.map((o) => o.american)) : Math.max(...os.map((o) => o.line ?? 0)));
+  const rows = [...byPlayer.entries()].filter(([n]) => !needle || n.toLowerCase().includes(needle))
+    .sort((x, y) => lead(y[1]) - lead(x[1]) || x[0].localeCompare(y[0]));
+  if (!rows.length) return <p className="sb-note">{needle ? "No player by that name here." : "Nothing posted."}</p>;
+  return (
+    <div className="sb-table sb-table--props" role="table" aria-label={sub}>
+      <div className="sb-table__head" role="row"><span role="columnheader">Player</span><span role="columnheader">{atd ? "Anytime" : "Over"}</span></div>
+      {rows.map(([name, os]) => (
+        <div key={name} className="sb-table__row" role="row">
+          <span className="sb-table__team" role="rowheader">{name}</span>
+          <div className="sb-prop-cells">
+            {[...os].sort((x, y) => (x.line ?? 0) - (y.line ?? 0)).map((o) => (
+              <Cell key={o.key} o={o} top={atd ? undefined : `O ${o.line}`} slipKeys={slipKeys} toggle={toggle} owner={owner} />
             ))}
           </div>
         </div>
@@ -124,6 +219,7 @@ function GameMenu({ week, game, slipKeys, toggle, owner }: {
   const [b, setB] = useState<Board | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [cat, setCat] = useState("Game lines");
   const load = useCallback(async () => {
     setErr(null);
     const r = await api(`/api/simbook/game/${encodeURIComponent(game.slug)}?week=${week}`);
@@ -132,17 +228,11 @@ function GameMenu({ week, game, slipKeys, toggle, owner }: {
   }, [game.slug, week]);
   useEffect(() => { load(); }, [load]);
 
-  const groups = useMemo(() => {
-    const m = new Map<string, Offer[]>();
-    for (const o of b?.offers || []) m.set(o.group, [...(m.get(o.group) || []), o]);
-    const keys = [...m.keys()].sort((a, b2) => {
-      const ia = GROUP_ORDER.indexOf(a), ib = GROUP_ORDER.indexOf(b2);
-      if (ia >= 0 || ib >= 0) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-      return a.localeCompare(b2);
-    });
-    return keys.map((k) => [k, m.get(k)!] as const);
-  }, [b]);
-  const players = groups.filter(([k]) => !GROUP_ORDER.includes(k));
+  const props = useMemo(() => (b?.offers || []).filter((o) => o.market === "prop"), [b]);
+  const cats = useMemo(() => {
+    const rank = (x: string) => (PROP_ORDER.indexOf(x) < 0 ? 99 : PROP_ORDER.indexOf(x));
+    return ["Game lines", ...[...new Set(props.map((o) => o.sub))].sort((x, y) => rank(x) - rank(y))];
+  }, [props]);
   const needle = q.trim().toLowerCase();
 
   if (err) return <div className="sb-menu"><p className="sb-note sb-note--neg">{err}</p><button type="button" className="ui-btn" onClick={load}>Try again</button></div>;
@@ -150,22 +240,24 @@ function GameMenu({ week, game, slipKeys, toggle, owner }: {
   if (b.started) return <div className="sb-menu"><p className="sb-note">This game has kicked off. Bets are closed.</p></div>;
   if (!b.has_lines || !b.offers.length) return <div className="sb-menu"><p className="sb-note">No DraftKings lines on this game yet. They usually post by midweek.</p></div>;
   const t = (o: Offer) => toggle(o, game);
+  const active = cats.includes(cat) ? cat : "Game lines";
   return (
     <div className="sb-menu">
-      {groups.filter(([k]) => GROUP_ORDER.includes(k)).map(([k, os]) => (
-        <OfferGroup key={k} title={k} offers={os} slipKeys={slipKeys} toggle={t} owner={owner} />
-      ))}
-      {players.length ? (
-        <>
-          <div className="sb-group__head sb-props-head">
-            <h3>Player props</h3>
-            <input className="sb-search" placeholder="Find a player" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a player" />
-          </div>
-          {players.filter(([k]) => !needle || k.toLowerCase().includes(needle)).map(([k, os]) => (
-            <OfferGroup key={k} title={k} offers={os} slipKeys={slipKeys} toggle={t} owner={owner} />
+      {cats.length > 1 && (
+        <div className="sb-pills" role="tablist" aria-label="Markets">
+          {cats.map((c) => (
+            <button key={c} type="button" role="tab" className="sb-pill" data-on={c === active ? "true" : undefined} aria-selected={c === active} onClick={() => setCat(c)}>{c}</button>
           ))}
-        </>
-      ) : null}
+        </div>
+      )}
+      {active === "Game lines"
+        ? <GameLines game={game} offers={b.offers.filter((o) => o.market !== "prop")} slipKeys={slipKeys} toggle={t} owner={owner} />
+        : (
+          <>
+            <input className="sb-search" placeholder="Find a player" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a player" />
+            <PropList sub={active} offers={props} slipKeys={slipKeys} toggle={t} owner={owner} needle={needle} />
+          </>
+        )}
       <p className="sb-note">Lines are DraftKings'. Prices are the house's, refreshed when you open a game. Bets lock at kickoff.</p>
     </div>
   );
@@ -447,8 +539,8 @@ export default function SimBook() {
                 <div key={g.slug} className="ui-card sb-game" data-open={openSlug === g.slug ? "true" : undefined}>
                   <button type="button" className="sb-game__row" aria-expanded={openSlug === g.slug}
                           onClick={() => setOpenSlug((s) => (s === g.slug ? null : g.slug))} disabled={g.started}>
-                    <span className="sb-game__teams"><span>{g.away}</span><span className="sb-dim">at</span> <span>{g.home}</span></span>
-                    <span className="sb-dim">{g.started ? "Closed" : kick(g.kickoff)}</span>
+                    <span className="sb-game__teams"><span>{g.away}</span><span>{g.home}</span></span>
+                    <span className="sb-game__time">{g.started ? "Closed" : kick(g.kickoff)}<span className="sb-chev" aria-hidden>{openSlug === g.slug ? "▴" : "▾"}</span></span>
                   </button>
                   {openSlug === g.slug && (
                     <div ref={menuRef}>

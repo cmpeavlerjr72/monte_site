@@ -276,7 +276,7 @@ async function previewEvent(deps: SimbookDeps, g: SlateGame): Promise<SgoEvent |
   const pHome = normCdf(mu / SDM);
   odds["points-home-game-ml-home"] = { byBookmaker: { draftkings: { odds: amFromP(pHome), available: true } } };
   odds["points-away-game-ml-away"] = { byBookmaker: { draftkings: { odds: amFromP(1 - pHome), available: true } } };
-  // props at the sim's median, priced -115 over (the under is ours, as live)
+  // props at the sim's median, priced -115 over (overs only, as live)
   const s = await seedsFor(deps, g);
   const players: Record<string, any> = {};
   const med = (a: number[]) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)] || 0; };
@@ -389,8 +389,8 @@ function quotesFromEvent(g: SlateGame, ev: SgoEvent): Quote[] {
     if (a != null) out.push({ leg: { key: `${g.slug}|ml|away|||`, slug: g.slug, market: "ml", side: "away", line: null },
       label: `${g.away} to win`, group: "Moneyline", odd_id: "points-away-game-ml-away", dk_american: a, pair_american: h, main: true, sub: "Moneyline" });
   }
-  // player props: DK lists OVERS (main + alt ladder) and anytime-TD yes. Unders
-  // are ours, priced off the over's no-vig probability (no DK price to clamp to).
+  // player props: DK lists OVERS (main + alt ladder) and anytime-TD yes. We
+  // offer the overs only (owner 2026-10-19: no unders, no market without a DK price).
   for (const [oid, o] of Object.entries<any>(odds)) {
     const pid = o?.playerID; if (!pid || o?.periodID !== "game") continue;
     const ps = PROP_STATS[o.statID]; if (!ps) continue;
@@ -401,8 +401,6 @@ function quotesFromEvent(g: SlateGame, ev: SgoEvent): Quote[] {
         const base = { slug: g.slug, market: "prop" as const, line: r.line, player: pid, stat: o.statID };
         out.push({ leg: { ...base, key: `${g.slug}|prop|over|${r.line}|${pid}|${o.statID}`, side: "over" },
           label: `${pname} over ${r.line} ${ps.label.toLowerCase()}`, group: pname, odd_id: oid, dk_american: r.am, pair_american: null, main: r.main, sub: ps.label });
-        out.push({ leg: { ...base, key: `${g.slug}|prop|under|${r.line}|${pid}|${o.statID}`, side: "under" },
-          label: `${pname} under ${r.line} ${ps.label.toLowerCase()}`, group: pname, odd_id: oid, dk_american: NaN, pair_american: r.am, main: r.main, sub: ps.label });
       }
     } else if (o.statID === "touchdowns" && o.betTypeID === "yn" && o.sideID === "yes") {
       const am = parseAm(b.odds); if (am == null) continue;
@@ -412,7 +410,45 @@ function quotesFromEvent(g: SlateGame, ev: SgoEvent): Quote[] {
   }
   // de-dup (an anytime-TD yes and a 0.5 over can collide): keep the better DK price for him? no — keep the first.
   const seen = new Set<string>();
-  return out.filter((q) => (seen.has(q.leg.key) ? false : (seen.add(q.leg.key), true)));
+  return nearEven(out.filter((q) => (seen.has(q.leg.key) ? false : (seen.add(q.leg.key), true))));
+}
+
+/** Owner 2026-10-19: no long ladders. Per market keep only the line(s) DK prices
+ *  closest to 50/50: the closest one, plus up to two more within 45-55%.
+ *  Moneylines and anytime TDs are one line each and pass through. */
+const NEAR_EVEN = 0.05, MAX_LINES_PER_MARKET = 3;
+function nearEven(qs: Quote[]): Quote[] {
+  // reference side = home (spread) / over (totals, props); its no-vig probability per line
+  const ladderOf = (q: Quote): { group: string; line: number; p: number } | null => {
+    const l = q.leg;
+    if (l.market === "ml" || l.line == null || q.sub === "Anytime TD") return null;
+    const imp = 1 / amToDec(q.dk_american);
+    const hold = l.market === "prop" ? H_PROPS : H_LINES;
+    let p = q.pair_american != null ? imp / (imp + 1 / amToDec(q.pair_american)) : imp / (1 + hold);
+    if (l.market === "spread") {
+      if (l.side === "away") p = 1 - p;
+      return { group: "spread", line: l.side === "home" ? l.line : -l.line, p };
+    }
+    if (l.market === "prop") return { group: `prop|${l.player}|${l.stat}`, line: l.line, p };
+    const prefix = l.side.replace(/(over|under)$/, "");
+    if (l.side.endsWith("under")) p = 1 - p;
+    return { group: `${l.market}|${prefix}`, line: l.line, p };
+  };
+  const byGroup = new Map<string, Map<number, number[]>>();
+  const info = qs.map(ladderOf);
+  info.forEach((x) => {
+    if (!x) return;
+    const m = byGroup.get(x.group) || new Map<number, number[]>(); byGroup.set(x.group, m);
+    m.set(x.line, [...(m.get(x.line) || []), x.p]);
+  });
+  const keep = new Map<string, Set<number>>();
+  for (const [grp, lines] of byGroup) {
+    const ranked = [...lines].map(([line, ps]) => ({ line, d: Math.abs(ps.reduce((a, b) => a + b, 0) / ps.length - 0.5) }))
+      .sort((a, b) => a.d - b.d);
+    const pick = ranked.filter((r, i) => i === 0 || r.d <= NEAR_EVEN).slice(0, MAX_LINES_PER_MARKET);
+    keep.set(grp, new Set(pick.map((r) => r.line)));
+  }
+  return qs.filter((q, i) => { const x = info[i]; return !x || keep.get(x.group)!.has(x.line); });
 }
 
 /** Per-seed outcome of a leg (1 win, 0 push, -1 loss), or null when the sim can't price it. */
@@ -455,17 +491,10 @@ function priceLeg(q: Quote, s: Seeds, ev: SgoEvent, g: SlateGame): PricedLeg | n
   const qSim = pPush < 1 ? pWin / (1 - pPush) : 0.5;
   const hold = q.leg.market === "prop" ? H_PROPS : H_LINES;
   // DK's no-vig probability for this side
-  let pMkt: number, dkDec: number;
-  if (Number.isFinite(q.dk_american)) {
-    const imp = 1 / amToDec(q.dk_american);
-    pMkt = q.pair_american != null ? imp / (imp + 1 / amToDec(q.pair_american)) : imp / (1 + hold);
-    dkDec = amToDec(q.dk_american);
-  } else {
-    // our own under: DK only lists the over
-    const impO = 1 / amToDec(q.pair_american!);
-    pMkt = 1 - impO / (1 + hold);
-    dkDec = 1 / (pMkt * (1 + hold));               // what DK would charge for it at their juice
-  }
+  if (!Number.isFinite(q.dk_american)) return null;  // no DK price, no market
+  const imp = 1 / amToDec(q.dk_american);
+  let pMkt = q.pair_american != null ? imp / (imp + 1 / amToDec(q.pair_american)) : imp / (1 + hold);
+  const dkDec = amToDec(q.dk_american);
   pMkt = Math.min(0.99, Math.max(0.01, pMkt));
   if (qSim <= 0.003 || qSim >= 0.997) return null;  // the sim says (almost) never/always: no market
   const pHouse = (qSim + pMkt) / 2;
@@ -478,7 +507,7 @@ function priceLeg(q: Quote, s: Seeds, ev: SgoEvent, g: SlateGame): PricedLeg | n
   return {
     ...q.leg, label, group: q.group, sub: q.sub, main: q.main, game: `${g.away} at ${g.home}`, kickoff: g.kickoff,
     sgo_event: ev.eventID, odd_id: q.odd_id,
-    dk_american: Number.isFinite(q.dk_american) ? q.dk_american : decToAmHouse(dkDec), dk_dec: dkDec,
+    dk_american: q.dk_american, dk_dec: dkDec,
     p_mkt: pMkt, q_sim: qSim, p_win: pWin, p_push: pPush, hold, sim_player: lo.simPlayer,
     american, dec, house_ev: houseEv, parlay_ok: pPush === 0 && (q.leg.line == null || Math.abs(q.leg.line % 1) === 0.5),
     outcome: lo.out,
