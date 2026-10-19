@@ -30,6 +30,10 @@ type SlateGame = {
   slug: string; home: string; away: string; kickoff: string; started: boolean;
   /** consensus line for the closed card: home handicap, game total */
   spread?: number | null; total?: number | null;
+  /** the card's game lines at the house's prices, off the server's snapshot */
+  offers?: Offer[]; as_of?: string; no_lines?: boolean;
+  /** client-side: the server is still reading this week's boards */
+  warming?: boolean;
 };
 type Offer = {
   key: string; label: string; group: string; sub: string; main: boolean; market: string; side: string;
@@ -155,7 +159,10 @@ function GameCard({ g, st, open, onOpen, slipKeys, toggle, owner }: {
   g: SlateGame; st?: BoardState; open: boolean; onOpen: () => void;
   slipKeys: Set<string>; toggle: (o: Offer, g: SlateGame) => void; owner: boolean;
 }) {
-  const board = st?.board && !st.board.started && st.board.has_lines ? st.board : null;
+  // a freshly opened board beats the slate's snapshot
+  const fresh = st?.board && !st.board.started && st.board.has_lines ? st.board.offers : null;
+  const offers = g.started ? null : fresh ?? (g.offers?.length ? g.offers : null);
+  const board = offers ? { offers } : null;
   const m = board ? gameMarkets(board.offers) : null;
   const t = (o: Offer) => toggle(o, g);
   const onArea = (e: React.MouseEvent) => {
@@ -193,7 +200,7 @@ function GameCard({ g, st, open, onOpen, slipKeys, toggle, owner }: {
         <div className="sbx-context">
           <span className="sbx-context__when">{g.started ? "Closed" : kick(g.kickoff)}</span>
           {inSlip > 0 && <span className="parlay-chip">{inSlip} on slip</span>}
-          {st?.loading && <span className="sbx-dim">loading prices…</span>}
+          {(st?.loading || (!board && g.warming && !g.no_lines && !g.started)) && <span className="sbx-dim">loading prices…</span>}
           {!g.started && (
             <button type="button" className="sbx-chev" onClick={onOpen} aria-expanded={open} aria-label={`Open ${g.away} at ${g.home}`}
                     data-open={open ? "true" : undefined}>›</button>
@@ -205,8 +212,8 @@ function GameCard({ g, st, open, onOpen, slipKeys, toggle, owner }: {
           {row("away")}
           {row("home")}
         </div>
-        {!board && !g.started && !st?.loading && (
-          <div className="sbx-dim sbx-card__hint">{st?.err ? st.err : "Tap for the house's prices and every prop."}</div>
+        {!board && !g.started && !st?.loading && (st?.err || g.no_lines || !g.warming) && (
+          <div className="sbx-dim sbx-card__hint">{st?.err ? st.err : g.no_lines ? "No DraftKings lines on this game yet." : "Prices aren't in yet. Tap to load them."}</div>
         )}
       </div>
     </article>
@@ -667,13 +674,23 @@ export default function SimBook() {
     api("/api/simbook/me").then((r) => setMe(r.ok ? r.body : { allowed: false, owner: false, player: null, lines: false }));
   }, [session]);
 
+  // The slate carries every card's prices. While the server is still reading
+  // the week's boards (a fresh snapshot), poll until they're all in.
   useEffect(() => {
     if (!me?.allowed) return;
     setBoards({});
-    api(`/api/simbook/slate${week ? `?week=${week}` : ""}`).then((r) => {
+    let alive = true, timer: ReturnType<typeof setTimeout> | undefined, tries = 0;
+    const load = () => api(`/api/simbook/slate${week ? `?week=${week}` : ""}`).then((r) => {
+      if (!alive) return;
       if (!r.ok) { setErr(ERRORS[r.body?.error] || `Couldn't load the slate (${r.status}).`); return; }
-      setGames(r.body.games); if (!week) setWeek(r.body.week);
+      setErr(null);
+      const warming = Boolean(r.body.warming);
+      setGames(r.body.games.map((g: SlateGame) => ({ ...g, warming })));
+      if (!week) setWeek(r.body.week);
+      if (warming && ++tries < 40) timer = setTimeout(load, 10_000);
     });
+    load();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [me?.allowed, week]);
 
   /** A game's board (DK lines at the house's prices). Read once per open; the

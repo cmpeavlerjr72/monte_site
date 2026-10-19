@@ -40,7 +40,13 @@ const SEASON = 2026;
 const SGO_KEY = process.env.SGO_API_KEY || "";
 const SGO_BASE = "https://api.sportsgameodds.com/v2";
 const SGO_MONTH_CAP = Number(process.env.SIMBOOK_SGO_MONTH_CAP || 2300); // plan allows 2,500 games/month
-const EVENT_TTL_MS = 120_000;        // a game's DK board is re-read at most every 2 min
+const EVENT_TTL_MS = 120_000;        // tickets re-read a game's DK board at most every 2 min
+const OPEN_TTL_MS = 10 * 60_000;     // opening a game re-reads its board when the snapshot is older than this
+// The card snapshot (owner 2026-10-19: "prices need to load automatically"): every
+// not-yet-kicked game's board is re-read in ONE batched pass, at most this often.
+// SGO bills each event read against 2,500/month, so 56 games x once a day is ~1,700.
+const CARD_TTL_MS = Number(process.env.SIMBOOK_CARD_TTL_H || 20) * 3600_000;
+// A game DK hasn't posted is looked for again on the same daily pass (opening it looks right away).
 const H_LINES = 0.045;               // juice on spreads, totals, moneylines, team totals
 const H_PROPS = 0.06;                // juice on player props
 const H_SIM = 0.03;                  // the house keeps at least this much by the sim
@@ -155,7 +161,7 @@ function seedsFor(deps: SimbookDeps, g: SlateGame): Promise<Seeds> {
     return { A: raw.A_pts, B: raw.B_pts, players: raw.players || {}, names };
   })();
   p.catch(() => seedsMemo.delete(key));
-  if (seedsMemo.size > 80) seedsMemo.clear();
+  if (seedsMemo.size > 12) seedsMemo.delete(seedsMemo.keys().next().value!);
   seedsMemo.set(key, p);
   return p;
 }
@@ -193,11 +199,56 @@ type SgoEvent = any;
 const eventIdBySlug = new Map<string, string>();
 const eventCache = new Map<string, { at: number; ev: SgoEvent | null }>();
 
+/** Does this SGO event describe our game? (team ids, or names when the ids miss) */
+function eventMatches(e: any, g: SlateGame): boolean {
+  const h = e?.teams?.home?.teamID, a = e?.teams?.away?.teamID;
+  const homeKeys = sgoTeamIds(g.home), awayKeys = sgoTeamIds(g.away);
+  const hn = nameKey(e?.teams?.home?.names?.long), an = nameKey(e?.teams?.away?.names?.long);
+  return (homeKeys.includes(h) && awayKeys.includes(a)) ||
+         (hn === nameKey(g.home) && an === nameKey(g.away)) ||
+         (homeKeys.includes(h) && an === nameKey(g.away)) ||
+         (awayKeys.includes(a) && hn === nameKey(g.home));
+}
+
+/* The snapshot lives in simbook_events so a redeploy reloads it instead of
+   re-buying it from SGO. */
+let snapSupa: SupabaseClient | null = null;
+const snapLoaded = new Map<number, Promise<void>>();
+function ensureSnapshot(week: number): Promise<void> {
+  const hit = snapLoaded.get(week); if (hit) return hit;
+  const p = (async () => {
+    if (!snapSupa) return;
+    const { data, error } = await snapSupa.from("simbook_events").select("slug, event_id, fetched_at, event").eq("season", SEASON).eq("week", week);
+    if (error) throw error;
+    for (const r of data || []) {
+      const ck = `${week}/${r.slug}`, at = Date.parse(r.fetched_at);
+      if (r.event_id) eventIdBySlug.set(ck, r.event_id);
+      const cur = eventCache.get(ck);
+      if (!cur || cur.at < at) eventCache.set(ck, { at, ev: r.event || null });
+    }
+  })();
+  p.catch((e) => { snapLoaded.delete(week); console.warn("[simbook] snapshot load:", e?.message ?? e); });
+  snapLoaded.set(week, p);
+  return p;
+}
+function saveEvent(g: SlateGame, ev: SgoEvent | null, at: number) {
+  const ck = `${g.week}/${g.slug}`;
+  eventCache.set(ck, { at, ev });
+  if (ev?.eventID) eventIdBySlug.set(ck, ev.eventID);
+  if (!snapSupa || PREVIEW) return;
+  snapSupa.from("simbook_events").upsert({ season: SEASON, week: g.week, slug: g.slug, event_id: ev?.eventID ?? eventIdBySlug.get(ck) ?? null,
+    fetched_at: new Date(at).toISOString(), event: ev }).then(({ error }) => { if (error) console.warn("[simbook] snapshot save:", error.message); });
+}
+
 async function sgoEventFor(g: SlateGame, maxAgeMs = EVENT_TTL_MS): Promise<SgoEvent | null> {
   const ck = `${g.week}/${g.slug}`;
+  await ensureSnapshot(g.week).catch(() => {});
   const hit = eventCache.get(ck);
   if (hit && Date.now() - hit.at < maxAgeMs) return hit.ev;
-  if (!(await sgoBudgetOk(100))) { const e: any = new Error("sgo_budget"); e.code = "budget"; throw e; }
+  if (!(await sgoBudgetOk(100))) {
+    if (hit) return hit.ev;              // out of budget: the last board beats no board (bets still re-price)
+    const e: any = new Error("sgo_budget"); e.code = "budget"; throw e;
+  }
   const base = { leagueID: "NCAAF", bookmakerID: "draftkings", includeAltLines: "true", limit: "1" };
   let ev: SgoEvent | null = null;
   const known = eventIdBySlug.get(ck);
@@ -206,25 +257,82 @@ async function sgoEventFor(g: SlateGame, maxAgeMs = EVENT_TTL_MS): Promise<SgoEv
     ev = d?.data?.[0] || null;
   } else {
     const after = new Date(Date.parse(g.kickoff) - 3 * 86400_000).toISOString();
-    const awayKeys = sgoTeamIds(g.away);
-    outer: for (const tid of [...sgoTeamIds(g.home), ...awayKeys]) {
+    outer: for (const tid of [...sgoTeamIds(g.home), ...sgoTeamIds(g.away)]) {
       const d = await sgoGet("events", { ...base, teamID: tid, startsAfter: after });
-      for (const e of d?.data || []) {
-        const h = e?.teams?.home?.teamID, a = e?.teams?.away?.teamID;
-        const ok = (sgoTeamIds(g.home).includes(h) && awayKeys.includes(a)) ||
-                   (nameKey(e?.teams?.home?.names?.long) === nameKey(g.home) && nameKey(e?.teams?.away?.names?.long) === nameKey(g.away)) ||
-                   (sgoTeamIds(g.home).includes(h) && nameKey(e?.teams?.away?.names?.long) === nameKey(g.away)) ||
-                   (awayKeys.includes(a) && nameKey(e?.teams?.home?.names?.long) === nameKey(g.home));
-        if (ok) { ev = e; break outer; }
-      }
+      for (const e of d?.data || []) if (eventMatches(e, g)) { ev = e; break outer; }
     }
-    if (ev?.eventID) eventIdBySlug.set(ck, ev.eventID);
   }
-  if (eventCache.size > 300) eventCache.clear();
-  eventCache.set(ck, { at: Date.now(), ev });
+  if (eventCache.size > 400) eventCache.clear();
+  saveEvent(g, ev, Date.now());
   return ev;
 }
 
+/** Spend no faster than the month allows: the cap, pro-rated to today, plus slack. */
+async function budgetPaced(n: number): Promise<boolean> {
+  if (!(await sgoBudgetOk(100 + n))) return false;
+  const d = new Date(), dim = new Date(d.getUTCFullYear(), d.getUTCMonth() + 1, 0).getDate();
+  const allowance = SGO_MONTH_CAP * (d.getUTCDate() / dim) + 300;
+  return sgoUsage.used + n <= allowance;
+}
+
+/** Re-read every not-yet-kicked game's board in batched calls, then price the
+ *  cards. Runs in the background off a slate request, one pass per week at a time. */
+const warming = new Map<number, Promise<void>>();
+function warmSlate(deps: SimbookDeps, week: number): Promise<void> {
+  const running = warming.get(week); if (running) return running;
+  const p = (async () => {
+    await ensureSnapshot(week).catch(() => {});
+    const games = await slate(deps, week);
+    const now = Date.now();
+    const open = games.filter((g) => now < Date.parse(g.kickoff) - 60_000);
+    const ckOf = (g: SlateGame) => `${week}/${g.slug}`;
+    if (PREVIEW) {
+      for (const g of open) if (!eventCache.has(ckOf(g))) eventCache.set(ckOf(g), { at: now, ev: await previewEvent(deps, g).catch(() => null) });
+    } else {
+      const stale = open.filter((g) => {
+        const h = eventCache.get(ckOf(g));
+        return !h || now - h.at > CARD_TTL_MS;
+      });
+      if (stale.length && (await budgetPaced(stale.length))) {
+        const base = { leagueID: "NCAAF", bookmakerID: "draftkings", includeAltLines: "true" };
+        const known = stale.filter((g) => eventIdBySlug.has(ckOf(g)));
+        const unknown = stale.filter((g) => !eventIdBySlug.has(ckOf(g)));
+        if (unknown.length > 5) {
+          // ONE league-wide pass over the window: with the DK filter SGO returns exactly
+          // the games DK lists, so this refreshes the known ones and finds new ones together.
+          const ks = stale.map((g) => Date.parse(g.kickoff));
+          const params: Record<string, string> = { ...base, limit: "100",
+            startsAfter: new Date(Math.min(...ks) - 3 * 3600_000).toISOString(), startsBefore: new Date(Math.max(...ks) + 3 * 3600_000).toISOString() };
+          const found = new Map<string, any>();
+          for (let page = 0; page < 6; page++) {
+            const d = await sgoGet("events", params);
+            for (const e of d?.data || []) {
+              const g = stale.find((x) => !found.has(x.slug) && (eventIdBySlug.get(ckOf(x)) === e.eventID || eventMatches(e, x)));
+              if (g) found.set(g.slug, e);
+            }
+            if (!d?.nextCursor) break;
+            params.cursor = String(d.nextCursor);
+          }
+          for (const g of stale) saveEvent(g, found.get(g.slug) || null, Date.now());
+        } else {
+          for (let i = 0; i < known.length; i += 25) {
+            const chunk = known.slice(i, i + 25);
+            const d = await sgoGet("events", { ...base, eventIDs: chunk.map((g) => eventIdBySlug.get(ckOf(g))!).join(","), limit: "25" });
+            const byId = new Map<string, any>((d?.data || []).map((e: any) => [e.eventID, e]));
+            for (const g of chunk) saveEvent(g, byId.get(eventIdBySlug.get(ckOf(g))!) || null, Date.now());
+          }
+          // a few strays (usually games DK hasn't posted): the per-team lookup costs a handful, not a league
+          for (const g of unknown) await sgoEventFor(g, 0).catch(() => null);
+        }
+        if (snapSupa) snapSupa.from("simbook_events").delete().eq("season", SEASON).lt("week", week - 1).then(() => {});
+      }
+    }
+    for (const g of open) await cardFor(deps, g).catch(() => null);
+  })();
+  p.catch((e) => console.warn("[simbook] warm:", e?.message ?? e)).finally(() => warming.delete(week));
+  warming.set(week, p);
+  return p;
+}
 
 /* ------------------------------------------------------------ PREVIEW MODE */
 // No SGO_API_KEY (owner 2026-10-19: "just wanna look at the interface"): build an
@@ -520,6 +628,27 @@ function kickedOff(g: SlateGame, ev: SgoEvent | null): boolean {
   return Boolean(ev?.status?.started) || now >= ko - 60_000;
 }
 
+/** A card's game lines (spread / total / ML / team totals), priced off the
+ *  snapshot as it stands: never reads SGO. Re-priced when the snapshot moves. */
+type CardLegs = { at: number; legs: PricedLeg[] };
+const cardCache = new Map<string, CardLegs>();
+async function cardFor(deps: SimbookDeps, g: SlateGame): Promise<CardLegs | null> {
+  const ck = `${g.week}/${g.slug}`;
+  const hit = eventCache.get(ck);
+  if (!hit?.ev) return null;
+  const cur = cardCache.get(ck);
+  if (cur && cur.at === hit.at) return cur;
+  const s = await seedsFor(deps, g);
+  const legs: PricedLeg[] = [];
+  for (const q of quotesFromEvent(g, hit.ev)) {
+    if (q.leg.market === "prop") continue;
+    const pl = priceLeg(q, s, hit.ev, g); if (pl) { delete pl.outcome; legs.push(pl); }
+  }
+  const out = { at: hit.at, legs };
+  cardCache.set(ck, out);
+  return out;
+}
+
 async function boardFor(deps: SimbookDeps, week: number, slug: string, maxAgeMs = EVENT_TTL_MS) {
   const g = await gameOf(deps, week, slug);
   if (!g) { const e: any = new Error("no_game"); e.code = "no_game"; throw e; }
@@ -528,6 +657,8 @@ async function boardFor(deps: SimbookDeps, week: number, slug: string, maxAgeMs 
   const s = await seedsFor(deps, g);
   const legs: PricedLeg[] = [];
   for (const q of quotesFromEvent(g, ev)) { const pl = priceLeg(q, s, ev, g); if (pl) legs.push(pl); }
+  const at = eventCache.get(`${week}/${slug}`)?.at;
+  if (at != null) cardCache.set(`${week}/${slug}`, { at, legs: legs.filter((l) => l.market !== "prop").map(({ outcome, ...l }) => l as PricedLeg) });
   return { g, ev, legs };
 }
 
@@ -684,6 +815,7 @@ async function gradeOpenTickets(deps: SimbookDeps): Promise<{ settled: number; c
 export function registerSimbook(app: Express, deps: SimbookDeps) {
   if (registered) return;               // once per process: routes + the grading timer
   registered = true;
+  snapSupa = deps.supa;
   const playerCache = new Map<string, { at: number; row: any }>();
   async function playerRow(uid: string): Promise<any | null> {
     const hit = playerCache.get(uid);
@@ -727,12 +859,21 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       const ww = String(week).padStart(2, "0");
       const lines = await hfJson(deps, `${SEASON}/weeks/week${ww}/lines.json`).catch(() => null);
       const num = (x: any) => (x == null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x));
-      res.json({ season: SEASON, week, games: games.map((g) => {
+      // card prices come from the snapshot; a stale or missing one is re-read in the background
+      warmSlate(deps, week);
+      await ensureSnapshot(week).catch(() => {});
+      const out = [];
+      for (const g of games) {
         const L = lines?.games?.[g.slug];
-        return { slug: g.slug, home: g.home, away: g.away, kickoff: g.kickoff,
-          started: Date.now() >= Date.parse(g.kickoff) - 60_000,
-          spread: num(L?.spread?.close ?? L?.spread?.open), total: num(L?.total?.close ?? L?.total?.open) };
-      }) });
+        const started = Date.now() >= Date.parse(g.kickoff) - 60_000;
+        const card = started ? null : cardCache.get(`${week}/${g.slug}`) || null;
+        out.push({ slug: g.slug, home: g.home, away: g.away, kickoff: g.kickoff, started,
+          spread: num(L?.spread?.close ?? L?.spread?.open), total: num(L?.total?.close ?? L?.total?.open),
+          offers: card ? card.legs.map((l) => publicLeg(l, w.owner)) : undefined,
+          as_of: card ? new Date(card.at).toISOString() : undefined,
+          no_lines: !started && eventCache.has(`${week}/${g.slug}`) && !eventCache.get(`${week}/${g.slug}`)!.ev });
+      }
+      res.json({ season: SEASON, week, warming: warming.has(week), games: out });
     } catch (err) { fail(res, err); }
   });
 
@@ -741,7 +882,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     const w = await who(req); if (!w) { res.status(403).json({ error: "not_invited" }); return; }
     try {
       const week = Number(req.query.week) || (await currentWeek(deps));
-      const b = await boardFor(deps, week, String(req.params.slug));
+      const b = await boardFor(deps, week, String(req.params.slug), OPEN_TTL_MS);
       res.json({ slug: b.g.slug, home: b.g.home, away: b.g.away, kickoff: b.g.kickoff, started: kickedOff(b.g, b.ev),
                  has_lines: Boolean(b.ev), preview: PREVIEW, as_of: new Date().toISOString(),
                  offers: b.legs.map((l) => publicLeg(l, w.owner)) });
