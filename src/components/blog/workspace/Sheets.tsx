@@ -1,6 +1,6 @@
 // The draft workspace's sheets: image options, hero options, "add something here", publish, the ⋯ menu.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Act, Anchor, Upload, Ws, WsImage } from "./types";
 import { FactsPanel } from "./Panels";
 import { NoteBox, PhotoPick, Sheet, fmtTime } from "./ui";
@@ -210,16 +210,30 @@ function SchedulePicker({ ws, act, busy }: { ws: Ws; act: Act; busy: boolean }) 
       </div>
       <p className={past ? "ws-small ws-flag" : "ws-small"}>{past ? "That time has already passed." : <>Goes live <b>{etLabel(date, time)}</b>, and posts to X then.</>}</p>
       <button type="button" className="pe-btn pe-btn--primary ws-big" disabled={busy || past || !date || !time}
-        onClick={() => act("publish_prepare", { when: `${date}T${time}` }, "Getting it ready")}>🗓 Check &amp; schedule</button>
+        onClick={() => act("publish_prepare", { when: `${date}T${time}` }, `Getting it ready for ${etLabel(date, time)}`)}>🗓 Check &amp; schedule</button>
     </div>
   );
 }
 
-export function PublishSheet({ ws, act, onClose, startWith = "now" }: { ws: Ws; act: Act; onClose: () => void; startWith?: "now" | "schedule" }) {
+export function PublishSheet({ ws, act: send, onClose, startWith = "now" }: { ws: Ws; act: Act; onClose: () => void; startWith?: "now" | "schedule" }) {
   const p = ws.publish || {};
   const [mode, setMode] = useState<"now" | "schedule">(startWith);
   const [repick, setRepick] = useState(false);
-  const busy = !!ws.busy;
+  // What it's doing right now, shown IN the sheet (the checks take ~30 s): set on a tap, cleared when the bot's answer
+  // changes the publish state (or the send fails).
+  const [doing, setDoing] = useState<string | null>(null);
+  const stateKey = [p.pending?.when ?? (p.pending ? "now" : ""), (p.blocks || []).join("|"), p.scheduled_at || "", p.live_url || ""].join("#");
+  useEffect(() => { setDoing(null); setRepick(false); }, [stateKey]);
+  const act: Act = async (type, args = {}, label = "Sending") => {
+    const when = (args as { when?: string }).when;
+    setDoing(type === "publish_prepare" ? `Running the checks${when ? ` for ${label.replace(/^Getting it ready( for )?/, "") || "that time"}` : ""}… about 30 seconds. Then you confirm here.`
+      : type === "publish_confirm" ? (p.pending?.when ? "Scheduling it…" : "Publishing… live in 5–10 minutes. You'll get a Telegram ping when it's up.")
+      : type === "schedule_cancel" ? "Cancelling the schedule…" : type === "publish_cancel" ? "Cancelling…" : `${label}…`);
+    const r = await send(type, args, label);
+    if (!r.ok) setDoing(null);
+    return r;
+  };
+  const busy = !!ws.busy || !!doing;
   const tabs = (
     <div className="ws-tabs" role="tablist" aria-label="When">
       <button type="button" role="tab" aria-selected={mode === "now"} className={mode === "now" ? "ws-tab ws-tab--on" : "ws-tab"} onClick={() => setMode("now")}>Publish now</button>
@@ -228,11 +242,12 @@ export function PublishSheet({ ws, act, onClose, startWith = "now" }: { ws: Ws; 
   );
   return (
     <Sheet title={p.live_url ? "Live" : p.scheduled_at ? "Scheduled" : "Publish or schedule"} onClose={onClose}>
+      {doing && <p className="ws-progress" role="status" aria-live="polite"><span className="ws-spin" aria-hidden="true" />{doing}</p>}
       {p.live_url ? (
         <p>✅ Live: <a href={p.live_url} target="_blank" rel="noopener noreferrer">{p.live_url}</a></p>
       ) : p.scheduled_at && !p.pending ? (
         <>
-          <p>🗓 Goes live <b>{p.scheduled_label || `${fmtTime(p.scheduled_at)} ET`}</b>. It publishes and posts to X by itself; you don't need the page open.</p>
+          <p className="ws-ok">✅ Scheduled. It goes live <b>{p.scheduled_label || `${fmtTime(p.scheduled_at)} ET`}</b> and posts to X then, by itself; you don't need the page open.</p>
           <div className="ws-row">
             <button type="button" className="pe-btn" onClick={() => setRepick(!repick)}>Change the time</button>
             <button type="button" className="pe-btn pe-btn--danger" onClick={() => act("schedule_cancel", {}, "Cancelling the schedule")}>Cancel the schedule</button>

@@ -386,3 +386,11 @@
 .ws-sched__quick .pe-btn { min-height: 44px; }
 .ws-sched__pick { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
 .ws-sched__pick .ws-input { min-width: 0; min-height: 44px; }
+
+/* Status messages show ABOVE an open sheet (owner 2026-10-19: tapped "Check & schedule", saw nothing: the message was
+   behind the sheet). In the workspace they sit at the top so they never cover a sheet's buttons. */
+.ws .pe-status { top: calc(var(--header-h, 56px) + 8px + env(safe-area-inset-top)); bottom: auto; z-index: 1200; max-width: calc(100vw - 32px); }
+.ws-progress { display: flex; gap: 10px; align-items: flex-start; padding: 12px; margin: 8px 0; border-radius: 10px;
+  background: color-mix(in oklab, var(--gold, #c2a35a) 18%, transparent); font-size: 15px; }
+.ws-progress .ws-spin { flex: none; margin-top: 3px; }
+.ws-ok { padding: 12px; border-radius: 10px; background: color-mix(in oklab, var(--pos, #2e7d32) 14%, transparent); }
