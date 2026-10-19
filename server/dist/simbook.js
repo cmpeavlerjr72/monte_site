@@ -207,6 +207,88 @@ async function sgoEventFor(g, maxAgeMs = EVENT_TTL_MS) {
     eventCache.set(ck, { at: Date.now(), ev });
     return ev;
 }
+/* ------------------------------------------------------------ PREVIEW MODE */
+// No SGO_API_KEY (owner 2026-10-19: "just wanna look at the interface"): build an
+// SGO-shaped event from what we already publish — the consensus close in
+// lines.json, a normal-curve alt ladder around it, and props at the sim's own
+// medians — so the whole board renders. Prices are SAMPLES: betting is refused.
+const PREVIEW = !SGO_KEY;
+function normCdf(z) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const d = 0.3989423 * Math.exp(-z * z / 2);
+    const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return z > 0 ? 1 - p : p;
+}
+function amFromP(p, vig = 0.0225) {
+    const q = Math.min(0.97, Math.max(0.03, p * (1 + vig)));
+    const am = q >= 0.5 ? -Math.round((100 * q) / (1 - q)) : Math.round((100 * (1 - q)) / q);
+    return am > 0 ? `+${am}` : `${am}`;
+}
+async function previewEvent(deps, g) {
+    const ww = String(g.week).padStart(2, "0");
+    const lines = await hfJson(deps, `${SEASON}/weeks/week${ww}/lines.json`).catch(() => null);
+    const L = lines?.games?.[g.slug];
+    const hm = Number(L?.spread?.close ?? L?.spread?.open); // home handicap, negative = home favoured
+    const tot = Number(L?.total?.close ?? L?.total?.open);
+    if (!Number.isFinite(hm) || !Number.isFinite(tot))
+        return null;
+    const mu = -hm, SDM = 15, SDT = 13, SDTT = 9;
+    const odds = {};
+    const half = (x) => Math.round(x * 2) / 2;
+    const ladder = (mainLine, pOf, field, sign = 1) => {
+        const fmt = (v) => (field === "spread" && v > 0 ? `+${v}` : `${v}`);
+        const main = { odds: amFromP(pOf(mainLine)), [field]: fmt(mainLine), available: true, altLines: [] };
+        for (let k = -7; k <= 7; k++) {
+            if (!k)
+                continue;
+            const ln = mainLine + sign * k;
+            main.altLines.push({ odds: amFromP(pOf(ln)), [field]: fmt(ln), available: true });
+        }
+        return { byBookmaker: { draftkings: main } };
+    };
+    odds["points-home-game-sp-home"] = ladder(hm, (h) => 1 - normCdf((-h - mu) / SDM), "spread");
+    odds["points-away-game-sp-away"] = ladder(-hm, (a) => normCdf((a - mu) / SDM), "spread");
+    odds["points-all-game-ou-over"] = ladder(tot, (t) => 1 - normCdf((t - tot) / SDT), "overUnder");
+    odds["points-all-game-ou-under"] = ladder(tot, (t) => normCdf((t - tot) / SDT), "overUnder");
+    const hT = half((tot + mu) / 2) + 0.5 * (Number.isInteger(half((tot + mu) / 2)) ? 1 : 0);
+    const aT = half((tot - mu) / 2) + 0.5 * (Number.isInteger(half((tot - mu) / 2)) ? 1 : 0);
+    odds["points-home-game-ou-over"] = ladder(hT, (t) => 1 - normCdf((t - (tot + mu) / 2) / SDTT), "overUnder");
+    odds["points-home-game-ou-under"] = ladder(hT, (t) => normCdf((t - (tot + mu) / 2) / SDTT), "overUnder");
+    odds["points-away-game-ou-over"] = ladder(aT, (t) => 1 - normCdf((t - (tot - mu) / 2) / SDTT), "overUnder");
+    odds["points-away-game-ou-under"] = ladder(aT, (t) => normCdf((t - (tot - mu) / 2) / SDTT), "overUnder");
+    const pHome = normCdf(mu / SDM);
+    odds["points-home-game-ml-home"] = { byBookmaker: { draftkings: { odds: amFromP(pHome), available: true } } };
+    odds["points-away-game-ml-away"] = { byBookmaker: { draftkings: { odds: amFromP(1 - pHome), available: true } } };
+    // props at the sim's median, priced -115 over (the under is ours, as live)
+    const s = await seedsFor(deps, g);
+    const players = {};
+    const med = (a) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)] || 0; };
+    const PICK = [
+        ["passing_yards", "pass_yds", 120], ["passing_completions", "pass_comp", 10], ["passing_attempts", "pass_att", 15],
+        ["passing_touchdowns", "pass_td", 1], ["rushing_yards", "rush_yds", 25], ["rushing_attempts", "rush_att", 6],
+        ["receiving_yards", "rec_yds", 20], ["receiving_receptions", "rec", 2],
+    ];
+    let n = 0;
+    for (const nm of new Set(Object.keys(s.players).map((k) => k.split("|")[0]))) {
+        const pid = `PV${n++}`;
+        let any = false;
+        for (const [sgoStat, simStat, floor] of PICK) {
+            const col = s.players[`${nm}|${simStat}`];
+            if (!col)
+                continue;
+            const m = med(col);
+            if (m < floor)
+                continue;
+            const line = Math.floor(m) + 0.5;
+            odds[`${sgoStat}-${pid}-game-ou-over`] = { playerID: pid, statID: sgoStat, periodID: "game", betTypeID: "ou", sideID: "over",
+                byBookmaker: { draftkings: { odds: "-115", overUnder: String(line), available: true } } };
+            any = true;
+        }
+        if (any)
+            players[pid] = { playerID: pid, name: nm };
+    }
+    return { eventID: "preview", preview: true, status: { started: false, startsAt: g.kickoff }, players, odds };
+}
 const PROP_STATS = {
     passing_yards: { label: "Passing yards", sim: ["pass_yds"] },
     passing_touchdowns: { label: "Passing TDs", sim: ["pass_td"] },
@@ -435,7 +517,7 @@ async function boardFor(deps, week, slug, maxAgeMs = EVENT_TTL_MS) {
         e.code = "no_game";
         throw e;
     }
-    const ev = await sgoEventFor(g, maxAgeMs);
+    const ev = PREVIEW ? await previewEvent(deps, g) : await sgoEventFor(g, maxAgeMs);
     if (!ev)
         return { g, ev: null, legs: [] };
     const s = await seedsFor(deps, g);
@@ -701,7 +783,7 @@ export function registerSimbook(app, deps) {
     const fail = (res, err) => {
         const code = err?.code || "error";
         const status = code === "no_game" ? 404 : code === "started" || code === "leg_gone" || code === "price_changed" ? 409
-            : code === "budget" || code === "no_lines" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake"].includes(code) ? 400 : 500;
+            : code === "budget" || code === "no_lines" || code === "preview" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake"].includes(code) ? 400 : 500;
         if (status === 500)
             console.warn("[simbook]", err?.message ?? err);
         res.status(status).json({ error: code, slug: err?.slug });
@@ -710,7 +792,7 @@ export function registerSimbook(app, deps) {
         res.set("Cache-Control", "no-store");
         const w = await who(req).catch(() => null);
         res.json({ allowed: Boolean(w), owner: Boolean(w?.owner), player: w?.player ? { name: w.player.name, max_stake: Number(w.player.max_stake) } : null,
-            lines: Boolean(SGO_KEY) });
+            lines: Boolean(SGO_KEY), preview: PREVIEW });
     });
     app.get("/api/simbook/slate", async (req, res) => {
         res.set("Cache-Control", "no-store");
@@ -740,7 +822,7 @@ export function registerSimbook(app, deps) {
             const week = Number(req.query.week) || (await currentWeek(deps));
             const b = await boardFor(deps, week, String(req.params.slug));
             res.json({ slug: b.g.slug, home: b.g.home, away: b.g.away, kickoff: b.g.kickoff, started: kickedOff(b.g, b.ev),
-                has_lines: Boolean(b.ev), as_of: new Date().toISOString(),
+                has_lines: Boolean(b.ev), preview: PREVIEW, as_of: new Date().toISOString(),
                 offers: b.legs.map((l) => publicLeg(l, w.owner)) });
         }
         catch (err) {
@@ -786,6 +868,8 @@ export function registerSimbook(app, deps) {
             const maxStake = Number(w.player.max_stake || 5);
             if (!(stake > 0) || stake > maxStake)
                 throw Object.assign(new Error("bad_stake"), { code: "bad_stake" });
+            if (PREVIEW)
+                throw Object.assign(new Error("preview"), { code: "preview" });
             const t = await quoteTicket(deps, week, keys, true);
             if (stake * t.dec > MAX_PAYOUT)
                 throw Object.assign(new Error("bad_stake"), { code: "bad_stake" });
@@ -877,7 +961,7 @@ export function registerSimbook(app, deps) {
         setInterval(() => { gradeOpenTickets(deps).catch(() => { }); }, 15 * 60_000).unref?.();
         setTimeout(() => { gradeOpenTickets(deps).catch(() => { }); }, 60_000).unref?.();
     }
-    console.log(`[simbook] routes on; lines ${SGO_KEY ? "ON" : "OFF (SGO_API_KEY not set)"}`);
+    console.log(`[simbook] routes on; lines ${SGO_KEY ? "ON" : "PREVIEW (SGO_API_KEY not set: sample prices, betting off)"}`);
 }
 /** Test hooks (scripts/check_simbook.mjs). Not used by the server. */
 export const _simbookTest = { boardFor, quoteTicket, gradeLeg, quotesFromEvent, priceLeg, decToAmHouse, amToDec, sgoTeamIds };

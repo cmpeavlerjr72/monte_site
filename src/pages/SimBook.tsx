@@ -16,7 +16,7 @@ import { useSession, getAccessToken, supabaseEnabled } from "../lib/supabase";
 import AuthPanel from "../components/AuthPanel";
 import "../styles/simbook.css";
 
-type Me = { allowed: boolean; owner: boolean; player: { name: string; max_stake: number } | null; lines: boolean };
+type Me = { allowed: boolean; owner: boolean; player: { name: string; max_stake: number } | null; lines: boolean; preview?: boolean };
 type SlateGame = { slug: string; home: string; away: string; kickoff: string; started: boolean };
 type Offer = {
   key: string; label: string; group: string; sub: string; main: boolean; market: string; side: string;
@@ -51,6 +51,7 @@ const ERRORS: Record<string, string> = {
   bad_stake: "Check the stake: it has to be above 0 and under your limit (max payout 250u).",
   budget: "The line feed is paused for the rest of the month.",
   no_lines: "The line feed isn't connected yet.",
+  preview: "Preview mode: these are sample prices, so betting is off until the DraftKings feed is connected.",
   owner_is_the_house: "You're the house. Only players can bet.",
   slow_down: "Easy. Too many bets in a minute.",
   bad_legs: "Pick 1 to 8 legs.",
@@ -426,7 +427,9 @@ export default function SimBook() {
         </div>
       </header>
 
-      {!me.lines && <p className="sb-note sb-note--neg">The DraftKings line feed isn't connected on the server yet (SGO_API_KEY).</p>}
+      {me.preview && (
+        <p className="sb-preview" role="status"><b>Preview.</b> Sample lines built from our consensus numbers, not live DraftKings. Betting is off until the DraftKings feed (SGO_API_KEY) is connected.</p>
+      )}
       {err && <p className="sb-note sb-note--neg">{err}</p>}
 
       {tab === "board" && (

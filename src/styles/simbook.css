@@ -87,3 +87,4 @@
 .sb-more { background: none; border: 0; padding: 6px 0; color: var(--brand-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-transform: none; letter-spacing: 0; }
 .sb-more:hover { text-decoration: underline; }
 .sb-offer__label { white-space: normal; overflow: visible; line-height: 1.25; }
+.sb-preview { margin: 0; padding: 10px 12px; border: 1px dashed var(--brand-text); border-radius: 10px; font-size: 13px; color: var(--text); background: color-mix(in srgb, var(--brand) 6%, var(--card)); }
