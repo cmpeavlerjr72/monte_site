@@ -5,14 +5,19 @@ import { useEffect, useRef, useState } from "react";
 /** A phone-style bottom sheet (a centered dialog on wide screens). Escape or the backdrop closes it. */
 export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  // Once, when the sheet opens. (It used to re-run whenever the page re-rendered, i.e. on every background refresh while
+  // the bot was busy, and the focus() stole focus from the text box being typed in: the phone keyboard closed every few
+  // seconds. Owner 2026-10-19.)
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") closeRef.current(); };
     window.addEventListener("keydown", k);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     ref.current?.focus({ preventScroll: true });
     return () => { window.removeEventListener("keydown", k); document.body.style.overflow = prev; };
-  }, [onClose]);
+  }, []);
   return (
     <div className="ws-sheet" role="presentation" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="ws-sheet__panel" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref}>
