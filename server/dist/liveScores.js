@@ -4954,9 +4954,13 @@ app.get("/api/preview/:token", asyncRoute(async (req, res) => {
         return;
     }
     previewHeaders(res);
+    const editable = req.get("x-preview-edit") ? previewEditAllowed(doc, req) : false;
     res.json({
         meta: doc.meta, body: doc.body, version: doc.version ?? null, held: Boolean(doc.held), hold: doc.hold ?? null,
-        editable: req.get("x-preview-edit") ? previewEditAllowed(doc, req) : false,
+        editable,
+        // The draft workspace (2026-10-19): outline, questions, image proposals, facts, publish state. Only for the owner's
+        // edit link; the read-only link gets the article and nothing else.
+        ...(editable && doc.ws && typeof doc.ws === "object" ? { ws: doc.ws } : {}),
     });
 }));
 // ---- Editing in the preview (2026-10-17) ----
@@ -5048,7 +5052,7 @@ app.get("/api/preview/:token/edits/:id", asyncRoute(async (req, res) => {
         try {
             const r = JSON.parse(data.toString("utf8"));
             if (r.token === token) {
-                res.json({ id, status: r.status, version: r.version ?? null, error: r.error ?? null });
+                res.json({ id, status: r.status, version: r.version ?? null, error: r.error ?? null, message: r.message ?? null });
                 return;
             }
         }
@@ -5057,6 +5061,89 @@ app.get("/api/preview/:token/edits/:id", asyncRoute(async (req, res) => {
         }
     }
     res.json({ id, status: "working" });
+}));
+// ---- The draft workspace (2026-10-19) ----
+// The preview page is the whole workspace for a draft: outline, questions, images, facts, publish. Every button there is
+// an ACTION, queued exactly like an edit (same _edits/ queue so the bot applies them in order, same secret, same rate
+// limit); the bot answers in _edit_results/<id>.json. Uploads (a photo from the phone) land in _uploads/ and are only
+// referenced by a later action (image_add / hero_set). Contract: cfb-props-sim/scripts/blogbot/WORKSPACE.md.
+const PREVIEW_ACTIONS = new Set([
+    "outline_write", "outline_redo", "outline_type", "outline_take", "draft_skip", "answer",
+    "image_use", "image_swap", "image_drop", "image_note", "image_change", "image_move", "image_hero", "image_alt", "image_caption",
+    "image_add", "graphic_new", "hero_set", "hero_alt", "hero_change",
+    "section_rewrite", "rewrite_all", "tone_down", "stool", "undo_last",
+    "facts_fix", "facts_keep", "injury",
+    "publish_prepare", "publish_confirm", "publish_cancel", "schedule_cancel", "refresh",
+]);
+const PREVIEW_ACTION_ARGS_MAX = 8 * 1024;
+const PREVIEW_UPLOAD_TYPES = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic", "image/heif": "heif",
+};
+/** The shared gate for workspace writes: a known token, the edit secret, the rate limit. -> true when the caller may go on. */
+async function previewWriteGate(req, res, token) {
+    const doc = await previewDoc(token);
+    if (!doc) {
+        previewNotFound(res);
+        return false;
+    }
+    previewHeaders(res);
+    if (!previewEditAllowed(doc, req)) {
+        res.status(403).json({ error: "edit_forbidden", message: "This page can't take changes. Open the workspace link from the bot again." });
+        return false;
+    }
+    if (!previewEditRateOk(token)) {
+        res.status(429).json({ error: "rate_limited", message: "That's a lot at once. Give it a minute." });
+        return false;
+    }
+    return true;
+}
+app.post("/api/preview/:token/actions", asyncRoute(async (req, res) => {
+    const token = String(req.params.token || "");
+    if (!(await previewWriteGate(req, res, token)))
+        return;
+    const b = (req.body || {});
+    const type = typeof b.type === "string" ? b.type : "";
+    const args = b.args && typeof b.args === "object" && !Array.isArray(b.args) ? b.args : {};
+    if (!PREVIEW_ACTIONS.has(type)) {
+        res.status(400).json({ error: "bad_action", message: "The bot doesn't know that button." });
+        return;
+    }
+    if (JSON.stringify(args).length > PREVIEW_ACTION_ARGS_MAX) {
+        res.status(400).json({ error: "bad_action", message: "That's too long to send." });
+        return;
+    }
+    const base = Number.isInteger(b.base_version) ? b.base_version : null;
+    const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const action = { id, token, kind: "action", type, args, base_version: base, at: new Date().toISOString() };
+    const { error } = await supa.storage
+        .from(PREVIEW_BUCKET)
+        .upload(`_edits/${id}.json`, Buffer.from(JSON.stringify(action)), { contentType: "application/json", upsert: false });
+    if (error) {
+        res.status(502).json({ error: "queue_failed", message: "Couldn't send that. Try again." });
+        return;
+    }
+    res.status(202).json({ id });
+}));
+app.post("/api/preview/:token/uploads", express.raw({ type: Object.keys(PREVIEW_UPLOAD_TYPES), limit: "15mb" }), asyncRoute(async (req, res) => {
+    const token = String(req.params.token || "");
+    if (!(await previewWriteGate(req, res, token)))
+        return;
+    const ctype = String(req.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    const ext = PREVIEW_UPLOAD_TYPES[ctype];
+    const data = req.body;
+    if (!ext || !Buffer.isBuffer(data) || data.length < 100) {
+        res.status(400).json({ error: "bad_upload", message: "That doesn't look like a photo (JPEG, PNG, WebP, GIF or HEIC)." });
+        return;
+    }
+    const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
+    const { error } = await supa.storage
+        .from(PREVIEW_BUCKET)
+        .upload(`_uploads/${name}`, data, { contentType: ctype, upsert: false });
+    if (error) {
+        res.status(502).json({ error: "upload_failed", message: "Couldn't upload that photo. Try again." });
+        return;
+    }
+    res.status(201).json({ upload: name });
 }));
 app.get("/api/preview/:token/img/:file", asyncRoute(async (req, res) => {
     const token = String(req.params.token || ""), file = String(req.params.file || "");

@@ -23,6 +23,10 @@ export type BlockEdit = {
   active: number | null;
   onTap: (start: number, end: number) => void;
   render: (start: number, end: number) => React.ReactNode;
+  /** The draft workspace (2026-10-19): an image / embed carrying a `wsid` (the bot's image id) gets an options button. */
+  onMedia?: (wsid: string) => void;
+  /** The draft workspace: an "add something here" affordance after each top-level block ([start, end) of that block). */
+  renderInsert?: (start: number, end: number) => React.ReactNode;
 };
 
 // Only these top-level blocks can be tapped. Embeds, figures, callouts and owner beats are directives or wrappers and are
@@ -53,16 +57,35 @@ function editable(Tag: string) {
     const span = str(props["data-blk"]);
     if (!span || !edit) return createElement(Tag, props);
     const [s, e] = span.split(":").map(Number);
-    if (edit.active === s) return <>{edit.render(s, e)}</>;
-    return createElement(Tag, {
-      ...props,
-      className: [str(props.className), "pe-block"].filter(Boolean).join(" "),
-      onClick: (ev: React.MouseEvent) => {
-        if ((ev.target as HTMLElement).closest("a")) return;          // links still work
-        edit.onTap(s, e);
-      },
-    });
+    const insert = edit.renderInsert ? edit.renderInsert(s, e) : null;
+    if (edit.active === s) return <>{edit.render(s, e)}{insert}</>;
+    return (
+      <>
+        {createElement(Tag, {
+          ...props,
+          className: [str(props.className), "pe-block"].filter(Boolean).join(" "),
+          onClick: (ev: React.MouseEvent) => {
+            if ((ev.target as HTMLElement).closest("a")) return;          // links still work
+            edit.onTap(s, e);
+          },
+        })}
+        {insert}
+      </>
+    );
   };
+}
+
+/** An embed in the workspace: the embed as it renders on the site, plus an options button (an iframe or a lite player
+ *  would swallow a tap on the embed itself). Without the workspace hook, or without a wsid, it is just the embed. */
+function MediaFrame({ wsid, children }: { wsid: string; children: React.ReactNode }) {
+  const edit = useContext(EditCtx);
+  if (!edit?.onMedia || !wsid) return <>{children}</>;
+  return (
+    <div className="ws-media">
+      {children}
+      <button type="button" className="ws-media__btn" onClick={() => edit.onMedia!(wsid)} aria-label="Image options">✎ Image options</button>
+    </div>
+  );
 }
 
 const EDITABLE_COMPONENTS = Object.fromEntries([...EDITABLE].map((t) => [t, editable(t)]));
@@ -92,10 +115,10 @@ export default function Markdown({ body, draft, edit }: { body: string; draft: b
         <figcaption><a href={str(url)} target="_blank" rel="noopener noreferrer">View on X →</a></figcaption>
       </figure>
     ),
-    "post-photo": ({ node: _n, ...p }: P) => <PhotoEmbed {...p} />,
-    "x-embed": ({ node: _n, ...p }: P) => <XEmbed {...p} />,
-    "youtube-embed": ({ node: _n, ...p }: P) => <YouTubeEmbed {...p} />,
-    "getty-embed": ({ node: _n, ...p }: P) => <GettyEmbed {...p} />,
+    "post-photo": ({ node: _n, ...p }: P) => editing ? <MediaFrame wsid={str(p.wsid)}><PhotoEmbed {...p} /></MediaFrame> : <PhotoEmbed {...p} />,
+    "x-embed": ({ node: _n, ...p }: P) => editing ? <MediaFrame wsid={str(p.wsid)}><XEmbed {...p} /></MediaFrame> : <XEmbed {...p} />,
+    "youtube-embed": ({ node: _n, ...p }: P) => editing ? <MediaFrame wsid={str(p.wsid)}><YouTubeEmbed {...p} /></MediaFrame> : <YouTubeEmbed {...p} />,
+    "getty-embed": ({ node: _n, ...p }: P) => editing ? <MediaFrame wsid={str(p.wsid)}><GettyEmbed {...p} /></MediaFrame> : <GettyEmbed {...p} />,
     "owner-beat": ({ note }: P) =>
       draft ? (
         <aside className="owner-beat" aria-label="Owner beat (draft only)">

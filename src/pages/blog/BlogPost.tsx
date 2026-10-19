@@ -93,7 +93,13 @@ export default function BlogPost() {
 
 /** The article itself, shared by /blog/:slug and the private draft preview (/preview/:token). `banner` replaces the
  *  draft note; `related` is left out of previews. */
-export function PostArticle({ post, body, related = [], banner, edit }: { post: BlogMeta; body: string | null; related?: BlogMeta[]; banner?: React.ReactNode; edit?: BlockEdit }) {
+export function PostArticle({ post, body, related = [], banner, edit, onHero, before }: {
+  post: BlogMeta; body: string | null; related?: BlogMeta[]; banner?: React.ReactNode; edit?: BlockEdit;
+  /** The draft workspace: an options button on the hero. */
+  onHero?: () => void;
+  /** The draft workspace: panels between the header and the hero. */
+  before?: React.ReactNode;
+}) {
   // Barstool format: most posts OPEN with an embed. When the body's first
   // block is the hero image itself, the hero is not drawn twice.
   const firstImage = body == null ? null : /^\s*(?:<!--[\s\S]*?-->\s*)*!\[[^\]]*\]\(([^)\s]+)/.exec(body)?.[1] ?? null;
@@ -124,9 +130,12 @@ export function PostArticle({ post, body, related = [], banner, edit }: { post: 
         {!post.draft && <ShareBar post={post} />}
       </header>
 
+      {before}
+
       {showHero && (
-        <figure className="post-hero">
+        <figure className={onHero ? "post-hero ws-media" : "post-hero"}>
           <img src={post.hero ?? undefined} alt={post.hero_alt} decoding="async" />
+          {onHero && <button type="button" className="ws-media__btn" onClick={onHero}>✎ Hero options</button>}
         </figure>
       )}
 
