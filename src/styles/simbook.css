@@ -94,7 +94,14 @@
 .sbx-slip { z-index: 60; }
 .sbx-slip__title { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 0; font: inherit; color: var(--text); cursor: pointer; min-width: 0; }
 .sbx-slip__price { font-variant-numeric: tabular-nums; font-size: 14px; }
-.sbx-slip__body { overflow: auto; padding: 12px; display: grid; gap: 10px; }
+.sbx-slip__body { overflow: auto; padding: 12px; display: grid; gap: 10px;
+  /* rows keep their full height and the body scrolls: with plain auto rows a short phone
+     slip squashed each game box (overflow: hidden) to its header and hid every leg */
+  grid-auto-rows: max-content; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
+@media (max-width: 720px) { .parlay-slip.sbx-slip { max-height: 75vh; } }
+/* stake + Place stay pinned at the bottom while the legs scroll */
+.sbx-slip__foot { position: sticky; bottom: -12px; margin: 0 -12px -12px; padding: 10px 12px 12px; display: grid; gap: 10px;
+  background: var(--card); border-top: 1px solid var(--border); }
 .sbx-mode { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; gap: 3px; border-radius: 10px; background: var(--fill); }
 .sbx-mode button { border: 0; border-radius: 8px; padding: 7px 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
 .sbx-mode button[data-on="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 3px var(--shadow); }

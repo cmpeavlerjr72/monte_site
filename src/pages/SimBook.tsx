@@ -606,6 +606,7 @@ function Slip({ week, legs, remove, clear, maxSingle, maxCombo, available, owner
               <button type="button" className="ui-btn" onClick={() => choose("singles")}>Bet as singles</button>
             </div>
           )}
+          <div className="sbx-slip__foot">
           <div className="sbx-slip__stake">
             <label>{combo || legs.length === 1 ? "Stake" : "Stake per bet"}
               <input type="number" inputMode="decimal" min={1} max={maxStake} step={1} value={stake} onChange={(e) => setStake(e.target.value)} />
@@ -622,6 +623,7 @@ function Slip({ week, legs, remove, clear, maxSingle, maxCombo, available, owner
           </button>
           <div className="sbx-dim">Max {u(maxSingle)} on a single, {u(maxCombo)} on a combo · {u(available)} available</div>
           {msg && <p className={`sb-note sb-note--${msg.tone}`} role="status">{msg.text}</p>}
+          </div>
         </div>
       )}
     </aside>
