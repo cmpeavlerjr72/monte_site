@@ -425,6 +425,8 @@ async function previewEvent(deps: SimbookDeps, g: SlateGame): Promise<SgoEvent |
 type Leg = {
   key: string; slug: string; market: "spread" | "total" | "ml" | "tt" | "prop";
   side: string; line: number | null; player?: string; stat?: string;
+  /** props: which of OUR teams the player is on (from SGO's player teamID) */
+  team?: "home" | "away";
 };
 type PricedLeg = Leg & {
   label: string; group: string; sub: string; main: boolean; game: string; kickoff: string; sgo_event: string; odd_id: string;
@@ -503,22 +505,34 @@ function quotesFromEvent(g: SlateGame, ev: SgoEvent): Quote[] {
     if (a != null) out.push({ leg: { key: `${g.slug}|ml|away|||`, slug: g.slug, market: "ml", side: "away", line: null },
       label: `${g.away} to win`, group: "Moneyline", odd_id: "points-away-game-ml-away", dk_american: a, pair_american: h, main: true, sub: "Moneyline" });
   }
+  // a player's side, by his SGO teamID against our home/away (ids, then SGO's own orientation by name)
+  const sgoHome = ev?.teams?.home?.teamID, sgoAway = ev?.teams?.away?.teamID;
+  const flipped = sgoTeamIds(g.home).includes(sgoAway) || nameKey(ev?.teams?.away?.names?.long) === nameKey(g.home);
+  const teamOf = (tid: any): "home" | "away" | undefined => {
+    if (!tid) return undefined;
+    if (sgoTeamIds(g.home).includes(tid)) return "home";
+    if (sgoTeamIds(g.away).includes(tid)) return "away";
+    if (tid === sgoHome) return flipped ? "away" : "home";
+    if (tid === sgoAway) return flipped ? "home" : "away";
+    return undefined;
+  };
   // player props: DK lists OVERS (main + alt ladder) and anytime-TD yes. We
   // offer the overs only (owner 2026-10-19: no unders, no market without a DK price).
   for (const [oid, o] of Object.entries<any>(odds)) {
     const pid = o?.playerID; if (!pid || o?.periodID !== "game") continue;
     const ps = PROP_STATS[o.statID]; if (!ps) continue;
     const pname = ev?.players?.[pid]?.name || pid;
+    const team = teamOf(ev?.players?.[pid]?.teamID);
     const b = dkOf(oid); if (!b) continue;
     if (o.betTypeID === "ou" && o.sideID === "over") {
       for (const r of ladder(b, "overUnder")) {
-        const base = { slug: g.slug, market: "prop" as const, line: r.line, player: pid, stat: o.statID };
+        const base = { slug: g.slug, market: "prop" as const, line: r.line, player: pid, stat: o.statID, team };
         out.push({ leg: { ...base, key: `${g.slug}|prop|over|${r.line}|${pid}|${o.statID}`, side: "over" },
           label: `${pname} over ${r.line} ${ps.label.toLowerCase()}`, group: pname, odd_id: oid, dk_american: r.am, pair_american: null, main: r.main, sub: ps.label });
       }
     } else if (o.statID === "touchdowns" && o.betTypeID === "yn" && o.sideID === "yes") {
       const am = parseAm(b.odds); if (am == null) continue;
-      out.push({ leg: { key: `${g.slug}|prop|over|0.5|${pid}|touchdowns`, slug: g.slug, market: "prop", side: "over", line: 0.5, player: pid, stat: "touchdowns" },
+      out.push({ leg: { key: `${g.slug}|prop|over|0.5|${pid}|touchdowns`, slug: g.slug, market: "prop", side: "over", line: 0.5, player: pid, stat: "touchdowns", team },
         label: `${pname} anytime TD`, group: pname, odd_id: oid, dk_american: am, pair_american: null, main: true, sub: "Anytime TD" });
     }
   }
@@ -675,7 +689,7 @@ async function boardFor(deps: SimbookDeps, week: number, slug: string, maxAgeMs 
 /** What the bettor may see about a leg: never the sim's or the market's probability. */
 function publicLeg(l: PricedLeg, owner: boolean) {
   const base = { key: l.key, label: l.label, group: l.group, sub: l.sub, main: l.main, market: l.market, side: l.side, line: l.line,
-                 american: l.american, dec: l.dec, parlay_ok: l.parlay_ok };
+                 american: l.american, dec: l.dec, parlay_ok: l.parlay_ok, team: l.team };
   if (!owner) return base;
   return { ...base, dk_american: l.dk_american, q_sim: l.q_sim, p_mkt: l.p_mkt, house_ev: l.house_ev, sim_player: l.sim_player };
 }

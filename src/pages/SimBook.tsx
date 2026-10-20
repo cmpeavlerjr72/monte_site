@@ -39,6 +39,8 @@ type Offer = {
   key: string; label: string; group: string; sub: string; main: boolean; market: string; side: string;
   line: number | null; american: number; dec: number; parlay_ok: boolean;
   dk_american?: number; q_sim?: number; p_mkt?: number; house_ev?: number;
+  /** props: the player's team */
+  team?: "home" | "away";
 };
 type Board = { slug: string; home: string; away: string; kickoff: string; started: boolean; has_lines: boolean; offers: Offer[] };
 type BoardState = { board?: Board; err?: string; loading?: boolean };
@@ -321,6 +323,7 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
     const needle = q.trim().toLowerCase();
     // player -> stat -> the offer we show (DK's main line, else the first near-even one)
     const byPlayer = new Map<string, Map<string, Offer>>();
+    const teamOfPlayer = new Map<string, "home" | "away">();
     // owner 2026-10-19: no QB rushing on the Rushing tab (qbSet: anyone with a
     // passing prop, or pass + rush yards, in this game).
     const qbs = qbSet;
@@ -328,6 +331,7 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
       if (!cols.some(([sub]) => sub === o.sub)) continue;
       if (pg.id === "Rushing" && qbs.has(o.group)) continue;
       const m = byPlayer.get(o.group) || new Map<string, Offer>(); byPlayer.set(o.group, m);
+      if (o.team) teamOfPlayer.set(o.group, o.team);
       const cur = m.get(o.sub);
       if (!cur || (o.main && !cur.main)) m.set(o.sub, o);
     }
@@ -336,8 +340,14 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
       return -Infinity;
     };
     const firstCol = (m: Map<string, Offer>) => cols.findIndex(([sub]) => m.has(sub));
+    // owner 2026-10-19: each team's players together (away first), most to least yards
     const rows = [...byPlayer.entries()].filter(([n]) => !needle || n.toLowerCase().includes(needle))
       .sort((x, y) => firstCol(x[1]) - firstCol(y[1]) || leadOf(y[1]) - leadOf(x[1]) || x[0].localeCompare(y[0]));
+    const sections = [
+      { team: g.away, rows: rows.filter(([n]) => teamOfPlayer.get(n) === "away") },
+      { team: g.home, rows: rows.filter(([n]) => teamOfPlayer.get(n) === "home") },
+      { team: "", rows: rows.filter(([n]) => !teamOfPlayer.has(n)) },
+    ].filter((x) => x.rows.length);
     const grid = { gridTemplateColumns: `minmax(var(--sbx-name), 1fr) repeat(${cols.length}, var(--sbx-col))` };
     body = (
       <div className="sbx-sections">
@@ -349,14 +359,25 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
                 <span role="columnheader">Player</span>
                 {cols.map(([sub, head]) => <span key={sub} role="columnheader" title={sub}>{head}</span>)}
               </div>
-              {rows.map(([name, m]) => (
-                <div key={name} className="sbx-statrow" role="row" style={grid}>
-                  <span className="sbx-statrow__name" role="rowheader">{name}</span>
-                  {cols.map(([sub]) => {
-                    const o = m.get(sub);
-                    return <Cell key={sub} o={o} top={o && sub !== "Anytime TD" ? `O ${o.line}` : undefined} slipKeys={slipKeys} toggle={t} owner={owner} wide />;
-                  })}
-                </div>
+              {sections.map((sec) => (
+                <Fragment key={sec.team || "other"}>
+                  {sections.length > 1 && (
+                    <div className="sbx-statteam" role="row">
+                      <span role="rowheader">{sec.team ? <><Logo team={sec.team} px={18} />{sec.team}</> : "Other"}</span>
+                    </div>
+                  )}
+                  {sec.rows.map(([name, m]) => (
+                    <div key={name} className="sbx-statrow" role="row" style={grid}>
+                      <span className="sbx-statrow__name" role="rowheader">
+                        {sec.team && <Logo team={sec.team} px={16} />}<span>{name}</span>
+                      </span>
+                      {cols.map(([sub]) => {
+                        const o = m.get(sub);
+                        return <Cell key={sub} o={o} top={o && sub !== "Anytime TD" ? `O ${o.line}` : undefined} slipKeys={slipKeys} toggle={t} owner={owner} wide />;
+                      })}
+                    </div>
+                  ))}
+                </Fragment>
               ))}
             </div>
           </div>
