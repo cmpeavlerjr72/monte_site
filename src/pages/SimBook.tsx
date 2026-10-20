@@ -860,7 +860,7 @@ export default function SimBook() {
       )}
       <p className="sb-explainer">
         <b>DraftKings lines, MVPeav prices.</b> DraftKings sets the line on every bet (the spread, the total, each player's number).
-        MVPeav sets the price you get on it, starting from DraftKings' odds.
+        MVPeav sets the price you get on it.
       </p>
       {err && <p className="sb-note sb-note--neg">{err}</p>}
       {me.player && (
