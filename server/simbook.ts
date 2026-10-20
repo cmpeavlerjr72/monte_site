@@ -853,7 +853,9 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
           spread: num(L?.spread?.close ?? L?.spread?.open), total: num(L?.total?.close ?? L?.total?.open),
           offers: card ? card.legs.map((l) => publicLeg(l, w.owner)) : undefined,
           as_of: card ? new Date(card.at).toISOString() : undefined,
-          stale, no_lines: !started && !stale && eventCache.has(`${week}/${g.slug}`) && !eventCache.get(`${week}/${g.slug}`)!.ev });
+          // no DK event, or DK has every line suspended (nothing priced off a fresh board)
+          stale, no_lines: !started && !stale && eventCache.has(`${week}/${g.slug}`) &&
+            (!eventCache.get(`${week}/${g.slug}`)!.ev || (cardCache.get(`${week}/${g.slug}`)?.at === snapAt && !card?.legs.length)) });
       }
       res.json({ season: SEASON, week, warming: pricing.has(week), games: out });
     } catch (err) { fail(res, err); }
