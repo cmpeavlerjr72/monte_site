@@ -35,6 +35,10 @@ server-only via the service role).
   one game, a stat + a combo stat containing it (same player), >6 legs from one
   game, <50 joint seeds (too rare to price), correlation r = joint / product of
   marginals > 2.0. r 1.25-2.0 = extra juice 5%->15% on top of the 1/r cut.
+  **Parlay juice** (owner 2026-10-20): x (1 - 0.03) per leg beyond the first
+  (`SIMBOOK_PARLAY_JUICE`), stamped as `parlay_juice` on each leg record; a dropped
+  (push/void) leg gives back its price AND its 3% at grading, capped at the won legs'
+  straight product.
   Measured: different players ~1.0-1.25; same player two stats 1.5-5.3; game
   total + team total 1.8-2.7.
   DK lists prop OVERS only, so props are overs only. Owner 2026-10-19: no

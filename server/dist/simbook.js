@@ -56,6 +56,10 @@ const STAT_OVERLAP = {
     receiving_yards: ["rushing+receiving_yards"], "passing+rushing_yards": ["passing_yards", "rushing_yards", "rushing+receiving_yards"],
     "rushing+receiving_yards": ["rushing_yards", "receiving_yards", "passing+rushing_yards"],
 };
+// Parlay juice (owner 2026-10-20): on top of each leg's own juice compounding, a combo
+// pays (1 - PARLAY_JUICE) less for every leg beyond the first (3%: 5 legs at -110 go
+// +2437 -> ~+2150). Stamped on each leg record so grading re-prices a pushed leg right.
+const PARLAY_JUICE = Number(process.env.SIMBOOK_PARLAY_JUICE ?? 0.03);
 const MAX_PAYOUT = 5000; // dollars, including stake ($25 combo at the +10000 cap = $2,525)
 const AM_MIN = -1000, AM_MAX_SINGLE = 1500, AM_MAX_PARLAY = 10000;
 /* -------------------------------------------------------------- small utils */
@@ -741,7 +745,7 @@ async function quoteTicket(deps, week, keys, forBet) {
     // same-game legs move together (joint > product of marginals) the payout is
     // cut by that ratio, as DK's own same-game parlays do. Never lengthened.
     const naive = legs.reduce((a, l) => a * l.p_win, 1);
-    let dec = legs.reduce((a, l) => a * l.dec, 1) * Math.min(1, naive / pSim) * juice;
+    let dec = legs.reduce((a, l) => a * l.dec, 1) * Math.min(1, naive / pSim) * juice * (1 - PARLAY_JUICE) ** (legs.length - 1);
     const pHouse = 1 / dec;
     let american = decToAmHouse(dec);
     if (american > AM_MAX_PARLAY)
@@ -894,9 +898,13 @@ async function gradeOpenTickets(deps) {
                         payout = Number(t.stake);
                     }
                     else {
-                        const cut = off.reduce((a, l) => a * (Number.isFinite(Number(l.american)) ? amToDec(Number(l.american)) : 1), 1);
+                        // each dropped leg takes out its own price and its parlay juice; never more than
+                        // the won legs' own prices multiplied, never less than the stake back
+                        const legDec = (l) => (Number.isFinite(Number(l.american)) ? amToDec(Number(l.american)) : 1);
+                        const cut = off.reduce((a, l) => a * legDec(l) * (1 - Number(l.parlay_juice ?? 0)), 1);
+                        const straight = legs.filter((l) => l.result === "won").reduce((a, l) => a * legDec(l), 1);
                         status = "won";
-                        payout = Number(t.stake) * Math.max(1, Number(t.decimal_odds) / cut);
+                        payout = Number(t.stake) * Math.max(1, Math.min(straight, Number(t.decimal_odds) / cut));
                     }
                 }
             }
@@ -1103,7 +1111,7 @@ export function registerSimbook(app, deps) {
             const row = {
                 user_id: w.uid, season: SEASON, week, kind: t.kind, stake, american: t.american, decimal_odds: t.dec,
                 p_sim: t.p_sim, p_mkt: t.p_mkt, p_house: t.p_house, house_ev: t.house_ev, dk_decimal: t.dk_dec,
-                legs: t.legs.map(legRecord), note: typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null,
+                legs: t.legs.map((l) => ({ ...legRecord(l), ...(t.kind === "parlay" ? { parlay_juice: PARLAY_JUICE } : {}) })), note: typeof req.body?.note === "string" ? req.body.note.slice(0, 200) : null,
             };
             const { data, error } = await deps.supa.from("simbook_tickets").insert(row).select("id, created_at").single();
             if (error)
