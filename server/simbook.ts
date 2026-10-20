@@ -4,20 +4,16 @@
 // server grades every ticket from SportsGameOdds results; the owner sees
 // whether "ball knowledge" beats the sim.
 //
-// PRICING (owner decisions 2026-10-19: "sim + guardrails", standard juice):
-//   q_sim   = the sim's probability his side wins (push-free), from seeds.json
-//   p_mkt   = DraftKings' no-vig probability for the same side and line
-//   p_house = (q_sim + p_mkt) / 2        — our calibration work showed the raw
-//             sim is overconfident against the market, the blend is not
-//   price   = the WORST for him of:
-//               DK's own price                     (never better than DK)
-//               (1 - H) / p_house                  (standard juice, 4.5% / 6% props)
-//               (1 - H_SIM) / q_sim                (the sim always keeps >= 3%)
-//   so the side the sim likes gets extra juice automatically, and every
-//   ticket is +EV for the house by the sim's own numbers.
-// Parlays: the sim's JOINT probability (same-game legs correlate through the
-// seeds), market = product of the legs, juice compounds per leg, DK clamp =
-// the product of DK's leg prices.
+// PRICING (owner 2026-10-19, second pass): the price IS DraftKings' price.
+//   q_sim = the sim's probability his side wins (push-free), from seeds.json
+//   p_mkt = DraftKings' no-vig probability for the same side and line
+//   if the sim likes the side more than DK does (q_sim > p_mkt), its implied
+//   probability goes up by min(SIM_LEAN_MAX, SIM_LEAN_K x (q_sim - p_mkt)):
+//   a little extra juice on the side the sim thinks will hit. The other side is
+//   DK's number untouched. (The first pass, worst-of DK / sim blend, posted
+//   prices like Marshall -170 / South Alabama -155 that looked wrong next to DK.)
+// Parlays: the product of the legs' prices, cut by the sim's same-game
+// correlation (joint / product of marginals) when the legs move together.
 //
 // TRUST: the browser never sends a price. It sends leg KEYS; the server
 // re-fetches DK, re-prices, and stores what IT computed. A worse price than
@@ -49,7 +45,12 @@ const CARD_TTL_MS = Number(process.env.SIMBOOK_CARD_TTL_H || 20) * 3600_000;
 // A game DK hasn't posted is looked for again on the same daily pass (opening it looks right away).
 const H_LINES = 0.045;               // juice on spreads, totals, moneylines, team totals
 const H_PROPS = 0.06;                // juice on player props
-const H_SIM = 0.03;                  // the house keeps at least this much by the sim
+const H_SIM = 0.03;                  // (retired 2026-10-19 with the blend; kept for old notes)
+// Sim lean (owner 2026-10-19): prices ARE DraftKings'. When the sim gives a side a
+// better chance than DK's no-vig, that side's implied probability goes up by
+// K x the gap, at most MAX (0.04 = 4 points: -110 -> -128, +142 -> +121).
+const SIM_LEAN_K = Number(process.env.SIMBOOK_LEAN_K || 0.5);
+const SIM_LEAN_MAX = Number(process.env.SIMBOOK_LEAN_MAX || 0.04);
 const MAX_LEGS = 8;
 const MAX_PAYOUT = 250;              // units, including stake
 const AM_MIN = -1000, AM_MAX_SINGLE = 1500, AM_MAX_PARLAY = 10000;
@@ -605,9 +606,13 @@ function priceLeg(q: Quote, s: Seeds, ev: SgoEvent, g: SlateGame): PricedLeg | n
   const dkDec = amToDec(q.dk_american);
   pMkt = Math.min(0.99, Math.max(0.01, pMkt));
   if (qSim <= 0.003 || qSim >= 0.997) return null;  // the sim says (almost) never/always: no market
-  const pHouse = (qSim + pMkt) / 2;
-  let dec = Math.min(dkDec, (1 - hold) / pHouse, (1 - H_SIM) / qSim);
-  let american = decToAmHouse(dec);
+  // DK's price, with extra juice ONLY on a side the sim likes more than DK does
+  // (owner 2026-10-19: never post a price that looks off next to DK's own board).
+  const gap = qSim - pMkt;   // under 2 points is noise: DK's number stands
+  const lean = gap > 0.02 ? Math.min(SIM_LEAN_MAX, gap * SIM_LEAN_K) : 0;
+  let dec = 1 / Math.min(0.99, 1 / dkDec + lean);
+  // no lean = DK's exact number (no rounding); a leaned price rounds against him
+  let american = lean > 0 ? decToAmHouse(dec) : q.dk_american;
   if (american < AM_MIN || american > AM_MAX_SINGLE) return null;
   dec = amToDec(american);
   const houseEv = 1 - (pWin * dec + pPush);
@@ -699,15 +704,18 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], fres
   if (legs.length === 1) {
     const l = legs[0];
     return { kind: "single" as const, legs, american: l.american, dec: l.dec, p_sim: l.q_sim, p_mkt: l.p_mkt,
-             p_house: (l.q_sim + l.p_mkt) / 2, house_ev: l.house_ev, dk_dec: l.dk_dec };
+             p_house: 1 / l.dec, house_ev: l.house_ev, dk_dec: l.dk_dec };
   }
   if (legs.some((l) => !l.parlay_ok)) throw Object.assign(new Error("parlay_push"), { code: "parlay_push" });
   const pMkt = legs.reduce((a, l) => a * l.p_mkt, 1);
   const dkDec = legs.reduce((a, l) => a * l.dk_dec, 1);
-  const juice = legs.reduce((a, l) => a * (1 - l.hold), 1);
   if (pSim <= 0.0005) throw Object.assign(new Error("parlay_dead"), { code: "parlay_dead" });
-  const pHouse = (pSim + pMkt) / 2;
-  let dec = Math.min(dkDec, juice / pHouse, (1 - H_SIM) / pSim);
+  // the legs' own prices (DK + any sim lean), multiplied; when the sim says the
+  // same-game legs move together (joint > product of marginals) the payout is
+  // cut by that ratio, as DK's own same-game parlays do. Never lengthened.
+  const naive = legs.reduce((a, l) => a * l.p_win, 1);
+  let dec = legs.reduce((a, l) => a * l.dec, 1) * Math.min(1, naive / pSim);
+  const pHouse = 1 / dec;
   let american = decToAmHouse(dec);
   if (american > AM_MAX_PARLAY) american = AM_MAX_PARLAY;
   if (american < AM_MIN) throw Object.assign(new Error("parlay_short"), { code: "parlay_short" });

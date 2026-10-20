@@ -23,14 +23,16 @@ server-only via the service role).
   opened (1 game, cached 2 min), never the whole slate; the server checks
   `/account/usage` and refuses new reads above `SIMBOOK_SGO_MONTH_CAP` (2300).
   10 requests/min is queued, not 429'd.
-- **Price** (owner decision): worst-for-him of DK's price, `(1-H)/p_house` and
-  `(1-0.03)/q_sim`, where `p_house` = mean(sim, DK no-vig). H = 4.5% game lines,
-  6% props, compounding per parlay leg. Sim probabilities come from `seeds.json`
-  (parlays use the joint over the same seeds). DK lists prop OVERS only, so
-  props are overs only (no unders). Owner 2026-10-19: no market without a DK
-  price, and no long ladders: per market only the line(s) DK prices nearest
-  50/50 (closest + up to 2 more within 45-55%; `nearEven`). Whole-number lines
-  can't go in a parlay (no push math in parlays).
+- **Price** (owner 2026-10-19, second pass): DraftKings' price, exactly. When
+  the sim beats DK's no-vig on a side by >2 points, that side's implied prob goes
+  up by min(`SIMBOOK_LEAN_MAX` 0.04, `SIMBOOK_LEAN_K` 0.5 x gap), rounded to 5
+  against him. The other side stays DK's number. (The first pass, worst-of DK /
+  sim blend, showed Marshall -170 / South Alabama -155 next to DK's board.)
+  Parlays = product of leg prices x min(1, product of sim marginals / sim
+  joint), so same-game correlation shortens a parlay but never lengthens it.
+  DK lists prop OVERS only, so props are overs only. Owner 2026-10-19: no
+  market without a DK price; per market only the line(s) nearest 50/50
+  (`nearEven`). Whole-number lines can't go in a parlay.
 - **Layout** (owner 2026-10-19): the scoreboard's grammar, NOT a DK skin. One
   card per game (logos, away on top, Spread/Total/ML cells, house prices on
   load). **Card prices** (owner: "load automatically"): SGO bills EVERY event
