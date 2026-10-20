@@ -65,6 +65,28 @@ const H_SIM = 0.03;                  // (retired 2026-10-19 with the blend; kept
 const SIM_LEAN_K = Number(process.env.SIMBOOK_LEAN_K || 0.25);
 const SIM_LEAN_MAX = Number(process.env.SIMBOOK_LEAN_MAX || 0.02);
 const MAX_LEGS = 8;
+// COMBO GUARDS (owner 2026-10-19: "match the rules DK has for their parlays";
+// "anything highly correlated that we allow gets extra vig").
+//   blocked, DK-style: both sides / two lines of one market, ML + spread in the
+//   same game, a stat with a combo stat that contains it (rush yds + rush+rec yds),
+//   more than MAX_SAME_GAME legs from one game, legs the sim almost never sees
+//   hit together (fewer than MIN_JOINT_SEEDS seeds: too rare to price).
+//   correlation ratio r = P(all hit) / product of the legs' own P, per game, off
+//   the same seeds (measured 2026-10-19: different players ~1.0-1.25; same player
+//   two stats 1.5-5.3; game total + a team total 1.8-2.7):
+//     r <= CORR_HIGH       priced for the correlation only (payout x 1/r)
+//     CORR_HIGH < r <= MAX extra juice, 5% rising to 15% at CORR_MAX
+//     r > CORR_MAX         blocked: too correlated to price
+const MAX_SAME_GAME = 6;
+const MIN_JOINT_SEEDS = 50;
+const CORR_HIGH = 1.25, CORR_MAX = 2.0;
+const corrJuice = (r: number) => (r <= CORR_HIGH ? 0 : 0.05 + 0.10 * Math.min(1, (r - CORR_HIGH) / (CORR_MAX - CORR_HIGH)));
+// a stat and the combo stats that contain it can't share a ticket for the same player
+const STAT_OVERLAP: Record<string, string[]> = {
+  passing_yards: ["passing+rushing_yards"], rushing_yards: ["passing+rushing_yards", "rushing+receiving_yards"],
+  receiving_yards: ["rushing+receiving_yards"], "passing+rushing_yards": ["passing_yards", "rushing_yards", "rushing+receiving_yards"],
+  "rushing+receiving_yards": ["rushing_yards", "receiving_yards", "passing+rushing_yards"],
+};
 const MAX_PAYOUT = 250;              // units, including stake
 const AM_MIN = -1000, AM_MAX_SINGLE = 1500, AM_MAX_PARLAY = 10000;
 
@@ -602,7 +624,7 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
   const bySlug = new Map<string, string[]>();
   for (const k of keys) { const slug = k.split("|")[0]; bySlug.set(slug, [...(bySlug.get(slug) || []), k]); }
   const legs: PricedLeg[] = [];
-  let pSim = 1;
+  let pSim = 1, corrMax = 1, juice = 1;   // juice: the extra cut for highly correlated same-game legs
   for (const [slug, ks] of bySlug) {
     const b = await boardFor(deps, week, slug);
     if (kickedOff(b.g, b.ev)) throw Object.assign(new Error("started"), { code: "started", slug });
@@ -611,12 +633,26 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
     if (mine.some((l) => !l)) throw Object.assign(new Error("leg_gone"), { code: "leg_gone", slug });
     // one game's legs: the joint comes from the SAME seeds
     if (ks.length > 1) {
-      const n = mine[0]!.outcome!.length; let w = 0;
-      for (let i = 0; i < n; i++) { if (mine.every((l) => l!.outcome![i] === 1)) w++; }
+      const ls = mine as PricedLeg[];
+      const fail = (code: string) => { throw Object.assign(new Error(code), { code, slug }); };
+      if (ls.length > MAX_SAME_GAME) fail("too_many_same_game");
+      // two sides (or two lines) of the same market
+      const mk = new Set(ls.map((l) => `${l.market}|${l.player || ""}|${l.stat || ""}|${l.market === "tt" ? l.side.split("_")[0] : ""}`));
+      if (mk.size !== ls.length) fail("same_market");
+      // DK: moneyline and spread don't go in the same same-game parlay
+      if (ls.some((l) => l.market === "ml") && ls.some((l) => l.market === "spread")) fail("ml_spread");
+      // a stat and a combo stat that contains it, same player
+      for (const a of ls) for (const b2 of ls) {
+        if (a !== b2 && a.player && a.player === b2.player && (STAT_OVERLAP[a.stat || ""] || []).includes(b2.stat || "")) fail("stat_overlap");
+      }
+      const n = ls[0].outcome!.length; let w = 0;
+      for (let i = 0; i < n; i++) { if (ls.every((l) => l.outcome![i] === 1)) w++; }
+      if (w < MIN_JOINT_SEEDS) fail("parlay_thin");
+      const r = (w / n) / ls.reduce((a, l) => a * l.p_win, 1);
+      if (r > CORR_MAX) fail("too_correlated");
+      corrMax = Math.max(corrMax, r);
+      juice *= 1 - corrJuice(r);
       pSim *= w / n;
-      // two sides of the same market can't both be in a ticket
-      const mk = new Set(mine.map((l) => `${l!.market}|${l!.player || ""}|${l!.stat || ""}|${l!.market === "tt" ? l!.side.split("_")[0] : ""}`));
-      if (mk.size !== mine.length) throw Object.assign(new Error("same_market"), { code: "same_market" });
     } else {
       pSim *= mine[0]!.p_win;
     }
@@ -635,14 +671,15 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
   // same-game legs move together (joint > product of marginals) the payout is
   // cut by that ratio, as DK's own same-game parlays do. Never lengthened.
   const naive = legs.reduce((a, l) => a * l.p_win, 1);
-  let dec = legs.reduce((a, l) => a * l.dec, 1) * Math.min(1, naive / pSim);
+  let dec = legs.reduce((a, l) => a * l.dec, 1) * Math.min(1, naive / pSim) * juice;
   const pHouse = 1 / dec;
   let american = decToAmHouse(dec);
   if (american > AM_MAX_PARLAY) american = AM_MAX_PARLAY;
   if (american < AM_MIN) throw Object.assign(new Error("parlay_short"), { code: "parlay_short" });
   dec = amToDec(american);
   return { kind: "parlay" as const, legs, american, dec, p_sim: pSim, p_mkt: pMkt, p_house: pHouse,
-           house_ev: 1 - pSim * dec, dk_dec: dkDec };
+           house_ev: 1 - pSim * dec, dk_dec: dkDec,
+           corr: corrMax > CORR_HIGH ? "high" as const : corrMax > 1.05 ? "some" as const : "none" as const };
 }
 
 function legRecord(l: PricedLeg) {
@@ -776,7 +813,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
   const fail = (res: Response, err: any) => {
     const code = err?.code || "error";
     const status = code === "no_game" ? 404 : code === "started" || code === "leg_gone" || code === "price_changed" ? 409
-      : code === "budget" || code === "no_lines" || code === "preview" || code === "stale_lines" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake"].includes(code) ? 400 : 500;
+      : code === "budget" || code === "no_lines" || code === "preview" || code === "stale_lines" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake", "too_many_same_game", "ml_spread", "stat_overlap", "parlay_thin", "too_correlated"].includes(code) ? 400 : 500;
     if (status === 500) console.warn("[simbook]", err?.message ?? err);
     res.status(status).json({ error: code, slug: err?.slug });
   };
@@ -842,7 +879,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       const week = Number(req.body?.week) || (await currentWeek(deps));
       const keys = Array.isArray(req.body?.legs) ? req.body.legs.map(String).slice(0, MAX_LEGS + 1) : [];
       const t = await quoteTicket(deps, week, keys, false);
-      res.json({ kind: t.kind, american: t.american, dec: t.dec, legs: t.legs.map((l) => publicLeg(l, w.owner)),
+      res.json({ kind: t.kind, american: t.american, dec: t.dec, corr: (t as any).corr ?? "none", legs: t.legs.map((l) => publicLeg(l, w.owner)),
                  ...(w.owner ? { p_sim: t.p_sim, p_mkt: t.p_mkt, house_ev: t.house_ev, dk_dec: t.dk_dec } : {}) });
     } catch (err) { fail(res, err); }
   });

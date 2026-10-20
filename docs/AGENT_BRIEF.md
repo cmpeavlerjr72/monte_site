@@ -30,6 +30,13 @@ server-only via the service role).
   sim blend, showed Marshall -170 / South Alabama -155 next to DK's board.)
   Parlays = product of leg prices x min(1, product of sim marginals / sim
   joint), so same-game correlation shortens a parlay but never lengthens it.
+  **Combo guards** (owner: "match DK's parlay rules"; correlated combos we allow
+  get extra vig). Blocked: both sides / two lines of one market, ML + spread in
+  one game, a stat + a combo stat containing it (same player), >6 legs from one
+  game, <50 joint seeds (too rare to price), correlation r = joint / product of
+  marginals > 2.0. r 1.25-2.0 = extra juice 5%->15% on top of the 1/r cut.
+  Measured: different players ~1.0-1.25; same player two stats 1.5-5.3; game
+  total + team total 1.8-2.7.
   DK lists prop OVERS only, so props are overs only. Owner 2026-10-19: no
   market without a DK price; per market only the line(s) nearest 50/50
   (`nearEven`). Whole-number lines can't go in a parlay.

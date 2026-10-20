@@ -74,7 +74,12 @@ const ERRORS: Record<string, string> = {
   started: "That game has kicked off. Bets are closed.",
   leg_gone: "That line just moved off the board. Reopen the game and pick again.",
   parlay_push: "Whole-number lines can push, so they can't go in a combo. Switch to singles or swap that leg.",
-  same_market: "Two sides of the same bet can't go in one combo.",
+  same_market: "Two sides of the same bet, or two lines of it, can't go in one combo.",
+  ml_spread: "A moneyline and a spread from the same game can't go in one combo.",
+  stat_overlap: "A player's stat and a combo stat that includes it can't go in one combo.",
+  too_many_same_game: "Max 6 legs from one game in a combo.",
+  parlay_thin: "Those legs almost never hit together, so the house can't price that combo.",
+  too_correlated: "Those legs move together too much to price as a combo. Bet them as singles or swap one.",
   parlay_dead: "The house won't write that combo.",
   parlay_short: "That combo is too short a price to write.",
   bad_stake: "Check the stake: it has to be above 0 and under your limit (max payout 250u).",
@@ -467,7 +472,7 @@ function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }
   const [mode, setMode] = useState<"combo" | "singles">("combo");
   const [picked, setPicked] = useState(false);           // he chose a mode himself
   const [stake, setStake] = useState("1");
-  const [quote, setQuote] = useState<{ american: number; dec: number } | null>(null);
+  const [quote, setQuote] = useState<{ american: number; dec: number; corr?: "none" | "some" | "high" } | null>(null);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "neg" | "pos" | "muted"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -494,7 +499,7 @@ function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }
     const t = setTimeout(async () => {
       const r = await api("/api/simbook/quote", { method: "POST", body: JSON.stringify({ week, legs: legs.map((l) => l.key) }) });
       if (!alive) return;
-      if (r.ok) setQuote({ american: r.body.american, dec: r.body.dec });
+      if (r.ok) setQuote({ american: r.body.american, dec: r.body.dec, corr: r.body.corr });
       else setQuoteErr(ERRORS[r.body?.error] || `Couldn't price that (${r.status}).`);
     }, 250);
     return () => { alive = false; clearTimeout(t); };
@@ -585,6 +590,11 @@ function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }
               ))}
             </section>
           ))}
+          {combo && quote?.corr && quote.corr !== "none" && (
+            <div className="sbx-dim">{quote.corr === "high"
+              ? "These legs tend to hit together, so this combo pays less than the legs multiplied, plus extra juice."
+              : "Some of these legs tend to hit together, so the combo pays a bit less than the legs multiplied."}</div>
+          )}
           {combo && quoteErr && (
             <div className="parlay-notice sbx-slip__err">
               <span>{quoteErr}</span>
