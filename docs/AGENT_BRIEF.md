@@ -35,17 +35,18 @@ server-only via the service role).
   (`nearEven`). Whole-number lines can't go in a parlay.
 - **Layout** (owner 2026-10-19): the scoreboard's grammar, NOT a DK skin. One
   card per game (logos, away on top, Spread/Total/ML cells, house prices on
-  load). **Lines data flow** (owner 2026-10-19): the SITE NEVER READS SGO.
-  One server timer (`refreshSlate`, every 15 min) re-reads the DK boards that are
-  due and writes them to `simbook_events`; cards, the game menu, the slip and
-  bets read only that snapshot. Due = by time to kickoff: >36h every 72h, 6-36h
-  every `SIMBOOK_CARD_TTL_H` (20h), last 6h every `SIMBOOK_NEAR_TTL_H` (4h), in
-  batched calls (25 ids/call; one league query when >5 games lack an id) under a
-  pro-rated monthly pacing guard. **Max age**: a board older than its interval +
-  30 min is NOT served (no card prices, empty menu, quotes/bets refused
-  `stale_lines`) until the timer refreshes it, so nothing too stale ever shows.
-  SGO bills every event read against 2,500/month; the owner sees reads used on
-  All bets. Only other SGO readers: the grading timer and owner "Grade now". Tapping a card opens a full-width drawer after its row with tabs
+  load). **Lines data flow** (owner 2026-10-19): THE SITE NEVER READS SGO and
+  holds no SGO key. The PC job `cfb-props-sim/scripts/simbook_refresh.py` (Task
+  Scheduler "SimBookRefresh", every 15 min, key in cfb-props-sim/.env) is the
+  only SGO reader: it writes each game's DK board to `simbook_events` on a
+  freshness schedule (>36h out every 72h, 6-36h every 20h, last 6h every 4h;
+  batched, pro-rated monthly pacing guard), re-reads finished games behind open
+  tickets until final (grading reads those rows), and writes its read count to
+  `simbook_meta` ('sgo', shown to the owner). Render re-reads the snapshot each
+  minute; cards, menu, slip, bets and grading read only the DB. **Max age**: a
+  board older than its interval + 30 min is NOT served (no card prices, empty
+  menu, quotes/bets refused `stale_lines`) until the job refreshes it.
+  `SIMBOOK_PREVIEW=1` = sample prices, betting off. Tapping a card opens a full-width drawer after its row with tabs
   (Game Lines, Team Totals, one per prop stat). The slip reuses the global
   `.parlay-*` classes: 2+ legs default to COMBO (house wants parlays), with a
   Singles toggle (same stake per leg, one ticket each) and Clear.

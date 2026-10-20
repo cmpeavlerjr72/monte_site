@@ -16,7 +16,7 @@
 // correlation (joint / product of marginals) when the legs move together.
 //
 // TRUST: the browser never sends a price. It sends leg KEYS; the server
-// re-fetches DK, re-prices, and stores what IT computed. A worse price than
+// re-reads the DK snapshot (simbook_events), re-prices, and stores what IT computed. A worse price than
 // the one he saw comes back as 409 `price_changed` with the new quote.
 // Tables: supabase/migrations/20261019_simbook.sql (RLS on, no client policy).
 // ============================================================================
@@ -33,15 +33,13 @@ export type SimbookDeps = {
 
 const REPO = "cfb-sims-2026";
 const SEASON = 2026;
-const SGO_KEY = process.env.SGO_API_KEY || "";
-const SGO_BASE = "https://api.sportsgameodds.com/v2";
-const SGO_MONTH_CAP = Number(process.env.SIMBOOK_SGO_MONTH_CAP || 2300); // plan allows 2,500 games/month
-// FRESHNESS (owner 2026-10-19): "the site only ever reads the database, never SGO".
-// SportsGameOdds is read ONLY by the server's refresh timer, which writes each
-// game's DK board to simbook_events. Every request (cards, opening a game, the
-// slip, placing a bet) reads that snapshot. SGO bills every event read against
-// 2,500/month, so a game is re-read on this schedule, by time to kickoff:
-const REFRESH_TICK_MS = 15 * 60_000;
+// DATA FLOW (owner 2026-10-19): "the site only ever reads the database, never SGO".
+// SportsGameOdds is read ONLY by the PC job cfb-props-sim/scripts/simbook_refresh.py
+// (Task Scheduler "SimBookRefresh", every 15 min), which writes each game's DK
+// board, finished games' results and its read count to Supabase. This server
+// holds NO SGO key and makes NO SGO call: cards, the menu, the slip, bets and
+// grading all read simbook_events. The job re-reads a game on this schedule, by
+// time to kickoff (keep these in step with simbook_refresh.py):
 const FRESH_FAR_MS = 72 * 3600_000;                                              // > 36h out
 const FRESH_MID_MS = Number(process.env.SIMBOOK_CARD_TTL_H || 20) * 3600_000;    // 6-36h out
 const FRESH_NEAR_MS = Number(process.env.SIMBOOK_NEAR_TTL_H || 4) * 3600_000;    // last 6h
@@ -186,78 +184,36 @@ function seedsFor(deps: SimbookDeps, g: SlateGame): Promise<Seeds> {
   return p;
 }
 
-/* ------------------------------------------------------- SportsGameOdds */
-let sgoCalls: number[] = [];
-let sgoUsage = { at: 0, used: 0 };
-async function sgoGet(path: string, params: Record<string, string>): Promise<any> {
-  if (!SGO_KEY) { const e: any = new Error("no_sgo_key"); e.code = "no_lines"; throw e; }
-  // 10 requests a minute on this plan: wait for a slot rather than 429.
-  for (;;) {
-    const now = Date.now();
-    sgoCalls = sgoCalls.filter((t) => now - t < 60_000);
-    if (sgoCalls.length < 9) break;
-    await new Promise((r) => setTimeout(r, 60_000 - (now - sgoCalls[0]) + 50));
-  }
-  sgoCalls.push(Date.now());
-  const qs = new URLSearchParams(params).toString();
-  const r = await fetch(`${SGO_BASE}/${path}?${qs}`, { headers: { "x-api-key": SGO_KEY, "user-agent": "monte-simbook" } } as any);
-  if (!r.ok) { const e: any = new Error(`SGO ${r.status}`); e.status = r.status; throw e; }
-  return r.json();
-}
-/** Monthly game budget: refuse new reads before the plan's cap, keep a reserve for grading. */
-async function sgoBudgetOk(reserve = 0): Promise<boolean> {
-  if (Date.now() - sgoUsage.at > 10 * 60_000) {
-    try {
-      const d = await sgoGet("account/usage", {});
-      sgoUsage = { at: Date.now(), used: Number(d?.data?.rateLimits?.["per-month"]?.["current-entities"] ?? 0) };
-    } catch { sgoUsage.at = Date.now(); }
-  }
-  return sgoUsage.used + reserve < SGO_MONTH_CAP;
-}
-
+/* -------------------------------------------------- the DK snapshot (DB) */
 type SgoEvent = any;
-const eventIdBySlug = new Map<string, string>();
 const eventCache = new Map<string, { at: number; ev: SgoEvent | null }>();
 
-/** Does this SGO event describe our game? (team ids, or names when the ids miss) */
-function eventMatches(e: any, g: SlateGame): boolean {
-  const h = e?.teams?.home?.teamID, a = e?.teams?.away?.teamID;
-  const homeKeys = sgoTeamIds(g.home), awayKeys = sgoTeamIds(g.away);
-  const hn = nameKey(e?.teams?.home?.names?.long), an = nameKey(e?.teams?.away?.names?.long);
-  return (homeKeys.includes(h) && awayKeys.includes(a)) ||
-         (hn === nameKey(g.home) && an === nameKey(g.away)) ||
-         (homeKeys.includes(h) && an === nameKey(g.away)) ||
-         (awayKeys.includes(a) && hn === nameKey(g.home));
-}
-
-/* The snapshot lives in simbook_events so a redeploy reloads it instead of
-   re-buying it from SGO. */
+/* The PC job writes simbook_events; this re-reads it at most once a minute per
+   week, pulling the (large) event JSON only for rows that changed. */
 let snapSupa: SupabaseClient | null = null;
-const snapLoaded = new Map<number, Promise<void>>();
+const SNAP_RELOAD_MS = 60_000;
+const snapLoaded = new Map<number, { at: number; p: Promise<void> }>();
 function ensureSnapshot(week: number): Promise<void> {
-  const hit = snapLoaded.get(week); if (hit) return hit;
+  const hit = snapLoaded.get(week);
+  if (hit && Date.now() - hit.at < SNAP_RELOAD_MS) return hit.p;
   const p = (async () => {
     if (!snapSupa) return;
-    const { data, error } = await snapSupa.from("simbook_events").select("slug, event_id, fetched_at, event").eq("season", SEASON).eq("week", week);
+    const { data, error } = await snapSupa.from("simbook_events").select("slug, fetched_at").eq("season", SEASON).eq("week", week);
     if (error) throw error;
-    for (const r of data || []) {
-      const ck = `${week}/${r.slug}`, at = Date.parse(r.fetched_at);
-      if (r.event_id) eventIdBySlug.set(ck, r.event_id);
-      const cur = eventCache.get(ck);
-      if (!cur || cur.at < at) eventCache.set(ck, { at, ev: r.event || null });
+    const changed = (data || []).filter((r) => {
+      const cur = eventCache.get(`${week}/${r.slug}`);
+      return !cur || cur.at < Date.parse(r.fetched_at);
+    }).map((r) => r.slug);
+    for (let i = 0; i < changed.length; i += 20) {
+      const { data: rows, error: e2 } = await snapSupa.from("simbook_events").select("slug, fetched_at, event")
+        .eq("season", SEASON).eq("week", week).in("slug", changed.slice(i, i + 20));
+      if (e2) throw e2;
+      for (const r of rows || []) eventCache.set(`${week}/${r.slug}`, { at: Date.parse(r.fetched_at), ev: r.event || null });
     }
   })();
   p.catch((e) => { snapLoaded.delete(week); console.warn("[simbook] snapshot load:", e?.message ?? e); });
-  snapLoaded.set(week, p);
+  snapLoaded.set(week, { at: Date.now(), p });
   return p;
-}
-function saveEvent(g: SlateGame, ev: SgoEvent | null, at: number) {
-  const ck = `${g.week}/${g.slug}`;
-  eventCache.set(ck, { at, ev });
-  if (ev?.eventID) eventIdBySlug.set(ck, ev.eventID);
-  if (!snapSupa || PREVIEW) return;
-  snapSupa.from("simbook_events").upsert({ season: SEASON, week: g.week, slug: g.slug, event_id: ev?.eventID ?? eventIdBySlug.get(ck) ?? null,
-    fetched_at: new Date(at).toISOString(), event: ev }).then(({ error }) => { if (error) console.warn("[simbook] snapshot save:", error.message); });
 }
 
 /** A game's DK board from the snapshot. NEVER reads SGO (request paths use this). */
@@ -266,84 +222,8 @@ async function snapEvent(g: SlateGame): Promise<{ ev: SgoEvent | null; at: numbe
   return eventCache.get(`${g.week}/${g.slug}`) || null;
 }
 
-/** Refresh timer only: find a game's SGO event by team (a few reads). */
-async function discoverEvent(g: SlateGame): Promise<SgoEvent | null> {
-  const base = { leagueID: "NCAAF", bookmakerID: "draftkings", includeAltLines: "true", limit: "1" };
-  const after = new Date(Date.parse(g.kickoff) - 3 * 86400_000).toISOString();
-  for (const tid of [...sgoTeamIds(g.home), ...sgoTeamIds(g.away)]) {
-    const d = await sgoGet("events", { ...base, teamID: tid, startsAfter: after });
-    for (const e of d?.data || []) if (eventMatches(e, g)) return e;
-  }
-  return null;
-}
-
-/** Spend no faster than the month allows: the cap, pro-rated to today, plus slack. */
-async function budgetPaced(n: number): Promise<boolean> {
-  if (!(await sgoBudgetOk(100 + n))) return false;
-  const d = new Date(), dim = new Date(d.getUTCFullYear(), d.getUTCMonth() + 1, 0).getDate();
-  const allowance = SGO_MONTH_CAP * (d.getUTCDate() / dim) + 300;
-  return sgoUsage.used + n <= allowance;
-}
-
-/** REFRESH TIMER ONLY: re-read the boards that are due (freshFor) in batched
- *  calls and write them to the snapshot, then price the cards. */
-const refreshing = new Map<number, Promise<void>>();
-function refreshSlate(deps: SimbookDeps, week: number): Promise<void> {
-  const running = refreshing.get(week); if (running) return running;
-  const p = (async () => {
-    await ensureSnapshot(week).catch(() => {});
-    const games = await slate(deps, week);
-    const now = Date.now();
-    const open = games.filter((g) => now < Date.parse(g.kickoff) - 60_000);
-    const ckOf = (g: SlateGame) => `${week}/${g.slug}`;
-    {
-      const stale = open.filter((g) => {
-        const h = eventCache.get(ckOf(g));
-        return !h || now - h.at > freshFor(Date.parse(g.kickoff), now);
-      });
-      if (stale.length && (await budgetPaced(stale.length))) {
-        const base = { leagueID: "NCAAF", bookmakerID: "draftkings", includeAltLines: "true" };
-        const known = stale.filter((g) => eventIdBySlug.has(ckOf(g)));
-        const unknown = stale.filter((g) => !eventIdBySlug.has(ckOf(g)));
-        if (unknown.length > 5) {
-          // ONE league-wide pass over the window: with the DK filter SGO returns exactly
-          // the games DK lists, so this refreshes the known ones and finds new ones together.
-          const ks = stale.map((g) => Date.parse(g.kickoff));
-          const params: Record<string, string> = { ...base, limit: "100",
-            startsAfter: new Date(Math.min(...ks) - 3 * 3600_000).toISOString(), startsBefore: new Date(Math.max(...ks) + 3 * 3600_000).toISOString() };
-          const found = new Map<string, any>();
-          for (let page = 0; page < 6; page++) {
-            const d = await sgoGet("events", params);
-            for (const e of d?.data || []) {
-              const g = stale.find((x) => !found.has(x.slug) && (eventIdBySlug.get(ckOf(x)) === e.eventID || eventMatches(e, x)));
-              if (g) found.set(g.slug, e);
-            }
-            if (!d?.nextCursor) break;
-            params.cursor = String(d.nextCursor);
-          }
-          for (const g of stale) saveEvent(g, found.get(g.slug) || null, Date.now());
-        } else {
-          for (let i = 0; i < known.length; i += 25) {
-            const chunk = known.slice(i, i + 25);
-            const d = await sgoGet("events", { ...base, eventIDs: chunk.map((g) => eventIdBySlug.get(ckOf(g))!).join(","), limit: "25" });
-            const byId = new Map<string, any>((d?.data || []).map((e: any) => [e.eventID, e]));
-            for (const g of chunk) saveEvent(g, byId.get(eventIdBySlug.get(ckOf(g))!) || null, Date.now());
-          }
-          // a few strays (usually games DK hasn't posted): the per-team lookup costs a handful, not a league
-          for (const g of unknown) saveEvent(g, await discoverEvent(g).catch(() => null), Date.now());
-        }
-        if (snapSupa) snapSupa.from("simbook_events").delete().eq("season", SEASON).lt("week", week - 1).then(() => {});
-      }
-    }
-    await priceCards(deps, week);
-  })();
-  p.catch((e) => console.warn("[simbook] refresh:", e?.message ?? e)).finally(() => refreshing.delete(week));
-  refreshing.set(week, p);
-  return p;
-}
-
-/** Price every open game's card off the snapshot (no SGO). Off a slate request
- *  after a restart, and after each refresh. */
+/** Price every open game's card off the snapshot. Off a slate request whenever a
+ *  card is missing or its snapshot row changed. */
 const pricing = new Map<number, Promise<void>>();
 function priceCards(deps: SimbookDeps, week: number): Promise<void> {
   const running = pricing.get(week); if (running) return running;
@@ -365,7 +245,7 @@ function priceCards(deps: SimbookDeps, week: number): Promise<void> {
 // SGO-shaped event from what we already publish — the consensus close in
 // lines.json, a normal-curve alt ladder around it, and props at the sim's own
 // medians — so the whole board renders. Prices are SAMPLES: betting is refused.
-const PREVIEW = !SGO_KEY;
+const PREVIEW = process.env.SIMBOOK_PREVIEW === "1";   // sample prices, betting off (no DB lines needed)
 function normCdf(z: number): number {
   const t = 1 / (1 + 0.2316419 * Math.abs(z));
   const d = 0.3989423 * Math.exp(-z * z / 2);
@@ -807,7 +687,7 @@ function closeOf(leg: any, ev: SgoEvent): { close_line: number | null; close_ame
 let grading = false;
 let registered = false;
 async function gradeOpenTickets(deps: SimbookDeps): Promise<{ settled: number; checked: number }> {
-  if (!deps.supa || !SGO_KEY || grading) return { settled: 0, checked: 0 };
+  if (!deps.supa || PREVIEW || grading) return { settled: 0, checked: 0 };
   grading = true;
   try {
     const { data: rows, error } = await deps.supa.from("simbook_tickets").select("*").eq("status", "open").limit(500);
@@ -818,11 +698,13 @@ async function gradeOpenTickets(deps: SimbookDeps): Promise<{ settled: number; c
       if (!l.result && now - Date.parse(l.kickoff) > 3 * 3600_000 && l.sgo_event) need.add(l.sgo_event);
     }
     if (!need.size) return { settled: 0, checked: 0 };
+    // finished games' events (with results) are written by the PC job; read them from the DB
     const evs = new Map<string, SgoEvent>();
     const ids = [...need];
-    for (let i = 0; i < ids.length; i += 25) {
-      const d = await sgoGet("events", { eventIDs: ids.slice(i, i + 25).join(","), limit: "25" });
-      for (const e of d?.data || []) evs.set(e.eventID, e);
+    for (let i = 0; i < ids.length; i += 20) {
+      const { data: evRows, error: e3 } = await deps.supa.from("simbook_events").select("event_id, event").in("event_id", ids.slice(i, i + 20));
+      if (e3) throw e3;
+      for (const r of evRows || []) if (r.event) evs.set(r.event_id, r.event);
     }
     let settled = 0;
     for (const t of rows) {
@@ -860,6 +742,15 @@ async function gradeOpenTickets(deps: SimbookDeps): Promise<{ settled: number; c
   }
 }
 
+/** The PC job's status row: SGO reads used this month, last run. */
+let feedMemo = { at: 0, v: null as any };
+async function feedStatus(): Promise<any> {
+  if (Date.now() - feedMemo.at < 60_000 || !snapSupa) return feedMemo.v;
+  const { data } = await snapSupa.from("simbook_meta").select("value, updated_at").eq("key", "sgo").maybeSingle();
+  feedMemo = { at: Date.now(), v: data ? { ...data.value, as_of: data.updated_at } : null };
+  return feedMemo.v;
+}
+
 /* ------------------------------------------------------------------ routes */
 export function registerSimbook(app: Express, deps: SimbookDeps) {
   if (registered) return;               // once per process: routes + the grading timer
@@ -894,8 +785,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     res.set("Cache-Control", "no-store");
     const w = await who(req).catch(() => null);
     res.json({ allowed: Boolean(w), owner: Boolean(w?.owner), player: w?.player ? { name: w.player.name, max_stake: Number(w.player.max_stake) } : null,
-               lines: Boolean(SGO_KEY), preview: PREVIEW,
-               ...(w?.owner && SGO_KEY && sgoUsage.at ? { sgo: { used: sgoUsage.used, cap: 2500, guard: SGO_MONTH_CAP, as_of: new Date(sgoUsage.at).toISOString() } } : {}) });
+               lines: !PREVIEW, preview: PREVIEW, ...(w?.owner ? { sgo: await feedStatus() } : {}) });
   });
 
   app.get("/api/simbook/slate", async (req, res) => {
@@ -911,14 +801,16 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       const num = (x: any) => (x == null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x));
       // card prices come from the snapshot (the refresh timer keeps it fresh); price any card not priced yet
       await ensureSnapshot(week).catch(() => {});
-      if (games.some((g) => Date.now() < Date.parse(g.kickoff) - 60_000 && eventCache.get(`${week}/${g.slug}`)?.ev && !cardCache.has(`${week}/${g.slug}`)))
-        priceCards(deps, week);
+      if (games.some((g) => {
+        const ck = `${week}/${g.slug}`, h = eventCache.get(ck);
+        return Date.now() < Date.parse(g.kickoff) - 60_000 && h?.ev && cardCache.get(ck)?.at !== h.at;
+      })) priceCards(deps, week);
       const out = [];
       for (const g of games) {
         const L = lines?.games?.[g.slug];
         const started = Date.now() >= Date.parse(g.kickoff) - 60_000;
         const snapAt = eventCache.get(`${week}/${g.slug}`)?.at;
-        const stale = !started && Boolean(SGO_KEY) && isStale(snapAt, Date.parse(g.kickoff));
+        const stale = !started && isStale(snapAt, Date.parse(g.kickoff));
         const card = started || stale ? null : cardCache.get(`${week}/${g.slug}`) || null;
         out.push({ slug: g.slug, home: g.home, away: g.away, kickoff: g.kickoff, started,
           spread: num(L?.spread?.close ?? L?.spread?.open), total: num(L?.total?.close ?? L?.total?.open),
@@ -926,7 +818,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
           as_of: card ? new Date(card.at).toISOString() : undefined,
           stale, no_lines: !started && !stale && eventCache.has(`${week}/${g.slug}`) && !eventCache.get(`${week}/${g.slug}`)!.ev });
       }
-      res.json({ season: SEASON, week, warming: pricing.has(week) || refreshing.has(week), games: out });
+      res.json({ season: SEASON, week, warming: pricing.has(week), games: out });
     } catch (err) { fail(res, err); }
   });
 
@@ -1028,19 +920,12 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     res.json(await gradeOpenTickets(deps));
   });
 
-  // THE ONLY SGO READER for lines: every 15 min, refresh whatever is due this week
-  if (deps.supa && SGO_KEY) {
-    const tick = async () => { refreshSlate(deps, await currentWeek(deps)).catch(() => {}); };
-    setInterval(() => { tick().catch(() => {}); }, REFRESH_TICK_MS).unref?.();
-    setTimeout(() => { tick().catch(() => {}); }, 30_000).unref?.();
-  }
-
-  // grading: every 15 minutes, only does work when a ticket's game ended 3h+ ago
-  if (deps.supa && SGO_KEY) {
+  // grading: every 15 minutes, off the finished-game rows the PC job writes
+  if (deps.supa && !PREVIEW) {
     setInterval(() => { gradeOpenTickets(deps).catch(() => {}); }, 15 * 60_000).unref?.();
     setTimeout(() => { gradeOpenTickets(deps).catch(() => {}); }, 60_000).unref?.();
   }
-  console.log(`[simbook] routes on; lines ${SGO_KEY ? "ON" : "PREVIEW (SGO_API_KEY not set: sample prices, betting off)"}`);
+  console.log(`[simbook] routes on; lines ${PREVIEW ? "PREVIEW (SIMBOOK_PREVIEW=1: sample prices, betting off)" : "from simbook_events (PC job simbook_refresh.py)"}`);
 }
 
 /** Test hooks (scripts/check_simbook.mjs). Not used by the server. */

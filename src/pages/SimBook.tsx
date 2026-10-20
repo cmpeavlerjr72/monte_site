@@ -27,7 +27,7 @@ import "../styles/simbook.css";
 
 type Me = { allowed: boolean; owner: boolean; player: { name: string; max_stake: number } | null; lines: boolean; preview?: boolean;
             /** owner only: SportsGameOdds reads this month */
-            sgo?: { used: number; cap: number; guard: number } | null };
+            sgo?: { used: number; cap: number; guard: number; last_run?: string; status?: string } | null };
 type SlateGame = {
   slug: string; home: string; away: string; kickoff: string; started: boolean;
   /** consensus line for the closed card: home handicap, game total */
@@ -843,7 +843,9 @@ export default function SimBook() {
           {tickets ? <Summary tickets={tickets} owner={me.owner} /> : <p className="sb-note">Loading…</p>}
           {me.owner && me.sgo && (
             <p className="sb-note">Line feed: {me.sgo.used.toLocaleString()} of {me.sgo.cap.toLocaleString()} reads used this month
-              {me.sgo.used >= me.sgo.guard ? ". Refreshes are paused; cards show the last prices." : "."}</p>
+              {me.sgo.last_run ? `, last update ${new Date(me.sgo.last_run).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })} ET` : ""}
+              {me.sgo.status && me.sgo.status !== "ok" ? ` (last run failed: ${me.sgo.status})` : ""}
+              {me.sgo.used >= me.sgo.guard ? ". Refreshes are paused; games past their max age stop showing." : "."}</p>
           )}
           {me.owner && <Players players={players} reload={loadTickets} />}
           {tickets ? <TicketList tickets={tickets} owner={me.owner} players={playerNames} /> : null}
