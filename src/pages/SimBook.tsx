@@ -108,8 +108,15 @@ function legTeams(l: SlipLeg): string[] {
 }
 
 /* ----------------------------------------------------------------- board */
-const PROP_ORDER = ["Anytime TD", "Passing yards", "Passing TDs", "Completions", "Pass attempts", "Interceptions thrown",
-  "Rushing yards", "Carries", "Receiving yards", "Receptions", "Pass + rush yards", "Rush + rec yards", "Touchdowns scored"];
+/** Prop tabs (owner 2026-10-19): one tab per category, one row per player,
+ *  one column per stat. The first column sorts the rows (QB1 / RB1 / WR1 on top). */
+const PROP_GROUPS: { id: string; cols: [sub: string, head: string][] }[] = [
+  { id: "Passing", cols: [["Passing yards", "Yards"], ["Passing TDs", "TDs"], ["Pass attempts", "Att"], ["Completions", "Comp"], ["Interceptions thrown", "INT"]] },
+  { id: "Rushing", cols: [["Rushing yards", "Yards"], ["Carries", "Carries"]] },
+  { id: "Receiving", cols: [["Receiving yards", "Yards"], ["Receptions", "Rec"]] },
+  { id: "Touchdowns", cols: [["Anytime TD", "Anytime"], ["Touchdowns scored", "TDs"]] },
+  { id: "Combos", cols: [["Pass + rush yards", "Pass+Rush"], ["Rush + rec yards", "Rush+Rec"]] },
+];
 
 /** One price cell: the line on top, the house price under it. Same footprint as the scoreboard's market cell. */
 function Cell({ o, top, slipKeys, toggle, owner, wide = false }: {
@@ -232,11 +239,11 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
   const offers = board?.offers || [];
   const props = offers.filter((o) => o.market === "prop");
   const tt = offers.filter((o) => o.market === "tt");
-  const rank = (x: string) => (PROP_ORDER.indexOf(x) < 0 ? 99 : PROP_ORDER.indexOf(x));
+  const subs = new Set(props.map((o) => o.sub));
   const tabs: Tab[] = [
     { id: "lines", label: "Game Lines" },
     ...(tt.length ? [{ id: "tt", label: "Team Totals" }] : []),
-    ...[...new Set(props.map((o) => o.sub))].sort((x, y) => rank(x) - rank(y)).map((s) => ({ id: `p:${s}`, label: s })),
+    ...PROP_GROUPS.filter((pg) => pg.cols.some(([sub]) => subs.has(sub))).map((pg) => ({ id: `p:${pg.id}`, label: pg.id })),
   ];
   const active = tabs.some((x) => x.id === tab) ? tab : "lines";
   const t = (o: Offer) => toggle(o, g);
@@ -307,31 +314,45 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
       </div>
     );
   } else {
-    const sub = active.slice(2);
-    const atd = sub === "Anytime TD";
+    const pg = PROP_GROUPS.find((x) => x.id === active.slice(2))!;
+    const cols = pg.cols.filter(([sub]) => subs.has(sub));
     const needle = q.trim().toLowerCase();
-    const byPlayer = new Map<string, Offer[]>();
-    for (const o of props) if (o.sub === sub) byPlayer.set(o.group, [...(byPlayer.get(o.group) || []), o]);
-    // biggest line first (QB1 / RB1 / WR1 up top); anytime TD by shortest price
-    const lead = (os: Offer[]) => (atd ? -Math.min(...os.map((o) => o.american)) : Math.max(...os.map((o) => o.line ?? 0)));
+    // player -> stat -> the offer we show (DK's main line, else the first near-even one)
+    const byPlayer = new Map<string, Map<string, Offer>>();
+    for (const o of props) {
+      if (!cols.some(([sub]) => sub === o.sub)) continue;
+      const m = byPlayer.get(o.group) || new Map<string, Offer>(); byPlayer.set(o.group, m);
+      const cur = m.get(o.sub);
+      if (!cur || (o.main && !cur.main)) m.set(o.sub, o);
+    }
+    const leadOf = (m: Map<string, Offer>) => {
+      for (const [sub] of cols) { const o = m.get(sub); if (o) return sub === "Anytime TD" ? -o.american : (o.line ?? 0); }
+      return -Infinity;
+    };
+    const firstCol = (m: Map<string, Offer>) => cols.findIndex(([sub]) => m.has(sub));
     const rows = [...byPlayer.entries()].filter(([n]) => !needle || n.toLowerCase().includes(needle))
-      .sort((x, y) => lead(y[1]) - lead(x[1]) || x[0].localeCompare(y[0]));
+      .sort((x, y) => firstCol(x[1]) - firstCol(y[1]) || leadOf(y[1]) - leadOf(x[1]) || x[0].localeCompare(y[0]));
+    const grid = { gridTemplateColumns: `minmax(var(--sbx-name), 1fr) repeat(${cols.length}, var(--sbx-col))` };
     body = (
       <div className="sbx-sections">
         <input className="sb-search" placeholder="Find a player" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a player" />
         {rows.length ? (
-          <div className="sbx-props">
-            <div className="sbx-prop sbx-prop--head"><span>Player</span><span>{atd ? "Scores a TD" : "Over"}</span></div>
-            {rows.map(([name, os]) => (
-              <div key={name} className="sbx-prop">
-                <span className="sbx-prop__name">{name}</span>
-                <div className="sbx-prop__cells">
-                  {[...os].sort((x, y) => (x.line ?? 0) - (y.line ?? 0)).map((o) => (
-                    <Cell key={o.key} o={o} top={atd ? undefined : `O ${o.line}`} slipKeys={slipKeys} toggle={t} owner={owner} wide />
-                  ))}
-                </div>
+          <div className="sbx-statgrid-wrap">
+            <div className="sbx-statgrid" role="table" aria-label={`${pg.id} props`}>
+              <div className="sbx-statrow sbx-statrow--head" role="row" style={grid}>
+                <span role="columnheader">Player</span>
+                {cols.map(([sub, head]) => <span key={sub} role="columnheader" title={sub}>{head}</span>)}
               </div>
-            ))}
+              {rows.map(([name, m]) => (
+                <div key={name} className="sbx-statrow" role="row" style={grid}>
+                  <span className="sbx-statrow__name" role="rowheader">{name}</span>
+                  {cols.map(([sub]) => {
+                    const o = m.get(sub);
+                    return <Cell key={sub} o={o} top={o && sub !== "Anytime TD" ? `O ${o.line}` : undefined} slipKeys={slipKeys} toggle={t} owner={owner} wide />;
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
         ) : <p className="sb-note">{needle ? "No player by that name here." : "Nothing posted."}</p>}
       </div>

@@ -136,3 +136,26 @@
   .sbx-grid { grid-template-columns: minmax(0, 1fr) repeat(3, 56px); }
   .sbx-team__name { font-size: 13px; }
 }
+
+/* prop tabs: one row per player, one column per stat; wide groups scroll sideways with the name pinned */
+.sbx-statgrid-wrap { overflow-x: auto; margin: 0 -10px; padding: 0 10px; scrollbar-width: thin; }
+.sbx-statgrid { display: grid; min-width: min-content; }
+.sbx-statrow { display: grid; gap: 6px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
+.sbx-statrow--head { border-top: 0; padding-top: 0; }
+.sbx-statrow--head span { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); text-align: center; white-space: nowrap; }
+.sbx-statrow--head span:first-child { text-align: left; }
+.sbx-statrow__name, .sbx-statrow--head span:first-child {
+  position: sticky; left: 0; z-index: 1; background: var(--card); align-self: stretch; display: flex; align-items: center;
+  font-weight: 600; font-size: 13px; line-height: 1.2; overflow-wrap: anywhere; padding-right: 4px;
+}
+.sbx-statrow--head span:first-child { font-weight: 700; font-size: 10px; }
+.sbx-statgrid { --sbx-name: 118px; --sbx-col: 76px; }
+.sbx-drawer { container-type: inline-size; }
+@container (max-width: 400px) {
+  /* four passing columns fit a phone without a sideways swipe */
+  .sbx-statgrid { --sbx-name: 70px; --sbx-col: 56px; }
+  .sbx-statrow { gap: 4px; }
+  .sbx-statrow .sbx-cell { height: 44px; }
+  .sbx-statrow .sbx-cell__line, .sbx-statrow .sbx-cell__price { font-size: 11.5px; }
+  .sbx-statrow__name { font-size: 12px; }
+}
