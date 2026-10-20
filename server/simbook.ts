@@ -48,9 +48,10 @@ const H_PROPS = 0.06;                // juice on player props
 const H_SIM = 0.03;                  // (retired 2026-10-19 with the blend; kept for old notes)
 // Sim lean (owner 2026-10-19): prices ARE DraftKings'. When the sim gives a side a
 // better chance than DK's no-vig, that side's implied probability goes up by
-// K x the gap, at most MAX (0.04 = 4 points: -110 -> -128, +142 -> +121).
-const SIM_LEAN_K = Number(process.env.SIMBOOK_LEAN_K || 0.5);
-const SIM_LEAN_MAX = Number(process.env.SIMBOOK_LEAN_MAX || 0.04);
+// K x the gap, at most MAX. Owner 2026-10-19: "something like 130 to 120", i.e.
+// ~2 points at most (+130 -> +119, -112 -> -122, -108 -> -117).
+const SIM_LEAN_K = Number(process.env.SIMBOOK_LEAN_K || 0.25);
+const SIM_LEAN_MAX = Number(process.env.SIMBOOK_LEAN_MAX || 0.02);
 const MAX_LEGS = 8;
 const MAX_PAYOUT = 250;              // units, including stake
 const AM_MIN = -1000, AM_MAX_SINGLE = 1500, AM_MAX_PARLAY = 10000;
@@ -101,6 +102,10 @@ function decToAmHouse(dec: number): number {
   if (dec >= 2) return Math.floor((100 * (dec - 1)) / 5 + 1e-7) * 5 || -100;
   const am = -100 / (dec - 1);
   return Math.ceil(Math.abs(am) / 5 - 1e-7) * -5;
+}
+function decToAmWhole(dec: number): number {
+  if (dec >= 2) return Math.floor(100 * (dec - 1) + 1e-7) || -100;
+  return -Math.ceil(100 / (dec - 1) - 1e-7);
 }
 function parseAm(s: any): number | null {
   const n = Number(String(s ?? "").replace("+", ""));
@@ -611,8 +616,8 @@ function priceLeg(q: Quote, s: Seeds, ev: SgoEvent, g: SlateGame): PricedLeg | n
   const gap = qSim - pMkt;   // under 2 points is noise: DK's number stands
   const lean = gap > 0.02 ? Math.min(SIM_LEAN_MAX, gap * SIM_LEAN_K) : 0;
   let dec = 1 / Math.min(0.99, 1 / dkDec + lean);
-  // no lean = DK's exact number (no rounding); a leaned price rounds against him
-  let american = lean > 0 ? decToAmHouse(dec) : q.dk_american;
+  // no lean = DK's exact number; a leaned price rounds to a whole number against him (DK-style, e.g. -122)
+  let american = lean > 0 ? decToAmWhole(dec) : q.dk_american;
   if (american < AM_MIN || american > AM_MAX_SINGLE) return null;
   dec = amToDec(american);
   const houseEv = 1 - (pWin * dec + pPush);

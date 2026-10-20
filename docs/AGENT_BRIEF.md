@@ -25,8 +25,8 @@ server-only via the service role).
   10 requests/min is queued, not 429'd.
 - **Price** (owner 2026-10-19, second pass): DraftKings' price, exactly. When
   the sim beats DK's no-vig on a side by >2 points, that side's implied prob goes
-  up by min(`SIMBOOK_LEAN_MAX` 0.04, `SIMBOOK_LEAN_K` 0.5 x gap), rounded to 5
-  against him. The other side stays DK's number. (The first pass, worst-of DK /
+  up by min(`SIMBOOK_LEAN_MAX` 0.02, `SIMBOOK_LEAN_K` 0.25 x gap), rounded to a
+  whole number against him (owner: "+130 to +120", not -112 to -135). The other side stays DK's number. (The first pass, worst-of DK /
   sim blend, showed Marshall -170 / South Alabama -155 next to DK's board.)
   Parlays = product of leg prices x min(1, product of sim marginals / sim
   joint), so same-game correlation shortens a parlay but never lengthens it.
