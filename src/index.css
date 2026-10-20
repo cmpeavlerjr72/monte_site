@@ -293,3 +293,12 @@ html, body { width:100%; max-width:100%; overflow-x:hidden; overflow-x:clip; }
 .install-glyph { width: 22px; height: 22px; flex: 0 0 auto; color: var(--brand-text); }
 .install-sheet__note { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
 #main:focus { outline: none; }
+
+/* Sim Book button in the ribbon: only for accounts on the list (owner 2026-10-19). */
+.simbook-btn {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 4px 12px;
+  border-radius: 999px; border: 1px solid color-mix(in oklab, var(--header-fg) 45%, transparent);
+  color: var(--header-fg); font-weight: 800; font-size: 13px; text-decoration: none; white-space: nowrap;
+}
+.simbook-btn:hover, .simbook-btn.active { background: color-mix(in oklab, var(--header-fg) 16%, transparent); }
+@media (max-width: 820px) { .simbook-btn { min-height: 30px; padding: 3px 10px; font-size: 12px; } }

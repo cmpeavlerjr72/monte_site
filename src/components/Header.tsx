@@ -22,6 +22,7 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import shield from "../assets/mv-shield.png";
 import AccountMenu from "./AccountMenu";
+import { useSimbookAccess } from "../lib/simbookAccess";
 import { MAIN_NAV, LABS, cfbNav, cbbNav, labsProjectOf, sectionOf, type NavItem } from "../lib/siteNav";
 
 function SubNav({ items, label }: { items: NavItem[]; label: string }) {
@@ -40,6 +41,7 @@ function SubNav({ items, label }: { items: NavItem[]; label: string }) {
 
 export default function Header() {
   const { pathname } = useLocation();
+  const simbook = useSimbookAccess();
   const section = sectionOf(pathname);
   const labsProject = labsProjectOf(pathname);
 
@@ -94,6 +96,10 @@ export default function Header() {
           </nav>
 
           <div className="header-end">
+            {/* Sim Book: only for accounts on the list (owner 2026-10-19). */}
+            {simbook.allowed && (
+              <Link to="/simbook" className={`simbook-btn${pathname.startsWith("/simbook") ? " active" : ""}`}>Sim Book</Link>
+            )}
             {/* Accounts: renders nothing when accounts are not configured
                 for this build. */}
             <AccountMenu />

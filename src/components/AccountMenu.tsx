@@ -28,12 +28,14 @@ import { Link, useLocation } from "react-router-dom";
 import AuthPanel from "./AuthPanel";
 import { supabase, supabaseEnabled, useProfile, useSession } from "../lib/supabase";
 import { fetchMySettings } from "../lib/userSettings";
+import { useSimbookAccess } from "../lib/simbookAccess";
 
 export default function AccountMenu() {
   const { session, loading } = useSession();
   const { profile } = useProfile(session);
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
+  const simbook = useSimbookAccess();
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   // Close on outside click and on Escape — same behaviour as the ribbon's
@@ -109,6 +111,7 @@ export default function AccountMenu() {
               {/* THREE DESTINATIONS, in the order a signed-in reader wants
                   them: what I have riding, what my friends are on, who I am.
                   Top-level paths — the account is sport-agnostic. */}
+              {simbook.allowed && <Link to="/simbook" className="acct-item" role="menuitem">Sim Book</Link>}
               <Link to="/mybook" className="acct-item" role="menuitem">My Book</Link>
               <Link to="/feed" className="acct-item" role="menuitem">Feed</Link>
               <Link to="/me" className="acct-item" role="menuitem">Profile</Link>
