@@ -72,6 +72,7 @@ const u = (n: number, sign = false) => {
 };
 const pct = (p?: number) => (p == null ? "—" : `${(p * 100).toFixed(1)}%`);
 const amToDec = (a: number) => (a > 0 ? 1 + a / 100 : 1 + 100 / -a);
+const decToAm = (d: number) => Math.round(d >= 2 ? (d - 1) * 100 : -100 / (d - 1));
 const kick = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).replace(",", " ·") + " ET";
 
@@ -696,14 +697,14 @@ function TicketList({ tickets, owner, players }: { tickets: Ticket[]; owner: boo
                 <li key={i}>
                   <span className={`sb-dot sb-dot--${l.result ?? "open"}`} aria-hidden />
                   <span className="sb-ticket__logos">{ticketLegTeams(l).map((tm) => <Logo key={tm} team={tm} px={18} />)}</span>
-                  <span className="sb-ticket__leg">{l.label}{l.score != null ? <span className="sb-dim"> · final {l.score}</span> : null}</span>
+                  <span className="sb-ticket__leg">{l.label}{l.score != null ? <span className="sb-dim"> · final {l.score}</span> : null}{t.kind === "parlay" && (l.result === "push" || l.result === "void") ? <span className="sb-dim"> · {l.result}, dropped</span> : null}</span>
                   {owner && <span className="sb-dim sb-own">sim {pct(l.p_sim)} · DK {pct(l.p_mkt)}</span>}
                 </li>
               ))}
             </ul>
             <div className="sb-ticket__nums">
               <div><span>Risk</span><b>{u(stake)}</b></div>
-              <div><span>Odds</span><b>{am(t.american)}</b></div>
+              <div><span>Odds</span><b>{am(t.american)}</b>{t.status === "won" && t.kind === "parlay" && t.payout != null && t.payout < stake * Number(t.decimal_odds) - 0.01 ? <span className="sb-dim"> re-priced {am(decToAm(t.payout / stake))}</span> : null}</div>
               <div><span>{t.status === "open" ? "To win" : "Profit"}</span>
                 <b data-tone={t.status === "open" ? undefined : profit > 0 ? "pos" : profit < 0 ? "neg" : undefined}>{u(profit, t.status !== "open")}</b></div>
             </div>

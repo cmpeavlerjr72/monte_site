@@ -39,7 +39,8 @@ server-only via the service role).
   total + team total 1.8-2.7.
   DK lists prop OVERS only, so props are overs only. Owner 2026-10-19: no
   market without a DK price; per market only the line(s) nearest 50/50
-  (`nearEven`). Whole-number lines can't go in a parlay.
+  (`nearEven`). Whole-number lines CAN go in a combo (owner 2026-10-20, "match DK":
+  the old block refused 5-leg slips with a -3/-7 spread). House EV counts pushes.
 - **Layout** (owner 2026-10-19): the scoreboard's grammar, NOT a DK skin. One
   card per game (logos, away on top, Spread/Total/ML cells, house prices on
   load). **Lines data flow** (owner 2026-10-19): THE SITE NEVER READS SGO and
@@ -62,7 +63,9 @@ server-only via the service role).
   his price got worse. Bettor payloads never carry `q_sim`/`p_mkt`/`house_ev`.
 - **Grading**: every 15 min (and owner "Grade now"), legs whose game kicked off
   3h+ ago are graded from the SGO event (`results.game`, finalized); a player
-  missing from results = DNP = void; a void leg voids a parlay. Closing line =
+  missing from results = DNP = void. DK rule (2026-10-20): a pushed/void leg drops
+  out of a combo and the rest pay ticket decimal / that leg's own decimal (min 1x);
+  every leg push/void = refund. Closing line =
   SGO consensus close, kept per leg.
 
 ## A handle is a door (2026-09-10)

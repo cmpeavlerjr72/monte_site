@@ -125,6 +125,7 @@
 .sb-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; background: var(--border); transform: translateY(-1px); }
 .sb-dot--won { background: var(--pos); }
 .sb-dot--lost { background: var(--neg); }
+.sb-dot--push, .sb-dot--void { background: var(--muted); }
 .sb-players { display: grid; gap: var(--sp-2); }
 .sb-players h2 { margin: 0; font-size: 16px; }
 .sb-players ul { margin: 0; padding-left: 18px; font-size: 13px; }

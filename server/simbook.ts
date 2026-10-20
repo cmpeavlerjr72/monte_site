@@ -563,7 +563,9 @@ function priceLeg(q: Quote, s: Seeds, ev: SgoEvent, g: SlateGame): PricedLeg | n
     sgo_event: ev.eventID, odd_id: q.odd_id,
     dk_american: q.dk_american, dk_dec: dkDec,
     p_mkt: pMkt, q_sim: qSim, p_win: pWin, p_push: pPush, hold, sim_player: lo.simPlayer,
-    american, dec, house_ev: houseEv, parlay_ok: pPush === 0 && (q.leg.line == null || Math.abs(q.leg.line % 1) === 0.5),
+    american, dec, house_ev: houseEv,
+    // DK rule (owner 2026-10-20): any line can go in a combo; a pushed leg drops out at grading
+    parlay_ok: true,
     outcome: lo.out,
   };
 }
@@ -625,6 +627,9 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
   for (const k of keys) { const slug = k.split("|")[0]; bySlug.set(slug, [...(bySlug.get(slug) || []), k]); }
   const legs: PricedLeg[] = [];
   let pSim = 1, corrMax = 1, juice = 1;   // juice: the extra cut for highly correlated same-game legs
+  // expected payout per $1 of the legs' own prices, pushes counted DK-style (a pushed
+  // leg drops out, the rest pay their own prices): per game, then multiplied
+  let ePay = 1;
   for (const [slug, ks] of bySlug) {
     const b = await boardFor(deps, week, slug);
     if (kickedOff(b.g, b.ev)) throw Object.assign(new Error("started"), { code: "started", slug });
@@ -653,8 +658,16 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
       corrMax = Math.max(corrMax, r);
       juice *= 1 - corrJuice(r);
       pSim *= w / n;
+      let e = 0;
+      for (let i = 0; i < n; i++) {
+        let f = 1;
+        for (const l of ls) { const o = l.outcome![i]; if (o === -1) { f = 0; break; } if (o === 1) f *= l.dec; }
+        e += f;
+      }
+      ePay *= e / n;
     } else {
       pSim *= mine[0]!.p_win;
+      ePay *= mine[0]!.p_win * mine[0]!.dec + mine[0]!.p_push;
     }
     legs.push(...(mine as PricedLeg[]));
   }
@@ -663,7 +676,6 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
     return { kind: "single" as const, legs, american: l.american, dec: l.dec, p_sim: l.q_sim, p_mkt: l.p_mkt,
              p_house: 1 / l.dec, house_ev: l.house_ev, dk_dec: l.dk_dec };
   }
-  if (legs.some((l) => !l.parlay_ok)) throw Object.assign(new Error("parlay_push"), { code: "parlay_push" });
   const pMkt = legs.reduce((a, l) => a * l.p_mkt, 1);
   const dkDec = legs.reduce((a, l) => a * l.dk_dec, 1);
   if (pSim <= 0.0005) throw Object.assign(new Error("parlay_dead"), { code: "parlay_dead" });
@@ -678,7 +690,8 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
   if (american < AM_MIN) throw Object.assign(new Error("parlay_short"), { code: "parlay_short" });
   dec = amToDec(american);
   return { kind: "parlay" as const, legs, american, dec, p_sim: pSim, p_mkt: pMkt, p_house: pHouse,
-           house_ev: 1 - pSim * dec, dk_dec: dkDec,
+           // the ticket's final price over the legs' own: the correlation cut, juice and rounding
+           house_ev: 1 - ePay * (dec / legs.reduce((a, l) => a * l.dec, 1)), dk_dec: dkDec,
            corr: corrMax > CORR_HIGH ? "high" as const : corrMax > 1.05 ? "some" as const : "none" as const };
 }
 
@@ -764,8 +777,16 @@ async function gradeOpenTickets(deps: SimbookDeps): Promise<{ settled: number; c
       else if (res.every((r: any) => r)) {
         if (t.kind === "single") {
           status = res[0]; payout = status === "won" ? Number(t.stake) * Number(t.decimal_odds) : Number(t.stake);
-        } else if (res.every((r: any) => r === "won")) { status = "won"; payout = Number(t.stake) * Number(t.decimal_odds); }
-        else { status = "void"; payout = Number(t.stake); }     // a void leg voids the parlay (refund)
+        } else {
+          // DK rule (owner 2026-10-20): a pushed or void leg drops out and the rest pay at
+          // the ticket's price with that leg's own price taken out. Nothing left = refund.
+          const off = legs.filter((l: any) => l.result !== "won");
+          if (off.length === legs.length) { status = res.includes("push") ? "push" : "void"; payout = Number(t.stake); }
+          else {
+            const cut = off.reduce((a: number, l: any) => a * (Number.isFinite(Number(l.american)) ? amToDec(Number(l.american)) : 1), 1);
+            status = "won"; payout = Number(t.stake) * Math.max(1, Number(t.decimal_odds) / cut);
+          }
+        }
       }
       const patch: any = { legs };
       if (status !== "open") { patch.status = status; patch.payout = Math.round(payout! * 100) / 100; patch.settled_at = new Date().toISOString(); settled++; }
