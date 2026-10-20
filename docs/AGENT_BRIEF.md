@@ -40,8 +40,11 @@ server-only via the service role).
   in `simbook_events` (survives redeploys), re-read in one batched pass at most
   every `SIMBOOK_CARD_TTL_H` (20h) under a pro-rated monthly pacing guard
   (`warmSlate`). A pass with >5 id-less games is ONE league query (the DK filter
-  returns only DK-listed games). Opening a game re-reads it if >10 min old; a bet
-  always re-prices fresh (45s). Tapping a card opens a full-width drawer after its row with tabs
+  returns only DK-listed games). Budget cuts (owner worried about the cap): only PLACING a bet
+  reads fresh (45s); opening a game and slip quotes use the snapshot up to
+  `SIMBOOK_OPEN_TTL_MIN` (180); games >36h out refresh every 3 days, within
+  36h daily; a no-lines game is re-searched at most every 6h; bets may use the
+  last ~200 reads after refreshes pause at 2,300. Owner sees reads used on All bets. Tapping a card opens a full-width drawer after its row with tabs
   (Game Lines, Team Totals, one per prop stat). The slip reuses the global
   `.parlay-*` classes: 2+ legs default to COMBO (house wants parlays), with a
   Singles toggle (same stake per leg, one ticket each) and Clear.

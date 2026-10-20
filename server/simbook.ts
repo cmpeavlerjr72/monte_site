@@ -37,7 +37,11 @@ const SGO_KEY = process.env.SGO_API_KEY || "";
 const SGO_BASE = "https://api.sportsgameodds.com/v2";
 const SGO_MONTH_CAP = Number(process.env.SIMBOOK_SGO_MONTH_CAP || 2300); // plan allows 2,500 games/month
 const EVENT_TTL_MS = 120_000;        // tickets re-read a game's DK board at most every 2 min
-const OPEN_TTL_MS = 10 * 60_000;     // opening a game re-reads its board when the snapshot is older than this
+// SGO budget (owner 2026-10-19: "worried we run out"). Only PLACING a bet must be
+// fresh; looking (cards, opening a game, pricing the slip) runs off the snapshot.
+const OPEN_TTL_MS = Number(process.env.SIMBOOK_OPEN_TTL_MIN || 180) * 60_000; // opening / slip quotes
+const FAR_TTL_MS = 72 * 3600_000;    // a game more than 36h out is re-read every 3 days, not daily
+const NEAR_MS = 36 * 3600_000;
 // The card snapshot (owner 2026-10-19: "prices need to load automatically"): every
 // not-yet-kicked game's board is re-read in ONE batched pass, at most this often.
 // SGO bills each event read against 2,500/month, so 56 games x once a day is ~1,700.
@@ -251,7 +255,10 @@ async function sgoEventFor(g: SlateGame, maxAgeMs = EVENT_TTL_MS): Promise<SgoEv
   await ensureSnapshot(g.week).catch(() => {});
   const hit = eventCache.get(ck);
   if (hit && Date.now() - hit.at < maxAgeMs) return hit.ev;
-  if (!(await sgoBudgetOk(100))) {
+  // DK hadn't posted this game when we last looked: look again at most every 6h (each look costs reads)
+  if (hit && !hit.ev && Date.now() - hit.at < 6 * 3600_000) return null;
+  // a bet (fresh read) may use the last ~200 reads the refreshes leave alone
+  if (!(await sgoBudgetOk(maxAgeMs <= 60_000 ? -150 : 100))) {
     if (hit) return hit.ev;              // out of budget: the last board beats no board (bets still re-price)
     const e: any = new Error("sgo_budget"); e.code = "budget"; throw e;
   }
@@ -297,7 +304,8 @@ function warmSlate(deps: SimbookDeps, week: number): Promise<void> {
     } else {
       const stale = open.filter((g) => {
         const h = eventCache.get(ckOf(g));
-        return !h || now - h.at > CARD_TTL_MS;
+        const ttl = Date.parse(g.kickoff) - now < NEAR_MS ? CARD_TTL_MS : FAR_TTL_MS;
+        return !h || now - h.at > ttl;
       });
       if (stale.length && (await budgetPaced(stale.length))) {
         const base = { leagueID: "NCAAF", bookmakerID: "draftkings", includeAltLines: "true" };
@@ -703,7 +711,7 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], fres
   const legs: PricedLeg[] = [];
   let pSim = 1;
   for (const [slug, ks] of bySlug) {
-    const b = await boardFor(deps, week, slug, fresh ? 45_000 : EVENT_TTL_MS);
+    const b = await boardFor(deps, week, slug, fresh ? 45_000 : OPEN_TTL_MS);
     if (kickedOff(b.g, b.ev)) throw Object.assign(new Error("started"), { code: "started", slug });
     const mine = ks.map((k) => b.legs.find((l) => l.key === k));
     if (mine.some((l) => !l)) throw Object.assign(new Error("leg_gone"), { code: "leg_gone", slug });
@@ -872,7 +880,8 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     res.set("Cache-Control", "no-store");
     const w = await who(req).catch(() => null);
     res.json({ allowed: Boolean(w), owner: Boolean(w?.owner), player: w?.player ? { name: w.player.name, max_stake: Number(w.player.max_stake) } : null,
-               lines: Boolean(SGO_KEY), preview: PREVIEW });
+               lines: Boolean(SGO_KEY), preview: PREVIEW,
+               ...(w?.owner && SGO_KEY ? { sgo: await sgoBudgetOk(0).then(() => ({ used: sgoUsage.used, cap: 2500, guard: SGO_MONTH_CAP })).catch(() => null) } : {}) });
   });
 
   app.get("/api/simbook/slate", async (req, res) => {
