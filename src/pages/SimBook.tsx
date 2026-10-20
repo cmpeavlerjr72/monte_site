@@ -93,7 +93,7 @@ const ERRORS: Record<string, string> = {
   over_balance: "That's more than your available balance.",
   budget: "The line feed is paused for the rest of the month.",
   no_lines: "The line feed isn't connected yet.",
-  preview: "Preview mode: these are sample prices, so betting is off until the DraftKings feed is connected.",
+  preview: "Preview mode: these are sample prices, so betting is off.",
   owner_is_the_house: "You're the house. Only players can bet.",
   slow_down: "Easy. Too many bets in a minute.",
   bad_legs: "Pick 1 to 8 legs.",
@@ -240,7 +240,7 @@ function GameCard({ g, st, open, onOpen, slipKeys, toggle, owner }: {
           {row("home")}
         </div>
         {!board && !g.started && !st?.loading && (st?.err || g.stale || g.no_lines || !g.warming) && (
-          <div className="sbx-dim sbx-card__hint">{st?.err ? st.err : g.stale ? "Updating lines. Prices are back after the next refresh." : g.no_lines ? "No DraftKings lines on this game yet." : "Prices aren't in yet. Tap to load them."}</div>
+          <div className="sbx-dim sbx-card__hint">{st?.err ? st.err : g.stale ? "Updating lines. Prices are back after the next refresh." : g.no_lines ? "No DraftKings lines or MVPeav prices on this game yet." : "Prices aren't in yet. Tap to load them."}</div>
         )}
       </div>
     </article>
@@ -273,10 +273,10 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
 
   let body: React.ReactNode;
   if (st?.err) body = <div className="sbx-empty"><p className="sb-note sb-note--neg">{st.err}</p><button type="button" className="ui-btn" onClick={onRetry}>Try again</button></div>;
-  else if (!board) body = <p className="sb-note">Loading DraftKings' board…</p>;
+  else if (!board) body = <p className="sb-note">Loading DraftKings lines and MVPeav prices…</p>;
   else if (board.started) body = <p className="sb-note">This game has kicked off. Bets are closed.</p>;
   else if (board.stale) body = <p className="sb-note">These lines are being updated. Prices come back after the next refresh.</p>;
-  else if (!board.has_lines || !offers.length) body = <p className="sb-note">No DraftKings lines on this game yet. They usually post by midweek.</p>;
+  else if (!board.has_lines || !offers.length) body = <p className="sb-note">No DraftKings lines or MVPeav prices on this game yet. They usually post by midweek.</p>;
   else if (active === "lines") {
     const m = gameMarkets(offers);
     body = (
@@ -422,7 +422,7 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
       )}
       {body}
       <p className="sb-note sbx-foot">
-        DraftKings lines{board?.as_of ? ` as of ${new Date(board.as_of).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })} ET` : ""}, updated through the week and more often near kickoff. Bets lock at kickoff.
+        DraftKings lines and MVPeav prices{board?.as_of ? ` as of ${new Date(board.as_of).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })} ET` : ""}, updated through the week and more often near kickoff. Bets lock at kickoff.
       </p>
     </section>
   );
@@ -856,8 +856,12 @@ export default function SimBook() {
       </header>
 
       {me.preview && (
-        <p className="sb-preview" role="status"><b>Preview.</b> Sample lines built from our consensus numbers, not live DraftKings. Betting is off until the DraftKings feed (SGO_API_KEY) is connected.</p>
+        <p className="sb-preview" role="status"><b>Preview.</b> Sample lines built from our consensus numbers, not live DraftKings. Betting is off (SIMBOOK_PREVIEW is on).</p>
       )}
+      <p className="sb-explainer">
+        <b>DraftKings lines, MVPeav prices.</b> DraftKings sets the line on every bet (the spread, the total, each player's number).
+        MVPeav sets the price you get on it, starting from DraftKings' odds.
+      </p>
       {err && <p className="sb-note sb-note--neg">{err}</p>}
       {me.player && (
         <div className="sb-account" aria-live="polite">

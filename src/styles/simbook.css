@@ -188,3 +188,6 @@
 .sb-ticket__nums b { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .sb-field { display: grid; gap: 2px; font-size: 11px; color: var(--muted); flex: 0 0 96px; }
 .sb-field input { width: 100%; }
+/* the "where it comes from" line at the top (owner 2026-10-19) */
+.sb-explainer { margin: 0; padding: 9px 12px; border: 1px solid var(--border); border-left: 3px solid var(--brand); border-radius: 8px; background: var(--card); font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.sb-explainer b { color: var(--text); }
