@@ -87,7 +87,7 @@ const STAT_OVERLAP: Record<string, string[]> = {
   receiving_yards: ["rushing+receiving_yards"], "passing+rushing_yards": ["passing_yards", "rushing_yards", "rushing+receiving_yards"],
   "rushing+receiving_yards": ["rushing_yards", "receiving_yards", "passing+rushing_yards"],
 };
-const MAX_PAYOUT = 250;              // units, including stake
+const MAX_PAYOUT = 5000;             // dollars, including stake ($25 combo at the +10000 cap = $2,525)
 const AM_MIN = -1000, AM_MAX_SINGLE = 1500, AM_MAX_PARLAY = 10000;
 
 /* -------------------------------------------------------------- small utils */
@@ -683,7 +683,8 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forB
 }
 
 function legRecord(l: PricedLeg) {
-  return { key: l.key, slug: l.slug, game: l.game, kickoff: l.kickoff, market: l.market, side: l.side, line: l.line, main: l.main,
+  const [away, home] = l.game.split(" at ");
+  return { key: l.key, slug: l.slug, game: l.game, home, away, team: l.team ?? null, kickoff: l.kickoff, market: l.market, side: l.side, line: l.line, main: l.main,
            player: l.player || null, stat: l.stat || null, sim_player: l.sim_player || null, label: l.label,
            sgo_event: l.sgo_event, odd_id: l.odd_id, american: l.american, dk_american: l.dk_american,
            p_sim: l.q_sim, p_mkt: l.p_mkt, result: null as string | null, score: null as number | null,
@@ -788,6 +789,19 @@ async function feedStatus(): Promise<any> {
   return feedMemo.v;
 }
 
+/** A player's balance (owner 2026-10-19): Available = bankroll + settled P&L - open risk. */
+async function accountOf(supa: SupabaseClient, uid: string, player: any) {
+  const { data } = await supa.from("simbook_tickets").select("stake, status, payout").eq("user_id", uid).limit(5000);
+  let net = 0, risk = 0;
+  for (const t of data || []) {
+    if (t.status === "open") risk += Number(t.stake);
+    else net += Number(t.payout ?? 0) - Number(t.stake);
+  }
+  const bankroll = Number(player?.bankroll ?? 250);
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  return { bankroll, current: r2(net), at_risk: r2(risk), available: r2(Math.max(0, bankroll + net - risk)) };
+}
+
 /* ------------------------------------------------------------------ routes */
 export function registerSimbook(app: Express, deps: SimbookDeps) {
   if (registered) return;               // once per process: routes + the grading timer
@@ -813,7 +827,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
   const fail = (res: Response, err: any) => {
     const code = err?.code || "error";
     const status = code === "no_game" ? 404 : code === "started" || code === "leg_gone" || code === "price_changed" ? 409
-      : code === "budget" || code === "no_lines" || code === "preview" || code === "stale_lines" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake", "too_many_same_game", "ml_spread", "stat_overlap", "parlay_thin", "too_correlated"].includes(code) ? 400 : 500;
+      : code === "budget" || code === "no_lines" || code === "preview" || code === "stale_lines" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake", "over_balance", "too_many_same_game", "ml_spread", "stat_overlap", "parlay_thin", "too_correlated"].includes(code) ? 400 : 500;
     if (status === 500) console.warn("[simbook]", err?.message ?? err);
     res.status(status).json({ error: code, slug: err?.slug });
   };
@@ -821,7 +835,9 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
   app.get("/api/simbook/me", async (req, res) => {
     res.set("Cache-Control", "no-store");
     const w = await who(req).catch(() => null);
-    res.json({ allowed: Boolean(w), owner: Boolean(w?.owner), player: w?.player ? { name: w.player.name, max_stake: Number(w.player.max_stake) } : null,
+    res.json({ allowed: Boolean(w), owner: Boolean(w?.owner),
+               player: w?.player ? { name: w.player.name, max_single: Number(w.player.max_single ?? 50), max_combo: Number(w.player.max_combo ?? 25),
+                                     ...(await accountOf(deps.supa!, w.uid, w.player)) } : null,
                lines: !PREVIEW, preview: PREVIEW, ...(w?.owner ? { sgo: await feedStatus() } : {}) });
   });
 
@@ -897,11 +913,13 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       const week = Number(req.body?.week) || (await currentWeek(deps));
       const keys = Array.isArray(req.body?.legs) ? req.body.legs.map(String).slice(0, MAX_LEGS + 1) : [];
       const stake = Math.round(Number(req.body?.stake) * 100) / 100;
-      const maxStake = Number(w.player.max_stake || 5);
-      if (!(stake > 0) || stake > maxStake) throw Object.assign(new Error("bad_stake"), { code: "bad_stake" });
+      if (!(stake > 0)) throw Object.assign(new Error("bad_stake"), { code: "bad_stake" });
       if (PREVIEW) throw Object.assign(new Error("preview"), { code: "preview" });
       const t = await quoteTicket(deps, week, keys, true);
-      if (stake * t.dec > MAX_PAYOUT) throw Object.assign(new Error("bad_stake"), { code: "bad_stake" });
+      const maxStake = t.kind === "single" ? Number(w.player.max_single ?? 50) : Number(w.player.max_combo ?? 25);
+      if (stake > maxStake || stake * t.dec > MAX_PAYOUT) throw Object.assign(new Error("bad_stake"), { code: "bad_stake" });
+      const acct = await accountOf(deps.supa!, w.uid, w.player);
+      if (stake > acct.available + 1e-9) throw Object.assign(new Error("over_balance"), { code: "over_balance" });
       const seen = Number(req.body?.expect_american);
       if (Number.isFinite(seen) && amToDec(seen) > t.dec + 1e-9) {
         res.status(409).json({ error: "price_changed", american: t.american, dec: t.dec, legs: t.legs.map((l) => publicLeg(l, false)) });
@@ -914,7 +932,8 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       };
       const { data, error } = await deps.supa!.from("simbook_tickets").insert(row).select("id, created_at").single();
       if (error) throw error;
-      res.json({ ok: true, id: data.id, created_at: data.created_at, american: t.american, dec: t.dec, stake, to_win: Math.round(stake * (t.dec - 1) * 100) / 100 });
+      res.json({ ok: true, id: data.id, created_at: data.created_at, american: t.american, dec: t.dec, stake, to_win: Math.round(stake * (t.dec - 1) * 100) / 100,
+                 available: Math.round((acct.available - stake) * 100) / 100 });
     } catch (err) { fail(res, err); }
   });
 
@@ -926,7 +945,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       if (!w.owner) q = q.eq("user_id", w.uid);
       const { data, error } = await q;
       if (error) throw error;
-      const { data: players } = w.owner ? await deps.supa!.from("simbook_players").select("user_id, name, active, max_stake") : { data: null };
+      const { data: players } = w.owner ? await deps.supa!.from("simbook_players").select("user_id, name, active, bankroll, max_single, max_combo") : { data: null };
       const strip = (t: any) => w.owner ? t : {
         ...t, p_sim: undefined, p_mkt: undefined, p_house: undefined, house_ev: undefined,
         legs: (t.legs || []).map((l: any) => ({ ...l, p_sim: undefined, p_mkt: undefined, sim_player: undefined })),
@@ -944,7 +963,10 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       const { data: prof } = await deps.supa!.from("profiles").select("id, handle, display_name").eq("handle", handle).maybeSingle();
       if (!prof) { res.status(404).json({ error: "no_such_user" }); return; }
       const row: any = { user_id: prof.id, name: String(req.body?.name || prof.display_name || prof.handle).slice(0, 40) };
-      if (req.body?.max_stake != null) row.max_stake = Math.min(100, Math.max(0.5, Number(req.body.max_stake) || 5));
+      const num = (v: any, lo: number, hi: number) => Math.min(hi, Math.max(lo, Number(v)));
+      if (req.body?.bankroll != null && Number.isFinite(Number(req.body.bankroll))) row.bankroll = num(req.body.bankroll, 0, 100000);
+      if (req.body?.max_single != null && Number(req.body.max_single) > 0) row.max_single = num(req.body.max_single, 1, 10000);
+      if (req.body?.max_combo != null && Number(req.body.max_combo) > 0) row.max_combo = num(req.body.max_combo, 1, 10000);
       if (req.body?.active != null) row.active = Boolean(req.body.active);
       const { error } = await deps.supa!.from("simbook_players").upsert(row, { onConflict: "user_id" });
       if (error) throw error;

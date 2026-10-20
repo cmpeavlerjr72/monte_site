@@ -166,3 +166,25 @@
   position: sticky; left: 0; display: inline-flex; align-items: center; gap: 6px;
   font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
 }
+
+/* account block under the title: Available / Current (owner 2026-10-19) */
+.sb-account { display: flex; gap: 28px; align-items: flex-end; }
+.sb-account div { display: grid; gap: 2px; }
+.sb-account span { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.sb-account b { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sb-account b[data-tone="pos"], .sb-ticket__nums b[data-tone="pos"] { color: var(--pos); }
+.sb-account b[data-tone="neg"], .sb-ticket__nums b[data-tone="neg"] { color: var(--neg); }
+
+/* My bets ticket: time placed, legs with logos, Risk / Odds / Profit */
+.sb-ticket__when { font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.sb-ticket li { align-items: center; flex-wrap: nowrap; }
+.sb-ticket__logos { display: inline-flex; gap: 2px; flex: none; min-width: 18px; }
+.sb-ticket__leg { min-width: 0; flex: 1; }
+.sb-ticket__nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.sb-ticket__nums div { display: grid; gap: 1px; }
+.sb-ticket__nums div:nth-child(2) { text-align: center; }
+.sb-ticket__nums div:nth-child(3) { text-align: right; }
+.sb-ticket__nums span { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.sb-ticket__nums b { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sb-field { display: grid; gap: 2px; font-size: 11px; color: var(--muted); flex: 0 0 96px; }
+.sb-field input { width: 100%; }

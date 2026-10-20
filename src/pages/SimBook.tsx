@@ -25,7 +25,8 @@ import { useIsDark } from "../lib/usePrefs";
 import AuthPanel from "../components/AuthPanel";
 import "../styles/simbook.css";
 
-type Me = { allowed: boolean; owner: boolean; player: { name: string; max_stake: number } | null; lines: boolean; preview?: boolean;
+type Me = { allowed: boolean; owner: boolean; lines: boolean; preview?: boolean;
+            player: { name: string; max_single: number; max_combo: number; bankroll: number; available: number; current: number; at_risk: number } | null;
             /** owner only: SportsGameOdds reads this month */
             sgo?: { used: number; cap: number; guard: number; last_run?: string; status?: string } | null };
 type SlateGame = {
@@ -57,13 +58,18 @@ type Ticket = {
   decimal_odds: number; status: "open" | "won" | "lost" | "push" | "void"; payout: number | null; settled_at: string | null;
   p_sim?: number; p_mkt?: number; house_ev?: number; dk_decimal?: number;
   legs: { label: string; game: string; kickoff: string; market: string; american: number; dk_american?: number; result: string | null;
-          score: number | null; close_line: number | null; close_american: number | null; line: number | null; side: string; main?: boolean; p_sim?: number; p_mkt?: number }[];
+          score: number | null; close_line: number | null; close_american: number | null; line: number | null; side: string; main?: boolean; p_sim?: number; p_mkt?: number;
+          home?: string; away?: string; team?: "home" | "away" | null }[];
 };
-type Player = { user_id: string; name: string; active: boolean; max_stake: number };
+type Player = { user_id: string; name: string; active: boolean; bankroll: number; max_single: number; max_combo: number };
 
 const am = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 const sgn = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-const u = (n: number, sign = false) => `${sign && n > 0 ? "+" : ""}${(Math.round(n * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}u`;
+const u = (n: number, sign = false) => {
+  const v = Math.round(n * 100) / 100, a = Math.abs(v);
+  const txt = a.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(a) ? 0 : 2, maximumFractionDigits: 2 });
+  return `${v < 0 ? "-" : sign && v > 0 ? "+" : ""}$${txt}`;
+};
 const pct = (p?: number) => (p == null ? "—" : `${(p * 100).toFixed(1)}%`);
 const amToDec = (a: number) => (a > 0 ? 1 + a / 100 : 1 + 100 / -a);
 const kick = (iso: string) =>
@@ -83,7 +89,8 @@ const ERRORS: Record<string, string> = {
   too_correlated: "Those legs can't be combined.",
   parlay_dead: "Those legs can't be combined.",
   parlay_short: "Those legs can't be combined.",
-  bad_stake: "Check the stake: it has to be above 0 and under your limit (max payout 250u).",
+  bad_stake: "Check the stake: max $50 on a single, $25 on a combo.",
+  over_balance: "That's more than your available balance.",
   budget: "The line feed is paused for the rest of the month.",
   no_lines: "The line feed isn't connected yet.",
   preview: "Preview mode: these are sample prices, so betting is off until the DraftKings feed is connected.",
@@ -466,13 +473,13 @@ function DayGrid({ games, openSlug, setOpen, boards, loadBoard, slipKeys, toggle
 /* ------------------------------------------------------------------ slip */
 // The scoreboard's parlay slip, as a betting slip. 2+ legs open as a COMBO;
 // he can flip to Singles (one bet per leg, same stake each) or clear it.
-function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }: {
-  week: number; legs: SlipLeg[]; remove: (k: string) => void; clear: () => void; maxStake: number; owner: boolean;
+function Slip({ week, legs, remove, clear, maxSingle, maxCombo, available, owner, onPlaced, onHeight }: {
+  week: number; legs: SlipLeg[]; remove: (k: string) => void; clear: () => void; maxSingle: number; maxCombo: number; available: number; owner: boolean;
   onPlaced: (placedKeys: string[], note?: string) => void; onHeight: (h: number) => void;
 }) {
   const [mode, setMode] = useState<"combo" | "singles">("combo");
   const [picked, setPicked] = useState(false);           // he chose a mode himself
-  const [stake, setStake] = useState("1");
+  const [stake, setStake] = useState("10");
   const [quote, setQuote] = useState<{ american: number; dec: number; corr?: "none" | "some" | "high" } | null>(null);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "neg" | "pos" | "muted"; text: string } | null>(null);
@@ -509,7 +516,8 @@ function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }
 
   if (!legs.length) return null;
   const s = Number(stake);
-  const okStake = s > 0 && s <= maxStake;
+  const maxStake = combo ? maxCombo : maxSingle;
+  const okStake = s > 0 && s <= maxStake && (combo || legs.length === 1 ? s : s * legs.length) <= available + 1e-9;
   const singleDec = legs.length === 1 ? legs[0].dec : null;
   const toWin = combo
     ? (quote && s > 0 ? s * (quote.dec - 1) : null)
@@ -598,8 +606,8 @@ function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }
             </div>
           )}
           <div className="sbx-slip__stake">
-            <label>{combo || legs.length === 1 ? "Stake (units)" : "Stake per bet (units)"}
-              <input type="number" inputMode="decimal" min={0.5} max={maxStake} step={0.5} value={stake} onChange={(e) => setStake(e.target.value)} />
+            <label>{combo || legs.length === 1 ? "Stake" : "Stake per bet"}
+              <input type="number" inputMode="decimal" min={1} max={maxStake} step={1} value={stake} onChange={(e) => setStake(e.target.value)} />
             </label>
             <div className="sbx-slip__win">
               {toWin != null && <>To win <b>{u(toWin)}</b></>}
@@ -611,7 +619,7 @@ function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }
                   onClick={() => (combo ? placeCombo() : placeSingles())}>
             {owner ? "You're the house" : busy ? "Placing…" : combo ? `Place combo${quote ? ` ${am(quote.american)}` : ""}` : legs.length === 1 ? `Place bet ${am(legs[0].american)}` : `Place ${legs.length} bets`}
           </button>
-          <div className="sbx-dim">Max {u(maxStake)} per bet.{!picked && legs.length >= 2 ? " Combos pay more; one miss loses it." : ""}</div>
+          <div className="sbx-dim">Max {u(maxSingle)} on a single, {u(maxCombo)} on a combo · {u(available)} available</div>
           {msg && <p className={`sb-note sb-note--${msg.tone}`} role="status">{msg.text}</p>}
         </div>
       )}
@@ -654,44 +662,71 @@ function clvPts(t: Ticket): number | null {
   return null;
 }
 
+const placedAt = (iso: string) =>
+  new Date(iso).toLocaleString("en-US", { weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).replace(",", " ·") + " ET";
+
+/** The team(s) a stored leg is about, for its logo. */
+function ticketLegTeams(l: Ticket["legs"][number]): string[] {
+  const [gAway, gHome] = (l.game || "").split(" at ");
+  const home = l.home || gHome, away = l.away || gAway;
+  if (!home || !away) return [];
+  if (l.market === "spread" || l.market === "ml") return [l.side === "home" ? home : away];
+  if (l.market === "tt") return [l.side.startsWith("home") ? home : away];
+  if (l.market === "prop" && l.team) return [l.team === "home" ? home : away];
+  return [away, home];
+}
+
 function TicketList({ tickets, owner, players }: { tickets: Ticket[]; owner: boolean; players: Map<string, string> }) {
   if (!tickets.length) return <section className="ui-card"><p className="sb-note">No bets yet.</p></section>;
   return (
     <section className="sb-tickets">
-      {tickets.map((t) => (
-        <article key={t.id} className="ui-card sb-ticket" data-status={t.status}>
-          <header>
-            <b>{t.kind === "single" ? "Single" : `${t.legs.length}-leg parlay`} · {am(t.american)}</b>
-            <span className={`sb-status sb-status--${t.status}`}>
-              {t.status === "open" ? "Open" : t.status === "won" ? `Won ${u(net(t), true)}` : t.status === "lost" ? `Lost ${u(net(t), true)}` : t.status === "push" ? "Push" : "Void"}
-            </span>
-          </header>
-          <ul>
-            {t.legs.map((l, i) => (
-              <li key={i}>
-                <span className={`sb-dot sb-dot--${l.result ?? "open"}`} aria-hidden />
-                <span>{l.label}{l.score != null ? <span className="sb-dim"> · final {l.score}</span> : null}</span>
-                {owner && <span className="sb-dim sb-own">sim {pct(l.p_sim)} · DK {pct(l.p_mkt)}</span>}
-              </li>
-            ))}
-          </ul>
-          <footer className="sb-dim">
-            {u(Number(t.stake))} to win {u(Number(t.stake) * (Number(t.decimal_odds) - 1))} · {new Date(t.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-            {owner && players.size > 1 ? ` · ${players.get(t.user_id) ?? "?"}` : ""}
-            {owner && t.house_ev != null ? ` · house EV ${pct(t.house_ev)} (sim ${pct(t.p_sim)}, DK ${pct(t.p_mkt)})` : ""}
-          </footer>
-        </article>
-      ))}
+      {tickets.map((t) => {
+        const stake = Number(t.stake), toWin = stake * (Number(t.decimal_odds) - 1);
+        const profit = t.status === "open" ? toWin : net(t);
+        return (
+          <article key={t.id} className="ui-card sb-ticket" data-status={t.status}>
+            <header>
+              <span className="sb-ticket__when">{placedAt(t.created_at)}</span>
+              <span className={`sb-status sb-status--${t.status}`}>
+                {t.status === "open" ? "Open" : t.status === "won" ? "Won" : t.status === "lost" ? "Lost" : t.status === "push" ? "Push" : "Void"}
+              </span>
+            </header>
+            <ul>
+              {t.legs.map((l, i) => (
+                <li key={i}>
+                  <span className={`sb-dot sb-dot--${l.result ?? "open"}`} aria-hidden />
+                  <span className="sb-ticket__logos">{ticketLegTeams(l).map((tm) => <Logo key={tm} team={tm} px={18} />)}</span>
+                  <span className="sb-ticket__leg">{l.label}{l.score != null ? <span className="sb-dim"> · final {l.score}</span> : null}</span>
+                  {owner && <span className="sb-dim sb-own">sim {pct(l.p_sim)} · DK {pct(l.p_mkt)}</span>}
+                </li>
+              ))}
+            </ul>
+            <div className="sb-ticket__nums">
+              <div><span>Risk</span><b>{u(stake)}</b></div>
+              <div><span>Odds</span><b>{am(t.american)}</b></div>
+              <div><span>{t.status === "open" ? "To win" : "Profit"}</span>
+                <b data-tone={t.status === "open" ? undefined : profit > 0 ? "pos" : profit < 0 ? "neg" : undefined}>{u(profit, t.status !== "open")}</b></div>
+            </div>
+            {owner && (
+              <footer className="sb-dim">
+                {players.size > 1 ? `${players.get(t.user_id) ?? "?"} · ` : ""}
+                {t.house_ev != null ? `house EV ${pct(t.house_ev)} (sim ${pct(t.p_sim)}, DK ${pct(t.p_mkt)})` : ""}
+              </footer>
+            )}
+          </article>
+        );
+      })}
     </section>
   );
 }
 
 function Players({ players, reload }: { players: Player[]; reload: () => void }) {
-  const [handle, setHandle] = useState(""); const [name, setName] = useState(""); const [max, setMax] = useState("5");
+  const [handle, setHandle] = useState(""); const [name, setName] = useState("");
+  const [bank, setBank] = useState("250"); const [maxS, setMaxS] = useState("50"); const [maxC, setMaxC] = useState("25");
   const [msg, setMsg] = useState<string | null>(null);
   async function add() {
     setMsg(null);
-    const r = await api("/api/simbook/players", { method: "POST", body: JSON.stringify({ handle, name: name || undefined, max_stake: Number(max) }) });
+    const r = await api("/api/simbook/players", { method: "POST", body: JSON.stringify({ handle, name: name || undefined, bankroll: Number(bank), max_single: Number(maxS), max_combo: Number(maxC) }) });
     if (r.ok) { setMsg(`${r.body.name} is in.`); setHandle(""); setName(""); reload(); }
     else setMsg(r.body?.error === "no_such_user" ? "No site account with that username. He signs up first, then you add him." : `Error ${r.status}`);
   }
@@ -702,11 +737,13 @@ function Players({ players, reload }: { players: Player[]; reload: () => void })
   return (
     <section className="ui-card sb-players">
       <h2>Players</h2>
-      {players.length ? <ul>{players.map((p) => <li key={p.user_id}>{p.name} · max {u(Number(p.max_stake))}{p.active ? "" : " · paused"}</li>)}</ul> : <p className="sb-note">Nobody invited yet.</p>}
+      {players.length ? <ul>{players.map((p) => <li key={p.user_id}>{p.name} · bankroll {u(Number(p.bankroll))} · max {u(Number(p.max_single))} single / {u(Number(p.max_combo))} combo{p.active ? "" : " · paused"}</li>)}</ul> : <p className="sb-note">Nobody invited yet.</p>}
       <div className="sb-form">
         <input placeholder="Site username" value={handle} onChange={(e) => setHandle(e.target.value)} aria-label="Site username" />
         <input placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} aria-label="Display name" />
-        <input type="number" min={0.5} max={100} step={0.5} value={max} onChange={(e) => setMax(e.target.value)} aria-label="Max stake (units)" />
+        <label className="sb-field">Bankroll<input type="number" min={0} step={10} value={bank} onChange={(e) => setBank(e.target.value)} /></label>
+        <label className="sb-field">Max single<input type="number" min={1} step={5} value={maxS} onChange={(e) => setMaxS(e.target.value)} /></label>
+        <label className="sb-field">Max combo<input type="number" min={1} step={5} value={maxC} onChange={(e) => setMaxC(e.target.value)} /></label>
         <button type="button" className="ui-btn" onClick={add} disabled={!handle.trim()}>Add / update</button>
         <button type="button" className="ui-btn" onClick={grade}>Grade now</button>
       </div>
@@ -726,15 +763,14 @@ export default function SimBook() {
   const [boards, setBoards] = useState<Record<string, BoardState>>({});
   const [slip, setSlip] = useState<SlipLeg[]>([]);
   const [slipH, setSlipH] = useState(0);
-  const [note, setNote] = useState<string | null>(null);
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!session) { setMe(null); return; }
+  const refreshMe = useCallback(() => {
     api("/api/simbook/me").then((r) => setMe(r.ok ? r.body : { allowed: false, owner: false, player: null, lines: false }));
-  }, [session]);
+  }, []);
+  useEffect(() => { if (!session) { setMe(null); return; } refreshMe(); }, [session, refreshMe]);
 
   // The slate carries every card's prices. While the server is still reading
   // the week's boards (a fresh snapshot), poll until they're all in.
@@ -775,7 +811,6 @@ export default function SimBook() {
 
   const slipKeys = useMemo(() => new Set(slip.map((l) => l.key)), [slip]);
   const toggle = useCallback((o: Offer, g: SlateGame) => {
-    setNote(null);
     setSlip((s) => s.some((l) => l.key === o.key) ? s.filter((l) => l.key !== o.key)
       : s.length >= 8 ? s : [...s, { key: o.key, label: o.label, american: o.american, dec: o.dec || amToDec(o.american), parlay_ok: o.parlay_ok,
                                      slug: g.slug, home: g.home, away: g.away, market: o.market, side: o.side }]);
@@ -824,7 +859,12 @@ export default function SimBook() {
         <p className="sb-preview" role="status"><b>Preview.</b> Sample lines built from our consensus numbers, not live DraftKings. Betting is off until the DraftKings feed (SGO_API_KEY) is connected.</p>
       )}
       {err && <p className="sb-note sb-note--neg">{err}</p>}
-      {note && <p className="sb-note sb-note--pos" role="status">{note}</p>}
+      {me.player && (
+        <div className="sb-account" aria-live="polite">
+          <div><span>Available</span><b>{u(me.player.available)}</b></div>
+          <div><span>Current</span><b data-tone={me.player.current > 0 ? "pos" : me.player.current < 0 ? "neg" : undefined}>{u(me.player.current, true)}</b></div>
+        </div>
+      )}
 
       {tab === "board" && (
         <>
@@ -858,9 +898,10 @@ export default function SimBook() {
         </>
       )}
 
-      <Slip week={week} legs={slip} owner={me.owner} maxStake={me.player?.max_stake ?? 5} onHeight={setSlipH}
+      <Slip week={week} legs={slip} owner={me.owner} onHeight={setSlipH}
+            maxSingle={me.player?.max_single ?? 50} maxCombo={me.player?.max_combo ?? 25} available={me.player?.available ?? 0}
             remove={(k) => setSlip((s) => s.filter((l) => l.key !== k))} clear={() => setSlip([])}
-            onPlaced={(keys, text) => { setSlip((s) => s.filter((l) => !keys.includes(l.key))); if (text) setNote(text); loadTickets(); }} />
+            onPlaced={(keys) => { setSlip((s) => s.filter((l) => !keys.includes(l.key))); loadTickets(); refreshMe(); }} />
     </div>
   );
 }
