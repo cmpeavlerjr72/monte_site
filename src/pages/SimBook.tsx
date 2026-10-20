@@ -73,15 +73,16 @@ const ERRORS: Record<string, string> = {
   not_invited: "This book is invite-only.",
   started: "That game has kicked off. Bets are closed.",
   leg_gone: "That line just moved off the board. Reopen the game and pick again.",
-  parlay_push: "Whole-number lines can push, so they can't go in a combo. Switch to singles or swap that leg.",
-  same_market: "Two sides of the same bet, or two lines of it, can't go in one combo.",
-  ml_spread: "A moneyline and a spread from the same game can't go in one combo.",
-  stat_overlap: "A player's stat and a combo stat that includes it can't go in one combo.",
-  too_many_same_game: "Max 6 legs from one game in a combo.",
-  parlay_thin: "Those legs almost never hit together, so the house can't price that combo.",
-  too_correlated: "Those legs move together too much to price as a combo. Bet them as singles or swap one.",
-  parlay_dead: "The house won't write that combo.",
-  parlay_short: "That combo is too short a price to write.",
+  // combo guards: the bettor sees one plain line, never why (owner 2026-10-19)
+  parlay_push: "Those legs can't be combined.",
+  same_market: "Those legs can't be combined.",
+  ml_spread: "Those legs can't be combined.",
+  stat_overlap: "Those legs can't be combined.",
+  too_many_same_game: "Those legs can't be combined.",
+  parlay_thin: "Those legs can't be combined.",
+  too_correlated: "Those legs can't be combined.",
+  parlay_dead: "Those legs can't be combined.",
+  parlay_short: "Those legs can't be combined.",
   bad_stake: "Check the stake: it has to be above 0 and under your limit (max payout 250u).",
   budget: "The line feed is paused for the rest of the month.",
   no_lines: "The line feed isn't connected yet.",
@@ -590,11 +591,6 @@ function Slip({ week, legs, remove, clear, maxStake, owner, onPlaced, onHeight }
               ))}
             </section>
           ))}
-          {combo && quote?.corr && quote.corr !== "none" && (
-            <div className="sbx-dim">{quote.corr === "high"
-              ? "These legs tend to hit together, so this combo pays less than the legs multiplied, plus extra juice."
-              : "Some of these legs tend to hit together, so the combo pays a bit less than the legs multiplied."}</div>
-          )}
           {combo && quoteErr && (
             <div className="parlay-notice sbx-slip__err">
               <span>{quoteErr}</span>

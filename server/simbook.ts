@@ -879,8 +879,8 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       const week = Number(req.body?.week) || (await currentWeek(deps));
       const keys = Array.isArray(req.body?.legs) ? req.body.legs.map(String).slice(0, MAX_LEGS + 1) : [];
       const t = await quoteTicket(deps, week, keys, false);
-      res.json({ kind: t.kind, american: t.american, dec: t.dec, corr: (t as any).corr ?? "none", legs: t.legs.map((l) => publicLeg(l, w.owner)),
-                 ...(w.owner ? { p_sim: t.p_sim, p_mkt: t.p_mkt, house_ev: t.house_ev, dk_dec: t.dk_dec } : {}) });
+      res.json({ kind: t.kind, american: t.american, dec: t.dec, legs: t.legs.map((l) => publicLeg(l, w.owner)),
+                 ...(w.owner ? { p_sim: t.p_sim, p_mkt: t.p_mkt, house_ev: t.house_ev, dk_dec: t.dk_dec, corr: (t as any).corr ?? "none" } : {}) });
     } catch (err) { fail(res, err); }
   });
 
