@@ -34,6 +34,8 @@ type SlateGame = {
   spread?: number | null; total?: number | null;
   /** the card's game lines at the house's prices, off the server's snapshot */
   offers?: Offer[]; as_of?: string; no_lines?: boolean;
+  /** the snapshot is past its max age: nothing is served until the next refresh */
+  stale?: boolean;
   /** client-side: the server is still reading this week's boards */
   warming?: boolean;
 };
@@ -44,7 +46,7 @@ type Offer = {
   /** props: the player's team */
   team?: "home" | "away";
 };
-type Board = { slug: string; home: string; away: string; kickoff: string; started: boolean; has_lines: boolean; offers: Offer[] };
+type Board = { slug: string; home: string; away: string; kickoff: string; started: boolean; has_lines: boolean; offers: Offer[]; as_of?: string | null; stale?: boolean };
 type BoardState = { board?: Board; err?: string; loading?: boolean };
 type SlipLeg = {
   key: string; label: string; american: number; dec: number; parlay_ok: boolean;
@@ -83,6 +85,7 @@ const ERRORS: Record<string, string> = {
   slow_down: "Easy. Too many bets in a minute.",
   bad_legs: "Pick 1 to 8 legs.",
   dup_leg: "That leg is already on the slip.",
+  stale_lines: "Those lines are being updated. Bets on that game reopen after the next refresh.",
 };
 
 async function api(path: string, init?: RequestInit) {
@@ -171,7 +174,7 @@ function GameCard({ g, st, open, onOpen, slipKeys, toggle, owner }: {
   slipKeys: Set<string>; toggle: (o: Offer, g: SlateGame) => void; owner: boolean;
 }) {
   // a freshly opened board beats the slate's snapshot
-  const fresh = st?.board && !st.board.started && st.board.has_lines ? st.board.offers : null;
+  const fresh = st?.board && !st.board.started && st.board.has_lines && !st.board.stale ? st.board.offers : null;
   const offers = g.started ? null : fresh ?? (g.offers?.length ? g.offers : null);
   const board = offers ? { offers } : null;
   const m = board ? gameMarkets(board.offers) : null;
@@ -223,8 +226,8 @@ function GameCard({ g, st, open, onOpen, slipKeys, toggle, owner }: {
           {row("away")}
           {row("home")}
         </div>
-        {!board && !g.started && !st?.loading && (st?.err || g.no_lines || !g.warming) && (
-          <div className="sbx-dim sbx-card__hint">{st?.err ? st.err : g.no_lines ? "No DraftKings lines on this game yet." : "Prices aren't in yet. Tap to load them."}</div>
+        {!board && !g.started && !st?.loading && (st?.err || g.stale || g.no_lines || !g.warming) && (
+          <div className="sbx-dim sbx-card__hint">{st?.err ? st.err : g.stale ? "Updating lines. Prices are back after the next refresh." : g.no_lines ? "No DraftKings lines on this game yet." : "Prices aren't in yet. Tap to load them."}</div>
         )}
       </div>
     </article>
@@ -259,6 +262,7 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
   if (st?.err) body = <div className="sbx-empty"><p className="sb-note sb-note--neg">{st.err}</p><button type="button" className="ui-btn" onClick={onRetry}>Try again</button></div>;
   else if (!board) body = <p className="sb-note">Loading DraftKings' board…</p>;
   else if (board.started) body = <p className="sb-note">This game has kicked off. Bets are closed.</p>;
+  else if (board.stale) body = <p className="sb-note">These lines are being updated. Prices come back after the next refresh.</p>;
   else if (!board.has_lines || !offers.length) body = <p className="sb-note">No DraftKings lines on this game yet. They usually post by midweek.</p>;
   else if (active === "lines") {
     const m = gameMarkets(offers);
@@ -404,7 +408,9 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
         </div>
       )}
       {body}
-      <p className="sb-note sbx-foot">Lines are DraftKings'. Prices are the house's, refreshed when you open a game. Bets lock at kickoff.</p>
+      <p className="sb-note sbx-foot">
+        DraftKings lines{board?.as_of ? ` as of ${new Date(board.as_of).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })} ET` : ""}, updated through the week and more often near kickoff. Bets lock at kickoff.
+      </p>
     </section>
   );
 }

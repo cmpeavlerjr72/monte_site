@@ -36,17 +36,27 @@ const SEASON = 2026;
 const SGO_KEY = process.env.SGO_API_KEY || "";
 const SGO_BASE = "https://api.sportsgameodds.com/v2";
 const SGO_MONTH_CAP = Number(process.env.SIMBOOK_SGO_MONTH_CAP || 2300); // plan allows 2,500 games/month
-const EVENT_TTL_MS = 120_000;        // tickets re-read a game's DK board at most every 2 min
-// SGO budget (owner 2026-10-19: "worried we run out"). Only PLACING a bet must be
-// fresh; looking (cards, opening a game, pricing the slip) runs off the snapshot.
-const OPEN_TTL_MS = Number(process.env.SIMBOOK_OPEN_TTL_MIN || 180) * 60_000; // opening / slip quotes
-const FAR_TTL_MS = 72 * 3600_000;    // a game more than 36h out is re-read every 3 days, not daily
-const NEAR_MS = 36 * 3600_000;
-// The card snapshot (owner 2026-10-19: "prices need to load automatically"): every
-// not-yet-kicked game's board is re-read in ONE batched pass, at most this often.
-// SGO bills each event read against 2,500/month, so 56 games x once a day is ~1,700.
-const CARD_TTL_MS = Number(process.env.SIMBOOK_CARD_TTL_H || 20) * 3600_000;
-// A game DK hasn't posted is looked for again on the same daily pass (opening it looks right away).
+// FRESHNESS (owner 2026-10-19): "the site only ever reads the database, never SGO".
+// SportsGameOdds is read ONLY by the server's refresh timer, which writes each
+// game's DK board to simbook_events. Every request (cards, opening a game, the
+// slip, placing a bet) reads that snapshot. SGO bills every event read against
+// 2,500/month, so a game is re-read on this schedule, by time to kickoff:
+const REFRESH_TICK_MS = 15 * 60_000;
+const FRESH_FAR_MS = 72 * 3600_000;                                              // > 36h out
+const FRESH_MID_MS = Number(process.env.SIMBOOK_CARD_TTL_H || 20) * 3600_000;    // 6-36h out
+const FRESH_NEAR_MS = Number(process.env.SIMBOOK_NEAR_TTL_H || 4) * 3600_000;    // last 6h
+function freshFor(kickoffMs: number, now = Date.now()): number {
+  const until = kickoffMs - now;
+  return until > 36 * 3600_000 ? FRESH_FAR_MS : until > 6 * 3600_000 ? FRESH_MID_MS : FRESH_NEAR_MS;
+}
+// Owner 2026-10-19: "if the data is over a certain amount of time it stops serving
+// it until it is refreshed". A board older than its refresh interval + this grace
+// is NOT served (no card prices, no menu, no bets) until the timer refreshes it.
+const STALE_GRACE_MS = 30 * 60_000;
+function isStale(at: number | null | undefined, kickoffMs: number, now = Date.now()): boolean {
+  if (PREVIEW) return false;
+  return at == null || now - at > freshFor(kickoffMs, now) + STALE_GRACE_MS;
+}
 const H_LINES = 0.045;               // juice on spreads, totals, moneylines, team totals
 const H_PROPS = 0.06;                // juice on player props
 const H_SIM = 0.03;                  // (retired 2026-10-19 with the blend; kept for old notes)
@@ -250,34 +260,21 @@ function saveEvent(g: SlateGame, ev: SgoEvent | null, at: number) {
     fetched_at: new Date(at).toISOString(), event: ev }).then(({ error }) => { if (error) console.warn("[simbook] snapshot save:", error.message); });
 }
 
-async function sgoEventFor(g: SlateGame, maxAgeMs = EVENT_TTL_MS): Promise<SgoEvent | null> {
-  const ck = `${g.week}/${g.slug}`;
+/** A game's DK board from the snapshot. NEVER reads SGO (request paths use this). */
+async function snapEvent(g: SlateGame): Promise<{ ev: SgoEvent | null; at: number } | null> {
   await ensureSnapshot(g.week).catch(() => {});
-  const hit = eventCache.get(ck);
-  if (hit && Date.now() - hit.at < maxAgeMs) return hit.ev;
-  // DK hadn't posted this game when we last looked: look again at most every 6h (each look costs reads)
-  if (hit && !hit.ev && Date.now() - hit.at < 6 * 3600_000) return null;
-  // a bet (fresh read) may use the last ~200 reads the refreshes leave alone
-  if (!(await sgoBudgetOk(maxAgeMs <= 60_000 ? -150 : 100))) {
-    if (hit) return hit.ev;              // out of budget: the last board beats no board (bets still re-price)
-    const e: any = new Error("sgo_budget"); e.code = "budget"; throw e;
-  }
+  return eventCache.get(`${g.week}/${g.slug}`) || null;
+}
+
+/** Refresh timer only: find a game's SGO event by team (a few reads). */
+async function discoverEvent(g: SlateGame): Promise<SgoEvent | null> {
   const base = { leagueID: "NCAAF", bookmakerID: "draftkings", includeAltLines: "true", limit: "1" };
-  let ev: SgoEvent | null = null;
-  const known = eventIdBySlug.get(ck);
-  if (known) {
-    const d = await sgoGet("events", { ...base, eventIDs: known });
-    ev = d?.data?.[0] || null;
-  } else {
-    const after = new Date(Date.parse(g.kickoff) - 3 * 86400_000).toISOString();
-    outer: for (const tid of [...sgoTeamIds(g.home), ...sgoTeamIds(g.away)]) {
-      const d = await sgoGet("events", { ...base, teamID: tid, startsAfter: after });
-      for (const e of d?.data || []) if (eventMatches(e, g)) { ev = e; break outer; }
-    }
+  const after = new Date(Date.parse(g.kickoff) - 3 * 86400_000).toISOString();
+  for (const tid of [...sgoTeamIds(g.home), ...sgoTeamIds(g.away)]) {
+    const d = await sgoGet("events", { ...base, teamID: tid, startsAfter: after });
+    for (const e of d?.data || []) if (eventMatches(e, g)) return e;
   }
-  if (eventCache.size > 400) eventCache.clear();
-  saveEvent(g, ev, Date.now());
-  return ev;
+  return null;
 }
 
 /** Spend no faster than the month allows: the cap, pro-rated to today, plus slack. */
@@ -288,24 +285,21 @@ async function budgetPaced(n: number): Promise<boolean> {
   return sgoUsage.used + n <= allowance;
 }
 
-/** Re-read every not-yet-kicked game's board in batched calls, then price the
- *  cards. Runs in the background off a slate request, one pass per week at a time. */
-const warming = new Map<number, Promise<void>>();
-function warmSlate(deps: SimbookDeps, week: number): Promise<void> {
-  const running = warming.get(week); if (running) return running;
+/** REFRESH TIMER ONLY: re-read the boards that are due (freshFor) in batched
+ *  calls and write them to the snapshot, then price the cards. */
+const refreshing = new Map<number, Promise<void>>();
+function refreshSlate(deps: SimbookDeps, week: number): Promise<void> {
+  const running = refreshing.get(week); if (running) return running;
   const p = (async () => {
     await ensureSnapshot(week).catch(() => {});
     const games = await slate(deps, week);
     const now = Date.now();
     const open = games.filter((g) => now < Date.parse(g.kickoff) - 60_000);
     const ckOf = (g: SlateGame) => `${week}/${g.slug}`;
-    if (PREVIEW) {
-      for (const g of open) if (!eventCache.has(ckOf(g))) eventCache.set(ckOf(g), { at: now, ev: await previewEvent(deps, g).catch(() => null) });
-    } else {
+    {
       const stale = open.filter((g) => {
         const h = eventCache.get(ckOf(g));
-        const ttl = Date.parse(g.kickoff) - now < NEAR_MS ? CARD_TTL_MS : FAR_TTL_MS;
-        return !h || now - h.at > ttl;
+        return !h || now - h.at > freshFor(Date.parse(g.kickoff), now);
       });
       if (stale.length && (await budgetPaced(stale.length))) {
         const base = { leagueID: "NCAAF", bookmakerID: "draftkings", includeAltLines: "true" };
@@ -336,15 +330,33 @@ function warmSlate(deps: SimbookDeps, week: number): Promise<void> {
             for (const g of chunk) saveEvent(g, byId.get(eventIdBySlug.get(ckOf(g))!) || null, Date.now());
           }
           // a few strays (usually games DK hasn't posted): the per-team lookup costs a handful, not a league
-          for (const g of unknown) await sgoEventFor(g, 0).catch(() => null);
+          for (const g of unknown) saveEvent(g, await discoverEvent(g).catch(() => null), Date.now());
         }
         if (snapSupa) snapSupa.from("simbook_events").delete().eq("season", SEASON).lt("week", week - 1).then(() => {});
       }
     }
-    for (const g of open) await cardFor(deps, g).catch(() => null);
+    await priceCards(deps, week);
   })();
-  p.catch((e) => console.warn("[simbook] warm:", e?.message ?? e)).finally(() => warming.delete(week));
-  warming.set(week, p);
+  p.catch((e) => console.warn("[simbook] refresh:", e?.message ?? e)).finally(() => refreshing.delete(week));
+  refreshing.set(week, p);
+  return p;
+}
+
+/** Price every open game's card off the snapshot (no SGO). Off a slate request
+ *  after a restart, and after each refresh. */
+const pricing = new Map<number, Promise<void>>();
+function priceCards(deps: SimbookDeps, week: number): Promise<void> {
+  const running = pricing.get(week); if (running) return running;
+  const p = (async () => {
+    await ensureSnapshot(week).catch(() => {});
+    const now = Date.now();
+    for (const g of (await slate(deps, week)).filter((x) => now < Date.parse(x.kickoff) - 60_000)) {
+      if (PREVIEW && !eventCache.has(`${week}/${g.slug}`)) eventCache.set(`${week}/${g.slug}`, { at: now, ev: await previewEvent(deps, g).catch(() => null) });
+      await cardFor(deps, g).catch(() => null);
+    }
+  })();
+  p.catch((e) => console.warn("[simbook] cards:", e?.message ?? e)).finally(() => pricing.delete(week));
+  pricing.set(week, p);
   return p;
 }
 
@@ -681,17 +693,18 @@ async function cardFor(deps: SimbookDeps, g: SlateGame): Promise<CardLegs | null
   return out;
 }
 
-async function boardFor(deps: SimbookDeps, week: number, slug: string, maxAgeMs = EVENT_TTL_MS) {
+async function boardFor(deps: SimbookDeps, week: number, slug: string) {
   const g = await gameOf(deps, week, slug);
   if (!g) { const e: any = new Error("no_game"); e.code = "no_game"; throw e; }
-  const ev = PREVIEW ? await previewEvent(deps, g) : await sgoEventFor(g, maxAgeMs);
-  if (!ev) return { g, ev: null, legs: [] as PricedLeg[] };
+  const snap = PREVIEW ? { ev: await previewEvent(deps, g), at: Date.now() } : await snapEvent(g);
+  const ev = snap?.ev || null;
+  if (!ev) return { g, ev: null, at: snap?.at ?? null, legs: [] as PricedLeg[] };
   const s = await seedsFor(deps, g);
   const legs: PricedLeg[] = [];
   for (const q of quotesFromEvent(g, ev)) { const pl = priceLeg(q, s, ev, g); if (pl) legs.push(pl); }
   const at = eventCache.get(`${week}/${slug}`)?.at;
   if (at != null) cardCache.set(`${week}/${slug}`, { at, legs: legs.filter((l) => l.market !== "prop").map(({ outcome, ...l }) => l as PricedLeg) });
-  return { g, ev, legs };
+  return { g, ev, at: snap!.at, legs };
 }
 
 /** What the bettor may see about a leg: never the sim's or the market's probability. */
@@ -703,7 +716,7 @@ function publicLeg(l: PricedLeg, owner: boolean) {
 }
 
 /* --------------------------------------------------------------- tickets */
-async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], fresh: boolean) {
+async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], forBet: boolean) {
   if (!keys.length || keys.length > MAX_LEGS) throw Object.assign(new Error("bad_legs"), { code: "bad_legs" });
   if (new Set(keys).size !== keys.length) throw Object.assign(new Error("dup_leg"), { code: "dup_leg" });
   const bySlug = new Map<string, string[]>();
@@ -711,8 +724,9 @@ async function quoteTicket(deps: SimbookDeps, week: number, keys: string[], fres
   const legs: PricedLeg[] = [];
   let pSim = 1;
   for (const [slug, ks] of bySlug) {
-    const b = await boardFor(deps, week, slug, fresh ? 45_000 : OPEN_TTL_MS);
+    const b = await boardFor(deps, week, slug);
     if (kickedOff(b.g, b.ev)) throw Object.assign(new Error("started"), { code: "started", slug });
+    if (isStale(b.at, Date.parse(b.g.kickoff))) throw Object.assign(new Error("stale_lines"), { code: "stale_lines", slug });
     const mine = ks.map((k) => b.legs.find((l) => l.key === k));
     if (mine.some((l) => !l)) throw Object.assign(new Error("leg_gone"), { code: "leg_gone", slug });
     // one game's legs: the joint comes from the SAME seeds
@@ -871,7 +885,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
   const fail = (res: Response, err: any) => {
     const code = err?.code || "error";
     const status = code === "no_game" ? 404 : code === "started" || code === "leg_gone" || code === "price_changed" ? 409
-      : code === "budget" || code === "no_lines" || code === "preview" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake"].includes(code) ? 400 : 500;
+      : code === "budget" || code === "no_lines" || code === "preview" || code === "stale_lines" ? 503 : ["bad_legs", "dup_leg", "same_market", "parlay_push", "parlay_dead", "parlay_short", "bad_stake"].includes(code) ? 400 : 500;
     if (status === 500) console.warn("[simbook]", err?.message ?? err);
     res.status(status).json({ error: code, slug: err?.slug });
   };
@@ -881,7 +895,7 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     const w = await who(req).catch(() => null);
     res.json({ allowed: Boolean(w), owner: Boolean(w?.owner), player: w?.player ? { name: w.player.name, max_stake: Number(w.player.max_stake) } : null,
                lines: Boolean(SGO_KEY), preview: PREVIEW,
-               ...(w?.owner && SGO_KEY ? { sgo: await sgoBudgetOk(0).then(() => ({ used: sgoUsage.used, cap: 2500, guard: SGO_MONTH_CAP })).catch(() => null) } : {}) });
+               ...(w?.owner && SGO_KEY && sgoUsage.at ? { sgo: { used: sgoUsage.used, cap: 2500, guard: SGO_MONTH_CAP, as_of: new Date(sgoUsage.at).toISOString() } } : {}) });
   });
 
   app.get("/api/simbook/slate", async (req, res) => {
@@ -895,21 +909,24 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
       const ww = String(week).padStart(2, "0");
       const lines = await hfJson(deps, `${SEASON}/weeks/week${ww}/lines.json`).catch(() => null);
       const num = (x: any) => (x == null || x === "" || !Number.isFinite(Number(x)) ? null : Number(x));
-      // card prices come from the snapshot; a stale or missing one is re-read in the background
-      warmSlate(deps, week);
+      // card prices come from the snapshot (the refresh timer keeps it fresh); price any card not priced yet
       await ensureSnapshot(week).catch(() => {});
+      if (games.some((g) => Date.now() < Date.parse(g.kickoff) - 60_000 && eventCache.get(`${week}/${g.slug}`)?.ev && !cardCache.has(`${week}/${g.slug}`)))
+        priceCards(deps, week);
       const out = [];
       for (const g of games) {
         const L = lines?.games?.[g.slug];
         const started = Date.now() >= Date.parse(g.kickoff) - 60_000;
-        const card = started ? null : cardCache.get(`${week}/${g.slug}`) || null;
+        const snapAt = eventCache.get(`${week}/${g.slug}`)?.at;
+        const stale = !started && Boolean(SGO_KEY) && isStale(snapAt, Date.parse(g.kickoff));
+        const card = started || stale ? null : cardCache.get(`${week}/${g.slug}`) || null;
         out.push({ slug: g.slug, home: g.home, away: g.away, kickoff: g.kickoff, started,
           spread: num(L?.spread?.close ?? L?.spread?.open), total: num(L?.total?.close ?? L?.total?.open),
           offers: card ? card.legs.map((l) => publicLeg(l, w.owner)) : undefined,
           as_of: card ? new Date(card.at).toISOString() : undefined,
-          no_lines: !started && eventCache.has(`${week}/${g.slug}`) && !eventCache.get(`${week}/${g.slug}`)!.ev });
+          stale, no_lines: !started && !stale && eventCache.has(`${week}/${g.slug}`) && !eventCache.get(`${week}/${g.slug}`)!.ev });
       }
-      res.json({ season: SEASON, week, warming: warming.has(week), games: out });
+      res.json({ season: SEASON, week, warming: pricing.has(week) || refreshing.has(week), games: out });
     } catch (err) { fail(res, err); }
   });
 
@@ -918,10 +935,11 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     const w = await who(req); if (!w) { res.status(403).json({ error: "not_invited" }); return; }
     try {
       const week = Number(req.query.week) || (await currentWeek(deps));
-      const b = await boardFor(deps, week, String(req.params.slug), OPEN_TTL_MS);
+      const b = await boardFor(deps, week, String(req.params.slug));
+      const stale = !kickedOff(b.g, b.ev) && isStale(b.at, Date.parse(b.g.kickoff));
       res.json({ slug: b.g.slug, home: b.g.home, away: b.g.away, kickoff: b.g.kickoff, started: kickedOff(b.g, b.ev),
-                 has_lines: Boolean(b.ev), preview: PREVIEW, as_of: new Date().toISOString(),
-                 offers: b.legs.map((l) => publicLeg(l, w.owner)) });
+                 has_lines: Boolean(b.ev), preview: PREVIEW, as_of: b.at ? new Date(b.at).toISOString() : null,
+                 stale, offers: stale ? [] : b.legs.map((l) => publicLeg(l, w.owner)) });
     } catch (err) { fail(res, err); }
   });
 
@@ -1009,6 +1027,13 @@ export function registerSimbook(app: Express, deps: SimbookDeps) {
     const w = await who(req); if (!w?.owner) { res.status(403).json({ error: "owner_only" }); return; }
     res.json(await gradeOpenTickets(deps));
   });
+
+  // THE ONLY SGO READER for lines: every 15 min, refresh whatever is due this week
+  if (deps.supa && SGO_KEY) {
+    const tick = async () => { refreshSlate(deps, await currentWeek(deps)).catch(() => {}); };
+    setInterval(() => { tick().catch(() => {}); }, REFRESH_TICK_MS).unref?.();
+    setTimeout(() => { tick().catch(() => {}); }, 30_000).unref?.();
+  }
 
   // grading: every 15 minutes, only does work when a ticket's game ended 3h+ ago
   if (deps.supa && SGO_KEY) {

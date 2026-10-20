@@ -35,16 +35,17 @@ server-only via the service role).
   (`nearEven`). Whole-number lines can't go in a parlay.
 - **Layout** (owner 2026-10-19): the scoreboard's grammar, NOT a DK skin. One
   card per game (logos, away on top, Spread/Total/ML cells, house prices on
-  load). **Card prices** (owner: "load automatically"): SGO bills EVERY event
-  read (re-reads too) against 2,500/month, so the slate's boards are a SNAPSHOT
-  in `simbook_events` (survives redeploys), re-read in one batched pass at most
-  every `SIMBOOK_CARD_TTL_H` (20h) under a pro-rated monthly pacing guard
-  (`warmSlate`). A pass with >5 id-less games is ONE league query (the DK filter
-  returns only DK-listed games). Budget cuts (owner worried about the cap): only PLACING a bet
-  reads fresh (45s); opening a game and slip quotes use the snapshot up to
-  `SIMBOOK_OPEN_TTL_MIN` (180); games >36h out refresh every 3 days, within
-  36h daily; a no-lines game is re-searched at most every 6h; bets may use the
-  last ~200 reads after refreshes pause at 2,300. Owner sees reads used on All bets. Tapping a card opens a full-width drawer after its row with tabs
+  load). **Lines data flow** (owner 2026-10-19): the SITE NEVER READS SGO.
+  One server timer (`refreshSlate`, every 15 min) re-reads the DK boards that are
+  due and writes them to `simbook_events`; cards, the game menu, the slip and
+  bets read only that snapshot. Due = by time to kickoff: >36h every 72h, 6-36h
+  every `SIMBOOK_CARD_TTL_H` (20h), last 6h every `SIMBOOK_NEAR_TTL_H` (4h), in
+  batched calls (25 ids/call; one league query when >5 games lack an id) under a
+  pro-rated monthly pacing guard. **Max age**: a board older than its interval +
+  30 min is NOT served (no card prices, empty menu, quotes/bets refused
+  `stale_lines`) until the timer refreshes it, so nothing too stale ever shows.
+  SGO bills every event read against 2,500/month; the owner sees reads used on
+  All bets. Only other SGO readers: the grading timer and owner "Grade now". Tapping a card opens a full-width drawer after its row with tabs
   (Game Lines, Team Totals, one per prop stat). The slip reuses the global
   `.parlay-*` classes: 2+ legs default to COMBO (house wants parlays), with a
   Singles toggle (same stake per leg, one ticket each) and Clear.
