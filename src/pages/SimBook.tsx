@@ -633,6 +633,95 @@ function Slip({ week, legs, remove, clear, maxSingle, maxCombo, available, owner
 /* --------------------------------------------------------------- tickets */
 function net(t: Ticket) { return t.status === "open" ? 0 : (t.payout ?? 0) - Number(t.stake); }
 
+/* ----------------------------------------------- owner: house EV (owner 2026-10-20)
+   House edge per $1 he risks, two ways:
+     DK  = 1 - DK's no-vig chance x the price he got (what the market says we hold)
+     sim = 1 - the sim's chance x the price (the ticket's house_ev; parlays count pushes)
+   Positive = good for the house. Dollars = stake x edge. */
+type Ev = { dk: number | null; sim: number | null };
+const legEv = (l: Ticket["legs"][number]): Ev => {
+  const d = Number.isFinite(l.american) ? amToDec(l.american) : null;
+  return { dk: d && l.p_mkt != null ? 1 - l.p_mkt * d : null, sim: d && l.p_sim != null ? 1 - l.p_sim * d : null };
+};
+const ticketEv = (t: Ticket): Ev => ({
+  dk: t.p_mkt != null ? 1 - Number(t.p_mkt) * Number(t.decimal_odds) : null,
+  sim: t.house_ev != null ? Number(t.house_ev) : null,
+});
+const pctS = (x: number | null) => (x == null ? "—" : `${x > 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
+const tone = (x: number | null) => (x == null || Math.abs(x) < 0.005 ? undefined : x > 0 ? "pos" : "neg");
+
+function EvPair({ ev, stake }: { ev: Ev; stake?: number }) {
+  const one = (k: "dk" | "sim", label: string) => (
+    <span className="sb-ev" data-tone={tone(ev[k])}>
+      {label} <b>{pctS(ev[k])}</b>{stake != null && ev[k] != null ? <> · {u(stake * ev[k]!, true)}</> : null}
+    </span>
+  );
+  return <span className="sb-evpair">{one("dk", "EV vs DK")}{one("sim", "EV vs sim")}</span>;
+}
+
+/** The house's numbers over a set of tickets: handle, expected (DK / sim), actual. */
+function houseStats(ts: Ticket[]) {
+  let handle = 0, dk = 0, sim = 0, dkN = 0, simN = 0, actual = 0, open = 0, setDk = 0, setSim = 0;
+  let w = 0, l = 0, p = 0;
+  for (const t of ts) {
+    const s = Number(t.stake), e = ticketEv(t);
+    handle += s;
+    if (e.dk != null) { dk += s * e.dk; dkN += s; }
+    if (e.sim != null) { sim += s * e.sim; simN += s; }
+    if (t.status === "open") { open += s; continue; }
+    actual -= net(t);
+    if (e.dk != null) setDk += s * e.dk;
+    if (e.sim != null) setSim += s * e.sim;
+    if (t.status === "won") l++; else if (t.status === "lost") w++; else p++;   // house record: his loss = house win
+  }
+  return { n: ts.length, handle, open, dk, sim, dkPct: dkN ? dk / dkN : null, simPct: simN ? sim / simN : null,
+           actual, setDk, setSim, w, l, p };
+}
+
+function HouseStats({ ts, big = false }: { ts: Ticket[]; big?: boolean }) {
+  const h = houseStats(ts);
+  return (
+    <div className="sb-house" data-big={big ? "true" : undefined}>
+      <div><span>Handle</span><b>{u(h.handle)}</b><i>{h.n} bet{h.n === 1 ? "" : "s"}{h.open ? ` · ${u(h.open)} open` : ""}</i></div>
+      <div><span>EV vs DK</span><b data-tone={tone(h.dkPct)}>{u(h.dk, true)}</b><i>{pctS(h.dkPct)} of handle</i></div>
+      <div><span>EV vs sim</span><b data-tone={tone(h.simPct)}>{u(h.sim, true)}</b><i>{pctS(h.simPct)} of handle</i></div>
+      <div><span>House actual</span><b data-tone={tone(h.actual / Math.max(1, h.handle))}>{u(h.actual, true)}</b>
+        <i>{h.w + h.l + h.p ? `house ${h.w}-${h.l}${h.p ? `-${h.p}` : ""} · settled EV ${u(h.setDk, true)} DK / ${u(h.setSim, true)} sim` : "nothing settled yet"}</i></div>
+    </div>
+  );
+}
+
+/** Owner's All bets: the house total, then one collapsible bucket per player. */
+function OwnerBets({ tickets, players }: { tickets: Ticket[]; players: Player[] }) {
+  const names = new Map(players.map((p) => [p.user_id, p.name]));
+  const by = new Map<string, Ticket[]>();
+  for (const p of players) by.set(p.user_id, []);
+  for (const t of tickets) by.set(t.user_id, [...(by.get(t.user_id) || []), t]);
+  const rows = [...by.entries()].map(([uid, ts]) => ({ uid, ts, h: houseStats(ts) })).sort((a, b) => b.h.handle - a.h.handle);
+  return (
+    <>
+      <section className="ui-card sb-summary">
+        <div className="sb-kicker">The house · all players</div>
+        <HouseStats ts={tickets} big />
+      </section>
+      {rows.map(({ uid, ts, h }) => (
+        <details key={uid} className="ui-card sb-bucket">
+          <summary>
+            <span className="sb-bucket__name">{names.get(uid) ?? "Unknown player"}</span>
+            <span className="sb-dim">{h.n} bet{h.n === 1 ? "" : "s"}{h.open ? ` · ${u(h.open)} open` : ""}</span>
+            <span className="sb-bucket__ev">
+              <b data-tone={tone(h.dkPct)}>DK {u(h.dk, true)}</b>
+              <b data-tone={tone(h.simPct)}>sim {u(h.sim, true)}</b>
+            </span>
+          </summary>
+          <HouseStats ts={ts} />
+          {ts.length ? <TicketList tickets={ts} owner players={new Map()} /> : <p className="sb-note">No bets yet.</p>}
+        </details>
+      ))}
+    </>
+  );
+}
+
 function Summary({ tickets, owner }: { tickets: Ticket[]; owner: boolean }) {
   const settled = tickets.filter((t) => t.status !== "open");
   const w = settled.filter((t) => t.status === "won").length, l = settled.filter((t) => t.status === "lost").length;
@@ -700,7 +789,7 @@ function TicketList({ tickets, owner, players }: { tickets: Ticket[]; owner: boo
                   <span className={`sb-dot sb-dot--${l.result ?? "open"}`} aria-hidden />
                   <span className="sb-ticket__logos">{ticketLegTeams(l).map((tm) => <Logo key={tm} team={tm} px={18} />)}</span>
                   <span className="sb-ticket__leg">{l.label}{l.score != null ? <span className="sb-dim"> · final {l.score}</span> : null}{t.kind === "parlay" && (l.result === "push" || l.result === "void") ? <span className="sb-dim"> · {l.result}, dropped</span> : null}</span>
-                  {owner && <span className="sb-dim sb-own">sim {pct(l.p_sim)} · DK {pct(l.p_mkt)}</span>}
+                  {owner && <span className="sb-own sb-legev"><EvPair ev={legEv(l)} /><span className="sb-dim">hits: sim {pct(l.p_sim)} · DK {pct(l.p_mkt)}</span></span>}
                 </li>
               ))}
             </ul>
@@ -713,7 +802,8 @@ function TicketList({ tickets, owner, players }: { tickets: Ticket[]; owner: boo
             {owner && (
               <footer className="sb-dim">
                 {players.size > 1 ? `${players.get(t.user_id) ?? "?"} · ` : ""}
-                {t.house_ev != null ? `house EV ${pct(t.house_ev)} (sim ${pct(t.p_sim)}, DK ${pct(t.p_mkt)})` : ""}
+                <EvPair ev={ticketEv(t)} stake={Number(t.stake)} />
+                <span>{t.kind === "parlay" ? "combo" : "bet"} hits: sim {pct(t.p_sim)} · DK {pct(t.p_mkt)}</span>
               </footer>
             )}
           </article>
@@ -893,7 +983,7 @@ export default function SimBook() {
 
       {tab === "bets" && (
         <>
-          {tickets ? <Summary tickets={tickets} owner={me.owner} /> : <p className="sb-note">Loading…</p>}
+          {!tickets ? <p className="sb-note">Loading…</p> : me.owner ? null : <Summary tickets={tickets} owner={false} />}
           {me.owner && me.sgo && (
             <p className="sb-note">Line feed: {me.sgo.used.toLocaleString()} of {me.sgo.cap.toLocaleString()} reads used this month
               {me.sgo.last_run ? `, last update ${new Date(me.sgo.last_run).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })} ET` : ""}
@@ -901,7 +991,7 @@ export default function SimBook() {
               {me.sgo.used >= me.sgo.guard ? ". Refreshes are paused; games past their max age stop showing." : "."}</p>
           )}
           {me.owner && <Players players={players} reload={loadTickets} />}
-          {tickets ? <TicketList tickets={tickets} owner={me.owner} players={playerNames} /> : null}
+          {tickets ? (me.owner ? <OwnerBets tickets={tickets} players={players} /> : <TicketList tickets={tickets} owner={false} players={playerNames} />) : null}
         </>
       )}
 
