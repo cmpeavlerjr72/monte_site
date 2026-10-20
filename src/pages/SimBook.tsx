@@ -240,10 +240,12 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
   const props = offers.filter((o) => o.market === "prop");
   const tt = offers.filter((o) => o.market === "tt");
   const subs = new Set(props.map((o) => o.sub));
+  const qbSet = new Set(props.filter((o) => /^Pass|^Completions|^Interceptions/.test(o.sub)).map((o) => o.group));
   const tabs: Tab[] = [
     { id: "lines", label: "Game Lines" },
     ...(tt.length ? [{ id: "tt", label: "Team Totals" }] : []),
-    ...PROP_GROUPS.filter((pg) => pg.cols.some(([sub]) => subs.has(sub))).map((pg) => ({ id: `p:${pg.id}`, label: pg.id })),
+    ...PROP_GROUPS.filter((pg) => props.some((o) => pg.cols.some(([sub]) => sub === o.sub) && !(pg.id === "Rushing" && qbSet.has(o.group))))
+      .map((pg) => ({ id: `p:${pg.id}`, label: pg.id })),
   ];
   const active = tabs.some((x) => x.id === tab) ? tab : "lines";
   const t = (o: Offer) => toggle(o, g);
@@ -319,8 +321,12 @@ function Drawer({ g, st, onClose, onRetry, slipKeys, toggle, owner }: {
     const needle = q.trim().toLowerCase();
     // player -> stat -> the offer we show (DK's main line, else the first near-even one)
     const byPlayer = new Map<string, Map<string, Offer>>();
+    // owner 2026-10-19: no QB rushing on the Rushing tab (qbSet: anyone with a
+    // passing prop, or pass + rush yards, in this game).
+    const qbs = qbSet;
     for (const o of props) {
       if (!cols.some(([sub]) => sub === o.sub)) continue;
+      if (pg.id === "Rushing" && qbs.has(o.group)) continue;
       const m = byPlayer.get(o.group) || new Map<string, Offer>(); byPlayer.set(o.group, m);
       const cur = m.get(o.sub);
       if (!cur || (o.main && !cur.main)) m.set(o.sub, o);
