@@ -22,6 +22,18 @@ import { useLocation } from "react-router-dom";
 import { supabase } from "./supabase";
 
 const ENDPOINT = "/api/t";
+/** The owner's account (MVPeav). A device signed in as it tags itself once per tab session ("staff:owner"), so the desk's
+ *  Metrics can leave that device's visits out (owner 2026-10-21: only MVPeav's own visits shouldn't count). */
+const OWNER_UID = "fe22741b-0e66-4ab6-ac40-5b2722a1faf0";
+
+function markOwner(uid: string | undefined) {
+  if (uid !== OWNER_UID) return;
+  try {
+    if (window.sessionStorage.getItem("mv_owner")) return;
+    window.sessionStorage.setItem("mv_owner", "1");
+  } catch { /* still send once per load */ }
+  trackClick("staff:owner");
+}
 let signedIn = false;
 let lastView = "";
 
@@ -123,8 +135,8 @@ export function useTrafficTracking() {
     let unsub: (() => void) | undefined;
     try {
       if (supabase) {
-        void supabase.auth.getSession().then(({ data }) => { signedIn = Boolean(data.session); });
-        const { data } = supabase.auth.onAuthStateChange((_e, s) => { signedIn = Boolean(s); });
+        void supabase.auth.getSession().then(({ data }) => { signedIn = Boolean(data.session); markOwner(data.session?.user?.id); });
+        const { data } = supabase.auth.onAuthStateChange((_e, s) => { signedIn = Boolean(s); markOwner(s?.user?.id); });
         unsub = () => data.subscription.unsubscribe();
       }
     } catch { /* */ }

@@ -2598,7 +2598,7 @@ app.get("/api/me/traffic", asyncRoute(async (req, res) => {
         }
         if (r.kind === "view")
             s.views++;
-        else if (String(r.label || "").startsWith("read:")) { /* reading depth, not a click */ }
+        else if (/^(read|staff):/.test(String(r.label || ""))) { /* reading depth / owner mark, not a click */ }
         else {
             s.clicks++;
             if (r.label && /bet|kalshi|dk|draftkings|order|buy/i.test(r.label))
@@ -2607,7 +2607,7 @@ app.get("/api/me/traffic", asyncRoute(async (req, res) => {
     }
     const views = rows.filter((r) => r.kind === "view");
     // read:50 / read:100 are reading-depth marks for the desk's Metrics, not clicks
-    const clicks = rows.filter((r) => r.kind === "click" && !String(r.label || "").startsWith("read:"));
+    const clicks = rows.filter((r) => r.kind === "click" && !/^(read|staff):/.test(String(r.label || "")));
     const uniq = (xs) => new Set(xs).size;
     // ---- by day (ET calendar day)
     const dayKey = (ts) => new Date(ts).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
@@ -5338,7 +5338,7 @@ app.get("/api/desk/queue", asyncRoute(async (req, res) => {
 // readers (unique devices), readers in the first 48h (the fair comparison across post ages), how many read halfway / to
 // the end (the read:50 / read:100 events BlogPost.tsx sends, live from DESK_READ_SINCE), where readers came from, and
 // whether they kept browsing the site afterwards. Then the same rolled up by type, author and posting slot.
-// Signed-in visits are left out (that's the owner and staff checking their own posts).
+// The owner's own visits are left out (devices tagged staff:owner by src/lib/track.ts); everyone else counts.
 const DESK_READ_SINCE = "2026-10-21T20:00:00Z";
 const DESK_TYPES = [["previews", "Game preview"], ["storylines", "Storyline"], ["scorecard", "Sim Scorecard"],
     ["rankings", "Poll reaction"], ["roundup", "Saturday Roundup"], ["recaps", "Game recap"], ["g6", "G6 Rundown"],
@@ -5389,7 +5389,10 @@ app.get("/api/desk/metrics", asyncRoute(async (req, res) => {
         if (!data || data.length < PAGE)
             break;
     }
-    const ev = rows.filter((r) => !r.signed_in);
+    // only the owner's own visits are left out: every device that was ever signed in as MVPeav (track.ts sends
+    // "staff:owner" from it), including that device's signed-out visits. Everyone else counts, signed in or not.
+    const ownerVids = new Set(rows.filter((r) => r.label === "staff:owner").map((r) => r.vid));
+    const ev = rows.filter((r) => !ownerVids.has(r.vid));
     // sessions: where each came from (its first tagged src / external referrer), its first page, its views in order
     const sess = new Map();
     for (const r of ev) {

@@ -195,7 +195,7 @@ export function DeskMetrics() {
       </section>
 
       <p className="desk-small desk-muted">
-        From the site's own visit counts, which started {fmtDay(m.tracking_since)} (older posts aren't listed). A reader is one device, signed-in visits (you and the writers) are left out, and
+        From the site's own visit counts, which started {fmtDay(m.tracking_since)} (older posts aren't listed). A reader is one device; your own visits (any device you've signed in on as MVPeav) are left out and everyone else counts, and
         "read to the end" counts only visits since {fmtDay(m.read_tracking_since)}{trackingNew ? ", so it fills in over the next few days" : ""}.
         Updated {fmtWhen(m.generated)}.
       </p>
