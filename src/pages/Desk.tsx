@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Card, EmptyState, PageHeader, Pill } from "../components/ui";
 import { MIN_PASSWORD, supabase, supabaseEnabled, useSession } from "../lib/supabase";
 import { deskFetch, useDeskAccess } from "../lib/deskAccess";
+import { DeskCalendar, usePosted, type CalItem } from "../components/desk/DeskCalendar";
 import "../styles/desk.css";
 
 type QueueDraft = {
@@ -55,6 +56,7 @@ function DraftRow({ d }: { d: QueueDraft }) {
 
 function EditorQueue() {
   const [q, setQ] = useState<Queue | null>(null);
+  const posted = usePosted();
   const [err, setErr] = useState<string | null>(null);
   const load = useCallback(() => {
     deskFetch<Queue>("/api/desk/queue").then((j) => { setQ(j); setErr(null); }).catch((e) => setErr(String(e.message || e)));
@@ -68,8 +70,15 @@ function EditorQueue() {
 
   if (err) return <Card><p className="desk-err">{err}</p></Card>;
   if (!q) return <Card><p className="desk-muted">Loading the queue…</p></Card>;
-  const guests = q.drafts.filter((d) => d.guest);
-  const mine = q.drafts.filter((d) => !d.guest);
+  // unscheduled drafts sit up top until they're scheduled or posted; those move to the calendar below
+  const open = q.drafts.filter((d) => !d.scheduled_at);
+  const guests = open.filter((d) => d.guest);
+  const mine = open.filter((d) => !d.guest);
+  const cal: CalItem[] = [
+    ...q.drafts.filter((d) => d.scheduled_at).map((d) => ({ key: `s:${d.did}`, at: d.scheduled_at as string, title: d.title,
+      kind: "scheduled" as const, href: d.link, author: d.author })),
+    ...posted,
+  ];
   const stale = q.built ? Date.now() - new Date(q.built).getTime() > 6 * 3600_000 : true;
   return (
     <>
@@ -95,14 +104,17 @@ function EditorQueue() {
           </ul>
         )}
       </Card>
-      <Card title="Your drafts" kicker="Not published yet">
-        {mine.length === 0 ? <p className="desk-muted">No drafts in progress. Start one from the bot.</p> : (
+      <Card title="Your drafts" kicker="Not scheduled yet">
+        {mine.length === 0 ? <p className="desk-muted">No unscheduled drafts. Start one from the bot.</p> : (
           <ul className="desk-list">{mine.map((d) => <DraftRow key={d.did} d={d} />)}</ul>
         )}
         <p className="desk-small desk-muted">
           {q.built ? `List from the bot, ${when(q.built)}.` : "The bot hasn't sent its list yet."}
           {stale ? " It updates whenever a draft changes; if the PC is off, new drafts won't show here." : ""}
         </p>
+      </Card>
+      <Card title="Calendar" kicker="Scheduled and posted">
+        <DeskCalendar items={cal} />
       </Card>
     </>
   );
@@ -293,7 +305,7 @@ export default function Desk() {
     <div className="desk">
       <PageHeader kicker="Writers' desk" title={access.editor ? "Drafts and submissions" : "Submit an article"}
         sub={access.editor
-          ? "Everything that isn't published yet. Open a workspace to edit, add pictures and publish."
+          ? "Unscheduled drafts up top; the calendar shows what's scheduled and what's posted. Open a workspace to edit, add pictures and publish."
           : `Writing as ${access.byline || "you"}. Send your article and the editor takes it from there.`} />
       {access.editor ? (
         <>
