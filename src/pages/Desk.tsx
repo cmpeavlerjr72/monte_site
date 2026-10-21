@@ -81,7 +81,7 @@ function EditorQueue() {
             {q.waiting.map((w) => (
               <li key={w.id} className="desk-row">
                 <div className="desk-row__main">
-                  <span className="desk-row__title">{w.title}</span>
+                  <span className="desk-row__title">{w.title || "(no title: headline ideas coming)"}</span>
                   <div className="desk-row__meta">
                     <Pill tone={w.failed ? "neg" : "outline"}>{w.failed ? "Couldn't read" : "Arriving"}</Pill>
                     <span>by {w.byline} · sent {when(w.at)}</span>
@@ -121,7 +121,7 @@ function SubmitForm({ onSent }: { onSent: () => void }) {
   const [sent, setSent] = useState<string | null>(null);
   const [fileKey, setFileKey] = useState(0);
 
-  const ready = title.trim().length >= 3 && (paste ? text.trim().split(/\s+/).length >= 50 : Boolean(file));
+  const ready = (title.trim().length === 0 || title.trim().length >= 3) && (paste ? text.trim().split(/\s+/).length >= 50 : Boolean(file));
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!ready || busy) return;
@@ -138,7 +138,7 @@ function SubmitForm({ onSent }: { onSent: () => void }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, sport, summary, note, ...(paste ? { text } : { upload, file_name: file?.name }) }),
       });
-      setSent(title.trim());
+      setSent(title.trim() || "your article");
       setTitle(""); setSummary(""); setNote(""); setText(""); setFile(null); setFileKey((k) => k + 1);
       onSent();
     } catch (e: any) {
@@ -151,7 +151,7 @@ function SubmitForm({ onSent }: { onSent: () => void }) {
   return (
     <form className="desk-form" onSubmit={submit}>
       <label className="desk-field">
-        <span>Title</span>
+        <span>Title <em>(optional: leave it blank and the editor will write one)</em></span>
         <input className="ui-sel" value={title} maxLength={140} onChange={(e) => setTitle(e.target.value)} placeholder="Your headline" />
       </label>
       <label className="desk-field">
@@ -190,7 +190,7 @@ function SubmitForm({ onSent }: { onSent: () => void }) {
         Pictures inside the Word file don't come through, so put any you want in the note.
       </p>
       {err && <p className="desk-err">{err}</p>}
-      {sent && <p className="desk-ok">Sent “{sent}”. It's in the editor's queue now.</p>}
+      {sent && <p className="desk-ok">Sent {sent === "your article" ? sent : `“${sent}”`}. It's in the editor's queue now.</p>}
       <button type="submit" className="ui-btn desk-submit" data-on="true" disabled={!ready || busy}>{busy ? "Sending…" : "Submit for editing"}</button>
     </form>
   );
@@ -217,7 +217,7 @@ function MySubmissions({ reloadKey }: { reloadKey: number }) {
         return (
           <li key={r.id} className="desk-row">
             <div className="desk-row__main">
-              {r.url ? <a className="desk-row__title" href={r.url}>{r.title}</a> : <span className="desk-row__title">{r.title}</span>}
+              {r.url ? <a className="desk-row__title" href={r.url}>{r.title}</a> : <span className="desk-row__title">{r.title || "(no title yet)"}</span>}
               <div className="desk-row__meta">
                 <Pill tone={tone}>{label}</Pill>
                 <span>sent {when(r.at)}</span>

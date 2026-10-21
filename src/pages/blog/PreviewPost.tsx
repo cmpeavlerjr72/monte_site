@@ -31,12 +31,13 @@ import { postAction, uploadPhoto, useJobs, type Job } from "../../components/blo
 import type { Act, Anchor, Ws } from "../../components/blog/workspace/types";
 import { Feed, FactsNudge, ImageTray, LiveCard, OutlinePanel, PlanningCard, QuestionsPanel, TopBar } from "../../components/blog/workspace/Panels";
 import { TableEditor, mdToGrid } from "../../components/blog/workspace/TableEditor";
+import { GuestTools, HeadlineSheet } from "../../components/blog/workspace/Guest";
 import { AddSheet, FactsSheet, HeroSheet, ImageSheet, MenuSheet, PublishSheet, SectionSheet } from "../../components/blog/workspace/Sheets";
 
 type Preview = { meta: BlogMeta; body: string; version: number | null; held: boolean; hold: string | null; editable?: boolean; ws?: Ws };
 type SheetState =
   | { kind: "image"; iid: string } | { kind: "hero" } | { kind: "add"; anchor: Anchor } | { kind: "publish"; schedule?: boolean }
-  | { kind: "menu" } | { kind: "facts" } | { kind: "section"; anchor: Anchor } | null;
+  | { kind: "menu" } | { kind: "facts" } | { kind: "section"; anchor: Anchor } | { kind: "headline" } | null;
 
 const secretKey = (token: string) => `mvpeav:pvedit:${token}`;
 const HEADING = /^#{1,6}\s+/;
@@ -374,6 +375,7 @@ export default function PreviewPost() {
           before={
             <div className="ws-before">
               <LiveCard ws={ws} />
+              {stage === "drafted" && ws.guest && <GuestTools ws={ws} act={act} onHeadline={() => setSheet({ kind: "headline" })} />}
               {waitingQs && <QuestionsPanel ws={ws} act={act} />}
               <FactsNudge ws={ws} onOpen={() => setSheet({ kind: "facts" })} />
               {stage === "drafted" && <ImageTray ws={ws} act={act} onMore={(iid) => setSheet({ kind: "image", iid })} />}
@@ -395,6 +397,7 @@ export default function PreviewPost() {
         onSchedule={() => setSheet({ kind: "publish", schedule: true })} />}
       {sheet?.kind === "facts" && <FactsSheet ws={ws} act={act} onClose={close} />}
       {sheet?.kind === "section" && <SectionSheet anchor={sheet.anchor} act={act} onClose={close} />}
+      {sheet?.kind === "headline" && <HeadlineSheet ws={ws} act={act} onClose={close} />}
       {toast}
     </div>
   );

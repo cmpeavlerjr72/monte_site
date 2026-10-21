@@ -5123,6 +5123,7 @@ const PREVIEW_ACTIONS = new Set([
     "facts_fix", "facts_keep", "injury",
     "publish_prepare", "publish_confirm", "publish_cancel", "schedule_cancel", "refresh",
     "table_add", // 2026-10-21: a table built on the page ("+" -> Table)
+    "guest_images", "guest_title", "title_set", // 2026-10-21: the editor's AI helpers on a guest post + the headline pick
 ]);
 const PREVIEW_ACTION_ARGS_MAX = 8 * 1024;
 const PREVIEW_UPLOAD_TYPES = {
@@ -5384,8 +5385,9 @@ app.post("/api/desk/submissions", asyncRoute(async (req, res) => {
     const upload = str("upload", 40);
     const fileName = str("file_name", 120);
     const bad = (message) => res.status(400).json({ error: "bad_submission", message });
-    if (title.length < 3) {
-        bad("Give it a title.");
+    // the title is optional (owner 2026-10-21): BlogBot writes headline ideas when he leaves it blank
+    if (title && title.length < 3) {
+        bad("That title is too short. Leave it blank and the editor will write one.");
         return;
     }
     if (upload && !/^\d{13}-[a-f0-9]{8}\.docx$/.test(upload)) {

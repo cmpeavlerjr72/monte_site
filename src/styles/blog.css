@@ -403,3 +403,4 @@
 .ws-table-ed .ws-input { width: 100%; box-sizing: border-box; font-size: 16px; }
 .ws-table-ed__head .ws-input { font-weight: 700; }
 .ws-table-ed td.ws-table-ed__x { min-width: 0; width: 1%; }
+.ws-row--wrap { flex-wrap: wrap; align-items: center; }
