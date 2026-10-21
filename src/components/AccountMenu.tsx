@@ -29,6 +29,7 @@ import AuthPanel from "./AuthPanel";
 import { supabase, supabaseEnabled, useProfile, useSession } from "../lib/supabase";
 import { fetchMySettings } from "../lib/userSettings";
 import { useSimbookAccess } from "../lib/simbookAccess";
+import { useDeskAccess } from "../lib/deskAccess";
 
 export default function AccountMenu() {
   const { session, loading } = useSession();
@@ -36,6 +37,7 @@ export default function AccountMenu() {
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
   const simbook = useSimbookAccess();
+  const desk = useDeskAccess();
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   // Close on outside click and on Escape — same behaviour as the ribbon's
@@ -111,6 +113,7 @@ export default function AccountMenu() {
               {/* THREE DESTINATIONS, in the order a signed-in reader wants
                   them: what I have riding, what my friends are on, who I am.
                   Top-level paths — the account is sport-agnostic. */}
+              {desk.writer && <Link to="/desk" className="acct-item" role="menuitem">{desk.editor ? "Drafts" : "Writers' desk"}</Link>}
               {simbook.allowed && <Link to="/simbook" className="acct-item" role="menuitem">Sim Book</Link>}
               <Link to="/mybook" className="acct-item" role="menuitem">My Book</Link>
               <Link to="/feed" className="acct-item" role="menuitem">Feed</Link>

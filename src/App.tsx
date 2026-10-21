@@ -105,6 +105,7 @@ const TestBets = lazyPage(() => import("./pages/TestBets"));
 // Owner-only traffic stats (2026-10-18): no nav entry; the server gates the data.
 const TrafficStats = lazyPage(() => import("./pages/TrafficStats"));
 const SimBook = lazyPage(() => import("./pages/SimBook"));
+const Desk = lazyPage(() => import("./pages/Desk"));
 
 
 /** Shown while a route's chunk downloads (usually a few hundred ms). */
@@ -247,6 +248,7 @@ export default function App() {
           {TEST_ROUTES && <Route path="/test-visual" element={<TestVisual />} />}
           <Route path="/stats" element={<TrafficStats />} />
           <Route path="/simbook" element={<SimBook />} />
+          <Route path="/desk" element={<Desk />} />
           {/* Hidden, DEV-ONLY: live-gamecast component harness vs any ESPN event */}
           {TEST_ROUTES && <Route path="/test-gamecast" element={<TestGamecast />} />}
           {/* Hidden, DEV-ONLY: Bets-panel harness — the week-2 decision rules

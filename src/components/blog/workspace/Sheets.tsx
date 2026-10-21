@@ -311,6 +311,7 @@ export function PublishSheet({ ws, act: send, onClose, startWith = "now" }: { ws
 export function MenuSheet({ ws, act, onFacts, onHero, onSchedule, onClose }: { ws: Ws; act: Act; onFacts: () => void; onHero: () => void; onSchedule?: () => void; onClose: () => void }) {
   const [mode, setMode] = useState<"" | "all">("");
   const drafted = ws.stage === "drafted";
+  const ai = drafted && !ws.guest;            // a guest writer's words are never rewritten (owner 2026-10-20)
   const go = async (type: string, args: Record<string, unknown>, label: string) => {
     const r = await act(type, args, label);
     if (r.ok) onClose();
@@ -326,9 +327,9 @@ export function MenuSheet({ ws, act, onFacts, onHero, onSchedule, onClose }: { w
         </>
       ) : (
         <div className="ws-menu">
-          {drafted && <button type="button" className="ws-menu__item" onClick={() => setMode("all")}>✍️ Rewrite all with a note</button>}
-          {drafted && <button type="button" className="ws-menu__item" onClick={() => go("tone_down", {}, "Toning it down")}>🔉 Tone it down</button>}
-          {drafted && <button type="button" className="ws-menu__item" onClick={() => go("stool", {}, "Turning it up")}>🔊 Turn it up (Barstool pass)</button>}
+          {ai && <button type="button" className="ws-menu__item" onClick={() => setMode("all")}>✍️ Rewrite all with a note</button>}
+          {ai && <button type="button" className="ws-menu__item" onClick={() => go("tone_down", {}, "Toning it down")}>🔉 Tone it down</button>}
+          {ai && <button type="button" className="ws-menu__item" onClick={() => go("stool", {}, "Turning it up")}>🔊 Turn it up (Barstool pass)</button>}
           {drafted && <button type="button" className="ws-menu__item" disabled={ws.can_undo === false} onClick={() => go("undo_last", {}, "Undoing the last change")}>↩️ Undo last change</button>}
           {drafted && onSchedule && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onSchedule(); }}>🗓 Schedule it{ws.publish?.scheduled_label ? ` · ${ws.publish.scheduled_label}` : ""}</button>}
           {drafted && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onHero(); }}>🖼 Hero image</button>}

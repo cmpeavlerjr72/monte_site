@@ -2591,7 +2591,8 @@ marketSignerAcct =
 //     attributable, queryable copy.
 // ============================================================================
 
-type SupaUser = { id: string; email: string | null };
+// `blog`: the writers' desk roles from app_metadata.blog (only the service role can set app_metadata). 2026-10-21.
+type SupaUser = { id: string; email: string | null; blog?: Record<string, unknown> | null };
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -2645,7 +2646,9 @@ async function supaVerify(jwt: string): Promise<SupaUser | null> {
   try {
     const { data, error } = await supa.auth.getUser(jwt);
     if (!error && data?.user) {
-      user = { id: data.user.id, email: data.user.email ?? null };
+      const blog = (data.user.app_metadata as Record<string, unknown> | undefined)?.blog;
+      user = { id: data.user.id, email: data.user.email ?? null,
+               blog: blog && typeof blog === "object" && !Array.isArray(blog) ? (blog as Record<string, unknown>) : null };
     }
   } catch (err: any) {
     // A verification OUTAGE is not a rejection: do not cache it, so the next
@@ -5795,6 +5798,200 @@ app.get(
     previewHeaders(res);
     res.type(path.extname(file) || "application/octet-stream");
     res.send(data);
+  })
+);
+
+// ----------------------------------------------------------------------------
+// THE WRITERS' DESK (owner 2026-10-21): /desk
+//
+// Roles live on the login itself, in Supabase app_metadata.blog = {roles: ["writer", "editor"], byline, x}; only the
+// service role can set app_metadata, so a user can't grant themselves anything (cfb-props-sim/scripts/blogbot/staff.py
+// sets them). The owner's uid is always both (BLOG_EDITORS overrides).
+//
+//   writer  submits an article (a Word file or pasted text) and sees where each of theirs stands. The site is only a
+//           drop box: GET /api/desk/mine, POST /api/desk/uploads (the .docx), POST /api/desk/submissions.
+//   editor  GET /api/desk/queue: every unpublished draft with its workspace link (the edit secret rides in the link's
+//           fragment, exactly the link BlogBot sends on Telegram), guest submissions first.
+//
+// Storage is the same private preview bucket: _submissions/<id>/{submission.json, original.docx} written here,
+// status.json written by BlogBot (submissions.py) on the owner's PC, and _index/drafts.json (the queue) also by BlogBot.
+// The PC turns a submission into a workspace draft within a minute; nothing here edits or publishes anything.
+// ----------------------------------------------------------------------------
+const BLOG_EDITOR_UIDS = new Set(
+  (process.env.BLOG_EDITORS || "fe22741b-0e66-4ab6-ac40-5b2722a1faf0")   // mvpeav (owner)
+    .split(",").map((x) => x.trim()).filter(Boolean));
+const DESK_SID_RE = /^\d{13}-[a-f0-9]{8}$/;
+const DESK_EDIT_RE = /^[A-Za-z0-9_-]{16,128}$/;
+const DESK_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const DESK_SPORTS = new Set(["nfl", "cfb", "cbb", "nhl", "other"]);
+const deskHits = new Map<string, number[]>();
+
+type DeskStaff = { writer: boolean; editor: boolean; byline: string; x: string | null };
+
+function deskStaffOf(u: SupaUser | null): DeskStaff | null {
+  if (!u) return null;
+  const b = u.blog || {};
+  const roles = Array.isArray(b.roles) ? (b.roles as unknown[]).map(String) : [];
+  const owner = BLOG_EDITOR_UIDS.has(u.id);
+  const editor = owner || roles.includes("editor");
+  const writer = editor || roles.includes("writer");
+  if (!writer) return null;
+  const s = (v: unknown, n: number) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+  return { writer, editor, byline: s(b.byline, 60) || (owner ? "MVPeav" : ""), x: s(b.x, 30).replace(/^@/, "") || (owner ? "MVPeav" : null) };
+}
+
+/** n per hour per uid and kind. */
+function deskRateOk(key: string, n: number): boolean {
+  const now = Date.now();
+  const hits = (deskHits.get(key) || []).filter((t) => now - t < 3600_000);
+  const ok = hits.length < n;
+  if (ok) hits.push(now);
+  deskHits.set(key, hits);
+  return ok;
+}
+
+async function deskJson(key: string): Promise<Record<string, any> | null> {
+  const data = await previewObject(key);
+  if (!data) return null;
+  try {
+    const j = JSON.parse(data.toString("utf8"));
+    return j && typeof j === "object" && !Array.isArray(j) ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The newest submission ids (they start with the ms timestamp), newest first. */
+async function deskSubmissionIds(limit: number): Promise<string[]> {
+  const { data, error } = await supa!.storage.from(PREVIEW_BUCKET).list("_submissions", { limit: 1000 });
+  if (error || !data) return [];
+  return data.map((x) => x.name).filter((n) => DESK_SID_RE.test(n)).sort().reverse().slice(0, limit);
+}
+
+/** The gate for every desk route: a signed-in writer (and an editor when asked). -> the staff record, or null (answered). */
+function deskGate(req: Request, res: Response, need: "writer" | "editor"): DeskStaff | null {
+  res.set("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  if (!supa) { res.status(503).json({ error: "accounts_off", message: "Accounts aren't set up on this server." }); return null; }
+  const u = supaUserOf(req);
+  if (!u) { res.status(401).json({ error: "sign_in", message: "Sign in first." }); return null; }
+  const st = deskStaffOf(u);
+  if (!st || (need === "editor" && !st.editor)) {
+    res.status(403).json({ error: "not_staff", message: need === "editor" ? "This is the editor's queue." : "This account isn't set up to write for the site yet." });
+    return null;
+  }
+  return st;
+}
+
+app.use("/api/desk", supabaseAuth);
+
+app.get("/api/desk/me", (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  const u = supaUserOf(req);
+  const st = deskStaffOf(u);
+  res.json({ signed_in: Boolean(u), writer: Boolean(st?.writer), editor: Boolean(st?.editor), byline: st?.byline || null, x: st?.x || null });
+});
+
+app.get(
+  "/api/desk/queue",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "editor")) return;
+    const idx = await deskJson("_index/drafts.json");
+    const drafts = (Array.isArray(idx?.drafts) ? idx!.drafts : [])
+      .filter((d: any) => d && PREVIEW_TOKEN_RE.test(String(d.token || "")) && DESK_EDIT_RE.test(String(d.edit || "")))
+      .map((d: any) => ({
+        did: String(d.did || ""), title: String(d.title || "Draft"), stage: String(d.stage || ""), busy: d.busy ? String(d.busy) : null,
+        created: d.created || null, updated: d.updated || null, version: Number.isInteger(d.version) ? d.version : null,
+        scheduled_at: d.scheduled_at || null, author: String(d.author || "MVPeav"), guest: Boolean(d.guest), submitted: d.submitted || null,
+        link: `/preview/${d.token}#edit=${d.edit}`,
+      }));
+    // Submissions the PC hasn't turned into drafts yet (no status.json), or couldn't read.
+    const ids = await deskSubmissionIds(30);
+    const rows = await Promise.all(ids.map(async (id) => {
+      const status = await deskJson(`_submissions/${id}/status.json`);
+      if (status && status.status !== "failed") return null;
+      const sub = await deskJson(`_submissions/${id}/submission.json`);
+      if (!sub) return null;
+      return { id, title: String(sub.title || ""), byline: String(sub.byline || ""), at: sub.at || null, failed: status?.status === "failed" };
+    }));
+    res.json({ built: idx?.built || null, drafts, waiting: rows.filter(Boolean) });
+  })
+);
+
+app.get(
+  "/api/desk/mine",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    const ids = await deskSubmissionIds(200);
+    const rows = await Promise.all(ids.map(async (id) => {
+      const sub = await deskJson(`_submissions/${id}/submission.json`);
+      if (!sub || sub.uid !== uid) return null;
+      const st = await deskJson(`_submissions/${id}/status.json`);
+      const preview = typeof st?.preview === "string" && /^\/preview\/[A-Za-z0-9_-]{32,64}$/.test(st.preview) ? st.preview : null;
+      const url = typeof st?.url === "string" && /^https:\/\/(www\.)?mvpeav\.com\/blog\//.test(st.url) ? st.url : null;
+      return { id, title: String(st?.title || sub.title || ""), at: sub.at || null, sport: sub.sport || null,
+               status: String(st?.status || "submitted"), message: st?.message ? String(st.message) : null,
+               scheduled_at: st?.scheduled_at || null, preview, url };
+    }));
+    res.json({ submissions: rows.filter(Boolean).slice(0, 50) });
+  })
+);
+
+app.post(
+  "/api/desk/uploads",
+  express.raw({ type: [DESK_DOCX, "application/octet-stream"], limit: "10mb" }),
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    if (!deskRateOk(`up:${uid}`, 30)) { res.status(429).json({ error: "rate_limited", message: "That's a lot of uploads. Give it a while." }); return; }
+    const data = req.body;
+    // a .docx is a zip: it starts with "PK"
+    if (!Buffer.isBuffer(data) || data.length < 200 || data[0] !== 0x50 || data[1] !== 0x4b) {
+      res.status(400).json({ error: "bad_file", message: "That doesn't look like a Word file (.docx). In Word: File → Save As → .docx." });
+      return;
+    }
+    const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.docx`;
+    const { error } = await supa!.storage.from(PREVIEW_BUCKET)
+      .upload(`_desk_uploads/${uid}/${name}`, data, { contentType: DESK_DOCX, upsert: false });
+    if (error) { res.status(502).json({ error: "upload_failed", message: "Couldn't upload that file. Try again." }); return; }
+    res.status(201).json({ upload: name });
+  })
+);
+
+app.post(
+  "/api/desk/submissions",
+  asyncRoute(async (req: Request, res: Response) => {
+    const st = deskGate(req, res, "writer");
+    if (!st) return;
+    const uid = supaUserOf(req)!.id;
+    const b = (req.body || {}) as Record<string, unknown>;
+    const str = (k: string, n: number) => (typeof b[k] === "string" ? (b[k] as string).replace(/\r\n/g, "\n").trim().slice(0, n) : "");
+    const title = str("title", 140), summary = str("summary", 200), note = str("note", 2000);
+    const text = typeof b.text === "string" ? b.text.replace(/\r\n/g, "\n").slice(0, 100_000) : "";
+    const sport = DESK_SPORTS.has(str("sport", 10).toLowerCase()) ? str("sport", 10).toLowerCase() : "other";
+    const upload = str("upload", 40);
+    const fileName = str("file_name", 120);
+    const bad = (message: string) => res.status(400).json({ error: "bad_submission", message });
+    if (title.length < 3) { bad("Give it a title."); return; }
+    if (upload && !/^\d{13}-[a-f0-9]{8}\.docx$/.test(upload)) { bad("That upload isn't one of yours. Attach the file again."); return; }
+    if (!upload && text.trim().split(/\s+/).length < 50) { bad("Attach your Word file or paste the article (at least a few paragraphs)."); return; }
+    if (!deskRateOk(`sub:${uid}`, 10)) { res.status(429).json({ error: "rate_limited", message: "That's a lot of submissions in an hour. Give it a while." }); return; }
+    if (!st.byline) { res.status(403).json({ error: "not_staff", message: "Your byline isn't set up yet. Ask MVPeav." }); return; }
+    const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const bucket = supa!.storage.from(PREVIEW_BUCKET);
+    if (upload) {
+      const { error } = await bucket.move(`_desk_uploads/${uid}/${upload}`, `_submissions/${id}/original.docx`);
+      if (error) { bad("That file upload expired. Attach it again."); return; }
+    }
+    const sub = { id, uid, byline: st.byline, author_x: st.x, title, summary, sport, note, text: upload ? "" : text,
+                  file: upload ? "original.docx" : null, file_name: upload ? (fileName || "Word file") : null, at: new Date().toISOString() };
+    // submission.json goes LAST: the PC only picks up a submission once it's there, so it never sees half of one
+    const { error } = await bucket.upload(`_submissions/${id}/submission.json`, Buffer.from(JSON.stringify(sub)),
+      { contentType: "application/json", upsert: false });
+    if (error) { res.status(502).json({ error: "queue_failed", message: "Couldn't send it. Try again." }); return; }
+    console.log(`[desk] submission ${id} from ${st.byline}: ${title.slice(0, 80)}`);
+    res.status(201).json({ id });
   })
 );
 

@@ -264,7 +264,7 @@ export default function PreviewPost() {
     render: (start, end) => (
       <BlockEditor key={start} source={body.slice(start, end)} busy={sending} error={editorError} onSave={save}
         onCancel={() => { setActive(null); setEditorError(null); }}
-        onSection={ws ? () => setSheet({ kind: "section", anchor: anchorOf(start, end) }) : undefined} />
+        onSection={ws && !ws.guest ? () => setSheet({ kind: "section", anchor: anchorOf(start, end) }) : undefined} />
     ),
     ...(ws ? {
       onMedia: (wsid: string) => setSheet({ kind: "image", iid: wsid }),
@@ -324,6 +324,7 @@ export default function PreviewPost() {
   const banner = (
     <div className="post-preview-banner ws-banner" role="note">
       <b>PREVIEW</b> · private{doc.held ? <> · <b>held</b>{doc.hold ? `: ${doc.hold}` : ""}</> : null}
+      {ws.guest && <div className="pe-banner"><span>✍️ {ws.guest.byline || "A guest"}'s piece: his words stay his. Fix typos by hand; add images and clips with “+”.</span></div>}
       {stage === "drafted" && (
         <div className="pe-banner">
           <span>{editOn ? "✏️ Tap text to edit · “+” to add · ✎ on images" : "Editing is off."}</span>

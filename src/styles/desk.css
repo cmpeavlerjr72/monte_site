@@ -1,0 +1,39 @@
+/* The writers' desk (/desk, 2026-10-21). Tokens only, phone first. */
+.desk { display: grid; gap: var(--sp-4); max-width: 820px; margin: 0 auto; min-width: 0; }
+.desk-muted { color: var(--muted); }
+.desk-small { font-size: var(--fs-sm); margin: var(--sp-3) 0 0; }
+.desk-err { color: var(--neg); margin: 0; font-size: var(--fs-sm); }
+.desk-ok { color: var(--pos); margin: 0; font-size: var(--fs-sm); font-weight: 700; }
+.desk-busy { color: var(--brand-text); }
+.desk-h3 { margin: var(--sp-5) 0 var(--sp-2); font-size: var(--fs-base); }
+
+.desk-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.desk-row {
+  display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) 0; border-top: var(--rule); min-width: 0;
+}
+.desk-row:first-child { border-top: 0; padding-top: 0; }
+.desk-row__main { flex: 1 1 auto; min-width: 0; display: grid; gap: 4px; }
+.desk-row__title { font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+a.desk-row__title:hover { text-decoration: underline; }
+.desk-row__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); }
+.desk-row__open { flex: 0 0 auto; white-space: nowrap; text-decoration: none; }
+@media (max-width: 560px) {
+  .desk-row { flex-direction: column; align-items: stretch; }
+  .desk-row__open { text-align: center; }
+}
+
+.desk-form { display: grid; gap: var(--sp-3); min-width: 0; }
+.desk-form--row { grid-template-columns: 1fr auto; align-items: center; }
+.desk-form--row > p { grid-column: 1 / -1; }
+@media (max-width: 560px) { .desk-form--row { grid-template-columns: 1fr; } }
+.desk-field { display: grid; gap: 4px; min-width: 0; }
+.desk-field > span { font-size: var(--fs-sm); font-weight: 700; }
+.desk-field em { font-weight: 400; color: var(--muted); font-style: normal; }
+.desk-field .ui-sel { width: 100%; box-sizing: border-box; font-size: 16px; }   /* 16px: iOS doesn't zoom the page */
+.desk-text { min-height: 220px; resize: vertical; font-family: inherit; line-height: 1.45; }
+.desk-link {
+  justify-self: start; background: none; border: 0; padding: 0; color: var(--brand-text); font-size: var(--fs-sm);
+  font-weight: 700; cursor: pointer;
+}
+.desk-submit { justify-self: start; padding: 10px 18px; font-weight: 700; }
+.desk-details > summary { cursor: pointer; font-weight: 700; color: var(--brand-text); margin-bottom: var(--sp-3); }
