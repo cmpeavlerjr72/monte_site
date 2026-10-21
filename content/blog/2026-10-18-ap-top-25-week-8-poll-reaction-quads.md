@@ -28,15 +28,15 @@ So let's grade it.
 
 BYU went from No. 8 to No. 2 with 20 first-place votes, and I don't have a word of complaint. My Quads have them No. 1.
 
-Quick word on what that means, because it comes up all article. My Quads are a résumé ranking: every win and every loss gets graded by how good the opponent is and where the game was played, same idea as basketball's NET quads. It measures what a team has done, not how good the team is. Keep that in your pocket, because that gap is the whole story this week.
+Quick word on what that means, because it comes up all article. My Quads are a résumé ranking, so every win and every loss gets graded by how good the opponent is and where the game was played, same idea as basketball's NET quads. It measures what a team has done, not how good the team is. Keep that in your pocket, because that gap is the whole story this week.
 
-On what they've done, BYU is the best team in the country. They're 6-0 with a 28-24 win over Notre Dame (SP+ #4) and a 28-17 win over Arizona (SP+ #15), which is two wins over top-15 teams before most contenders have played one. The Notre Dame game ended the way you'd want a résumé win to end: Bear Bachmeier's 6-yard TD to Walker Lyons with 1:47 left, then a goal-line stand to hold it (although there is understandably alot of different opinions about the no call and the game clock).
+On what they've done, BYU is the best team in the country. They're 6-0 with a 28-24 win over Notre Dame (SP+ #4) and a 28-17 win over Arizona (SP+ #15), two top-15 wins before most contenders have played one. The Notre Dame game ended the way you'd want a résumé win to end: Bear Bachmeier's 6-yard TD to Walker Lyons with 1:47 left, then a goal-line stand to hold it (although there is understandably alot of different opinions about the no call and the game clock).
 
 ::getty{id="2300233510" et="00Tm1z7cTyhxg9l2-yWRMw" sig="it9drurk5zYN9Pg0QJ7PdonXJ_N69Wk1iRAHLVBTUAY=" w="594" h="416" caption="Bear Bachmeier throws against Notre Dame in Provo" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2300233510"}
 
-Ohio State at No. 3 is clean too. They went to Bloomington and beat Indiana (SP+ #5) 19-15, which makes them **2-1 against Q1** opponents, and they're my No. 3 as well. Ugly score, great win. That's the kind of game that should move a team and did.
+Ohio State at No. 3 is clean too. They went to Bloomington and beat Indiana (SP+ #5) 19-15, which makes them **2-1 against Q1** opponents, and they're my No. 3 as well. Ugly score, great win. A win like that should move a team, and it did.
 
-Then the swap. Tennessee went from No. 14 to No. 11 after beating Alabama 26-10; I have them No. 10. Bama fell from No. 6 to No. 13; I have them No. 12. Unfortunately that's about right for my guys. The Tide are 0-2 against Q1 competition, and a résumé that can't win its biggest games doesn't get to sit in the top 10 on reputation. The voters saw it that way. Good. Now hold that thought.
+Then there's the swap. Tennessee went from No. 14 to No. 11 after beating Alabama 26-10; I have them No. 10. Bama fell from No. 6 to No. 13; I have them No. 12. Unfortunately that's about right for my guys. The Tide are 0-2 against Q1 competition, and a résumé that can't win its biggest games doesn't get to sit in the top 10 on reputation. The voters saw it that way. Good. Now hold that thought.
 
 ::getty{id="2300230745" et="Okgyh71XT3xWD8aSFvT3ZA" sig="0ZMMpMAHf75yWc3N95GJjEeEQgLVQsVh8F9uwqQ0jvA=" w="594" h="416" caption="DeSean Bishop celebrates with Tennessee fans after the 26-10 win over Alabama" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2300230745"}
 
@@ -48,7 +48,7 @@ Georgia was No. 1. Auburn (SP+ #42) walked into Athens as a double-digit underdo
 
 ::getty{id="2300220081" et="4nag1VJjQzldLtNznECxVQ" sig="Lfqjagfzv9qrd1sdv5w316zn5OctLsGt2Wyyhoj7k7Y=" w="594" h="396" caption="Alex McPherson celebrates with teammates after his game-winning field goal in Athens" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2300220081"}
 
-And the AP's response was to move Georgia to **No. 5**. My Quads have Georgia at No. 15, down from No. 1 a week ago, which is what happens when the worst loss on your résumé is also the only loss on your résumé.
+And the AP's response was to move Georgia to **No. 5**. My Quads have Georgia at No. 15, down from No. 1 a week ago, because the worst loss on your résumé is also the only loss on your résumé.
 
 The defense of the ranking writes itself, and I'll give it a fair hearing. Georgia out-gained Auburn 440-366. Stockton threw 2 interceptions and fumbled at the Auburn 46 with 58 seconds left, and if you flip any one of those three plays Georgia probably wins. SP+ still has them #2. Good team, bad night.
 
@@ -72,7 +72,7 @@ The AP dropped them 2 spots to **No. 4**. My Quads have them No. 13.
 
 What makes it worse is who they're sitting ahead of. Indiana lost 19-15 at home to Ohio State, a team the AP itself has at No. 3, and fell to No. 6. So the team that lost by 4 to the No. 3 team is behind the team that lost to the No. 2 team on a last-play incompletion, except Indiana has actually beaten somebody along the way. I have Indiana No. 7 and Notre Dame No. 13, and I'd argue that order harder than almost any other on the sheet.
 
-Then Miami. The Hurricanes are No. 1 with 40 first-place votes, and I get it: they're 6-0 and SP+ has them #3. There's a real case for them, and it's a power case, and on power they belong near the top.
+Then Miami. The Hurricanes are No. 1 with 40 first-place votes, and I get it: they're 6-0 and SP+ has them #3. There's a case for them, but it's a power case, and on power they belong near the top.
 
 ::getty{id="2300742571" et="D93XrVUXQmNSwcgxx4t3Wg" sig="C_X6C8rCVX7pzxbpxbUn9SGJsg1G0ks6ghmJfpG9-u0=" w="594" h="396" caption="Javian Mallory and Darian Mensah celebrate a Miami touchdown against Florida State" credit="Megan Briggs/Getty Images" page="https://www.gettyimages.com/detail/2300742571"}
 
@@ -90,7 +90,7 @@ LSU has 2 losses, 24-32 at Ole Miss and 34-35 at Kentucky, and its best win all 
 
 Utah is the gentler version of the same thing. The Utes are 6-0 and moved up to No. 10 after a 27-24 win at Colorado (SP+ #80), a Q3 game they nearly dropped. Their best wins are Kansas (SP+ #58) and at Iowa State (SP+ #68). No Q1 wins, no Q2 wins. Not one.
 
-My Quads have Utah No. 18, and honestly that feels generous. I'm not saying Utah isn't good; SP+ has them #10 and a 6-0 team has earned some patience. I'm saying nobody can tell you who they've beaten, and "nobody can tell you who they've beaten" shouldn't come with a top-10 ranking attached.
+My Quads have Utah No. 18, and that feels generous. I'm not saying Utah isn't good; SP+ has them #10 and a 6-0 team has earned some patience. I'm saying nobody can tell you who they've beaten, and "nobody can tell you who they've beaten" shouldn't come with a top-10 ranking attached.
 
 ## Where My Quads Go Rogue: Kentucky, Houston and the Teams the AP Left Out
 
@@ -100,15 +100,15 @@ Now the part where I sound like a crazy person, so let me set it up right.
 
 My Quads have Kentucky at **No. 2**. The AP has them 12th, up from 15th. SP+ has them #45. I am not telling you Kentucky is the second-best team in the country, and anyone who reads my rank that way is reading it wrong.
 
-What I'm telling you is what Kentucky has done. They beat LSU 35-34. They won at South Carolina 35-34. They went to Norman on Saturday and beat Oklahoma 21-13. One loss, a Q1 win, and three road-or-near-road wins over real programs. Georgia and Notre Dame both lost the game they played this weekend; Kentucky kept winning theirs. On the "what have you actually done" test there's no comparison, which is exactly why the test exists.
+What I'm telling you is what Kentucky has done. They beat LSU 35-34. They won at South Carolina 35-34. They went to Norman on Saturday and beat Oklahoma 21-13. One loss, a Q1 win, and three road-or-near-road wins over real programs. Georgia and Notre Dame both lost the game they played this weekend; Kentucky kept winning theirs. On the "what have you actually done" test there's no comparison, and the test exists for exactly this reason.
 
 ::getty{id="2300230909" et="kW1vKAe3RO11kbViCjSUNg" sig="RQEqaT8I-ZV_Of_wbJ6kfxBcIiPmDoRyexyr4RudPhw=" w="594" h="396" caption="Kenny Minchey Jr. throws in Kentucky's 21-13 win at Oklahoma" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2300230909"}
 
 Houston is the same argument. They're my No. 5, the AP has them 14th. They beat Oklahoma State (SP+ #27) 35-32 and won 35-16 at Kansas State (SP+ #29), and the only loss is 26-28 at Texas Tech. That's a 6-1 team whose one loss is a 2-point road loss, and it took until Week 8 for the voters to put them in the top 15.
 
-Then the three teams in my 25 who aren't in the AP's at all. Auburn I covered: my No. 23, 61 votes, beat the No. 1 team on the road. James Madison is 7-0 and my No. 19 with 52 votes, and I'll be fair here, because the wins are all Q3 and Q4: Liberty (SP+ #46), at Georgia Southern (SP+ #85). That's a real résumé for a Group of 5 team and a thin one for a top-25 argument. I'd rank them; I understand why a voter wouldn't.
+Then the three teams in my 25 who aren't in the AP's at all. Auburn I covered: my No. 23, 61 votes, beat the No. 1 team on the road. James Madison is 7-0 and my No. 19 with 52 votes, and I'll be fair here, because the wins are all Q3 and Q4: Liberty (SP+ #46), at Georgia Southern (SP+ #85). For a Group of 5 team that's a strong résumé, and for a top-25 argument it's a thin one. I'd rank them; I understand why a voter wouldn't.
 
-Oregon is the strange one. They're 4-2 with losses to Oklahoma State and UCLA, which is a rough pair of losses. But they beat USC 41-27 on the road, a Q1 win, and beat Nebraska 17-14. My Quads have them No. 24 on that USC result, and the AP has them at 79 votes and out. That's the right debate to be having, tho: a Q1 road win against two bad losses. The Georgia-at-5 debate is not a real debate.
+Oregon is the strange one. They're 4-2, and the losses to Oklahoma State and UCLA are a rough pair. But they beat USC 41-27 on the road, a Q1 win, and beat Nebraska 17-14. My Quads have them No. 24 on that USC result, and the AP has them at 79 votes and out. That's the right debate to be having, tho: a Q1 road win against two bad losses. The Georgia-at-5 debate shouldn't be a debate at all.
 
 ## The One Ranking That Has to Change Next Week
 

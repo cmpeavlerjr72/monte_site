@@ -16,7 +16,7 @@ sources:
   - "ESPN FPI pregame matchup predictor"
 ---
 
-The sims went 41-18 in week 7. That's 69.5%, which is a C-plus, and it beat ESPN's FPI by three games on the exact same slate.
+The sims went 41-18 in week 7. A 69.5% week, a C-plus on the report card, and still three games better than ESPN's FPI on the exact same slate.
 
 So I get to brag and eat crow in the same column. The season is basically a dead heat with the Worldwide Leader, the misses were almost all teams falling apart on their own, and one of them was a 92.8% Temple favorite losing to a Charlotte team that hadn't won a game in 15 tries.
 
@@ -34,25 +34,25 @@ Margins were a wash. The sims missed the final margin by 11.5 points on average,
 
 The ranges did their job tho. When my sims say the middle 50% of outcomes lands in a certain window, the real margin should land there about half the time. In week 7 it landed there 52.5% of the time, and the wider middle-80 window caught 84.7%. On the season those sit at 55.2% and 81.6%. That's about as on-target as you can ask.
 
-Now the part FPI gets to brag about. Weeks 2 through 7, the sims are 251-86 straight up, 74.5%. FPI on the same games is 252-85. One game. Season Brier is 0.1779 for the sims against 0.1771 for FPI, and FPI's margin miss is 11.5 to our 12.1. So they're a hair ahead on the year, I'm a hair ahead this week, but comparing my one man show to the Goliath that is ESPN, I don't mind being David.
+Zoom out to the full season, though, and FPI gets to brag a little. Weeks 2 through 7, the sims are 251-86 straight up, 74.5%. FPI on the same games is 252-85. One game. Season Brier is 0.1779 for the sims against 0.1771 for FPI, and FPI's margin miss is 11.5 to our 12.1. So they're a hair ahead on the year, I'm a hair ahead this week, but comparing my one man show to the Goliath that is ESPN, I don't mind being David.
 
 ## The Calls We'll Be Bragging About
 
-Where it gets fun is the disagreements. In 7 games this week the sims and FPI had different winners, the sims were right in **5 of 7**. That's the part I actually care about, because agreeing with FPI on Ohio State over Purdue proves nothing.
+Where it gets fun is the disagreements. In 7 games this week the sims and FPI had different winners, the sims were right in **5 of 7**. Those are the games I actually care about, because agreeing with FPI on Ohio State over Purdue proves nothing.
 
 ::photo{src="/blog/sim-scorecard-week-7-2026/gfx-1019115405.png" alt="Bar chart of week 7's seven games where the sims and ESPN FPI picked different winners, showing the sims' median margin, FPI's projected margin and the final margin for the sims' pick: the sims were right in 5 of 7 (e.g. San Diego State, FPI -10.3, won 26-23; Western Kentucky won 16-3), FPI was righ" caption="The week 7 split decisions: the sims took 5 of the 7 games where they and FPI disagreed." own="1"}
 
-Then the exact hits. Out of 1,251 graded predictions, the sims put SMU by 10 over Virginia and it finished SMU by 10. They had Ohio State by 4 over Indiana and Ohio State won 19-15. Dead on, twice, in two games where the sims only had Ohio State at 60%.
+The sims also nailed a couple right on the nose. Out of 1,251 graded predictions, the sims put SMU by 10 over Virginia and it finished SMU by 10. They had Ohio State by 4 over Indiana and Ohio State won 19-15. Dead on, twice, in two games where the sims only had Ohio State at 60%.
 
 Player stat predictions also had a good week. Mensah's 23 completions matched the median exactly. MacIntyre's passing yards came in at 195 projected, 197 actual. Two yards. I'll take that any week (although I wish it hadn't happened again the Tide).
 
-And the weird one: the sims had Auburn-Georgia at 51 total points, and the game finished 27-24. Fifty-one. Got the total perfect and the winner and margin completely wrong, which is the most simulator thing that has ever happened.
+The weird one was Auburn-Georgia, where the sims had 51 total points and the game finished 27-24. Fifty-one. Got the total perfect and the winner and margin completely wrong. I can't think of a more simulator thing to have ever happened.
 
 Utah over Colorado 27-24 landed on the right side at 89.7%, a close call the sims liked a lot and got.
 
 ## Charlotte 38, Our 92.8% Favorite 31
 
-Worst miss of the week, no contest. The sims gave Temple **92.8%** with a median score of Temple 33, Charlotte 10. Three-touchdown favorite. Charlotte won 38-31.
+Worst miss of the week, no contest. The sims had Temple at **92.8%**, and the middle sim of the bunch came out Temple 33, Charlotte 10. Three-touchdown favorite. Charlotte won 38-31.
 
 ::photo{src="/blog/sim-scorecard-week-7-2026/gfx-1019110256.png" alt="Margin chart of Charlotte at Temple: the sims' pregame bands had Temple (92.8%) pulling away to a median 33-10 win, middle half of sims Temple by 11 to 31, while the actual scoring line in Charlotte green stayed within a touchdown all game and finished Charlotte 38, Temple 31." caption="The pregame sim bands for Temple vs. Charlotte, with what actually happened drawn over them." own="1"}
 
@@ -60,9 +60,9 @@ Charlotte came in on a 15-game losing streak. Conner Harrell went 23-of-31 for 2
 
 FPI had Temple at 92.3%, so this isn't a case where the sims saw something dumb that everybody else avoided. Everybody was wrong. That doesn't make it less wrong but I don't mind hiding in the crowd on this one
 
-My honest reaction: if the simulator had predicted a Charlotte win, I would have started open heart surgery on it to find where it went off the rails. There was no version of the inputs that produced that. So I'm happy for the 49ers, genuinely, because they found a way to make it in in the 7.2%.
+If the simulator had predicted a Charlotte win, I would have started open heart surgery on it to find where it went off the rails. There was no version of the inputs that produced that. So I'm happy for the 49ers, genuinely, because they found a way to make it in in the 7.2%.
 
-The fair counterpoint is that a 7.2% outcome shouldn't look like 449 yards and a 31-point half. It should look like a lucky field goal. The sims will see that Charlotte tape, and so will I.
+Still, a 7.2% outcome shouldn't look like 449 yards and a 31-point half. It should look like a lucky field goal. The sims will see that Charlotte tape, and so will I.
 
 ## When the Big Boys Fall Apart, the Sims Fall With Them
 
@@ -80,7 +80,7 @@ Missouri. This was the biggest whiff by magnitude. Sims leaned Missouri 57.5% wi
 
 Missouri's 3 points came in **27 below** the sims' median. Only about 0.46% of the 10,000 sims had Missouri that low or lower. Fewer than 1 in 200. When your 57% lean loses by 28, the problem isn't the coin flip, it's that the sims never saw that versions of Missouri offense existing.
 
-Then the undercard. Texas (79.0%) lost to Florida 27-24. Memphis (77.5%) lost to Tulane 31-17. Notre Dame (71.4%) lost 28-24 at BYU. Kentucky, at 32.6%, won at Oklahoma 21-13. And North Carolina beat Duke 24-20 in a game where the sims had Duke at 80.3% and FPI had it at 53.9%.
+The undercard was busy too. Texas (79.0%) lost to Florida 27-24. Memphis (77.5%) lost to Tulane 31-17. Notre Dame (71.4%) lost 28-24 at BYU. Kentucky, at 32.6%, won at Oklahoma 21-13. And North Carolina beat Duke 24-20 in a game where the sims had Duke at 80.3% and FPI had it at 53.9%.
 
 ## Are Our 75% Favorites Actually Winning 75%?
 

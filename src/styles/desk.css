@@ -112,3 +112,19 @@ a.desk-row__title:hover { text-decoration: underline; }
   .dm-post__nums { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dm-post__main { grid-column: 1 / -1; }
 }
+
+/* Hero thumbnails on the desk's lists and calendar (owner 2026-10-21). 16:9 like the hero itself. */
+.dthumb { display: block; flex: 0 0 auto; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 6px; background: color-mix(in srgb, var(--muted) 16%, transparent); }
+.dthumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.dthumb--md { width: 112px; }
+.dthumb--xs { width: 26px; border-radius: 3px; }
+.dthumb--none { display: grid; place-items: center; color: var(--muted); font-size: 11px; text-align: center; }
+.desk-row--thumb { align-items: flex-start; }
+.desk-row--thumb > a:first-child { flex: 0 0 auto; line-height: 0; }
+@media (max-width: 560px) {
+  .desk-row.desk-row--thumb { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
+  .desk-row--thumb .dthumb--md { width: 96px; }
+  .desk-row--thumb .desk-row__open { grid-column: 1 / -1; }
+}
+.dcal__chip { display: flex !important; align-items: center; gap: 4px; }
+.dcal__chiptxt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

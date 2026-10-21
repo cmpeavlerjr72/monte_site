@@ -47,7 +47,7 @@ The only blemish is a 24-23 loss at Texas. Wins at Iowa (31-14) and over Illinoi
 
 ::getty{id="2180350528" et="xmurqQNsRv1I9OoBrNNS8g" sig="l3p04MaA4Bv770enNlfEBPL07GU-JqkEsqrodA7m9nU=" w="594" h="396" caption="Indiana head coach Curt Cignetti walking the sideline" credit="Getty Images" page="https://www.gettyimages.com/detail/2180350528"}
 
-Mendoza is gone and Josh Hoover is the quarterback now. Indiana lost a Heisman winner and kept winning anyway, which is the kind of thing that used to happen to Indiana, not for Indiana.
+Mendoza is gone and Josh Hoover is the quarterback now. Indiana lost a Heisman winner and kept winning anyway, something that would've read as science fiction in Bloomington a few years ago.
 
 The formula is the run game. Indiana averages 6.1 yards a carry, 3rd in FBS, and it's not a trick stat. The Hoosiers pile up 221.3 rushing yards a game, and they do it with the subtlety of a snowplow.
 
@@ -61,7 +61,7 @@ Those two scores are the interesting part tho. Both were close, and that Northwe
 
 ::photo{src="/blog/ohio-state-at-indiana-preview-rematch-2026/card-k2.png" alt="Strength vs. Weakness (comparison card)" caption="Strength vs. Weakness" credit="MVPeav graphic"}
 
-Each team's best unit gets to attack the other team's soft spot, which is why this is a great game and not just a loud one.
+Each team's best unit lines up across from the other team's soft spot, and that's how you get a great game.
 
 Indiana's pass defense is only 64th in FBS at 188.3 yards a game. That's the unit lined up across from the 2nd-best passing offense in the country. Sayin and Smith are going to get their shots, and a 64th-ranked secondary is going to find out what a bad Saturday feels like.
 
@@ -75,7 +75,7 @@ The swing unit is Indiana's pass rush. The Hoosiers have 20 sacks this season, a
 
 ::photo{src="/blog/ohio-state-at-indiana-preview-rematch-2026/memorial-stadium-bloomington-indiana-10-19-24.jpg" alt="Memorial Stadium, Bloomington, Indiana - 10.19.24" caption="Memorial Stadium, Bloomington, Indiana - 10.19.24" credit="ZCash1104" license="CC BY-SA 4.0" licenseurl="https://creativecommons.org/licenses/by-sa/4.0" source="https://commons.wikimedia.org/wiki/File:Memorial_Stadium,_Bloomington,_Indiana_-_10.19.24.jpg"}
 
-I'll be honest, I liked that title game. It was a fun defensive matchup, two defenses refusing to give an inch, and it truly went down to the wire. Ugly on the scoreboard, great in the moment. If I'm ranking conference championship games from last year, 13-10 was one of the more fun ones, but part of that is because I grew up around the classic Saban defenses and learned to love a low scoring slugfest.
+I liked that title game. It was a fun defensive matchup, two defenses refusing to give an inch, and it truly went down to the wire. Ugly on the scoreboard, great in the moment. If I'm ranking conference championship games from last year, 13-10 was one of the more fun ones, but part of that is because I grew up around the classic Saban defenses and learned to love a low scoring slugfest.
 
 Ohio State hasn't had a chance to answer it until now. The Buckeyes went undefeated into Indianapolis and left with nothing, and that sits in a locker room for a long time.
 
@@ -99,6 +99,6 @@ I'm on the same side as my sims here. Indiana has taken a step back in my eyes, 
 
 The way Ohio State wins is simple: hold onto the ball and get enough from the ground game that Indiana can't just sit back and send everyone at Sayin. Do that and one of the best passing attacks in the country beats a 64th-ranked secondary.
 
-The way Indiana wins is the way it won last time. Get after the quarterback, run it 6 yards a pop, and keep it close enough that Bloomington does the rest. That's a 40% outcome in my sims, which is a long way from unlikely.
+The way Indiana wins is the way it won last time. Get after the quarterback, run it 6 yards a pop, and keep it close enough that Bloomington does the rest. That script shows up in 40% of my sims, so it's nowhere near a long shot.
 
-The middle half of my sims runs from Ohio State by 13 to Indiana by 6. That's a game that's close most of the time, with Ohio State's ceiling higher. I think the Buckeyes get their revenge, but nobody's leaving that stadium before the final play.
+Toss out the blowouts on both ends and half my sims sit between Ohio State by 13 and Indiana by 6. That's a game that's close most of the time, with Ohio State's ceiling higher. I think the Buckeyes get their revenge, but nobody's leaving that stadium before the final play.

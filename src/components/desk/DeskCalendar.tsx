@@ -5,7 +5,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { Pill } from "../ui";
 
-export type CalItem = { key: string; at: string; title: string; kind: "scheduled" | "posted"; href: string; author?: string };
+export type CalItem = { key: string; at: string; title: string; kind: "scheduled" | "posted"; href: string; author?: string; thumb?: string | null };
+
+/** The hero, small (owner 2026-10-21: "a thumbnail version of the hero image for each"). An empty frame when there's none. */
+export function Thumb({ src, size = "md" }: { src?: string | null; size?: "xs" | "md" }) {
+  const [bad, setBad] = useState(false);
+  return (
+    <span className={`dthumb dthumb--${size}${!src || bad ? " dthumb--none" : ""}`} aria-hidden="true">
+      {src && !bad ? <img src={src} alt="" loading="lazy" decoding="async" onError={() => setBad(true)} /> : size === "md" ? "No hero yet" : null}
+    </span>
+  );
+}
 
 const TZ = "America/New_York";
 const dayKey = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
@@ -19,10 +29,11 @@ export function usePosted(): CalItem[] {
     let off = false;
     fetch("/blog/index.json", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : []))
-      .then((j: { slug: string; title: string; date: string; author?: string }[]) => {
+      .then((j: { slug: string; title: string; date: string; author?: string; thumb?: string | null; hero?: string | null }[]) => {
         if (off || !Array.isArray(j)) return;
         setRows(j.filter((p) => p.date && !Number.isNaN(new Date(p.date).getTime())).map((p) => ({
           key: `p:${p.slug}`, at: p.date, title: p.title, kind: "posted", href: `/blog/${p.slug}`, author: p.author,
+          thumb: p.thumb || p.hero || null,
         })));
       })
       .catch(() => {});
@@ -77,7 +88,9 @@ export function DeskCalendar({ items }: { items: CalItem[] }) {
               aria-label={`${k}: ${its.length ? its.map((x) => `${x.kind} ${x.title}`).join("; ") : "nothing"}`}>
               <span className="dcal__num">{Number(k.slice(8))}</span>
               <span className="dcal__chips">
-                {its.slice(0, 3).map((x) => <span key={x.key} className={`dcal__chip dcal__chip--${x.kind}`}>{x.title}</span>)}
+                {its.slice(0, 3).map((x) => (
+                  <span key={x.key} className={`dcal__chip dcal__chip--${x.kind}`}><Thumb src={x.thumb} size="xs" /><span className="dcal__chiptxt">{x.title}</span></span>
+                ))}
                 {its.length > 3 && <span className="dcal__more">+{its.length - 3}</span>}
               </span>
               <span className="dcal__dots" aria-hidden="true">
@@ -111,7 +124,8 @@ const k2 = (picked: string, today: string, label: string) => (picked === today ?
 function CalRow({ x, withDay }: { x: CalItem; withDay?: boolean }) {
   const day = new Date(x.at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: TZ });
   return (
-    <li className="desk-row">
+    <li className="desk-row desk-row--thumb">
+      <a href={x.href} tabIndex={-1}><Thumb src={x.thumb} /></a>
       <div className="desk-row__main">
         <a className="desk-row__title" href={x.href}>{x.title}</a>
         <div className="desk-row__meta">

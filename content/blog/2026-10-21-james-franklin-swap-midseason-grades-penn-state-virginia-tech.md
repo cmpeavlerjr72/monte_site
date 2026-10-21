@@ -40,7 +40,7 @@ That argument has a shelf life, tho. Bob Chesney is 6-0 at UCLA with a win at Or
 
 ::getty{id="2271688876" et="CP8sP5OKQLhwChW-qbDkbw" sig="fQr092CubMpsqX0cmAWMdY44iZVWdqDQL5UNG4X9CmM=" w="594" h="416" caption="Virginia Tech Hokies Head Coach James Franklin daps up Hokies defensive lineman T-Ron Richardson Jr. (95) prior to the Virginia Tech spring football game on Apr" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2271688876"}
 
-Virginia Tech gets a B from me, and I'll be honest about why it's not higher. The actual output is basically the same as what got Franklin fired at Penn State. The difference is the VT fans I know and work with have had expectations so low for so long that anything is exciting, and for the first time in a while there's real hope for the future.
+Virginia Tech gets a B from me, and even that took some squinting. The actual output is basically the same as what got Franklin fired at Penn State. The difference is the VT fans I know and work with have had expectations so low for so long that anything is exciting, and for the first time in a while there's real hope for the future.
 
 The progress is real. Going from 3-9 to 5-2 is a different program than the one he walked into, and the numbers back it up on both counts: VT is 40th in SP+ to Penn State's 47th, and 54th in my Quads ranking to Penn State's 84th.
 
@@ -84,7 +84,7 @@ The fans want backup Alex Manske. Campbell says he isn't considering a change. I
 
 ## The Back Half: Death Valley vs. a Big Ten Soft Landing
 
-VT's back half comes down to three road trips: at Clemson Saturday, then at SMU after a bye, then at Miami, with a Stanford home game tucked between the last two. Win Saturday and the Hokies are bowl-eligible, which is its own kind of statement for a program that was 3-9 last year. The catch is Clemson is 7-0 against Virginia Tech under Dabo Swinney, going back to 2011.
+VT's back half comes down to three road trips: at Clemson Saturday, then at SMU after a bye, then at Miami, with a Stanford home game tucked between the last two. Win Saturday and the Hokies are bowl-eligible, and for a program that was 3-9 last year that says plenty on its own. The catch is Clemson is 7-0 against Virginia Tech under Dabo Swinney, going back to 2011.
 
 ::getty{id="2300662988" et="sxCtoMLKSAtgHyaxbIBmYA" sig="L-AxdmQXTXivqh9eizj0dR8QCixiBdUftZ6Wf1iLexM=" w="594" h="396" caption="Getty Images editorial photo" credit="Getty Images" page="https://www.gettyimages.com/detail/2300662988"}
 
@@ -98,7 +98,7 @@ Penn State, meanwhile, gets a bye and then the softest finish anyone could draw:
 
 ## What the Sims Say About the Rest of the Way
 
-I simmed the rest of all three seasons, Penn State, Virginia Tech and Iowa State, because the midseason grade only matters if you know what the finish probably looks like. Quick credibility check first: [how my sims did in Week 7](/blog/sim-scorecard-week-7-2026), 41-18 picking winners and three games better than ESPN's FPI. One honest line on method: this week's games ran 10,000 sims each, and later games use FPI's predicted margin since nothing's posted yet, so read everything below as "wins X% of my sims," not a forecast.
+I simmed the rest of all three seasons, Penn State, Virginia Tech and Iowa State, because the midseason grade only matters if you know what the finish probably looks like. Quick credibility check first: [how my sims did in Week 7](/blog/sim-scorecard-week-7-2026), 41-18 picking winners and three games better than ESPN's FPI. On method, this week's games ran 10,000 sims each, and the later ones lean on FPI's predicted margin since nothing's posted yet, so read everything below as "wins X% of my sims" and leave it there.
 
 ::photo{src="/blog/james-franklin-swap-midseason-grades-penn-state-virginia-tech/gfx-1021090907.png" alt="Remaining-schedule strip with one tile per game: Penn State's sims win every game but the swing game at Washington (52.9%) at least 78.9% of the time (expected 6.9-5.1); Virginia Tech's swing game is at Clemson (45.7%), with Miami at 9.2% (expected 7.2-4.8); Iowa State is under 50% in all six games" caption="Every game left for Penn State, Virginia Tech and Iowa State, with the share of my sims each team wins." own="1"}
 

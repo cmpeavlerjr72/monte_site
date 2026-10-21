@@ -237,7 +237,9 @@ for (const m of pub) {
     (m.hero ? `<figure><img src="${esc(m.hero)}" alt="${esc(m.hero_alt)}"></figure>` : "") + body + `</article>`;
   fs.writeFileSync(path.join(outDir, `${m.slug}.html`), article);
   const { _private, _body, ...meta } = m;
-  index.push({ ...meta, og_image: ogOf(m), url: `${SITE}/blog/${m.slug}` });
+  // the desk's calendar / lists show a small hero (owner 2026-10-21): public/blog/<slug>/thumb.jpg, made at export
+  const thumb = fs.existsSync(path.join(PUBLIC, "blog", m.slug, "thumb.jpg")) ? `/blog/${m.slug}/thumb.jpg` : null;
+  index.push({ ...meta, og_image: ogOf(m), thumb, url: `${SITE}/blog/${m.slug}` });
 }
 fs.writeFileSync(path.join(outDir, "index.json"), JSON.stringify(index, null, 1));
 

@@ -22,7 +22,7 @@ sources:
   - "School releases and schedules: Oregon State, Rutgers, Ohio State athletics; 247Sports; WRVO; Fox Sports"
 ---
 
-Jeremiah Smith is going to win the Heisman Trophy. That's been the assumption for weeks, and nothing about his season has given anyone a reason to back out of it. He's the most physically ridiculous receiver college football has seen in a long time, he plays for Ohio State, and he's put up the kind of numbers that make a voter's job easy.
+Jeremiah Smith is going to win the Heisman Trophy. That's been the assumption for weeks, and nothing about his season has given anyone a reason to back out of it. He's the most physically ridiculous receiver college football has seen in a long time, he plays for Ohio State, and his numbers make a voter's job easy.
 
 So let me ask a slightly annoying question: why isn't he leading the country in receiving?
 
@@ -40,7 +40,7 @@ The last two weeks have been quieter tho. Some of that is volume: after 14 to 16
 
 ::photo{src="/blog/heisman-receivers-nobody-is-talking-about/smith_gamelog.png" alt="Jeremiah Smith's receiving yards in each 2026 game, with each opponent's SP+ defense rank" caption="Jeremiah Smith, game by game, with each opponent's SP+ defense rank" own="1"}
 
-And now there's a real headwind. Julian Sayin is out for several weeks with an injured right arm, which means the best receiver in the country is about to catch passes from a backup right as the schedule gets serious. Oregon comes to Columbus on November 7. Michigan is November 28.
+And now there's a headwind. Julian Sayin is out for several weeks with an injured right arm, which means the best receiver in the country is about to catch passes from a backup right as the schedule gets serious. Oregon comes to Columbus on November 7. Michigan is November 28.
 
 ## Meet the kid who's actually leading the country
 
@@ -54,13 +54,13 @@ The signature game was Week 2 against Texas Tech, a defense ranked 13th in SP+. 
 
 He also talks like a guy who knows exactly what he is. "When I go to catch a ball, they talk about 50/50," Legree said. "I know it's 100/0 going to come down with me." His own offensive coordinator, Mitch Dahlen, says he doesn't act like a freshman.
 
-To be fair to the voters, Legree isn't totally invisible anymore. He made the AP's midseason All-America first team, and he's fifth on the Heisman oddsboards, the only non-quarterback behind Smith. But he's being treated like a fun story, not a real candidate. That's the part I don't get.
+To be fair to the voters, Legree isn't totally invisible anymore. He made the AP's midseason All-America first team, and he's fifth on the Heisman oddsboards, the only non-quarterback behind Smith. But voters have him filed under fun story. I don't get that.
 
 ## Legree vs. Smith, side by side
 
 Put the two lines next to each other and it's not close in the categories that usually decide this stuff.
 
-Legree has more yards, more touchdowns, and a higher yards-per-game average (148.6 to 140.6). He's more efficient too. Using targets from the play-by-play, Legree is averaging **17.3 yards every time the ball goes his way**. Smith is at 14.3, which is elite. Legree's number is absurd.
+Legree has more yards, more touchdowns, and a higher yards-per-game average (148.6 to 140.6). He's more efficient too. Using targets from the play-by-play, Legree is averaging **17.3 yards every time the ball goes his way**. Smith is at an elite 14.3. Legree's number is absurd.
 
 And he's doing it on way fewer looks. Oregon State has thrown 287 passes this year, more than any team in this piece, but only about one in five goes to Legree (21 to 23%, depending on whose target count you use). Smith gets about a third of Ohio State's throws. Give Smith's target share to Legree and he'd have seen roughly 30 more balls come his way.
 
@@ -68,7 +68,7 @@ And he's doing it on way fewer looks. Oregon State has thrown 287 passes this ye
 
 Smith has the edge in catches (52 to 46) and a better team record (6-1 to 5-2). Those aren't nothing. But if you covered up the helmets and handed a voter these two lines, I'm pretty sure which one they'd circle.
 
-One more thing worth saying: Legree is doing this as a true freshman. No freshman receiver has ever won the Heisman.
+Legree is also doing this as a true freshman. No freshman receiver has ever won the Heisman.
 
 ## Measured against the receivers who actually won it
 
@@ -78,7 +78,7 @@ The best of the group was DeVonta Smith, who had 65 catches for 903 yards and 10
 
 ::photo{src="/blog/heisman-receivers-nobody-is-talking-about/winners_7games.png" alt="Receiving yards and TDs through 7 games: Legree, Jeremiah Smith and the five receivers who won the Heisman" caption="Through seven games, Legree and Smith are ahead of every receiver who won the Heisman" own="1"}
 
-Now the honest caveats. Rodgers, Brown and Howard won in different eras, and a big chunk of their cases came on returns. Brown had three punt-return touchdowns, Howard had his famous one against Ohio State. Hunter won playing both ways and picked off four passes. Howard also had 15 touchdowns through seven games, so the TD number isn't a clean sweep.
+There are caveats, though. Rodgers, Brown and Howard won in different eras, and a big chunk of their cases came on returns. Brown had three punt-return touchdowns, Howard had his famous one against Ohio State. Hunter won playing both ways and picked off four passes. Howard also had 15 touchdowns through seven games, so the TD number isn't a clean sweep.
 
 But on pure receiving production at this point in the season, Legree is ahead of every receiver who has ever won the thing. Carry his per-game numbers over a 12-game regular season and he lands around 1,783 yards and 24 touchdowns. DeVonta finished with 1,856 and 23, and that took 13 games including the playoff.
 
@@ -92,7 +92,7 @@ He's faced three defenses in the SP+ top 13: Texas (5th), Iowa (13th) and Indian
 
 So I tried to put both guys on the same scale. For every FBS game, I compared what they did to what that defense allowed the other team's top receiver in the other games on their schedule. It's a simple way to ask "how much more than a normal No. 1 receiver did you get?"
 
-The answer: Smith has averaged **69 yards** more than a defense's usual top receiver. Legree has averaged 68 more. Dead even.
+Turns out Smith has averaged **69 yards** more than a defense's usual top receiver. Legree has averaged 68 more. Dead even.
 
 Smith's résumé against good defenses is better. Legree's production against everybody is better. Per game, they're beating their opponents by the exact same margin. That's a dead heat race to the finish.
 
@@ -110,7 +110,7 @@ Umari Hatcher's story might be even better. He's a sixth-year senior at Syracuse
 
 He doesn't care. He just went for 13 catches and 224 yards against Louisville, both career highs, and he's third in the country with **784 receiving yards** in six games. "It really doesn't matter who the quarterback is," Hatcher said after that one. "I got to make plays for each one of those guys."
 
-I'll be straight about where these two sit. Their efficiency isn't at Legree or Smith's level: Duff averages 10.6 yards per target and Hatcher 11.4. Their case is different. Duff is targeted on nearly two of every five Rutgers passes and Hatcher on about 30% of Syracuse's, the heaviest workloads of anyone in this piece. Duff accounts for 46% of Rutgers' receiving yards and Hatcher 45% of Syracuse's, on teams where every defense knows exactly where the ball is going. That's not a Heisman case today. It's a case for being in the conversation, which they currently are not.
+Start with where these two sit. Their efficiency isn't at Legree or Smith's level: Duff averages 10.6 yards per target and Hatcher 11.4. Their case is different. Duff is targeted on nearly two of every five Rutgers passes and Hatcher on about 30% of Syracuse's, the heaviest workloads of anyone in this piece. Duff accounts for 46% of Rutgers' receiving yards and Hatcher 45% of Syracuse's, on teams where every defense knows exactly where the ball is going. Today that adds up to a case for being in the conversation, which they currently are not.
 
 ::photo{src="/blog/heisman-receivers-nobody-is-talking-about/team_share.png" alt="Share of team receiving yards: Duff 46%, Hatcher 45%, Smith 44%, Legree 39%" caption="Duff and Hatcher are carrying nearly half of their teams' passing games" own="1"}
 

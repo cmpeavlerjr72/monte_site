@@ -5319,6 +5319,7 @@ app.get("/api/desk/queue", asyncRoute(async (req, res) => {
         created: d.created || null, updated: d.updated || null, version: Number.isInteger(d.version) ? d.version : null,
         scheduled_at: d.scheduled_at || null, author: String(d.author || "MVPeav"), guest: Boolean(d.guest), submitted: d.submitted || null,
         link: `/preview/${d.token}#edit=${d.edit}`,
+        thumb: d.thumb && PREVIEW_FILE_RE.test(String(d.thumb)) ? `/api/preview/${d.token}/img/${d.thumb}` : null,
     }));
     // Submissions the PC hasn't turned into drafts yet (no status.json), or couldn't read.
     const ids = await deskSubmissionIds(30);

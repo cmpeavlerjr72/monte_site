@@ -54,7 +54,7 @@ Then Jayden Sanders picked off Bachmeier at the Irish 15 with 8:05 left. BYU had
 
 BYU got the ball back one more time and went 10 plays and 55 yards, and Bachmeier hit Walker Lyons from 6 yards out with 1:47 on the clock. ESPN's model went from 52.2% BYU to 86.9% on that one throw. One snap, and the whole night flipped.
 
-Notre Dame still got inside the 10 with the clock running out. The last snap came with 4 seconds left, Carr's pass went toward Jaden Greathouse, who'd been killing BYU all night, and it fell incomplete in the end zone as the clock hit 0:00. BYU's probability on ESPN's model went from 70.5% to 100% on that incompletion, which is a fancy way of saying the game was over.
+Notre Dame still got inside the 10 with the clock running out. The last snap came with 4 seconds left, Carr's pass went toward Jaden Greathouse, who'd been killing BYU all night, and it fell incomplete in the end zone as the clock hit 0:00. ESPN's model moved BYU from 70.5% to 100% on that incompletion. Fancy way of saying the game was over.
 
 ## Bachmeier Ran It, Threw It and Caught It
 
@@ -62,7 +62,7 @@ Notre Dame still got inside the 10 with the clock running out. The last snap cam
 
 Here's the line that makes this one a BYU game and not a Notre Dame game: Bachmeier had rushing touchdowns of 5 and 1 yards, caught a 15-yard touchdown from Kasper on a trick play, and threw the game-winner. Three different ways to score, and he used all three.
 
-The passing line was 23 of 36 for **224 yards** with the one TD and the one INT, plus 13 carries for 45 yards. He completed 72% of his throws in the first half, which is where BYU built the cushion that ended up being just barely enough.
+The passing line was 23 of 36 for **224 yards** with the one TD and the one INT, plus 13 carries for 45 yards. He completed 72% of his throws in a first half where BYU built the cushion that ended up being just barely enough.
 
 Preston Rex ran 10 times for 66 yards, 6.6 a pop, and most of that felt like it came when BYU needed to keep Carr on the bench. Not a huge workload, just an efficient one.
 
@@ -82,11 +82,11 @@ And then the spike. First and goal territory at the BYU 5, end of the half, and 
 
 ## The Sims Liked the Irish. So Did Everybody.
 
-My sims had Notre Dame at 71% before kickoff, with a median score of Notre Dame 25, BYU 17. ESPN's FPI was even more confident at 78.2%. Nobody with a spreadsheet saw BYU winning this.
+Before kickoff my sims had Notre Dame winning 71% of the time, and the middle one finished Notre Dame 25, BYU 17. ESPN's FPI was even more confident at 78.2%. Nobody with a spreadsheet saw BYU winning this.
 
 The actual result was BYU by 4. My sims' middle range for BYU's margin ran from -17 to +3, so +4 landed just outside the middle half. The middle 80% went out to +10, so it wasn't a crazy outcome, just a tail one. About 80% of my sims had BYU doing worse than this.
 
-The individual miss that stings: my sims had Greathouse at **20** receiving yards. He had 125. Bachmeier's median was 160 passing yards and he threw for 224, Rex's median was 32 rushing and he went for 66, and Walton's median was 42 rushing and he got 17. The sims had the Notre Dame run game doing more and BYU's quarterback doing less, and the game did the opposite.
+The individual miss that stings is Greathouse, who my sims had at **20** receiving yards. He had 125. Bachmeier's median was 160 passing yards and he threw for 224, Rex's median was 32 rushing and he went for 66, and Walton's median was 42 rushing and he got 17. The sims had the Notre Dame run game doing more and BYU's quarterback doing less, and the game did the opposite.
 
 ## Chaos at the Top, and What's Next
 
@@ -96,4 +96,4 @@ BYU is 6-0 for the third straight year, and this one came with 65,179 people in 
 
 This was the craziest week of college football in quite a while, and I'm not sure I'm overselling that. Five of the top 7 lost by my count, No. 1 Georgia included (27-24 to Auburn), and a sixth needed double overtime and a controversial call to get out alive. The AP's own math says five of the top 8 went down on the same regular-season day for the first time. Whichever way you count it, the poll on Sunday is going to look like somebody shook it.
 
-BYU gets a week to enjoy it and then goes to UCF on Oct. 24. Notre Dame is off until Navy on Oct. 31, which is a long time to stare at a spike that didn't get spiked.
+BYU gets a week to enjoy it and then goes to UCF on Oct. 24. Notre Dame is off until Navy on Oct. 31, plenty of time to stare at a spike that didn't get spiked.

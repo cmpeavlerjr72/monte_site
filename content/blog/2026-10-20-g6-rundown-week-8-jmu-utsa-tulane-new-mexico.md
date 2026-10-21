@@ -22,7 +22,7 @@ James Madison is 7-0, the last unbeaten team in the Group of 6, and I still can'
 
 Behind them sit six one-loss teams, and only one of the whole bunch, Boise State, is in the AP poll at all. That's the race right now: an unbeaten team nobody's been forced to respect yet, and a pack of one-loss teams that all think they'd beat them.
 
-Thursday night at App State won't settle anything. But it kicks off a real G6 week: UTSA at Tulane, where my sims and ESPN FPI flat-out disagree, and a defense-on-defense game in Albuquerque that could knock somebody out of the one-loss club.
+Thursday night at App State won't settle anything. But it kicks off a loaded G6 week: UTSA at Tulane, where my sims and ESPN FPI flat-out disagree, and a defense-on-defense game in Albuquerque that could knock somebody out of the one-loss club.
 
 ## The G6 Power Board: One Unbeaten, Six Teams With One Loss
 
@@ -37,33 +37,33 @@ Quads is our résumé ranking: every win and loss gets graded by how good the op
 
 The one-loss club behind JMU is six deep: UTSA, Boise State, Air Force, Liberty, NDSU and New Mexico. Six teams, one spot, and the only one of them we know for sure isn't going anywhere is the one that loses again.
 
-My read on JMU is simple: that No. 1 is a record, not a résumé. Their two best wins are Liberty at home, 20-13, and Georgia Southern on the road, 27-24, and both of those are Quad 3 games. Seven wins and the best one is a 3-point escape in Statesboro. I'm not saying they're bad. I'm saying nobody has made them prove it.
+My read is that JMU's No. 1 is a record, not a résumé. Their two best wins are Liberty at home, 20-13, and Georgia Southern on the road, 27-24, and both of those are Quad 3 games. Seven wins and the best one is a 3-point escape in Statesboro. I'm not saying they're bad. I'm saying nobody has made them prove it.
 
 ::getty{id="2299832497" et="reXijAtKQTds20U7bDKT_Q" sig="gwPRDHgX0LT9GpkQP9629JvhJ9h0Mcwo3wJKV1H4q5g=" w="594" h="396" caption="James Madison Dukes wide receiver Chase Pensyl (81) and safety Terrence Jones (25) lead the team onto the field prior to a college football game between the Mar" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2299832497"}
 
-UTSA is the opposite case. The one loss was **30-6 at Texas**, which is the kind of loss I'll forgive any G6 team, and they've won five straight since. Boise State is the team the rest of the country takes seriously, and it's not close. Air Force is 5-1 with a loss to NDSU on their own field, which looks worse by the week as NDSU keeps winning.
+UTSA is the opposite case. The one loss was **30-6 at Texas**, a loss I'll forgive any G6 team, and they've won five straight since. Boise State is the team the rest of the country takes seriously, and it's not close. Air Force is 5-1 with a loss to NDSU on their own field, which looks worse by the week as NDSU keeps winning.
 
 ## UTSA at Tulane: The Sims and FPI Pick Opposite Sides
 
 ::photo{src="/blog/g6-rundown-week-8-jmu-utsa-tulane-new-mexico/card-k2.png" alt="UTSA at Tulane" caption="UTSA at Tulane" credit="MVPeav graphic"}
 
-This is the best G6 game of the week by our ranking, and it's the one where my sims and ESPN FPI are standing on opposite sides of the room. My sims give **UTSA 59%** with a median score of 27-24. FPI gives Tulane 59.9% at home. Somebody is going to look silly Saturday night, and I'm fine if it's me, but let me make the case.
+This is the best G6 game of the week by our ranking, and it's the one where my sims and ESPN FPI are standing on opposite sides of the room. My sims have **UTSA 59%**, and the sim smack in the middle finishes 27-24. FPI gives Tulane 59.9% at home. Somebody is going to look silly Saturday night, and I'm fine if it's me, but let me make the case.
 
-Tulane's offense is 133rd of 138 in success rate. That's not a slump, that's an identity. Tulane is 3-3 in Will Hall's first season, and an offense that can't string together successful plays is exactly the kind of offense my sims expect to start handing the ball over, and they do: the sims have UTSA forcing more than a turnover out of Tulane in this game against a season average of half a turnover a game. That gap, plus McCown, is the whole 59%.
+Tulane's offense is 133rd of 138 in success rate. That's who they are. Tulane is 3-3 in Will Hall's first season, and my sims expect an offense that can't string together successful plays to start handing the ball over, and sure enough the sims have UTSA forcing more than a turnover out of Tulane in this game against a season average of half a turnover a game. That gap, plus McCown, is the whole 59%.
 
 And McCown is the real thing. He threw for 359 yards and 3 TDs in the 38-34 win over Navy, and UTSA hasn't lost since the Texas trip.
 
 ::getty{id="2296743892" et="WGh2r-2dS5hIbN4yijjw6Q" sig="6Zxc9pHREEviGvOLeqhGSbNaWfEPL-518GjEEA6-rkw=" w="594" h="431" caption="UTSA Roadrunners QB Owen McCown scrambles in the pocket during game between the Colorado State Rams and the UTSA Roadrunners on September 26, 2026 at the Alamod" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2296743892"}
 
-The case for Tulane is fair, tho. Will Hall's first season just got its signature win, 31-17 over Memphis, and that's a better win than anything on UTSA's five-game run. And UTSA can't stop the run either: they allow 199.9 rushing yards a game, 124th in FBS, which is barely better than Tulane's own 212.5. Whoever runs the ball on Saturday is going to find room. I think the better quarterback wins it anyway, just a lot tighter than UTSA's last few have been.
+The case for Tulane is fair, tho. Will Hall's first season just got its signature win, 31-17 over Memphis, and that's a better win than anything on UTSA's five-game run. And UTSA can't stop the run either, allowing 199.9 rushing yards a game, 124th in FBS and barely better than Tulane's own 212.5. Whoever runs the ball on Saturday is going to find room. I think the better quarterback wins it anyway, just a lot tighter than UTSA's last few have been.
 
 ::getty{id="2299594878" et="DOJFfFyHR0tonuz4TMh7_A" sig="Yi0eM-40EUS6nGNwvCgDnpvKJySuUj7WREtTJ1tPgOA=" w="594" h="396" caption="Defensive back Shaun Nicholas #0 of the Tulane Green Wave runs on the field prior to a game against the South Alabama Jaguars at Yulman Stadium on September 12" credit="Tyler Kaufman/Getty Images" page="https://www.gettyimages.com/detail/2299594878"}
 
 ## JMU at App State on Thursday Night
 
-My sims give **JMU 80%** with a median score of 31-17, and FPI is right there with it, handing App State just 15.5% at home. I'd be shocked if this one got weird.
+JMU wins **80%** of my sims, usually by a couple of scores (31-17 is the typical one), and FPI is right there with it, handing App State just 15.5% at home. I'd be shocked if this one got weird.
 
-JMU's offense is scoring 42.9 points a game, and the turnover margin is +7, 7th in FBS. App State just lost 10-3 at home to a 2-5 Old Dominion team. Three points. At home. My sims see App State's red-zone touchdown rate cratering from 93% on the season to 52% against this defense, which is a polite way of saying the drives that end in touchdowns against the rest of the schedule end in field goals Thursday night.
+JMU's offense is scoring 42.9 points a game, and the turnover margin is +7, 7th in FBS. App State just lost 10-3 at home to a 2-5 Old Dominion team. Three points. At home. My sims see App State's red-zone touchdown rate cratering from 93% on the season to 52% against this defense, meaning the drives that end in touchdowns against the rest of the schedule end in field goals Thursday night.
 
 ::getty{id="2299828503" et="epeQSWL3RQp9X-nICPo8zg" sig="MNl88ejO8siQ4UKaXqXnNPVBTNkZ19COM5grYokOH0c=" w="594" h="416" caption="James Madison Dukes offensive lineman Tyler Brown (56) protects while Dukes quarterback Camden Coleman (7) throws a pass from the pocket during a college footba" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2299828503"}
 
@@ -77,7 +77,7 @@ A comfortable win Thursday keeps JMU unbeaten. It also does nothing for the rés
 
 New Mexico allows 10.5 points a game, 1st in FBS. NDSU allows 11.3, 2nd in FBS. Both teams are one-loss G6 contenders, and my sims think only one of them deserves to be: **New Mexico 80%**, median score 27-14, with FPI at 79.4% for the Lobos. When the sims and FPI agree this hard, I pay attention.
 
-The reason is the NDSU offense, and specifically that it can't throw. NDSU is 122nd in EPA per play, and 187.3 passing yards a game puts them 114th in FBS. Against most teams that doesn't matter, because they run through you. Against this New Mexico defense, my sims chop the NDSU run game roughly in half, from 193 yards a game down to 92. Take the run away from a team that can't pass and you get 14 points, which is what the sims spit out.
+The reason is the NDSU offense, and specifically that it can't throw. NDSU is 122nd in EPA per play, and 187.3 passing yards a game puts them 114th in FBS. Against most teams that doesn't matter, because they run through you. Against this New Mexico defense, my sims chop the NDSU run game roughly in half, from 193 yards a game down to 92. Take the run away from a team that can't pass and you get the 14 points the sims spit out.
 
 The other side of it is turnovers. New Mexico is +17 in turnover margin, 2nd in FBS. That's a team that doesn't give you anything for free, and NDSU's offense can't afford to give anything either.
 
@@ -91,7 +91,7 @@ For what it's worth, NDSU's only loss is 13-7 at UNLV, and they beat Air Force 3
 
 Billy Napier is in year one at JMU, straight off the Florida firing, and he's doing what JMU coaches do: win early and get the big schools circling. Cignetti, then Chesney, now Napier. That program has become the place you go to get your reputation back, and the Sun Belt keeps paying for it.
 
-Two other first-year head coaches show up on this week's G6 slate. Will Hall is in his first season at Tulane, and that Memphis win gave him a real result to sell. Kirby Moore is in year one at Washington State after Jimmy Rogers left for Iowa State, and his team is 1-6 heading into Boise State, so the honeymoon is already over.
+Two other first-year head coaches show up on this week's G6 slate. Will Hall is in his first season at Tulane, and that Memphis win gave him a result he can sell. Kirby Moore is in year one at Washington State after Jimmy Rogers left for Iowa State, and his team is 1-6 heading into Boise State, so the honeymoon is already over.
 
 ::getty{id="2299595346" et="mrpcXi5ASG5BHZCY7J9Yuw" sig="A4EYec-kagj2P_yx1XL0zomF5d7Ij-PWZ3o33KV1L8M=" w="594" h="396" caption="Head coach Will Hall of the Tulane Green Wave reacts during the second half of a game at Yulman Stadium on September 12, 2026 in New Orleans, Louisiana." credit="Tyler Kaufman/Getty Images" page="https://www.gettyimages.com/detail/2299595346"}
 
@@ -99,7 +99,7 @@ The playoff spot question gets asked every week and it comes down to the same tw
 
 ## Rapid Fire: Boise State and Air Force Tune-Ups, Plus Navy and Louisiana Tech
 
-**Boise State at Washington State, sims 84%**, median score 29-14. Washington State's offense is averaging 5.5 yards per pass attempt, dead last in FBS, 138th of 138. Boise's one real weakness is a pass defense that allows 261.3 yards a game, and they drew the one team in the country that can't take advantage of it. Boise runs for 234.5 a game, 10th in FBS, and that's the whole game.
+**Boise State at Washington State, sims 84%**, median score 29-14. Washington State's offense is averaging 5.5 yards per pass attempt, dead last in FBS, 138th of 138. Boise's one real weakness is a pass defense that allows 261.3 yards a game, and they drew the one team in the country that can't take advantage of it. Boise runs for 234.5 a game, 10th in FBS, and they'll ride that all night.
 
 ::getty{id="2296171052" et="vwkMWBiFSa1GNQMszXip-w" sig="tUwACAd208V5A5v_cjVtsd3VRFfToJSxE-IOIJzGRdU=" w="594" h="396" caption="Boise State Broncos running back Sire Gaines (26) rushes with the football during a college football game between the Memphis Tigers and the Boise State Broncos" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2296171052"}
 
@@ -109,7 +109,7 @@ The playoff spot question gets asked every week and it comes down to the same tw
 
 ::getty{id="2296787242" et="3Xm6uNo3QlJQXF8AgiW8Jg" sig="-vWQRUYK1pGg_LGZP8toaPw-BaQAkyVbE2ScvxzAc4Q=" w="594" h="396" caption="The North Texas Mean Green run onto the field before the game between the North Texas Mean Green and the Houston Christian Huskies on September 26, 2026 at DATC" credit="Icon Sportswire/Getty Images" page="https://www.gettyimages.com/detail/2296787242"}
 
-**Old Dominion at Louisiana Tech, sims 66%**, median 25-19. FPI is way more sure about it at 83.1% for the home team, and I get why: ODU's offense is last in FBS in success rate at 31%. Louisiana Tech is 4-2 with a 32-31 win over Louisiana and a 31-29 win over Army, both at home and both by a possession, which is why my sims are less confident than FPI. They win ugly, and ugly is close.
+**Old Dominion at Louisiana Tech, sims 66%**, median 25-19. FPI is way more sure about it at 83.1% for the home team, and I get why: ODU's offense is last in FBS in success rate at 31%. Louisiana Tech is 4-2 with a 32-31 win over Louisiana and a 31-29 win over Army, both at home and both by a possession, so my sims aren't as sure as FPI. They win ugly, and ugly is close.
 
 ## Bottom Line: Watch UTSA at Tulane, and the Sims Trust Boise State Most
 

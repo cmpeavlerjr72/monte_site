@@ -13,12 +13,13 @@ import { Card, EmptyState, PageHeader, Pill } from "../components/ui";
 import { MIN_PASSWORD, supabase, supabaseEnabled, useSession } from "../lib/supabase";
 import { deskFetch, useDeskAccess } from "../lib/deskAccess";
 import { DeskMetrics } from "../components/desk/DeskMetrics";
-import { DeskCalendar, usePosted, type CalItem } from "../components/desk/DeskCalendar";
+import { DeskCalendar, Thumb, usePosted, type CalItem } from "../components/desk/DeskCalendar";
 import "../styles/desk.css";
 
 type QueueDraft = {
   did: string; title: string; stage: string; busy: string | null; created: string | null; updated: string | null;
   version: number | null; scheduled_at: string | null; author: string; guest: boolean; submitted: string | null; link: string;
+  thumb?: string | null;
 };
 type Queue = { built: string | null; drafts: QueueDraft[]; waiting: { id: string; title: string; byline: string; at: string | null; failed: boolean }[] };
 type Mine = { submissions: { id: string; title: string; at: string | null; sport: string | null; status: string; message: string | null;
@@ -40,7 +41,8 @@ function when(iso: string | null | undefined): string {
 function DraftRow({ d }: { d: QueueDraft }) {
   const label = d.scheduled_at ? "Scheduled" : STAGE[d.stage] || d.stage;
   return (
-    <li className="desk-row">
+    <li className="desk-row desk-row--thumb">
+      <a href={d.link} tabIndex={-1}><Thumb src={d.thumb} /></a>
       <div className="desk-row__main">
         <a className="desk-row__title" href={d.link}>{d.title}</a>
         <div className="desk-row__meta">
@@ -77,7 +79,7 @@ function EditorQueue() {
   const mine = open.filter((d) => !d.guest);
   const cal: CalItem[] = [
     ...q.drafts.filter((d) => d.scheduled_at).map((d) => ({ key: `s:${d.did}`, at: d.scheduled_at as string, title: d.title,
-      kind: "scheduled" as const, href: d.link, author: d.author })),
+      kind: "scheduled" as const, href: d.link, author: d.author, thumb: d.thumb })),
     ...posted,
   ];
   const stale = q.built ? Date.now() - new Date(q.built).getTime() > 6 * 3600_000 : true;

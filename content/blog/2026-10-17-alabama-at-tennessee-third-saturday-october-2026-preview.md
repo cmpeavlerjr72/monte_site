@@ -24,7 +24,7 @@ sources:
 
 Both of these teams are 5-1. Both lost 20-17 at home to a big name. That is about where the resemblance ends.
 
-Alabama scores 44 a game, the most in the country. Tennessee throws for 186 a game, which is 120th. One of those two numbers is going to decide this (and it isn't the one that lives in Knoxville).
+Alabama scores 44 a game, the most in the country. Tennessee is 120th in the country throwing it, at 186 a game. One of those two numbers is going to decide this (and it isn't the one that lives in Knoxville).
 
 Third Saturday in October, 3:30 at Neyland. Let's get into it, who is gonna be lighting up the cigars.
 
@@ -61,9 +61,9 @@ The quarterback spot is the thing hanging over it all. George MacIntyre started 
 
 So it's run game vs front, and the front is good. Alabama is allowing **99.8 rushing yards a game**, 20th in FBS, and 3.0 a carry, 17th. Tennessee's 228 is going to run into something it hasn't seen yet.
 
-That is the entire ballgame. If the Vols can get the run going, they shorten the day, keep Russell on the bench, and make it a 4th-quarter game in a stadium that gets loud. If they can't, they're asking a 120th-ranked passing game to catch up to a 44-point offense, and that goes how you think it goes.
+Whether Tennessee can run the ball decides this one. If the Vols can get the run going, they shorten the day, keep Russell on the bench, and make it a 4th-quarter game in a stadium that gets loud. If they can't, they're asking a 120th-ranked passing game to catch up to a 44-point offense, and that goes how you think it goes.
 
-There's a second lever and it's turnovers. Alabama is +7 on the year, 6th in FBS. Tennessee is +1, 26th. The team that needs to win the turnover battle to have a chance is the one that's been worse at it, which is not a great spot to be in.
+There's a second lever and it's turnovers. Alabama is +7 on the year, 6th in FBS. Tennessee is +1, 26th. The team that has to win the turnover battle to have a chance has been the worse of the two at it, and that's a rough spot to be in.
 
 ## Third Saturday Storylines
 
@@ -75,15 +75,15 @@ The all-time series sits at 60-40-7 Alabama, and Bama took last year's game 37-2
 
 I'm not sweating it. The fire DeBoer showed at the end of the UGA game is the thing I keep coming back to, and I think a lot of Bama fans feel the same way. That loss stung, but a coach who's that fed up about a 3-point loss is a coach I'm fine going on the road with.
 
-My call for the cigars: Alabama's lighting them.
+Alabama's the one lighting the cigars.
 
 ## What 10,000 Sims Say
 
 ::photo{src="/blog/alabama-at-tennessee-third-saturday-october-2026-preview/margin.png" alt="Tennessee margin across all 10,000 sims: Alabama wins 80%, Tennessee 20%, median margin Alabama by 11" caption="Every one of the 10,000 sims: Alabama wins 80%, Tennessee 20%; the median margin is Alabama by 11" own="1"}
 
-My sims have Alabama winning **80% of the time**, with a median score of 31-19. The middle of the distribution runs from Bama by 21 down to Bama by 3, so a close one is on the table, but a blowout is just as much on it.
+Alabama wins **80% of the time** in my sims, and a typical one ends 31-19. The middle of the distribution runs from Bama by 21 down to Bama by 3, so a close one is on the table, but a blowout is just as much on it.
 
-The Tennessee wins look exactly like the game we just described. In the sims the Vols win, they run for about 172 yards. In the sims Alabama wins, that number is 110. Alabama also turns it over about 1.6 times in the games it loses, against 0.8 in the games it wins. Run the ball, take it away, keep it in the 20s. That's the only version.
+The Tennessee wins look exactly like the game we just described. In the sims the Vols win, they run for about 172 yards. In the sims Alabama wins, that number is 110. Alabama also turns it over about 1.6 times in the games it loses, against 0.8 in the games it wins. Run the ball, take it away, keep it in the 20s. Tennessee doesn't win it any other way.
 
 The quarterback gap shows up too. Russell's median line is 258 passing yards with 2 TD. MacIntyre's is 195 with 1. Not a blowout at the position, but the gap is real, and it's the gap that decides the 80.
 

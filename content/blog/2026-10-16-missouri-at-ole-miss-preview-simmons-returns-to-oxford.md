@@ -26,7 +26,7 @@ Austin Simmons walks back into Vaught-Hemingway on Saturday afternoon in black a
 
 But the reason I like Missouri in this game has almost nothing to do with Simmons's arm. It's the stuff around him: a Tigers run defense that makes the ground game disappear and an Ole Miss defense that has been letting people run on it since September.
 
-Ole Miss is going to score. Trinidad Chambliss is a real problem. The question is whether Missouri can grind it out on the ground and hang onto the ball long enough to turn this into a slugfest instead of the track meet Ole Miss wants. Kickoff is 3:30 ET in Oxford.
+Ole Miss is going to score. Trinidad Chambliss is a problem. The question is whether Missouri can grind it out on the ground and hang onto the ball long enough to turn this into a slugfest instead of the track meet Ole Miss wants. Kickoff is 3:30 ET in Oxford.
 
 
 ::sim-game{season=2026 week=7 game=401856721}
@@ -35,9 +35,9 @@ Ole Miss is going to score. Trinidad Chambliss is a real problem. The question i
 
 ::photo{src="/blog/missouri-at-ole-miss-preview-simmons-returns-to-oxford/sunset-at-ole-miss-football-stadium.jpg" alt="Sunset at Ole Miss Football Stadium" caption="Sunset at Vaught-Hemingway Stadium" credit="Bleon19" license="CC BY 4.0" licenseurl="https://creativecommons.org/licenses/by/4.0" source="https://commons.wikimedia.org/wiki/File:Sunset_at_Ole_Miss_Football_Stadium.jpg"}
 
-Missouri's offense succeeds on 42% of its plays. That's 99th in the country, which is bad, and yet they put up 35.8 a game, which is 37th. Those two numbers are not supposed to live in the same box score.
+Missouri's offense succeeds on 42% of its plays. That ranks 99th in the country, bad by any measure, and yet they put up 35.8 a game, good for 37th. Those two numbers are not supposed to live in the same box score.
 
-The way they pull it off is that they don't give the ball away and the defense keeps handing it back to them. Missouri is **+5 in turnover margin**, 8th in FBS, and that is the whole trick. You can be sloppy on 2nd and 7 if you never give the other guys a short field and you get a couple of your own.
+The way they pull it off is that they don't give the ball away and the defense keeps handing it back to them. Missouri is **+5 in turnover margin**, 8th in FBS, and that number covers for all the sloppiness. You can be sloppy on 2nd and 7 if you never give the other guys a short field and you get a couple of your own.
 
 The other half is the front seven. Missouri allows 78.8 rushing yards a game, 6th in FBS, and 2.5 yards a carry. Teams just stop trying after a while. That came against a schedule that includes a 45-17 win over Florida and a 38-21 win at Kansas, with the one loss coming 24-31 at Mississippi State, so it's not a stat built on cupcakes.
 
@@ -49,11 +49,11 @@ The bad news is RB Ahmad Hardy is out on the SEC availability report, which take
 
 Chambliss is completing over 70% of his throws with 1,435 yards, 11 TDs and 4 INTs, and he's running an offense that succeeds on 52% of its plays, 3rd in FBS. They throw for 300.6 yards a game, 10th in the country. Ole Miss scores 38.8 a game, and when they're rolling it looks easy.
 
-The defense is where it gets ugly. Ole Miss allows 28.0 a game, 80th in FBS, and it's worse than that under the hood: **+0.18 EPA per play allowed**, which is 115th. The run defense gives up 176.4 yards a game, 104th in the country. That's not a soft spot, that's an open door.
+The defense is where it gets ugly. Ole Miss allows 28.0 a game, 80th in FBS, and the **+0.18 EPA per play allowed** underneath that ranks 115th, so it's even worse than it looks. The run defense gives up 176.4 yards a game, 104th in the country. That's an open door.
 
 Look at their résumé and it tracks. They beat LSU 32-24 at home and Louisville 41-38 on a neutral field, and they lost 28-52 at Florida. Every one of those is a shootout. This team wins by outscoring you, and when the offense has an off day, there's no safety net.
 
-And now CB Edwin Joseph is out after ankle surgery, which is the last thing a defense ranked 115th in EPA needed. RB Kewan Lacy is listed healthy after a Week 3 shoulder injury, so at least they have their back.
+And now CB Edwin Joseph is out after ankle surgery, the last thing a defense ranked 115th in EPA needed. RB Kewan Lacy is listed healthy after a Week 3 shoulder injury, so at least they have their back.
 
 ## The Matchup: Missouri's Ground Game vs. Ole Miss's Soft Middle
 
@@ -75,15 +75,15 @@ I love the revenge story here. Losing your job to a Ferris State transfer while 
 
 The numbers make it even better. Simmons has 1,434 yards, 14 TDs and 1 INT. Chambliss has 1,435 yards, 11 TDs and 4 INTs. One yard apart, and the guy who lost the job has the cleaner line. Lee is questionable on the report, so whether he gets his own moment is a Saturday question.
 
-Winner of this one likely takes the driver's seat for a Playoff bid, which is a lot of stakes for a game that was already personal.
+Winner of this one likely takes the driver's seat for a Playoff bid, a lot of stakes for a game that was already personal.
 
 ## How My Sims See It
 
 ::photo{src="/blog/missouri-at-ole-miss-preview-simmons-returns-to-oxford/margin.png" alt="Ole Miss margin across all 10,000 sims: Missouri wins 57%, Ole Miss 43%, median margin Missouri by 3" caption="Every one of the 10,000 sims: Missouri wins 57%, Ole Miss 43%; the median margin is Missouri by 3" own="1"}
 
-My sims have Missouri winning **57% of the time** across 10,000 runs, with a median score of Missouri 30, Ole Miss 27. The middle half of outcomes runs from Missouri by 14 to Ole Miss by 7, so this is a coin flip with a lean, not a blowout.
+Missouri wins **57% of the time** across 10,000 sims, and the middle sim comes out Missouri 30, Ole Miss 27. Half of those sims finish anywhere from Missouri by 14 to Ole Miss by 7, so call it a coin flip with a lean.
 
-The version where Missouri wins is the one I described above. The Tigers rush for about 210 yards in their wins and only 147 in their losses, and they turn it over about 0.9 times when they win versus 1.8 when they lose. Jamal Roberts lands around 76 rushing yards at the median, which is the Hardy-less version of grinding it out. Hold onto the ball, run it 200 times, go home.
+The version where Missouri wins is the one I described above. The Tigers rush for about 210 yards in their wins and only 147 in their losses, and they turn it over about 0.9 times when they win versus 1.8 when they lose. Jamal Roberts lands around 76 rushing yards in the typical sim, the Hardy-less version of grinding it out. Hold onto the ball, run it 200 times, go home.
 
 The version where Ole Miss wins looks like Chambliss throwing for his median 297 while the Rebels actually find some running room, about 124 yards on the ground in their wins compared to 85 in their losses. If Lacy gets going at all, the whole thing tilts.
 

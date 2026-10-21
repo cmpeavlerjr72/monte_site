@@ -19,7 +19,7 @@ sources:
 
 I have watched a lot of college football in my life and I have never seen a Saturday do that. Eight ranked teams lost. Three of them were top-5 teams.
 
-ESPN Research went digging and came back with the kind of note you only get to write once: five of the top eight in the AP poll losing on the same day had never happened since the poll started in 1936. Ninety years of Saturdays, and this was the one that broke the record book.
+ESPN Research went digging and came back with a note you only get to write once, because five of the top eight in the AP poll losing on the same day had never happened since the poll started in 1936. Ninety years of Saturdays, and this was the one that broke the record book.
 
 So let's walk through it, because every one of these games had its own flavor of nonsense, and because the playoff picture at kickoff looked nothing like the playoff picture by the time the lights went out.
 
@@ -31,11 +31,11 @@ So let's walk through it, because every one of these games had its own flavor of
 
 I had the double box going. One side was the Tide getting abused in Knoxville. The other side was our bitter rival Auburn beating my least favorite team in the world, the Georgia Bulldogs. I have never been so miserable and so entertained at the same time, and I'm not sure which feeling won.
 
-Auburn 27, Georgia 24, on Alex McPherson's 34-yard field goal as time expired. A 4-2 Auburn team. Against No. 1. My sims gave Georgia 87% before kickoff with a median score of 33-17, and the real game looked nothing like that from the first quarter on.
+Auburn 27, Georgia 24, on Alex McPherson's 34-yard field goal as time expired. A 4-2 Auburn team. Against No. 1. My sims gave Georgia 87% before kickoff and had the typical result at 33-17, and the real game looked nothing like that from the first quarter on.
 
 Georgia had the ball and was driving for the go-ahead field goal with under a minute left, and then Gunner Stockton fumbled at the Auburn 46 with 58 seconds to go. That was his third giveaway of the day after 2 interceptions, and Auburn finished with zero. You can't hand a rival three turnovers on the road and act surprised when the kick goes through.
 
-The part that should scare Georgia fans more than the turnovers is the line of scrimmage. Byrum Brown ran it 26 times for 115 yards and a touchdown, and Auburn outrushed Georgia 192-113. That's not a fluke. That's a team being physically outplayed by an opponent it had beaten 9 years in a row.
+The part that should scare Georgia fans more than the turnovers is the line of scrimmage. Byrum Brown ran it 26 times for 115 yards and a touchdown, and Auburn outrushed Georgia 192-113. That's a team being physically outplayed by an opponent it had beaten 9 years in a row.
 
 The streaks that died: 53 straight wins over unranked teams, 9 straight over Auburn, and the No. 1 team has now lost in back-to-back weeks for the first time since October 1990 (that one's Sportradar's). Alex Golesh kept it simple afterward: "We're going to build Auburn back to where everybody wants it, one game at a time." He's one game in and he already has a win most Auburn coaches never got.
 
@@ -45,9 +45,9 @@ The streaks that died: 53 straight wins over unranked teams, 9 straight over Aub
 
 ::x-embed{url="https://x.com/YahooSports/status/2111801708674175423" author="@YahooSports" text=""}
 
-BYU 28, Notre Dame 24. Bear Bachmeier threw a 6-yard touchdown to Walker Lyons with 1:47 left for the lead, and a 6-0 BYU team beat the Irish for the first time since 2004. My sims had Notre Dame at 71% with a median of 25-17, so this was a real upset, but not the kind where the better team got robbed.
+BYU 28, Notre Dame 24. Bear Bachmeier threw a 6-yard touchdown to Walker Lyons with 1:47 left for the lead, and a 6-0 BYU team beat the Irish for the first time since 2004. My sims had Notre Dame at 71% with a typical result of 25-17, so BYU pulled an upset, just not one where the better team got robbed.
 
-Then the ending. Notre Dame's last throw, from the BYU 9 with 4 seconds showing, fell incomplete and the game was over. Except the Big 12, which supplied the officials because Notre Dame is an independent, came out Sunday and said replay cleared the play incorrectly and there was still time on the clock when the ball hit the ground. The Irish deserved one more snap.
+The ending is where it gets ugly. Notre Dame's last throw, from the BYU 9 with 4 seconds showing, fell incomplete and the game was over. Except the Big 12, which supplied the officials because Notre Dame is an independent, came out Sunday and said replay cleared the play incorrectly and there was still time on the clock when the ball hit the ground. The Irish deserved one more snap.
 
 Notice what the Big 12 didn't say. It didn't say that snap changes the result, and nobody honest can. One play from the 9 is a coin flip at best for an offense that had struggled all night.
 
@@ -63,7 +63,7 @@ Ohio State 19, Indiana 15, and the whole thing came down to a left foot. Nick Ma
 
 And it was revenge. Indiana beat them in last December's Big Ten title game, and this time Ohio State got to be the one walking off happy. The longest win streaks in FBS stay alive: 22 straight overall and 19 straight at home.
 
-My sims had Ohio State at 60%, which is about as close to a toss-up as a top-5 home team gets, and the game played like a toss-up. Indiana fans have every right to feel sick about an inch of chalk. That was a really good team playing a really good team to a standstill.
+My sims had Ohio State at 60%, about as close to a toss-up as a top-5 home team gets, and the game played like a toss-up. Indiana fans have every right to feel sick about an inch of chalk. That was a really good team playing a really good team to a standstill.
 
 Ohio State is 6-1 and 4-0 in the Big Ten, with a bye next, then a trip to USC on Oct. 31. After a day where everyone around them fell over, a week off might be the best thing that happened to them.
 
@@ -71,7 +71,7 @@ Ohio State is 6-1 and 4-0 in the Big Ten, with a bye next, then a trip to USC on
 
 ::photo{src="/blog/week-7-wildest-saturday-roundup-playoff-chaos/photo-i4-125801.jpg" alt="your photo" own="1"}
 
-My first instinct is to chalk this up to a hangover from last week, when we went the distance with UGA in a hard-fought one. That excuse only goes so far, though. This offense has looked stuck in a rut more than once this season, and that's the part I can't wave away. I'm still okay with DeBoer. Ryan Grubb is the one I'm starting to have questions about.
+My first instinct is to chalk this up to a hangover from last week, when we went the distance with UGA in a hard-fought one. That excuse only goes so far, though. This offense has looked stuck in a rut more than once this season, and I can't wave that away. I'm still okay with DeBoer. Ryan Grubb is the one I'm starting to have questions about.
 
 Tennessee 26, Alabama 10, and the box score reads like a mugging. DeSean Bishop carried it 32 times for 159 yards and 2 touchdowns, and Tennessee just kept handing it to him because nothing we did suggested we could stop it.
 
@@ -87,7 +87,7 @@ The history is the part that hurts. That's the first time Alabama has lost conse
 
 Florida 27, Texas 24, in Austin, with Tramell Jones Jr. making his first career start. Texas led 17-3. My sims had the Longhorns at 79%. None of that mattered once Florida's defensive line decided Arch Manning wasn't going to have a quiet evening.
 
-Five sacks. The last one forced a fumble on Texas' final possession, which is about as decisive as a defensive stat line gets. Texas finished with 272 total yards and has now lost two straight.
+Five sacks. The last one forced a fumble on Texas' final possession, about as decisive as a defensive stat line gets. Texas finished with 272 total yards and has now lost two straight.
 
 Jones threw 2 touchdowns, both to Lacota Dippre, and erased a two-score hole on the road in his first start. It's Florida's first road win over a top-10 opponent since 2012, and that's with a lot of talented Florida teams in between that couldn't pull it off.
 
@@ -133,7 +133,7 @@ And then the big one, from ESPN Research: five of the top eight losing on one Sa
 
 ::photo{src="/blog/week-7-wildest-saturday-roundup-playoff-chaos/photo-i11.jpg" alt="Photo for: Five of the Top Eight Fell in One Day: Walking Through College Football's Most Unhinged Saturday" own="1"}
 
-Nobody is safe. That's the whole section, but I'll show my work.
+Nobody is safe. I could stop there, but I'll show my work.
 
 ESPN's projected playoff top 12 after Week 7 has Miami first, then Ohio State, BYU, Notre Dame, Indiana and Georgia. SI's live bracket sees it differently: Notre Dame 1, Ohio State 2, Miami 3, Georgia 4, Ole Miss 5, UCLA 6, Indiana 7, BYU 8 (and that one may have been built before all the final scores came in). When two outlets can't agree on who's No. 1 and who's No. 4, that's a league with no settled top.
 
@@ -141,4 +141,4 @@ The one thing everybody agrees on is Ohio State. FPI and CBS both give the Bucke
 
 Then there's the SEC eating itself. Georgia, Tennessee and Ole Miss all hold losses, and CBS's bowl projection expects at least two three-loss SEC teams in the bracket, and that's with Georgia, Tennessee and Ole Miss still finishing 10-2. A year ago a third loss in that league was a funeral. Now it's a projection.
 
-Miami still needs a statement win and gets Pittsburgh at home next Saturday. BYU, the team the whole country just discovered, goes to UCF the same day. Both are the kind of game you lose when you believe your own ranking, and after this Saturday I'm not assuming anything about anyone.
+Miami still needs a statement win and gets Pittsburgh at home next Saturday. BYU, the team the whole country just discovered, goes to UCF the same day. Both are games you lose when you believe your own ranking, and after this Saturday I'm not assuming anything about anyone.
