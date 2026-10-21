@@ -394,3 +394,12 @@
   background: color-mix(in oklab, var(--gold, #c2a35a) 18%, transparent); font-size: 15px; }
 .ws-progress .ws-spin { flex: none; margin-top: 3px; }
 .ws-ok { padding: 12px; border-radius: 10px; background: color-mix(in oklab, var(--pos, #2e7d32) 14%, transparent); }
+
+/* The table builder (workspace "+" -> Table, and a tapped table). 2026-10-21 */
+.ws-table-ed { display: grid; gap: 8px; min-width: 0; }
+.ws-table-ed__scroll { overflow-x: auto; max-width: 100%; }
+.ws-table-ed table { border-collapse: separate; border-spacing: 4px; width: 100%; }
+.ws-table-ed td { padding: 0; min-width: 96px; }
+.ws-table-ed .ws-input { width: 100%; box-sizing: border-box; font-size: 16px; }
+.ws-table-ed__head .ws-input { font-weight: 700; }
+.ws-table-ed td.ws-table-ed__x { min-width: 0; width: 1%; }

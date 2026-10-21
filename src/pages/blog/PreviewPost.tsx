@@ -30,6 +30,7 @@ import { PostArticle } from "./BlogPost";
 import { postAction, uploadPhoto, useJobs, type Job } from "../../components/blog/workspace/api";
 import type { Act, Anchor, Ws } from "../../components/blog/workspace/types";
 import { Feed, FactsNudge, ImageTray, LiveCard, OutlinePanel, PlanningCard, QuestionsPanel, TopBar } from "../../components/blog/workspace/Panels";
+import { TableEditor, mdToGrid } from "../../components/blog/workspace/TableEditor";
 import { AddSheet, FactsSheet, HeroSheet, ImageSheet, MenuSheet, PublishSheet, SectionSheet } from "../../components/blog/workspace/Sheets";
 
 type Preview = { meta: BlogMeta; body: string; version: number | null; held: boolean; hold: string | null; editable?: boolean; ws?: Ws };
@@ -70,6 +71,21 @@ function splice(body: string, start: number, end: number, next: string): string 
 }
 
 function BlockEditor({ source, busy, error, onSave, onCancel, onSection }: {
+  source: string; busy: boolean; error: string | null; onSave: (text: string) => void; onCancel: () => void; onSection?: () => void;
+}) {
+  const grid = mdToGrid(source);                    // a tapped table opens as a grid, not raw | pipes | (2026-10-21)
+  if (grid) {
+    return (
+      <div className="pe-editor">
+        <TableEditor initial={grid} button="Save" busy={busy} onSave={onSave} onCancel={onCancel} onDelete={() => onSave("")} />
+        {error && <p className="pe-editor__err" role="alert">{error}</p>}
+      </div>
+    );
+  }
+  return <TextBlockEditor source={source} busy={busy} error={error} onSave={onSave} onCancel={onCancel} onSection={onSection} />;
+}
+
+function TextBlockEditor({ source, busy, error, onSave, onCancel, onSection }: {
   source: string; busy: boolean; error: string | null; onSave: (text: string) => void; onCancel: () => void; onSection?: () => void;
 }) {
   const heading = HEADING.test(source);

@@ -1,6 +1,7 @@
 // The draft workspace's sheets: image options, hero options, "add something here", publish, the ⋯ menu.
 
 import { useEffect, useState } from "react";
+import { TableEditor } from "./TableEditor";
 import type { Act, Anchor, Upload, Ws, WsImage } from "./types";
 import { FactsPanel } from "./Panels";
 import { NoteBox, PhotoPick, Sheet, fmtTime } from "./ui";
@@ -112,7 +113,14 @@ export function HeroSheet({ ws, act, upload, onClose }: { ws: Ws; act: Act; uplo
   );
 }
 
-type AddMode = "" | "upload" | "link" | "graphic" | "commons";
+type AddMode = "" | "upload" | "link" | "graphic" | "commons" | "table";
+
+/** "+" -> Table: build it, then it goes in after the block he tapped "+" under. */
+function TableAdd({ go }: { go: (type: string, args: Record<string, unknown>, label: string) => Promise<boolean> }) {
+  const [busy, setBusy] = useState(false);
+  return <TableEditor button="Add the table" busy={busy}
+    onSave={async (md) => { setBusy(true); const ok = await go("table_add", { md }, "Adding the table"); if (!ok) setBusy(false); }} />;
+}
 
 export function AddSheet({ anchor, ws, act, upload, onClose }: { anchor: Anchor; ws: Ws; act: Act; upload: Upload; onClose: () => void }) {
   const [mode, setMode] = useState<AddMode>("");
@@ -131,6 +139,7 @@ export function AddSheet({ anchor, ws, act, upload, onClose }: { anchor: Anchor;
         <div className="ws-menu">
           <button type="button" className="ws-menu__item" onClick={() => setMode("upload")}>📷 Upload a photo</button>
           <button type="button" className="ws-menu__item" onClick={() => setMode("link")}>🔗 Paste a link (Getty, X, YouTube)</button>
+          <button type="button" className="ws-menu__item" onClick={() => setMode("table")}>📋 Table</button>
           <button type="button" className="ws-menu__item" onClick={() => setMode("graphic")}>📊 Request a chart or graphic</button>
           <button type="button" className="ws-menu__item" onClick={() => setMode("commons")}>🖼 Search Commons photos</button>
           {editorial && <button type="button" className="ws-menu__item" onClick={() => go("image_add", { source: "getty_search" }, "Looking on Getty")}>📸 Getty ideas for this spot</button>}
@@ -158,6 +167,7 @@ export function AddSheet({ anchor, ws, act, upload, onClose }: { anchor: Anchor;
         <NoteBox label="What should it show?" placeholder="e.g. Legree vs Smith yards per game, bars in team colors with logos" button="Send to the graphics desk" rows={4} autoFocus
           onSend={(t) => go("graphic_new", { request: t }, "Making the graphic")} />
       )}
+      {mode === "table" && <TableAdd go={go} />}
       {mode === "commons" && (
         <NoteBox label="Search Commons" placeholder="e.g. Reser Stadium" button="Search" rows={1} autoFocus
           onSend={(t) => go("image_add", { source: "commons", query: t }, "Searching Commons")} />

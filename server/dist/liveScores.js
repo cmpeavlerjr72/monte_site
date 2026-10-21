@@ -5122,6 +5122,7 @@ const PREVIEW_ACTIONS = new Set([
     "section_rewrite", "rewrite_all", "tone_down", "stool", "undo_last",
     "facts_fix", "facts_keep", "injury",
     "publish_prepare", "publish_confirm", "publish_cancel", "schedule_cancel", "refresh",
+    "table_add", // 2026-10-21: a table built on the page ("+" -> Table)
 ]);
 const PREVIEW_ACTION_ARGS_MAX = 8 * 1024;
 const PREVIEW_UPLOAD_TYPES = {

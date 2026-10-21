@@ -31,7 +31,7 @@ export type BlockEdit = {
 
 // Only these top-level blocks can be tapped. Embeds, figures, callouts and owner beats are directives or wrappers and are
 // changed from the bot.
-const EDITABLE = new Set(["p", "h2", "h3", "ul", "ol", "blockquote"]);
+const EDITABLE = new Set(["p", "h2", "h3", "ul", "ol", "blockquote", "table"]);   // table: 2026-10-21
 
 type HastNode = { type: string; tagName?: string; position?: { start: { offset?: number }; end: { offset?: number } }; properties?: Record<string, unknown>; children?: HastNode[] };
 
@@ -55,13 +55,15 @@ function editable(Tag: string) {
   return function EditableBlock({ node: _n, ...props }: P) {
     const edit = useContext(EditCtx);
     const span = str(props["data-blk"]);
-    if (!span || !edit) return createElement(Tag, props);
+    // a table keeps the site's scroll wrapper (the plain `table` component is replaced by this one while editing)
+    const make = (p: Record<string, unknown>) => Tag === "table" ? <div className="post-table">{createElement("table", p)}</div> : createElement(Tag, p);
+    if (!span || !edit) return make(props);
     const [s, e] = span.split(":").map(Number);
     const insert = edit.renderInsert ? edit.renderInsert(s, e) : null;
     if (edit.active === s) return <>{edit.render(s, e)}{insert}</>;
     return (
       <>
-        {createElement(Tag, {
+        {make({
           ...props,
           className: [str(props.className), "pe-block"].filter(Boolean).join(" "),
           onClick: (ev: React.MouseEvent) => {
