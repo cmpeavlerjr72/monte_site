@@ -12,6 +12,7 @@ import { Link, useLocation } from "react-router-dom";
 import { TeamCell } from "../ui/TeamCell";
 import { Skeleton } from "../Skeleton";
 import { loadUpNext, type UpNext } from "../../lib/upNext";
+import { NflTicker } from "./NflTicker";
 
 const TICKER_PATHS = new Set(["/", "/cfb"]);
 const N_GAMES = 16;
@@ -30,6 +31,7 @@ const kick = (iso?: string) => {
 
 export function SiteTicker() {
   const { pathname } = useLocation();
+  if (pathname === "/nfl") return <NflTicker />;
   return TICKER_PATHS.has(pathname) ? <ScoreTicker /> : null;
 }
 

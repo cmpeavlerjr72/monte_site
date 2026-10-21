@@ -147,6 +147,7 @@ export default function App() {
           <Route path="/blog/tag/:tag" element={<BlogIndex />} />
           <Route path="/blog/:slug" element={<BlogPost />} />
           <Route path="/preview/:token" element={<PreviewPost />} />
+          <Route path="/nfl" element={<SportHome sport="nfl" />} />
           <Route path="/nhl" element={<BlogIndex tag="nhl" />} />
           <Route path="/fantasy-ai" element={<BlogIndex tag="fantasy-ai" />} />
           <Route path="/about" element={<About />} />

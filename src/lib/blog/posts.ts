@@ -83,6 +83,8 @@ export function postForGame(gameId: string | number | null | undefined): BlogMet
 export const TAG_WORDS: Record<string, string> = {
   cfb: "College football",
   cbb: "College basketball",
+  nfl: "NFL",
+  "nfc-east": "NFC East",
   nhl: "NHL",
   "fantasy-ai": "Fantasy AI",
   previews: "Previews",

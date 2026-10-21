@@ -971,6 +971,33 @@ app.get("/api/espn/scoreboard", async (req: Request, res: Response) => {
 });
 
 
+// ---- NFL scoreboard for the /nfl ticker (2026-10-20) ----
+// This week's NFL games from ESPN, served from our own origin with a 30s
+// in-memory cache, so a reader's browser never depends on reaching ESPN and
+// ESPN sees one request per 30s, not one per reader.
+let nflCache: { at: number; status: number; body: string } | null = null;
+app.get("/api/nfl/scoreboard", async (_req: Request, res: Response) => {
+  try {
+    if (!nflCache || Date.now() - nflCache.at > 30_000) {
+      const r = await fetchWithTimeout(
+        "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+        { headers: { "user-agent": "Mozilla/5.0", "cache-control": "no-cache" } },
+        15_000
+      );
+      const body = await r.text();
+      if (r.ok) nflCache = { at: Date.now(), status: r.status, body };
+      else if (!nflCache) { res.status(502).json({ error: "espn_upstream_error" }); return; }
+    }
+    res.status(200).set("Content-Type", "application/json").set("Cache-Control", "public, max-age=30").send(nflCache!.body);
+  } catch (err: any) {
+    console.error("GET /api/nfl/scoreboard error:", err?.message || err);
+    if (res.headersSent) { res.end(); return; }
+    if (nflCache) { res.status(200).set("Content-Type", "application/json").send(nflCache.body); return; }
+    res.status(err?.name === "AbortError" ? 504 : 502).json({ error: "espn_upstream_error" });
+  }
+});
+
+
 // ----------------------------------------------------------------------------
 // Hugging Face dataset pass-through
 //

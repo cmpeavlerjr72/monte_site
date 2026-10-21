@@ -22,6 +22,7 @@ const TOP_N = 6;
 const SECTIONS = [
   { tag: "cfb", title: "College football", home: "/cfb" },
   { tag: "cbb", title: "College basketball", home: "/cbb" },
+  { tag: "nfl", title: "NFL", home: "/nfl" },
   { tag: "fantasy-ai", title: "Fantasy AI", home: "/fantasy-ai" },
   { tag: "nhl", title: "NHL", home: "/nhl" },
 ];

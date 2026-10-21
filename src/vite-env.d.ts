@@ -15,7 +15,7 @@ declare module "virtual:blog-index" {
     date: string; updated: string | null;
     author: string; author_x: string;
     tags: string[];
-    hero: string | null; hero_alt: string;
+    hero: string | null; hero_alt: string; hero_credit?: string | null;
     og_image: string | null;
     draft: boolean;
     /** Has a `hold:` line: in a preview it shows only with ?drafts=1, never by default. */

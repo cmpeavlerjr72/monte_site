@@ -11,11 +11,12 @@
 import { GATES, isOpen } from "./seasons";
 
 export type NavItem = { to: string; label: string; end?: boolean };
-export type Section = "blog" | "cfb" | "cbb" | "fantasy-ai" | "about" | "labs" | "account" | null;
+export type Section = "blog" | "cfb" | "cbb" | "nfl" | "fantasy-ai" | "about" | "labs" | "account" | null;
 
 export const MAIN_NAV: Array<NavItem & { section: Exclude<Section, null> }> = [
   { to: "/cfb", label: "CFB", section: "cfb" },
   { to: "/cbb", label: "CBB", section: "cbb" },
+  { to: "/nfl", label: "NFL", section: "nfl" },
   { to: "/fantasy-ai", label: "Fantasy AI", section: "fantasy-ai" },
   { to: "/blog", label: "Blog", section: "blog" },
   { to: "/about", label: "About", section: "about" },
@@ -78,6 +79,7 @@ export function sectionOf(pathname: string): Section {
   if (pathname.startsWith("/blog") || pathname === "/nhl") return "blog";
   if (pathname.startsWith("/cfb")) return "cfb";
   if (pathname.startsWith("/cbb")) return "cbb";
+  if (pathname.startsWith("/nfl")) return "nfl";
   if (pathname.startsWith("/about")) return "about";
   if (pathname.startsWith("/labs") || LABS.some((l) => pathname.startsWith(l.prefix))) return "labs";
   if (/^\/(mybook|feed|me|u\/)/.test(pathname)) return "account";

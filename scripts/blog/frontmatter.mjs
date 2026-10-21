@@ -139,7 +139,7 @@ export function metaOf(post) {
     date: d.date, updated: d.updated ?? null,
     author: d.author ?? "MVPeav", author_x: d.author_x ?? "MVPeav",
     tags: Array.isArray(d.tags) ? d.tags.map(String) : [],
-    hero: d.hero ?? null, hero_alt: d.hero_alt ?? "",
+    hero: d.hero ?? null, hero_alt: d.hero_alt ?? "", hero_credit: d.hero_credit ?? null,
     og_image: d.og_image ?? null,
     // A private post is a draft whatever its frontmatter says.
     draft: d.draft === true || post.private === true,

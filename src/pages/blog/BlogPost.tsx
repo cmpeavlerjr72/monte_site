@@ -135,6 +135,8 @@ export function PostArticle({ post, body, related = [], banner, edit, onHero, be
       {showHero && (
         <figure className={onHero ? "post-hero ws-media" : "post-hero"}>
           <img src={post.hero ?? undefined} alt={post.hero_alt} decoding="async" />
+          {/* A Commons hero's license asks for a credit line (e.g. "Photo: X / Wikimedia Commons, CC BY-SA 4.0"). */}
+          {post.hero_credit && <figcaption><span className="post-photo__credit">{post.hero_credit}</span></figcaption>}
           {onHero && <button type="button" className="ws-media__btn" onClick={onHero}>✎ Hero options</button>}
         </figure>
       )}

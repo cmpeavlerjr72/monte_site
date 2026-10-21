@@ -13,10 +13,10 @@ import { GATES, isOpen } from "../../lib/seasons";
 import { TopStories } from "../../components/site/TopStories";
 import { RecordTile } from "../../components/site/RecordTile";
 
-type Sport = "cfb" | "cbb";
+type Sport = "cfb" | "cbb" | "nfl";
 
 const CFG: Record<Sport, {
-  name: string; sub: string; board: string; links: { to: string; label: string }[];
+  name: string; sub: string; board?: string; links: { to: string; label: string; ext?: boolean }[];
 }> = {
   cfb: {
     name: "College football",
@@ -38,6 +38,17 @@ const CFG: Record<Sport, {
       { to: "/cbb/results", label: "Results" },
     ],
   },
+  // No NFL sims (yet): the page is the columns, with the week's games in the
+  // ticker on top (NflTicker) instead of a sim board.
+  nfl: {
+    name: "NFL",
+    sub: "Columns and takes from around the league. This week's games run across the top.",
+    links: [
+      { to: "/blog/tag/nfl", label: "All NFL posts" },
+      { to: "https://www.espn.com/nfl/scoreboard", label: "Scores (ESPN)", ext: true },
+      { to: "https://www.espn.com/nfl/standings", label: "Standings (ESPN)", ext: true },
+    ],
+  },
 };
 
 export default function SportHome({ sport }: { sport: Sport }) {
@@ -49,7 +60,7 @@ export default function SportHome({ sport }: { sport: Sport }) {
   return (
     <div className="stack sport-home">
       <PageHeader kicker={offSeason ? "Season tips Nov 3" : "MVPEAV"} title={c.name} sub={c.sub}
-        actions={<ButtonLink to={c.board}>{sport === "cfb" ? "Full board" : "Scoreboard"}</ButtonLink>} />
+        actions={c.board ? <ButtonLink to={c.board}>{sport === "cfb" ? "Full board" : "Scoreboard"}</ButtonLink> : undefined} />
 
       <div className="sport-home__grid">
         <div className="sport-home__main">
@@ -57,8 +68,8 @@ export default function SportHome({ sport }: { sport: Sport }) {
             <TopStories posts={posts} moreTo={`/blog/tag/${sport}`} moreLabel={`All ${c.name.toLowerCase()} posts`} />
           ) : (
             <EmptyState kicker={c.name} title="No posts yet"
-              action={<ButtonLink to={c.board}>{sport === "cfb" ? "This week's board" : "Scoreboard"}</ButtonLink>}>
-              <p>Write-ups about the {c.name.toLowerCase()} sims land here. The board is live in the meantime.</p>
+              action={c.board ? <ButtonLink to={c.board}>{sport === "cfb" ? "This week's board" : "Scoreboard"}</ButtonLink> : undefined}>
+              <p>{c.board ? `Write-ups about the ${c.name.toLowerCase()} sims land here. The board is live in the meantime.` : `${c.name} columns land here.`}</p>
             </EmptyState>
           )}
         </div>
@@ -68,7 +79,9 @@ export default function SportHome({ sport }: { sport: Sport }) {
           <div className="ui-card">
             <div className="kicker">{c.name}</div>
             <ul className="about-links">
-              {c.links.map((l) => <li key={l.to}><Link to={l.to}>{l.label} →</Link></li>)}
+              {c.links.map((l) => <li key={l.to}>{l.ext
+                ? <a href={l.to} target="_blank" rel="noopener noreferrer">{l.label} ↗</a>
+                : <Link to={l.to}>{l.label} →</Link>}</li>)}
             </ul>
           </div>
         </aside>
