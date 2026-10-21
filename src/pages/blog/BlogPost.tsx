@@ -21,9 +21,36 @@ import {
   fmtPostDate, gameCardHref, loadBody, postBySlug, tagLine, visiblePosts, type BlogMeta,
 } from "../../lib/blog/posts";
 import { useDocumentMeta } from "../../lib/useDocumentMeta";
+import { trackClick } from "../../lib/track";
 import type { BlockEdit } from "../../components/blog/Markdown";
 
 const Markdown = lazy(() => import("../../components/blog/Markdown"));
+
+/** How far readers get (owner 2026-10-21, the desk's Metrics): one "read:50" when the middle of the article has been on
+ *  screen and one "read:100" when its end has, once per post per page view. Live posts only (never a draft preview). */
+function useReadDepth(slug: string, ready: boolean) {
+  useEffect(() => {
+    if (!ready) return;
+    const sent = new Set<string>();
+    let raf = 0;
+    const check = () => {
+      raf = 0;
+      const el = document.querySelector("article.post .post-body") as HTMLElement | null;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.height < 50) return;
+      const seen = (window.innerHeight - r.top) / r.height;      // share of the article that has reached the screen
+      for (const [mark, at] of [["read:50", 0.5], ["read:100", 0.97]] as const) {
+        if (seen >= at && !sent.has(mark)) { sent.add(mark); trackClick(mark); }
+      }
+      if (sent.size === 2) window.removeEventListener("scroll", onScroll);
+    };
+    const onScroll = () => { if (!raf) raf = window.requestAnimationFrame(check); };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const t = window.setTimeout(check, 1500);                 // a short post can be fully on screen without scrolling
+    return () => { window.removeEventListener("scroll", onScroll); window.clearTimeout(t); if (raf) window.cancelAnimationFrame(raf); };
+  }, [slug, ready]);
+}
 
 /** Did the post's pick hit? Spread/ML sides are away/home; totals over/under. */
 function grade(pick: NonNullable<BlogMeta["pick"]>, f: { home: number; away: number }): "hit" | "miss" | "push" {
@@ -72,6 +99,7 @@ export default function BlogPost() {
     loadBody[post.slug]?.().then((b) => { if (alive) setBody(b); });
     return () => { alive = false; };
   }, [post?.slug]);
+  useReadDepth(post?.slug || "", Boolean(post && !post.draft && body != null));
 
   useDocumentMeta(post ? {
     title: post.title, description: post.description, type: "article",

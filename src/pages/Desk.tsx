@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Card, EmptyState, PageHeader, Pill } from "../components/ui";
 import { MIN_PASSWORD, supabase, supabaseEnabled, useSession } from "../lib/supabase";
 import { deskFetch, useDeskAccess } from "../lib/deskAccess";
+import { DeskMetrics } from "../components/desk/DeskMetrics";
 import { DeskCalendar, usePosted, type CalItem } from "../components/desk/DeskCalendar";
 import "../styles/desk.css";
 
@@ -115,6 +116,9 @@ function EditorQueue() {
       </Card>
       <Card title="Calendar" kicker="Scheduled and posted">
         <DeskCalendar items={cal} />
+      </Card>
+      <Card title="Metrics" kicker="How the articles are doing">
+        <DeskMetrics />
       </Card>
     </>
   );

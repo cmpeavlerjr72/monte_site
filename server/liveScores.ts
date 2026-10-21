@@ -3021,11 +3021,13 @@ app.get("/api/me/traffic", asyncRoute(async (req: Request, res: Response) => {
       s.source = tSourceOf(r.src, r.ref_host);
     }
     if (r.kind === "view") s.views++;
+    else if (String(r.label || "").startsWith("read:")) { /* reading depth, not a click */ }
     else { s.clicks++; if (r.label && /bet|kalshi|dk|draftkings|order|buy/i.test(r.label)) s.betClicks++; }
   }
 
   const views = rows.filter((r) => r.kind === "view");
-  const clicks = rows.filter((r) => r.kind === "click");
+  // read:50 / read:100 are reading-depth marks for the desk's Metrics, not clicks
+  const clicks = rows.filter((r) => r.kind === "click" && !String(r.label || "").startsWith("read:"));
   const uniq = (xs: string[]) => new Set(xs).size;
 
   // ---- by day (ET calendar day)
@@ -5917,6 +5919,152 @@ app.get(
       return { id, title: String(sub.title || ""), byline: String(sub.byline || ""), at: sub.at || null, failed: status?.status === "failed" };
     }));
     res.json({ built: idx?.built || null, drafts, waiting: rows.filter(Boolean) });
+  })
+);
+
+// GET /api/desk/metrics (editor, owner 2026-10-21): "a metrics section on my drafts page so that I can see how different
+// things are performing to try to guide the direction of future articles". Per published post, from public.page_events:
+// readers (unique devices), readers in the first 48h (the fair comparison across post ages), how many read halfway / to
+// the end (the read:50 / read:100 events BlogPost.tsx sends, live from DESK_READ_SINCE), where readers came from, and
+// whether they kept browsing the site afterwards. Then the same rolled up by type, author and posting slot.
+// Signed-in visits are left out (that's the owner and staff checking their own posts).
+const DESK_READ_SINCE = "2026-10-21T20:00:00Z";
+const DESK_TYPES: [string, string][] = [["previews", "Game preview"], ["storylines", "Storyline"], ["scorecard", "Sim Scorecard"],
+  ["rankings", "Poll reaction"], ["roundup", "Saturday Roundup"], ["recaps", "Game recap"], ["g6", "G6 Rundown"],
+  ["upset-watch", "Upset Watch"], ["nfl", "NFL"]];
+function deskTypeOf(tags: string[] = []): string {
+  if (tags.includes("g6")) return "G6 Rundown";                         // the G6 piece also carries "previews"
+  if (tags.includes("roundup")) return "Saturday Roundup";               // ... and the roundup "recaps"
+  for (const [t, label] of DESK_TYPES) if (tags.includes(t)) return label;
+  return "Other";
+}
+function deskSourceBucket(src: string | null, host: string | null): string {
+  const h = (host || "").toLowerCase(), t = (src || "").toLowerCase();
+  if (/(^|\.)reddit\.com$/.test(h) || /^(r-|rcfb|reddit|cfbvegas|rsb)/.test(t)) return "Reddit";
+  if (h === "t.co" || h === "x.com" || h === "twitter.com" || /^(x-|x$|tw)/.test(t)) return "X";
+  if (t) return "Other links";
+  const s = tSourceOf(null, host);
+  if (s.startsWith("search:")) return "Search";
+  if (s === "direct / unknown") return "Direct / app";
+  return "Other sites";
+}
+/** page_events starts here (the tracker went live 2026-10-18); posts older than this have no fair numbers. */
+const DESK_TRACK_SINCE = "2026-10-18T17:53:00Z";
+
+app.get(
+  "/api/desk/metrics",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "editor")) return;
+    const days = Math.min(90, Math.max(7, Number(req.query.days) || 30));
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const rows: TRow[] = [];
+    const PAGE = 1000, MAX = 300_000;
+    for (let from = 0; from < MAX; from += PAGE) {
+      const { data, error } = await supa!.from("page_events")
+        .select("ts,kind,path,label,src,ref_host,vid,sid,is_new,device,country,signed_in")
+        .gte("ts", since).order("ts", { ascending: true }).range(from, from + PAGE - 1);
+      if (error) { res.status(500).json({ error: error.message }); return; }
+      rows.push(...((data ?? []) as TRow[]));
+      if (!data || data.length < PAGE) break;
+    }
+    const ev = rows.filter((r) => !r.signed_in);
+
+    // sessions: where each came from (its first tagged src / external referrer), its first page, its views in order
+    const sess = new Map<string, { source: string; landing: string; views: { ts: number; key: string }[] }>();
+    for (const r of ev) {
+      let s = sess.get(r.sid);
+      const key = tPageKey(r.path);
+      if (!s) { s = { source: deskSourceBucket(r.src, r.ref_host), landing: key, views: [] }; sess.set(r.sid, s); }
+      else if (s.source === "Direct / app" && (r.src || r.ref_host)) s.source = deskSourceBucket(r.src, r.ref_host);
+      if (r.kind === "view") s.views.push({ ts: Date.parse(r.ts), key });
+    }
+
+    const posts = blogPosts().filter((p) => p.date && Date.parse(p.date) >= Date.now() - days * 86_400_000
+      && Date.parse(p.date) >= Date.parse(DESK_TRACK_SINCE));
+    const bySlug = new Map(posts.map((p) => [`/blog/${p.slug}`, p]));
+    type Acc = { readers: Set<string>; r48: Set<string>; trackedReaders: Set<string>; half: Set<string>; end: Set<string>;
+      views: number; newReaders: Set<string>; src: Map<string, Set<string>>; sessions: Set<string>; onward: Set<string>; landed: Set<string> };
+    const acc = new Map<string, Acc>();
+    const mk = (): Acc => ({ readers: new Set(), r48: new Set(), trackedReaders: new Set(), half: new Set(), end: new Set(), views: 0,
+      newReaders: new Set(), src: new Map(), sessions: new Set(), onward: new Set(), landed: new Set() });
+    const readSince = Date.parse(DESK_READ_SINCE);
+    for (const r of ev) {
+      const key = tPageKey(r.path);
+      const p = bySlug.get(key);
+      if (!p) continue;
+      const a = acc.get(key) ?? mk(); acc.set(key, a);
+      const ts = Date.parse(r.ts);
+      if (r.kind === "click") {
+        if (r.label === "read:50") a.half.add(r.vid);
+        if (r.label === "read:100") { a.end.add(r.vid); a.half.add(r.vid); }
+        continue;
+      }
+      a.views++; a.readers.add(r.vid); a.sessions.add(r.sid);
+      if (ts - Date.parse(p.date) <= 48 * 3600_000) a.r48.add(r.vid);
+      if (ts >= readSince) a.trackedReaders.add(r.vid);
+      if (r.is_new) a.newReaders.add(r.vid);
+      const s = sess.get(r.sid)!;
+      const srcName = s.landing === key ? s.source : "Inside the site";
+      if (s.landing === key) a.landed.add(r.sid);
+      (a.src.get(srcName) ?? a.src.set(srcName, new Set()).get(srcName)!).add(r.vid);
+      if (s.views.some((v) => v.ts > ts && v.key !== key)) a.onward.add(r.sid);
+    }
+
+    const pct = (n: number, d: number) => (d ? Math.round((100 * n) / d) : null);
+    const now = Date.now();
+    const out = posts.map((p) => {
+      const a = acc.get(`/blog/${p.slug}`) ?? mk();
+      const tracked = [...a.trackedReaders];
+      const src = [...a.src.entries()].map(([k, v]) => ({ source: k, readers: v.size })).sort((x, y) => y.readers - x.readers);
+      const et = new Date(p.date);
+      const hour = Number(et.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }));
+      return {
+        slug: p.slug, title: p.title, date: p.date, author: p.author || "MVPeav", type: deskTypeOf(p.tags),
+        slot: hour < 12 ? "Morning (before noon)" : hour < 17 ? "Afternoon (noon-5)" : "Evening (5pm on)",
+        weekday: et.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long" }),
+        age_hours: Math.round((now - Date.parse(p.date)) / 3600_000),
+        views: a.views, readers: a.readers.size, readers_48h: a.r48.size,
+        new_pct: pct(a.newReaders.size, a.readers.size),
+        read_tracked: tracked.length,
+        half_pct: pct(tracked.filter((v) => a.half.has(v)).length, tracked.length),
+        end_pct: pct(tracked.filter((v) => a.end.has(v)).length, tracked.length),
+        onward_pct: pct(a.onward.size, a.sessions.size),
+        sources: src,
+      };
+    }).sort((x, y) => Date.parse(y.date) - Date.parse(x.date));
+
+    // roll-ups over posts at least 48h old (a fresh post would drag its group's average down)
+    const ripe = out.filter((p) => p.age_hours >= 48);
+    const group = (keyOf: (p: typeof out[number]) => string) => {
+      const m = new Map<string, typeof out>();
+      for (const p of ripe) (m.get(keyOf(p)) ?? m.set(keyOf(p), []).get(keyOf(p))!).push(p);
+      return [...m.entries()].map(([key, ps]) => {
+        const r48 = ps.map((p) => p.readers_48h).sort((a, b) => a - b);
+        const ends = ps.filter((p) => p.end_pct != null && p.read_tracked >= 5);
+        return { key, posts: ps.length, avg_48h: Math.round(r48.reduce((s, x) => s + x, 0) / ps.length),
+          median_48h: r48[Math.floor((r48.length - 1) / 2)],
+          end_pct: ends.length ? Math.round(ends.reduce((s, p) => s + (p.end_pct as number), 0) / ends.length) : null,
+          best: ps.slice().sort((a, b) => b.readers_48h - a.readers_48h)[0]?.title ?? null };
+      }).sort((a, b) => b.avg_48h - a.avg_48h);
+    };
+    const srcTotals = new Map<string, number>();
+    for (const p of out) for (const s of p.sources) srcTotals.set(s.source, (srcTotals.get(s.source) ?? 0) + s.readers);
+    const blogViews = ev.filter((r) => r.kind === "view" && r.path.startsWith("/blog"));
+    const dayKey = (ts: string) => new Date(ts).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const byDay = new Map<string, Set<string>>();
+    for (const r of blogViews) (byDay.get(dayKey(r.ts)) ?? byDay.set(dayKey(r.ts), new Set()).get(dayKey(r.ts))!).add(r.vid);
+    const last7 = new Set(blogViews.filter((r) => Date.parse(r.ts) >= now - 7 * 86_400_000).map((r) => r.vid));
+    const prev7 = new Set(blogViews.filter((r) => { const t = Date.parse(r.ts); return t < now - 7 * 86_400_000 && t >= now - 14 * 86_400_000; }).map((r) => r.vid));
+
+    res.json({
+      days, generated: new Date().toISOString(), read_tracking_since: DESK_READ_SINCE, tracking_since: DESK_TRACK_SINCE,
+      totals: { blog_readers_7d: last7.size, blog_readers_prev_7d: prev7.size, posts: out.length,
+        avg_48h: ripe.length ? Math.round(ripe.reduce((s, p) => s + p.readers_48h, 0) / ripe.length) : null },
+      by_day: [...byDay.entries()].sort().map(([day, v]) => ({ day, readers: v.size })),
+      by_type: group((p) => p.type), by_slot: group((p) => p.slot), by_author: group((p) => p.author),
+      sources: [...srcTotals.entries()].map(([source, readers]) => ({ source, readers })).sort((a, b) => b.readers - a.readers),
+      posts: out,
+    });
   })
 );
 

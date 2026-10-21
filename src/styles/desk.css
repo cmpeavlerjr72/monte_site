@@ -70,3 +70,45 @@ a.desk-row__title:hover { text-decoration: underline; }
   }
   .dcal__more { font-size: 10.5px; color: var(--muted); }
 }
+
+/* Article metrics (owner 2026-10-21). One measure per bar, numbers in text ink beside it. */
+.dm { display: grid; gap: var(--sp-4); min-width: 0; }
+.dm-controls { display: flex; justify-content: flex-end; }
+.dm-range { min-width: 160px; }
+.dm-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); }
+@media (max-width: 640px) { .dm-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dm-sec { min-width: 0; }
+.dm-sec .desk-h3 { margin-top: 0; }
+.dm-sechead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.dm-sechead .desk-h3 { margin: 0; }
+.dm-sort { display: flex; gap: 4px; flex-wrap: wrap; }
+.dm-sort .ui-btn.is-on { background: var(--brand-text); color: var(--card); border-color: var(--brand-text); }
+.dm-takeaways { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.dm-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); table-layout: fixed; }
+.dm-table th, .dm-table td { padding: 8px 6px; border-top: var(--rule); text-align: left; vertical-align: middle; }
+.dm-table thead th { border-top: 0; color: var(--muted); font-weight: 700; font-size: 12px; }
+.dm-table tbody th { font-weight: 700; width: 38%; overflow-wrap: anywhere; }
+.dm-table .dm-num { width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+.dm-sub { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dm-barcell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dm-barcell b { font-variant-numeric: tabular-nums; min-width: 2.2em; }
+.dm-bar { flex: 1 1 auto; min-width: 30px; height: 10px; background: color-mix(in srgb, var(--muted) 14%, transparent); border-radius: 4px; overflow: hidden; }
+.dm-bar__fill { display: block; height: 100%; background: var(--brand-text); border-radius: 4px; }
+.dm-days { display: flex; align-items: flex-end; gap: 2px; height: 90px; padding-top: 4px; }
+.dm-day { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
+.dm-day__bar { display: block; width: 100%; background: var(--brand-text); border-radius: 4px 4px 0 0; }
+.dm-day:hover .dm-day__bar { opacity: .75; }
+.dm-days__axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.dm-post { display: grid; gap: 6px; padding: var(--sp-3) 0; border-top: var(--rule); min-width: 0; }
+.dm-post:first-child { border-top: 0; padding-top: 0; }
+.dm-post__nums { display: grid; grid-template-columns: minmax(0, 2fr) repeat(4, minmax(0, 1fr)); gap: var(--sp-3); font-size: var(--fs-sm); }
+.dm-post__nums > span { display: grid; gap: 1px; min-width: 0; }
+.dm-post__nums b { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dm-post__nums em { font-style: normal; color: var(--muted); font-size: 12px; }
+.dm-post__main { display: flex !important; flex-wrap: wrap; }
+.dm-post__main em { flex-basis: 100%; }
+@media (max-width: 640px) {
+  .dm-post__nums { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dm-post__main { grid-column: 1 / -1; }
+}
