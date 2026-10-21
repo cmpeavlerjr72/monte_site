@@ -152,7 +152,7 @@ function SubmitForm({ onSent }: { onSent: () => void }) {
     <form className="desk-form" onSubmit={submit}>
       <label className="desk-field">
         <span>Title</span>
-        <input className="ui-sel" value={title} maxLength={140} onChange={(e) => setTitle(e.target.value)} placeholder="State of the NFC Least" />
+        <input className="ui-sel" value={title} maxLength={140} onChange={(e) => setTitle(e.target.value)} placeholder="Your headline" />
       </label>
       <label className="desk-field">
         <span>Section</span>
