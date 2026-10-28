@@ -45,7 +45,9 @@ export type Ws = {
   feed?: { at?: string; text: string; level?: "info" | "warn" | "done" | "error" }[];
   can_undo?: boolean;
   guest?: { byline?: string; x?: string | null; note?: string | null; untitled?: boolean; headline?: string; summary?: string;
-            ideas?: { headlines?: string[]; summary?: string; ts?: string } | null } | null;   // a guest writer's post: his words stay his
+            ideas?: { headlines?: string[]; summary?: string; ts?: string } | null;
+            file?: string | null;                                                       // "written on the site" / "Word file" / "pasted text"
+            asks?: { kind: string; ask: string; text: string; section: string }[] } | null;   // a guest writer's post: his words stay his
 };
 
 /** Where a new thing goes: AFTER this block (its exact Markdown as the page has it, and which copy of it). */

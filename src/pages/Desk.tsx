@@ -2,19 +2,23 @@
 //
 //   editor (MVPeav)  the queue: guest submissions waiting on him first, then every unpublished BlogBot draft, each with
 //                    "Open workspace" (the same edit link the bot sends on Telegram).
-//   writer (Cowboy Teddy)  a drop box: attach the Word file (or paste the text), add a title, send. Below it, where each
-//                    of theirs stands: with the editor (with a read-only preview link), scheduled, live.
+//   writer (Cowboy Teddy)  his articles, written here (/desk/write/<id>, owner 2026-10-28: the desk's own word processor,
+//                    so he needs no Word license), or a drop box for a Word file / pasted text. Below it, where each of
+//                    theirs stands: with the editor (with a read-only preview link), scheduled, live.
 //
 // The server (server/liveScores.ts, "THE WRITERS' DESK") checks the role on every call; BlogBot on the owner's PC turns
 // a submission into a workspace draft within a minute (cfb-props-sim/scripts/blogbot/submissions.py).
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, EmptyState, PageHeader, Pill } from "../components/ui";
+import { newDocId } from "../lib/deskDoc";
 import { MIN_PASSWORD, supabase, supabaseEnabled, useSession } from "../lib/supabase";
 import { deskFetch, useDeskAccess } from "../lib/deskAccess";
 import { DeskMetrics } from "../components/desk/DeskMetrics";
 import { DeskCalendar, Thumb, usePosted, type CalItem } from "../components/desk/DeskCalendar";
 import "../styles/desk.css";
+import "../styles/deskwrite.css";
 
 type QueueDraft = {
   did: string; title: string; stage: string; busy: string | null; created: string | null; updated: string | null;
@@ -214,6 +218,57 @@ function SubmitForm({ onSent }: { onSent: () => void }) {
   );
 }
 
+type DocRow = { id: string; title: string; sport: string; words: number; updated: string; created: string; submitted: { sid: string; at: string } | null };
+
+/** The writer's documents, written on the site. "New article" opens an empty one (it's created on the first save). */
+function MyDocs({ reloadKey }: { reloadKey: number }) {
+  const nav = useNavigate();
+  const [rows, setRows] = useState<DocRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(() => {
+    deskFetch<{ docs: DocRow[] }>("/api/desk/docs").then((j) => { setRows(j.docs); setErr(null); }).catch((e) => setErr(String(e.message || e)));
+  }, []);
+  useEffect(() => { load(); }, [load, reloadKey]);
+  const remove = async (d: DocRow) => {
+    if (!window.confirm(`Delete “${d.title || "Untitled"}”? This can't be undone.`)) return;
+    try { await deskFetch(`/api/desk/docs/${d.id}`, { method: "DELETE" }); load(); } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+  const drafts = (rows || []).filter((d) => !d.submitted);
+  const sentOnes = (rows || []).filter((d) => d.submitted);
+  return (
+    <>
+      <div className="desk-docs__new">
+        <button type="button" className="ui-btn desk-submit" data-on="true" onClick={() => nav(`/desk/write/${newDocId()}`)}>✍️ New article</button>
+        <span className="desk-small desk-muted">Write it here: it saves as you type, and you send it when it's done.</span>
+      </div>
+      {err && <p className="desk-err">{err}</p>}
+      {rows === null ? <p className="desk-muted">Loading…</p> : drafts.length === 0 ? <p className="desk-muted">Nothing in progress.</p> : (
+        <ul className="desk-list">
+          {drafts.map((d) => (
+            <li key={d.id} className="desk-row">
+              <div className="desk-row__main">
+                <a className="desk-row__title" href={`/desk/write/${d.id}`} onClick={(e) => { e.preventDefault(); nav(`/desk/write/${d.id}`); }}>{d.title || "Untitled"}</a>
+                <div className="desk-row__meta">
+                  <Pill tone="outline">In progress</Pill>
+                  <span>{d.words} words · saved {when(d.updated)}</span>
+                  <button type="button" className="desk-row__del" onClick={() => remove(d)}>Delete</button>
+                </div>
+              </div>
+              <button type="button" className="ui-btn desk-row__open" onClick={() => nav(`/desk/write/${d.id}`)}>Keep writing</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {sentOnes.length > 0 && (
+        <p className="desk-small desk-muted">
+          Sent from here: {sentOnes.map((d, i) => <span key={d.id}>{i ? ", " : ""}<a href={`/desk/write/${d.id}`} onClick={(e) => { e.preventDefault(); nav(`/desk/write/${d.id}`); }}>{d.title || "Untitled"}</a></span>)}.
+          Where each one stands is under “What you've sent”.
+        </p>
+      )}
+    </>
+  );
+}
+
 const MINE_STATUS: Record<string, [string, "outline" | "navy" | "gold" | "pos" | "neg"]> = {
   submitted: ["Sent", "outline"], editing: ["With the editor", "navy"], scheduled: ["Scheduled", "gold"],
   published: ["Live", "pos"], skipped: ["Not running", "outline"], failed: ["Couldn't read", "neg"],
@@ -301,7 +356,11 @@ export default function Desk() {
 
   const submit = (
     <>
-      <SubmitForm onSent={() => setReloadKey((k) => k + 1)} />
+      <MyDocs reloadKey={reloadKey} />
+      <details className="desk-details" style={{ marginTop: 16 }}>
+        <summary>Have a Word file or text to paste instead?</summary>
+        <SubmitForm onSent={() => setReloadKey((k) => k + 1)} />
+      </details>
       <h3 className="desk-h3">What you've sent</h3>
       <MySubmissions reloadKey={reloadKey} />
     </>
@@ -312,7 +371,7 @@ export default function Desk() {
       <PageHeader kicker="Writers' desk" title={access.editor ? "Drafts and submissions" : "Submit an article"}
         sub={access.editor
           ? "Unscheduled drafts up top; the calendar shows what's scheduled and what's posted. Open a workspace to edit, add pictures and publish."
-          : `Writing as ${access.byline || "you"}. Send your article and the editor takes it from there.`} />
+          : `Writing as ${access.byline || "you"}. Write it here, send it, and the editor takes it from there.`} />
       {access.editor ? (
         <>
           <EditorQueue />
@@ -321,7 +380,7 @@ export default function Desk() {
           </Card>
         </>
       ) : (
-        <Card title="New article">{submit}</Card>
+        <Card title="Your articles">{submit}</Card>
       )}
       <Card title="Your login" kicker={session.user.email?.replace(/@mvpeav\.com$/, "") || undefined}>
         <PasswordCard />

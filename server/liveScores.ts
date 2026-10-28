@@ -6126,11 +6126,19 @@ app.post(
     const sport = DESK_SPORTS.has(str("sport", 10).toLowerCase()) ? str("sport", 10).toLowerCase() : "other";
     const upload = str("upload", 40);
     const fileName = str("file_name", 120);
+    const docId = str("doc_id", 40);
     const bad = (message: string) => res.status(400).json({ error: "bad_submission", message });
     // the title is optional (owner 2026-10-21): BlogBot writes headline ideas when he leaves it blank
     if (title && title.length < 3) { bad("That title is too short. Leave it blank and the editor will write one."); return; }
     if (upload && !/^\d{13}-[a-f0-9]{8}\.docx$/.test(upload)) { bad("That upload isn't one of yours. Attach the file again."); return; }
-    if (!upload && text.trim().split(/\s+/).length < 50) { bad("Attach your Word file or paste the article (at least a few paragraphs)."); return; }
+    // written on the site (2026-10-28): the document's own title / section / summary / note ride along with its blocks
+    let doc: DeskDoc | null = null;
+    if (docId) {
+      doc = await deskDocOf(uid, docId);
+      if (!doc) { bad("That document isn't here any more. Reload the page."); return; }
+      if (doc.submitted) { bad("That one's already been sent."); return; }
+      if (deskWordCount(doc.blocks) < 50) { bad("Write at least a few paragraphs before sending it."); return; }
+    } else if (!upload && text.trim().split(/\s+/).length < 50) { bad("Attach your Word file or paste the article (at least a few paragraphs)."); return; }
     if (!deskRateOk(`sub:${uid}`, 10)) { res.status(429).json({ error: "rate_limited", message: "That's a lot of submissions in an hour. Give it a while." }); return; }
     if (!st.byline) { res.status(403).json({ error: "not_staff", message: "Your byline isn't set up yet. Ask MVPeav." }); return; }
     const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
@@ -6139,14 +6147,306 @@ app.post(
       const { error } = await bucket.move(`_desk_uploads/${uid}/${upload}`, `_submissions/${id}/original.docx`);
       if (error) { bad("That file upload expired. Attach it again."); return; }
     }
-    const sub = { id, uid, byline: st.byline, author_x: st.x, title, summary, sport, note, text: upload ? "" : text,
-                  file: upload ? "original.docx" : null, file_name: upload ? (fileName || "Word file") : null, at: new Date().toISOString() };
+    if (doc) {
+      // his photos move under the submission; one that's gone stays in the blocks without a file (the bot leaves a 📌 line)
+      const blocks = await Promise.all(doc.blocks.map(async (b) => {
+        const f = b.kind === "insert" && b.insert?.kind === "photo" && typeof b.insert.file === "string" ? b.insert.file : null;
+        if (!f) return b;
+        const { error } = await bucket.move(`_desk_uploads/${uid}/${f}`, `_submissions/${id}/media/${f}`);
+        return error ? { kind: "insert", insert: { ...b.insert, file: "" } } : b;
+      }));
+      const { error } = await bucket.upload(`_submissions/${id}/doc.json`, Buffer.from(JSON.stringify({ blocks })),
+        { contentType: "application/json", upsert: false });
+      if (error) { res.status(502).json({ error: "queue_failed", message: "Couldn't send it. Try again." }); return; }
+    }
+    const sub = { id, uid, byline: st.byline, author_x: st.x,
+                  title: doc ? (title || doc.title) : title, summary: doc ? (summary || doc.summary) : summary,
+                  sport: doc ? (DESK_SPORTS.has(doc.sport) ? doc.sport : sport) : sport, note: doc ? (note || doc.note) : note,
+                  text: upload || doc ? "" : text,
+                  file: upload ? "original.docx" : null, file_name: upload ? (fileName || "Word file") : doc ? "written on the site" : null,
+                  doc: doc ? "doc.json" : null, at: new Date().toISOString() };
     // submission.json goes LAST: the PC only picks up a submission once it's there, so it never sees half of one
     const { error } = await bucket.upload(`_submissions/${id}/submission.json`, Buffer.from(JSON.stringify(sub)),
       { contentType: "application/json", upsert: false });
     if (error) { res.status(502).json({ error: "queue_failed", message: "Couldn't send it. Try again." }); return; }
-    console.log(`[desk] submission ${id} from ${st.byline}: ${title.slice(0, 80)}`);
+    if (doc) await deskPutJson(`_desk_docs/${uid}/${doc.id}.json`, { ...doc, submitted: { sid: id, at: sub.at }, updated: sub.at });
+    console.log(`[desk] submission ${id} from ${st.byline}${doc ? " (written on the site)" : ""}: ${sub.title.slice(0, 80)}`);
     res.status(201).json({ id });
+  })
+);
+
+// ----------------------------------------------------------------------------
+// THE DESK EDITOR (owner 2026-10-28): /desk/write/<id>, a word processor on the site
+//
+// "his Microsoft license expired ... rather than get him a new license, since we are just really focused on his words
+// and then we format everything for the website anyway, build a word processor into our website so that he can just
+// type there." Any account with the writer role gets it (staff.py grants the role).
+//
+// A document is JSON in the private preview bucket, _desk_docs/<uid>/<id>.json:
+//   {id, rev, title, sport, summary, note, blocks, created, updated, submitted: {sid, at} | null}
+//   blocks: {kind: p | h | li | quote, html}        inline HTML with only <b> <i> <a href="http(s)…"> <br>
+//           {kind: "insert", insert: {kind: link | photo | request, ask, url, file, credit, own, text}}
+// The page autosaves (PUT, with the rev it last saw: a stale save is answered 409 with the newer copy). Photos he puts in
+// go to _desk_uploads/<uid>/<name> first (POST /api/desk/photos) and move under the submission when he sends it.
+// Sending (POST /api/desk/submissions {doc_id}) copies the blocks to _submissions/<sid>/doc.json + media/, and BlogBot
+// (submissions.py) turns that into the same guest draft a Word file becomes: links and photos as image proposals where
+// he put them, requests as 📌 lines the editor resolves.
+//
+// Lookups (owner, same day): "while someone is writing ... they can just hop over and tell a bot what to go find and
+// then keep working while the research goes on in the background". POST /api/desk/lookups writes the question to
+// _desk_lookups/<uid>/<lid>.json; BlogBot on the PC (lookups.py) answers in <lid>.answer.json; GET lists both.
+// ----------------------------------------------------------------------------
+const DESK_DOC_RE = /^\d{13}-[a-f0-9]{8}$/;
+const DESK_PHOTO_RE = /^\d{13}-[a-f0-9]{8}\.(jpg|png|webp|heic)$/;
+const DESK_PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "image/heif": "heic" };
+const DESK_BLOCK_KINDS = new Set(["p", "h", "li", "quote"]);
+const DESK_INSERT_KINDS = new Set(["link", "photo", "request"]);
+const DESK_ASK_KINDS = new Set(["image", "video", "tweet", "stat", "other"]);
+const DESK_DOC_MAX_BLOCKS = 3000;
+const DESK_DOC_MAX_CHARS = 400_000;
+const DESK_DOCS_LISTED = 60;
+const DESK_LOOKUPS_LISTED = 40;
+
+type DeskBlock = { kind: string; html?: string; insert?: Record<string, unknown> };
+type DeskDoc = { id: string; rev: number; title: string; sport: string; summary: string; note: string; blocks: DeskBlock[];
+  created: string; updated: string; submitted: { sid: string; at: string } | null };
+
+const deskEsc = (s: string) => s.replace(/&(?!(?:amp|lt|gt|quot|#39|nbsp|#\d+|[a-z]+);)/gi, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/** Inline HTML from the editor -> only <b> <i> <a href="http(s)…"> <br>; every other tag goes, its text stays. */
+function deskCleanInline(html: string): string {
+  let out = "", open: string[] = [];
+  const re = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  let last = 0, m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    out += deskEsc(html.slice(last, m.index));
+    last = re.lastIndex;
+    const closing = m[0].startsWith("</"), tag = m[1].toLowerCase(), attrs = m[2] || "";
+    const t = tag === "strong" ? "b" : tag === "em" ? "i" : tag;
+    if (t === "br") { if (!closing) out += "<br>"; continue; }
+    if (t !== "b" && t !== "i" && t !== "a") continue;
+    if (closing) {
+      const i = open.lastIndexOf(t);
+      if (i >= 0) { out += `</${t}>`; open.splice(i, 1); }
+      continue;
+    }
+    if (t === "a") {
+      const h = /href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs);
+      const href = (h?.[1] ?? h?.[2] ?? h?.[3] ?? "").trim();
+      if (!/^https?:\/\/[^\s"'<>]{1,500}$/i.test(href)) continue;
+      out += `<a href="${href.replace(/&(?!amp;)/g, "&amp;")}">`;
+    } else out += `<${t}>`;
+    open.push(t);
+  }
+  out += deskEsc(html.slice(last));
+  while (open.length) out += `</${open.pop()}>`;
+  return out;
+}
+
+const deskPlain = (html: string) => html.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "")
+  .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+const deskWordCount = (blocks: DeskBlock[]) =>
+  blocks.filter((b) => b.kind !== "insert").map((b) => deskPlain(b.html || "").trim()).filter(Boolean).join(" ").split(/\s+/).filter(Boolean).length;
+
+/** The editor's document, checked and tidied. -> the doc, or an error message. */
+function deskNormDoc(raw: unknown, id: string, prev: DeskDoc | null): { doc?: DeskDoc; error?: string } {
+  if (!raw || typeof raw !== "object") return { error: "That isn't a document." };
+  const b = raw as Record<string, unknown>;
+  const str = (k: string, n: number) => (typeof b[k] === "string" ? (b[k] as string).replace(/\r\n/g, "\n").trim().slice(0, n) : "");
+  const blocksIn = Array.isArray(b.blocks) ? (b.blocks as unknown[]).slice(0, DESK_DOC_MAX_BLOCKS) : [];
+  const blocks: DeskBlock[] = [];
+  let chars = 0;
+  for (const x of blocksIn) {
+    if (!x || typeof x !== "object") continue;
+    const blk = x as Record<string, unknown>;
+    const kind = String(blk.kind || "p");
+    if (kind === "insert") {
+      const ins = (blk.insert && typeof blk.insert === "object" ? blk.insert : {}) as Record<string, unknown>;
+      const ik = String(ins.kind || "");
+      if (!DESK_INSERT_KINDS.has(ik)) continue;
+      const s = (k: string, n: number) => (typeof ins[k] === "string" ? (ins[k] as string).replace(/\s+/g, " ").trim().slice(0, n) : "");
+      const clean: Record<string, unknown> = { kind: ik, text: s("text", 500) };
+      if (ik === "request") clean.ask = DESK_ASK_KINDS.has(s("ask", 10)) ? s("ask", 10) : "other";
+      if (ik === "link") { const u = s("url", 500); if (!/^https?:\/\/\S+$/.test(u)) continue; clean.url = u; }
+      if (ik === "photo") {
+        const f = s("file", 60);
+        if (!DESK_PHOTO_RE.test(f)) continue;
+        clean.file = f; clean.own = ins.own !== false; clean.credit = s("credit", 200);
+      }
+      blocks.push({ kind: "insert", insert: clean });
+      continue;
+    }
+    if (!DESK_BLOCK_KINDS.has(kind)) continue;
+    const html = deskCleanInline(typeof blk.html === "string" ? blk.html.slice(0, 50_000) : "");
+    chars += html.length;
+    if (chars > DESK_DOC_MAX_CHARS) return { error: "That document is too long to save." };
+    blocks.push({ kind, html });
+  }
+  const now = new Date().toISOString();
+  const sport = DESK_SPORTS.has(str("sport", 10).toLowerCase()) ? str("sport", 10).toLowerCase() : (prev?.sport || "nfl");
+  return { doc: { id, rev: (prev?.rev || 0) + 1, title: str("title", 140), sport, summary: str("summary", 200), note: str("note", 2000),
+    blocks, created: prev?.created || now, updated: now, submitted: prev?.submitted || null } };
+}
+
+async function deskDocOf(uid: string, id: string): Promise<DeskDoc | null> {
+  if (!DESK_DOC_RE.test(id)) return null;
+  const j = await deskJson(`_desk_docs/${uid}/${id}.json`);
+  return j && j.id === id && Array.isArray(j.blocks) ? (j as DeskDoc) : null;
+}
+
+async function deskPutJson(key: string, doc: unknown): Promise<boolean> {
+  const { error } = await supa!.storage.from(PREVIEW_BUCKET)
+    .upload(key, Buffer.from(JSON.stringify(doc)), { contentType: "application/json", upsert: true });
+  return !error;
+}
+
+const deskDocRow = (d: DeskDoc) => ({ id: d.id, title: d.title, sport: d.sport, words: deskWordCount(d.blocks), updated: d.updated,
+  created: d.created, submitted: d.submitted });
+
+app.get(
+  "/api/desk/docs",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    const { data } = await supa!.storage.from(PREVIEW_BUCKET).list(`_desk_docs/${uid}`, { limit: 1000 });
+    const ids = (data || []).map((x) => x.name.replace(/\.json$/, "")).filter((n) => DESK_DOC_RE.test(n)).sort().reverse().slice(0, DESK_DOCS_LISTED);
+    const docs = (await Promise.all(ids.map((id) => deskDocOf(uid, id)))).filter(Boolean) as DeskDoc[];
+    res.json({ docs: docs.map(deskDocRow) });
+  })
+);
+
+app.get(
+  "/api/desk/docs/:id",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const d = await deskDocOf(supaUserOf(req)!.id, String(req.params.id));
+    if (!d) { res.status(404).json({ error: "no_doc", message: "That document isn't here." }); return; }
+    res.json({ doc: d });
+  })
+);
+
+// PUT /api/desk/docs/:id  (text/plain JSON: the global JSON parser's 128kb limit is too small for a long piece)
+//   body {base_rev, title, sport, summary, note, blocks}. A new id creates the document (base_rev 0).
+app.put(
+  "/api/desk/docs/:id",
+  express.text({ type: ["text/plain", "application/json"], limit: "3mb" }),
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    const id = String(req.params.id);
+    if (!DESK_DOC_RE.test(id)) { res.status(400).json({ error: "bad_id", message: "That document id isn't valid." }); return; }
+    let body: unknown = null;
+    try { body = JSON.parse(typeof req.body === "string" ? req.body : ""); } catch { /* answered below */ }
+    if (!body || typeof body !== "object") { res.status(400).json({ error: "bad_body", message: "Couldn't read that save." }); return; }
+    if (!deskRateOk(`doc:${uid}`, 1200)) { res.status(429).json({ error: "rate_limited", message: "Saving too often. It'll retry in a moment." }); return; }
+    const prev = await deskDocOf(uid, id);
+    const baseRev = Number((body as Record<string, unknown>).base_rev) || 0;
+    if (prev && prev.rev !== baseRev) {
+      res.status(409).json({ error: "conflict", message: "This document changed somewhere else (another tab or phone). Reloaded the newer copy.", doc: prev });
+      return;
+    }
+    if (prev?.submitted) { res.status(409).json({ error: "submitted", message: "This one's been sent. Make a copy to keep working on it.", doc: prev }); return; }
+    const n = deskNormDoc(body, id, prev);
+    if (!n.doc) { res.status(400).json({ error: "bad_doc", message: n.error }); return; }
+    if (!(await deskPutJson(`_desk_docs/${uid}/${id}.json`, n.doc))) { res.status(502).json({ error: "save_failed", message: "Couldn't save. Trying again shortly." }); return; }
+    res.json({ rev: n.doc.rev, updated: n.doc.updated, words: deskWordCount(n.doc.blocks) });
+  })
+);
+
+app.delete(
+  "/api/desk/docs/:id",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    const d = await deskDocOf(uid, String(req.params.id));
+    if (!d) { res.status(404).json({ error: "no_doc", message: "That document isn't here." }); return; }
+    const photos = d.blocks.filter((b) => b.kind === "insert" && b.insert?.kind === "photo" && typeof b.insert.file === "string")
+      .map((b) => `_desk_uploads/${uid}/${b.insert!.file}`);
+    await supa!.storage.from(PREVIEW_BUCKET).remove([`_desk_docs/${uid}/${d.id}.json`, ...(d.submitted ? [] : photos)]);
+    res.json({ ok: true });
+  })
+);
+
+// Photos he puts in a document: checked by their first bytes, kept under his uid until the document is sent.
+app.post(
+  "/api/desk/photos",
+  express.raw({ type: Object.keys(DESK_PHOTO_TYPES), limit: "15mb" }),
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    if (!deskRateOk(`photo:${uid}`, 60)) { res.status(429).json({ error: "rate_limited", message: "That's a lot of photos. Give it a while." }); return; }
+    const data = req.body;
+    const type = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    const ext = DESK_PHOTO_TYPES[type];
+    const magic = Buffer.isBuffer(data) && data.length > 64 ? data.subarray(0, 12) : Buffer.alloc(0);
+    const okMagic = ext === "jpg" ? magic[0] === 0xff && magic[1] === 0xd8 && magic[2] === 0xff
+      : ext === "png" ? magic.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+      : ext === "webp" ? magic.subarray(0, 4).toString("ascii") === "RIFF" && magic.subarray(8, 12).toString("ascii") === "WEBP"
+      : ext === "heic" ? magic.subarray(4, 8).toString("ascii") === "ftyp" : false;
+    if (!ext || !okMagic) { res.status(400).json({ error: "bad_file", message: "That doesn't look like a photo (JPEG, PNG, WebP or HEIC)." }); return; }
+    const name = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
+    const { error } = await supa!.storage.from(PREVIEW_BUCKET).upload(`_desk_uploads/${uid}/${name}`, data, { contentType: type, upsert: false });
+    if (error) { res.status(502).json({ error: "upload_failed", message: "Couldn't upload that photo. Try again." }); return; }
+    res.status(201).json({ upload: name });
+  })
+);
+
+app.get(
+  "/api/desk/photos/:name",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    const name = String(req.params.name);
+    if (!DESK_PHOTO_RE.test(name)) { res.status(404).end(); return; }
+    const data = await previewObject(`_desk_uploads/${uid}/${name}`);
+    if (!data) { res.status(404).end(); return; }
+    res.set("Cache-Control", "private, max-age=3600");
+    res.type(name.endsWith(".heic") ? "image/heic" : name.endsWith(".webp") ? "image/webp" : name.endsWith(".png") ? "image/png" : "image/jpeg");
+    res.send(data);
+  })
+);
+
+// Lookups: a question for the research bot while he keeps writing.
+const DESK_LID_RE = /^\d{13}-[a-f0-9]{8}$/;
+
+app.post(
+  "/api/desk/lookups",
+  asyncRoute(async (req: Request, res: Response) => {
+    const st = deskGate(req, res, "writer");
+    if (!st) return;
+    const uid = supaUserOf(req)!.id;
+    const b = (req.body || {}) as Record<string, unknown>;
+    const q = typeof b.q === "string" ? b.q.replace(/\s+/g, " ").trim().slice(0, 600) : "";
+    const docId = typeof b.doc_id === "string" && DESK_DOC_RE.test(b.doc_id) ? b.doc_id : null;
+    if (q.length < 4) { res.status(400).json({ error: "bad_lookup", message: "Say what you need looked up." }); return; }
+    if (!deskRateOk(`lookup:${uid}`, 20)) { res.status(429).json({ error: "rate_limited", message: "That's a lot of lookups in an hour. Give it a while." }); return; }
+    const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const doc = { id, uid, byline: st.byline || "a writer", q, doc_id: docId, at: new Date().toISOString() };
+    if (!(await deskPutJson(`_desk_lookups/${uid}/${id}.json`, doc))) { res.status(502).json({ error: "queue_failed", message: "Couldn't send it. Try again." }); return; }
+    res.status(201).json({ id, q, at: doc.at, status: "asked" });
+  })
+);
+
+app.get(
+  "/api/desk/lookups",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const uid = supaUserOf(req)!.id;
+    const { data } = await supa!.storage.from(PREVIEW_BUCKET).list(`_desk_lookups/${uid}`, { limit: 1000 });
+    const names = new Set((data || []).map((x) => x.name));
+    const ids = [...names].filter((n) => n.endsWith(".json") && !n.endsWith(".answer.json")).map((n) => n.slice(0, -5))
+      .filter((n) => DESK_LID_RE.test(n)).sort().reverse().slice(0, DESK_LOOKUPS_LISTED);
+    const rows = await Promise.all(ids.map(async (id) => {
+      const q = await deskJson(`_desk_lookups/${uid}/${id}.json`);
+      if (!q) return null;
+      const a = names.has(`${id}.answer.json`) ? await deskJson(`_desk_lookups/${uid}/${id}.answer.json`) : null;
+      return { id, q: String(q.q || ""), at: q.at || null, doc_id: q.doc_id || null,
+        status: a ? String(a.status || "working") : "asked", answer: a?.answer ? String(a.answer) : null,
+        facts: Array.isArray(a?.facts) ? a!.facts.map(String) : [],
+        sources: Array.isArray(a?.sources) ? a!.sources.filter((s: any) => s && typeof s.url === "string").map((s: any) => ({ title: String(s.title || s.url), url: String(s.url) })) : [],
+        confidence: a?.confidence ? String(a.confidence) : null, answered_at: a?.at || null };
+    }));
+    res.json({ lookups: rows.filter(Boolean) });
   })
 );
 

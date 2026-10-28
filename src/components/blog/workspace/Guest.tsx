@@ -17,6 +17,14 @@ export function GuestTools({ ws, act, onHeadline }: { ws: Ws; act: Act; onHeadli
       <div className="kicker">Guest post · {g.byline || "guest writer"}</div>
       {g.untitled && <p className="ws-small">⚠️ He didn't give it a title. Pick one under <b>Headline</b> (I put in the first idea).</p>}
       {g.note && <p className="ws-small">✉️ His note: {g.note}</p>}
+      {!!g.asks?.length && (
+        <div className="ws-small">
+          <b>📌 He asked for {g.asks.length} thing{g.asks.length === 1 ? "" : "s"}</b> (the 📌 lines in the body show where). Add each, then delete its line; it can't publish with one still in.
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {g.asks.map((a, i) => <li key={i}>{a.ask === "link" ? "link" : a.ask}: {a.text}</li>)}
+          </ul>
+        </div>
+      )}
       <div className="ws-row ws-row--wrap">
         <button type="button" className="pe-btn pe-btn--primary" disabled={finding}
           onClick={async () => { setBusy(true); await act("guest_images", {}, "Looking for pictures"); setBusy(false); }}>

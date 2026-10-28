@@ -106,6 +106,7 @@ const TestBets = lazyPage(() => import("./pages/TestBets"));
 const TrafficStats = lazyPage(() => import("./pages/TrafficStats"));
 const SimBook = lazyPage(() => import("./pages/SimBook"));
 const Desk = lazyPage(() => import("./pages/Desk"));
+const DeskWrite = lazyPage(() => import("./pages/DeskWrite"));
 
 
 /** Shown while a route's chunk downloads (usually a few hundred ms). */
@@ -249,6 +250,7 @@ export default function App() {
           <Route path="/stats" element={<TrafficStats />} />
           <Route path="/simbook" element={<SimBook />} />
           <Route path="/desk" element={<Desk />} />
+          <Route path="/desk/write/:id" element={<DeskWrite />} />
           {/* Hidden, DEV-ONLY: live-gamecast component harness vs any ESPN event */}
           {TEST_ROUTES && <Route path="/test-gamecast" element={<TestGamecast />} />}
           {/* Hidden, DEV-ONLY: Bets-panel harness — the week-2 decision rules
