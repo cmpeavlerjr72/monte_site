@@ -8,7 +8,7 @@ const STAGE_LABEL: Record<string, string> = {
   planning: "Researching", outline: "Outline", writing: "Writing", drafted: "Draft", published: "Live", skipped: "Skipped",
 };
 
-export function TopBar({ ws, version, onPublish, onMenu }: { ws: Ws; version: number | null; onPublish: () => void; onMenu: () => void }) {
+export function TopBar({ ws, version, onPublish, onMenu, publishHidden }: { ws: Ws; version: number | null; onPublish: () => void; onMenu: () => void; publishHidden?: boolean }) {
   const [, tick] = useState(0);
   const busy = ws.busy;
   useEffect(() => {
@@ -25,7 +25,7 @@ export function TopBar({ ws, version, onPublish, onMenu }: { ws: Ws; version: nu
         {busy ? <><span className="ws-spin" aria-hidden="true" />{busy.label || busy.what || "Working"}… {elapsed(busy.since)}</>
           : pub.scheduled_at ? <>🗓 {pub.scheduled_label || fmtTime(pub.scheduled_at)}</> : null}
       </span>
-      {stage === "drafted" && (
+      {stage === "drafted" && !publishHidden && (
         <button type="button" className="pe-btn pe-btn--primary ws-bar__pub" onClick={onPublish}>{pub.scheduled_at ? "Scheduled" : "Publish"}</button>
       )}
       <button type="button" className="pe-btn ws-bar__menu" aria-label="More" onClick={onMenu}>⋯</button>

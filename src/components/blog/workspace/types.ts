@@ -48,6 +48,7 @@ export type Ws = {
             ideas?: { headlines?: string[]; summary?: string; ts?: string } | null;
             file?: string | null;                                                       // "written on the site" / "Word file" / "pasted text"
             asks?: { kind: string; ask: string; text: string; section: string }[] } | null;   // a guest writer's post: his words stay his
+  writer?: { byline?: string; x?: string | null; note?: string | null; submitted?: string | null } | null;   // 2026-10-29: the bot wrote it from his outline; he edits, the editor publishes
 };
 
 /** Where a new thing goes: AFTER this block (its exact Markdown as the page has it, and which copy of it). */

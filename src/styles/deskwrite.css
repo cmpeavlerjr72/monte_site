@@ -102,3 +102,9 @@
 .desk-docs__new { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-3); }
 .desk-row__del { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: var(--fs-sm); padding: 4px; }
 .desk-row__del:hover { color: var(--neg); }
+
+/* 2026-10-29: the send sheet's choices (as written / BlogBot writes it) and the image bot box */
+.dw-send__mode { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.dw-send__mode > span { font-weight: 600; }
+.dw-send__opt { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; font-size: 14px; line-height: 1.35; cursor: pointer; }
+.dw-send__opt input { margin-top: 3px; }

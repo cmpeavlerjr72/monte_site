@@ -26,6 +26,7 @@ import { SkeletonLines } from "../../components/Skeleton";
 import type { BlockEdit } from "../../components/blog/Markdown";
 import type { BlogMeta } from "../../lib/blog/posts";
 import { useDocumentMeta } from "../../lib/useDocumentMeta";
+import { useDeskAccess } from "../../lib/deskAccess";
 import { PostArticle } from "./BlogPost";
 import { postAction, uploadPhoto, useJobs, type Job } from "../../components/blog/workspace/api";
 import type { Act, Anchor, Ws } from "../../components/blog/workspace/types";
@@ -146,6 +147,7 @@ function statusLine(jobs: Job[]): { node: React.ReactNode; bad: boolean } | null
 
 export default function PreviewPost() {
   const { token = "" } = useParams();
+  const access = useDeskAccess();                 // 2026-10-29: on a writer's piece only a signed-in editor sees Publish
   const [doc, setDoc] = useState<Preview | null>(null);
   const [missing, setMissing] = useState(false);
   const [secret, setSecret] = useState("");
@@ -342,6 +344,9 @@ export default function PreviewPost() {
     <div className="post-preview-banner ws-banner" role="note">
       <b>PREVIEW</b> · private{doc.held ? <> · <b>held</b>{doc.hold ? `: ${doc.hold}` : ""}</> : null}
       {ws.guest && <div className="pe-banner"><span>✍️ {ws.guest.byline || "A guest"}'s piece: his words stay his. Fix typos by hand; add images and clips with “+”.</span></div>}
+      {ws.writer && <div className="pe-banner"><span>✍️ BlogBot wrote this from {ws.writer.byline || "the writer"}'s outline. {access.editor
+        ? "He edits it himself; you publish when he's happy with it."
+        : "Tap any paragraph to change it, add your color, swap pictures. The editor publishes it when you're done."}</span></div>}
       {stage === "drafted" && (
         <div className="pe-banner">
           <span>{editOn ? "✏️ Tap text to edit · “+” to add · ✎ on images" : "Editing is off."}</span>
@@ -355,7 +360,8 @@ export default function PreviewPost() {
 
   return (
     <div className="ws">
-      <TopBar ws={ws} version={doc.version} onPublish={() => setSheet({ kind: "publish" })} onMenu={() => setSheet({ kind: "menu" })} />
+      <TopBar ws={ws} version={doc.version} onPublish={() => setSheet({ kind: "publish" })} onMenu={() => setSheet({ kind: "menu" })}
+        publishHidden={!!ws.writer && !access.editor} />
       <div className="ws-top">
         <Feed ws={ws} />
         {stage === "planning" && <PlanningCard ws={ws} />}

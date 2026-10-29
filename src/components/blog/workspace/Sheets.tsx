@@ -342,6 +342,7 @@ export function MenuSheet({ ws, act, onFacts, onHero, onSchedule, onClose }: { w
           {ai && <button type="button" className="ws-menu__item" onClick={() => go("stool", {}, "Turning it up")}>🔊 Turn it up (Barstool pass)</button>}
           {drafted && <button type="button" className="ws-menu__item" disabled={ws.can_undo === false} onClick={() => go("undo_last", {}, "Undoing the last change")}>↩️ Undo last change</button>}
           {drafted && onSchedule && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onSchedule(); }}>🗓 Schedule it{ws.publish?.scheduled_label ? ` · ${ws.publish.scheduled_label}` : ""}</button>}
+          {drafted && <button type="button" className="ws-menu__item" onClick={() => go("images_fill", {}, "Image bot: filling every section")}>🤖 Image bot: a picture or graphic in every section</button>}
           {drafted && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onHero(); }}>🖼 Hero image</button>}
           {drafted && <button type="button" className="ws-menu__item" onClick={() => { onClose(); onFacts(); }}>🔎 Facts{ws.facts?.summary ? ` · ${ws.facts.summary}` : ""}</button>}
           <button type="button" className="ws-menu__item" onClick={() => go("refresh", {}, "Refreshing")}>🔄 Refresh the page from the bot</button>

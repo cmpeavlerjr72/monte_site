@@ -14,7 +14,7 @@ import { useNavigate } from "react-router-dom";
 import { Card, EmptyState, PageHeader, Pill } from "../components/ui";
 import { newDocId } from "../lib/deskDoc";
 import { MIN_PASSWORD, supabase, supabaseEnabled, useSession } from "../lib/supabase";
-import { deskFetch, useDeskAccess } from "../lib/deskAccess";
+import { deskFetch, forgetDeskAccess, useDeskAccess } from "../lib/deskAccess";
 import { DeskMetrics } from "../components/desk/DeskMetrics";
 import { DeskCalendar, Thumb, usePosted, type CalItem } from "../components/desk/DeskCalendar";
 import "../styles/desk.css";
@@ -27,7 +27,7 @@ type QueueDraft = {
 };
 type Queue = { built: string | null; drafts: QueueDraft[]; waiting: { id: string; title: string; byline: string; at: string | null; failed: boolean }[] };
 type Mine = { submissions: { id: string; title: string; at: string | null; sport: string | null; status: string; message: string | null;
-  scheduled_at: string | null; preview: string | null; url: string | null }[] };
+  scheduled_at: string | null; preview: string | null; url: string | null; edit?: string | null; mode?: "written" | "outline" }[] };
 
 const STAGE: Record<string, string> = { planning: "Researching", outline: "Outline", writing: "Writing", drafted: "Draft" };
 const SPORTS = [["nfl", "NFL"], ["cfb", "College football"], ["cbb", "College basketball"], ["nhl", "NHL"], ["other", "Something else"]];
@@ -272,7 +272,47 @@ function MyDocs({ reloadKey }: { reloadKey: number }) {
 const MINE_STATUS: Record<string, [string, "outline" | "navy" | "gold" | "pos" | "neg"]> = {
   submitted: ["Sent", "outline"], editing: ["With the editor", "navy"], scheduled: ["Scheduled", "gold"],
   published: ["Live", "pos"], skipped: ["Not running", "outline"], failed: ["Couldn't read", "neg"],
+  writing: ["BlogBot is writing it", "navy"],
 };
+
+const X_SKIP_KEY = "desk-x-skip";
+
+/** Owner 2026-10-29: "a prompt when they login if we don't have one saved asking for their X handle". Saved on the
+ *  account (POST /api/desk/profile); the X post of each article tags it and the byline links to it. */
+function XHandleCard({ uid, current, onSaved, prompt }: { uid: string; current: string | null; onSaved: () => void; prompt: boolean }) {
+  const [x, setX] = useState(current || "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [skipped, setSkipped] = useState(() => { try { return Number(localStorage.getItem(X_SKIP_KEY) || 0) > Date.now(); } catch { return false; } });
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await deskFetch<{ x: string | null }>("/api/desk/profile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ x }) });
+      setMsg({ ok: true, text: r.x ? `Saved. Your articles will tag @${r.x} on X and link to you.` : "Saved. No X handle on file." });
+      forgetDeskAccess(uid); onSaved();
+    } catch (e: any) { setMsg({ ok: false, text: String(e?.message || e) }); }
+    finally { setBusy(false); }
+  };
+  if (prompt && skipped) return null;
+  const form = (
+    <form className="desk-form desk-form--row" onSubmit={save}>
+      <input className="ui-sel" value={x} maxLength={16} onChange={(e) => setX(e.target.value)} placeholder="@yourhandle" autoComplete="off" />
+      <button type="submit" className="ui-btn" data-on={prompt ? "true" : undefined} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+      {prompt && <button type="button" className="ui-btn" disabled={busy}
+        onClick={() => { try { localStorage.setItem(X_SKIP_KEY, String(Date.now() + 7 * 86400_000)); } catch { /* fine */ } setSkipped(true); }}>Not now</button>}
+      {msg && <p className={msg.ok ? "desk-ok" : "desk-err"}>{msg.text}</p>}
+    </form>
+  );
+  if (!prompt) return form;
+  return (
+    <Card title="What's your X handle?" kicker="One-time setup">
+      <p className="desk-muted">When one of your articles goes out, the site posts it on X and tags you, and your byline links readers to your account. Leave it blank if you'd rather not.</p>
+      {form}
+    </Card>
+  );
+}
 
 function MySubmissions({ reloadKey }: { reloadKey: number }) {
   const [rows, setRows] = useState<Mine["submissions"] | null>(null);
@@ -294,11 +334,14 @@ function MySubmissions({ reloadKey }: { reloadKey: number }) {
               <div className="desk-row__meta">
                 <Pill tone={tone}>{label}</Pill>
                 <span>sent {when(r.at)}</span>
+                {r.mode === "outline" && <span>· from your outline</span>}
                 {r.scheduled_at && <span>· goes live {when(r.scheduled_at)}</span>}
                 {r.message && <span>· {r.message}</span>}
+                {r.edit && r.status === "editing" && <span>· BlogBot wrote it; open it to tweak and add your color, then the editor publishes</span>}
               </div>
             </div>
-            {r.preview && <a className="ui-btn desk-row__open" href={r.preview}>See the preview</a>}
+            {r.edit && !r.url ? <a className="ui-btn desk-row__open" data-on="true" href={r.edit}>Edit it</a>
+              : r.preview && <a className="ui-btn desk-row__open" href={r.preview}>See the preview</a>}
             {r.url && <a className="ui-btn desk-row__open" href={r.url}>Read it live</a>}
           </li>
         );
@@ -372,6 +415,7 @@ export default function Desk() {
         sub={access.editor
           ? "Unscheduled drafts up top; the calendar shows what's scheduled and what's posted. Open a workspace to edit, add pictures and publish."
           : `Writing as ${access.byline || "you"}. Write it here, send it, and the editor takes it from there.`} />
+      {!access.editor && !access.x && <XHandleCard uid={session.user.id} current={null} prompt onSaved={() => setReloadKey((k) => k + 1)} />}
       {access.editor ? (
         <>
           <EditorQueue />
@@ -384,6 +428,12 @@ export default function Desk() {
       )}
       <Card title="Your login" kicker={session.user.email?.replace(/@mvpeav\.com$/, "") || undefined}>
         <PasswordCard />
+        {!access.editor && (
+          <>
+            <h3 className="desk-h3">Your X handle {access.x ? <span className="desk-muted">· @{access.x}</span> : null}</h3>
+            <XHandleCard uid={session.user.id} current={access.x} prompt={false} onSaved={() => setReloadKey((k) => k + 1)} />
+          </>
+        )}
       </Card>
     </div>
   );

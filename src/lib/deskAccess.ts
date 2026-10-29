@@ -28,6 +28,11 @@ function accessFor(uid: string): Promise<DeskAccess> {
   return p;
 }
 
+/** Forget the cached answer (after the writer saves his X handle), so the next read asks the server again. */
+export function forgetDeskAccess(uid: string): void {
+  memo.delete(uid);
+}
+
 export function useDeskAccess(): DeskAccess {
   const { session } = useSession();
   const uid = session?.user?.id ?? "";

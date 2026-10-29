@@ -12,6 +12,7 @@ export function GuestTools({ ws, act, onHeadline }: { ws: Ws; act: Act; onHeadli
   const [busy, setBusy] = useState(false);
   if (!g) return null;
   const finding = ws.busy?.what === "gimages" || busy;
+  const filling = ws.busy?.what === "ifill" || busy;
   return (
     <section className="ws-card" aria-label="Guest post tools">
       <div className="kicker">Guest post · {g.byline || "guest writer"}</div>
@@ -30,9 +31,13 @@ export function GuestTools({ ws, act, onHeadline }: { ws: Ws; act: Act; onHeadli
           onClick={async () => { setBusy(true); await act("guest_images", {}, "Looking for pictures"); setBusy(false); }}>
           {finding ? "Looking for pictures…" : "🖼 Find pictures for me"}
         </button>
+        <button type="button" className="pe-btn" disabled={filling}
+          onClick={async () => { setBusy(true); await act("images_fill", {}, "Image bot: filling every section"); setBusy(false); }}>
+          {filling ? "Image bot running…" : "🤖 Image bot: every section"}
+        </button>
         <button type="button" className="pe-btn" onClick={onHeadline}>🏷 Headline{g.ideas?.headlines?.length ? " ideas" : ""}</button>
       </div>
-      <p className="ws-small ws-muted">AI only suggests: pictures show up below as ideas to approve, and you pick the headline. His words stay his.</p>
+      <p className="ws-small ws-muted">AI only suggests: pictures show up below as ideas to approve (the image bot also makes a graphic where no photo fits), and you pick the headline. His words stay his.</p>
     </section>
   );
 }

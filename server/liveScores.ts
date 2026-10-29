@@ -5702,7 +5702,11 @@ const PREVIEW_ACTIONS = new Set([
   "publish_prepare", "publish_confirm", "publish_cancel", "schedule_cancel", "refresh",
   "table_add",                                   // 2026-10-21: a table built on the page ("+" -> Table)
   "guest_images", "guest_title", "title_set",    // 2026-10-21: the editor's AI helpers on a guest post + the headline pick
+  "images_fill",                                 // 2026-10-29: the image bot (every section gets a picture or a graphic)
 ]);
+// On a piece the bot wrote from a guest writer's outline (ws.writer), the writer edits with the same link the editor
+// has, but only a signed-in editor may publish, schedule or skip it (owner 2026-10-29: "the editor takes it from there").
+const PREVIEW_EDITOR_ONLY = new Set(["publish_prepare", "publish_confirm", "publish_cancel", "schedule_cancel", "draft_skip"]);
 const PREVIEW_ACTION_ARGS_MAX = 8 * 1024;
 const PREVIEW_UPLOAD_TYPES: Record<string, string> = {
   "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic", "image/heif": "heif",
@@ -5729,6 +5733,7 @@ async function previewWriteGate(req: Request, res: Response, token: string): Pro
 
 app.post(
   "/api/preview/:token/actions",
+  supabaseAuth,                                   // a signed-in editor is recognised (PREVIEW_EDITOR_ONLY); nobody is rejected here
   asyncRoute(async (req: Request, res: Response) => {
     const token = String(req.params.token || "");
     if (!(await previewWriteGate(req, res, token))) return;
@@ -5738,6 +5743,13 @@ app.post(
     if (!PREVIEW_ACTIONS.has(type)) {
       res.status(400).json({ error: "bad_action", message: "The bot doesn't know that button." });
       return;
+    }
+    if (PREVIEW_EDITOR_ONLY.has(type)) {
+      const doc = await previewDoc(token);
+      if (doc?.ws && (doc.ws as Record<string, unknown>).writer && !deskStaffOf(supaUserOf(req))?.editor) {
+        res.status(403).json({ error: "editor_only", message: "Publishing is the editor's call. Your edits are saved; he'll take it from here." });
+        return;
+      }
     }
     if (JSON.stringify(args).length > PREVIEW_ACTION_ARGS_MAX) {
       res.status(400).json({ error: "bad_action", message: "That's too long to send." });
@@ -5895,6 +5907,26 @@ app.get("/api/desk/me", (req: Request, res: Response) => {
   const st = deskStaffOf(u);
   res.json({ signed_in: Boolean(u), writer: Boolean(st?.writer), editor: Boolean(st?.editor), byline: st?.byline || null, x: st?.x || null });
 });
+
+// POST /api/desk/profile {x} (writer, owner 2026-10-29): a writer's own X handle, so the X post of his article tags him and
+// the byline links to him. The desk asks for it at login when none is saved. It lives next to the roles in
+// app_metadata.blog (service role only), so this is the one field a writer may set there himself.
+app.post(
+  "/api/desk/profile",
+  asyncRoute(async (req: Request, res: Response) => {
+    if (!deskGate(req, res, "writer")) return;
+    const u = supaUserOf(req)!;
+    const b = (req.body || {}) as Record<string, unknown>;
+    const raw = typeof b.x === "string" ? b.x.trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, "").replace(/[/?].*$/, "") : "";
+    if (raw && !/^[A-Za-z0-9_]{1,15}$/.test(raw)) { res.status(400).json({ error: "bad_handle", message: "An X handle is 1 to 15 letters, numbers or underscores." }); return; }
+    const blog = { ...(u.blog || {}), x: raw || null };
+    const { error } = await supa!.auth.admin.updateUserById(u.id, { app_metadata: { blog } });
+    if (error) { res.status(502).json({ error: "save_failed", message: "Couldn't save that. Try again." }); return; }
+    supaTokenCache.clear();                       // the next /api/desk/me and the next submission see the new handle
+    console.log(`[desk] ${u.id.slice(0, 8)} set X handle ${raw ? "@" + raw : "(none)"}`);
+    res.json({ x: raw || null });
+  })
+);
 
 app.get(
   "/api/desk/queue",
@@ -6084,9 +6116,11 @@ app.get(
       const st = await deskJson(`_submissions/${id}/status.json`);
       const preview = typeof st?.preview === "string" && /^\/preview\/[A-Za-z0-9_-]{32,64}$/.test(st.preview) ? st.preview : null;
       const url = typeof st?.url === "string" && /^https:\/\/(www\.)?mvpeav\.com\/blog\//.test(st.url) ? st.url : null;
+      // a piece the bot wrote from his outline (2026-10-29): he edits it himself, with the workspace link the bot wrote for him
+      const edit = typeof st?.edit === "string" && /^\/preview\/[A-Za-z0-9_-]{32,64}#edit=[A-Za-z0-9_-]{16,128}$/.test(st.edit) ? st.edit : null;
       return { id, title: String(st?.title || sub.title || ""), at: sub.at || null, sport: sub.sport || null,
                status: String(st?.status || "submitted"), message: st?.message ? String(st.message) : null,
-               scheduled_at: st?.scheduled_at || null, preview, url };
+               scheduled_at: st?.scheduled_at || null, preview, url, edit, mode: sub.mode === "outline" ? "outline" : "written" };
     }));
     res.json({ submissions: rows.filter(Boolean).slice(0, 50) });
   })
@@ -6127,6 +6161,11 @@ app.post(
     const upload = str("upload", 40);
     const fileName = str("file_name", 120);
     const docId = str("doc_id", 40);
+    // 2026-10-29: "outline" = he sent an outline and wants BlogBot to write the piece (he edits it after); image_bot = let the
+    // bot fill in pictures for every section once it's in
+    const mode = b.mode === "outline" ? "outline" : "written";
+    const imageBot = b.image_bot === true;
+    const minWords = mode === "outline" ? 15 : 50;
     const bad = (message: string) => res.status(400).json({ error: "bad_submission", message });
     // the title is optional (owner 2026-10-21): BlogBot writes headline ideas when he leaves it blank
     if (title && title.length < 3) { bad("That title is too short. Leave it blank and the editor will write one."); return; }
@@ -6137,8 +6176,8 @@ app.post(
       doc = await deskDocOf(uid, docId);
       if (!doc) { bad("That document isn't here any more. Reload the page."); return; }
       if (doc.submitted) { bad("That one's already been sent."); return; }
-      if (deskWordCount(doc.blocks) < 50) { bad("Write at least a few paragraphs before sending it."); return; }
-    } else if (!upload && text.trim().split(/\s+/).length < 50) { bad("Attach your Word file or paste the article (at least a few paragraphs)."); return; }
+      if (deskWordCount(doc.blocks) < minWords) { bad(mode === "outline" ? "Give the outline a few headings and points first." : "Write at least a few paragraphs before sending it."); return; }
+    } else if (!upload && text.trim().split(/\s+/).length < minWords) { bad(mode === "outline" ? "Paste the outline first (a few headings and points)." : "Attach your Word file or paste the article (at least a few paragraphs)."); return; }
     if (!deskRateOk(`sub:${uid}`, 10)) { res.status(429).json({ error: "rate_limited", message: "That's a lot of submissions in an hour. Give it a while." }); return; }
     if (!st.byline) { res.status(403).json({ error: "not_staff", message: "Your byline isn't set up yet. Ask MVPeav." }); return; }
     const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
@@ -6164,7 +6203,7 @@ app.post(
                   sport: doc ? (DESK_SPORTS.has(doc.sport) ? doc.sport : sport) : sport, note: doc ? (note || doc.note) : note,
                   text: upload || doc ? "" : text,
                   file: upload ? "original.docx" : null, file_name: upload ? (fileName || "Word file") : doc ? "written on the site" : null,
-                  doc: doc ? "doc.json" : null, at: new Date().toISOString() };
+                  doc: doc ? "doc.json" : null, mode, image_bot: imageBot, at: new Date().toISOString() };
     // submission.json goes LAST: the PC only picks up a submission once it's there, so it never sees half of one
     const { error } = await bucket.upload(`_submissions/${id}/submission.json`, Buffer.from(JSON.stringify(sub)),
       { contentType: "application/json", upsert: false });

@@ -159,14 +159,15 @@ export default function DeskWrite() {
     return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("beforeunload", onBefore); flush(); };
   }, [persist]);
 
-  const send = async (fields: { title: string; sport: string; summary: string; note: string }) => {
+  const send = async (fields: SendFields) => {
     const d = docRef.current!;
-    change(fields);
+    const { mode, image_bot, ...docFields } = fields;
+    change(docFields);
     if (timer.current) window.clearTimeout(timer.current);
     await persist();
     if (dirty.current) throw new Error("Couldn't save the latest changes. Check the connection and try again.");
     const r = await deskFetch<{ id: string }>("/api/desk/submissions", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc_id: d.id, ...fields }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ doc_id: d.id, ...docFields, mode, image_bot }),
     });
     const now = new Date().toISOString();
     docRef.current = { ...docRef.current!, submitted: { sid: r.id, at: now } };
@@ -199,7 +200,7 @@ export default function DeskWrite() {
         <Link to="/desk" className="desk-link">← Writers' desk</Link>
         <span className={`dwp__status dwp__status--${locked ? "sent" : save.state}`}>{status}</span>
         <span className="desk-muted desk-small">{words} words</span>
-        {!locked && <button type="button" className="ui-btn" data-on="true" disabled={words < 50} onClick={() => setSendOpen(true)}>Send to the editor</button>}
+        {!locked && <button type="button" className="ui-btn" data-on="true" disabled={words < 15} onClick={() => setSendOpen(true)}>Send to the editor</button>}
         {locked && <button type="button" className="ui-btn" onClick={makeCopy}>Make a copy</button>}
       </div>
       {save.state === "error" && save.msg && <p className="desk-err">{save.msg}</p>}
@@ -294,19 +295,27 @@ function LookupPanel({ docId, onClose, onInsert, locked }: { docId: string; onCl
   );
 }
 
-function SendSheet({ doc, onClose, onSend }: { doc: DeskDoc; onClose: () => void; onSend: (f: { title: string; sport: string; summary: string; note: string }) => Promise<void> }) {
+type SendFields = { title: string; sport: string; summary: string; note: string; mode: "written" | "outline"; image_bot: boolean };
+
+function SendSheet({ doc, onClose, onSend }: { doc: DeskDoc; onClose: () => void; onSend: (f: SendFields) => Promise<void> }) {
   const [title, setTitle] = useState(doc.title);
   const [sport, setSport] = useState(doc.sport || "nfl");
   const [summary, setSummary] = useState(doc.summary);
   const [note, setNote] = useState(doc.note);
+  // owner 2026-10-29: a writer may send an OUTLINE and have BlogBot write the piece (he edits it after), and may let the
+  // image bot fill in pictures for every section
+  const [mode, setMode] = useState<"written" | "outline">("written");
+  const [imageBot, setImageBot] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const asks = doc.blocks.filter((b) => b.kind === "insert").length;
+  const words = doc.blocks.reduce((n, b) => n + (b.kind === "insert" ? 0 : b.html.replace(/<[^>]+>/g, " ").trim().split(/\s+/).filter(Boolean).length), 0);
   const go = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
+    if (mode === "written" && words < 50) { setErr("That's short for a finished article. If it's an outline, pick “Have BlogBot write it” below."); return; }
     setBusy(true); setErr(null);
-    try { await onSend({ title: title.trim(), sport, summary: summary.trim(), note: note.trim() }); }
+    try { await onSend({ title: title.trim(), sport, summary: summary.trim(), note: note.trim(), mode, image_bot: imageBot }); }
     catch (e: any) { setErr(String(e?.message || e)); setBusy(false); }
   };
   return (
@@ -329,8 +338,23 @@ function SendSheet({ doc, onClose, onSend }: { doc: DeskDoc; onClose: () => void
           <span>Note for the editor <em>(optional)</em></span>
           <textarea className="ui-sel" rows={3} value={note} maxLength={2000} onChange={(e) => setNote(e.target.value)} placeholder="Anything he should know: when it should go up, what to look for…" />
         </label>
+        <fieldset className="desk-field dw-send__mode">
+          <span>What should happen to it?</span>
+          <label className="dw-send__opt">
+            <input type="radio" name="mode" checked={mode === "written"} onChange={() => setMode("written")} />
+            <span><b>It's finished: use my words as written.</b> The editor fixes typos, adds pictures and clips, and publishes.</span>
+          </label>
+          <label className="dw-send__opt">
+            <input type="radio" name="mode" checked={mode === "outline"} onChange={() => setMode("outline")} />
+            <span><b>It's an outline: have BlogBot write it.</b> Your headings and points are the structure; the bot researches and writes a full draft under your name, then you open it and tweak it, add your color, swap pictures. The editor publishes when you're done.</span>
+          </label>
+        </fieldset>
+        <label className="dw-send__opt">
+          <input type="checkbox" checked={imageBot} onChange={(e) => setImageBot(e.target.checked)} />
+          <span><b>Let the image bot fill in pictures.</b> Every section gets a picture idea or a graphic; the editor approves them.</span>
+        </label>
         <p className="desk-small desk-muted">
-          Your words go up exactly as you wrote them; the editor fixes typos, adds the pictures and clips, and publishes.
+          {mode === "written" ? "Your words go up exactly as you wrote them." : "BlogBot writes it from your outline; what you send here is the plan, not the article."}
           {asks > 0 && ` Your ${asks} insert${asks === 1 ? "" : "s"} go with it.`} You can't edit it here after sending (make a copy if you need to).
         </p>
         {err && <p className="desk-err">{err}</p>}

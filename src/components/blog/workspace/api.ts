@@ -1,6 +1,7 @@
 // Talking to the bot through the site: queued edits/actions, their results, photo uploads (WORKSPACE.md §2).
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getAccessToken } from "../../../lib/supabase";
 
 export type JobStatus = "working" | "saved" | "done" | "queued" | "refused" | "failed";
 export type Job = {
@@ -97,9 +98,11 @@ export function useJobs(token: string, secret: string, onSettled: () => void) {
 
 /** POST one action. -> {ok, id} or {ok: false, message} (the 4xx/5xx answer, ready to show). */
 export async function postAction(token: string, secret: string, type: string, args: Record<string, unknown>, base: number | null) {
+  // signed in as the editor? say so: on a writer's piece only the editor may publish (the server checks)
+  const jwt = await getAccessToken().catch(() => null);
   const r = await fetch(`${api(token)}/actions`, {
     method: "POST", cache: "no-store",
-    headers: { "Content-Type": "application/json", "X-Preview-Edit": secret },
+    headers: { "Content-Type": "application/json", "X-Preview-Edit": secret, ...(jwt ? { authorization: `Bearer ${jwt}` } : {}) },
     body: JSON.stringify({ type, args, base_version: base }),
   }).catch(() => null);
   if (!r) return { ok: false as const, status: 0, message: "No connection. Try again." };
