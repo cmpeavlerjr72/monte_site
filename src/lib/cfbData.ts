@@ -40,6 +40,32 @@ export type Season = string;
 /** What an un-parameterized getCatalog() call resolves to. */
 export const DEFAULT_SEASON: Season = "2025";
 
+/* ---------------------------------- sport ---------------------------------
+ * The basketball dataset (`mvpeav/cbb-sims-2027`) mirrors the football layout
+ * key for key, with DAYS in place of WEEKS: `2027/days/<YYYY-MM-DD>/...`. It
+ * is addressed by the namespace "cbb-<season>" ("cbb-2027"), which every
+ * fetch below resolves to repo `cbb-sims-2027`, root dir `2027` and period
+ * dir `days`. Football namespaces ("2026", "fcs-2026") are untouched: their
+ * repo is still `cfb-sims-<ns>`, root `<ns>`, period dir `weeks`.
+ * ------------------------------------------------------------------------ */
+
+export type SportKey = "cfb" | "cbb";
+
+/** Which sport a dataset namespace belongs to. */
+export function sportOfNamespace(ns: Season): SportKey {
+  return /^cbb-\d{4}$/.test(String(ns)) ? "cbb" : "cfb";
+}
+
+/** The directory the per-period folders live under: `weeks` (football) or
+ *  `days` (basketball). Every `weeks/<id>/...` path in the libs reads this. */
+export function periodDir(ns: Season): "weeks" | "days" {
+  return sportOfNamespace(ns) === "cbb" ? "days" : "weeks";
+}
+
+/** Basketball namespaces the UI offers, newest first (the 2026-27 season is
+ *  season 2027 in the basketball project). */
+export const CBB_SEASONS: readonly Season[] = ["cbb-2027"];
+
 /* --------------------------------- division -------------------------------
  * FBS and FCS are published as two separate datasets with an identical
  * layout. The scoreboard can show either or both, so the division travels
@@ -65,11 +91,20 @@ export function namespaceFor(division: Division, season: Season): Season {
 export const fcsAvailableFor = (season: Season): boolean =>
   FCS_SEASONS.includes(String(season));
 
-const repoForSeason = (season: Season) => `cfb-sims-${season}`;
+const repoForSeason = (season: Season) => {
+  const cbb = /^cbb-(\d{4})$/.exec(String(season));
+  return cbb ? `cbb-sims-${cbb[1]}` : `cfb-sims-${season}`;
+};
+/** Root directory inside the repo: the namespace itself for football, the
+ *  bare season year for basketball ("cbb-2027" -> "2027"). */
+const rootDirForSeason = (season: Season) => {
+  const cbb = /^cbb-(\d{4})$/.exec(String(season));
+  return cbb ? cbb[1] : String(season);
+};
 const proxyBase = (season: Season) =>
-  `/api/data/${repoForSeason(season)}/${season}`;
+  `/api/data/${repoForSeason(season)}/${rootDirForSeason(season)}`;
 const hubBase = (season: Season) =>
-  `https://huggingface.co/datasets/mvpeav/${repoForSeason(season)}/resolve/main/${season}`;
+  `https://huggingface.co/datasets/mvpeav/${repoForSeason(season)}/resolve/main/${rootDirForSeason(season)}`;
 
 export type WeekMeta = {
   /** Directory name in the dataset, e.g. "week05". */
@@ -86,6 +121,8 @@ export type WeekMeta = {
   legacyKey: string;
   nGames: number;
   hasOpen: boolean;
+  /** Basketball only: the calendar day (YYYY-MM-DD) this entry IS. */
+  date?: string;
 };
 
 /** Matches the shape the pages' existing CSV parsers accept. */
@@ -102,6 +139,9 @@ export type GameMeta = {
 export type CfbCatalog = {
   /** Which season this catalog describes. */
   season: Season;
+  /** What one entry of `weeks` is: a football week or a basketball day. */
+  periods: "weeks" | "days";
+  /** The season's periods, in index order (football weeks or basketball days). */
   weeks: WeekMeta[];
   /** One bundled file per week containing every game's score sims. */
   scoreFiles: FileItem[];
@@ -127,7 +167,7 @@ const weekIndexCache = new Map<string, Promise<GameMeta[]>>();
 export class DatasetUnavailable extends Error {
   readonly season: Season;
   constructor(season: Season) {
-    super(`cfb ${season} dataset unreachable (proxy and hub both failed)`);
+    super(`${sportOfNamespace(season)} ${season} dataset unreachable (proxy and hub both failed)`);
     this.name = "DatasetUnavailable";
     this.season = season;
   }
@@ -206,6 +246,32 @@ function parseWeekEntry(w: any): WeekMeta | null {
   };
 }
 
+/**
+ * One entry of a basketball season_index.json `days` list:
+ *   {day: "2026-11-02", id: "2026-11-02", dir: "days/2026-11-02",
+ *    label: "Mon Nov 2", n_games, has_open, updated}
+ * Mapped onto WeekMeta so every page-level consumer (period dropdown, latest
+ * period, deep links) is the same code for both sports. `week` carries the
+ * date as YYYYMMDD so `latestWeek`'s "highest number wins" still orders days.
+ */
+function parseDayEntry(d: any): WeekMeta | null {
+  if (!d) return null;
+  const dirRaw = String(d.dir ?? "").trim();
+  const dirLeaf = dirRaw ? dirRaw.split("/").filter(Boolean).pop() ?? "" : "";
+  const date = String(d.day ?? d.date ?? d.id ?? dirLeaf ?? "").trim();
+  const id = String(d.id ?? "").trim() || dirLeaf || date;
+  if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return {
+    id,
+    week: Number(date.replace(/-/g, "")),
+    label: String(d.label ?? date),
+    legacyKey: id.toLowerCase(),
+    nGames: Number(d.n_games ?? d.nGames ?? 0),
+    hasOpen: Boolean(d.has_open ?? d.hasOpen),
+    date,
+  };
+}
+
 export async function getCatalog(
   season: Season = DEFAULT_SEASON
 ): Promise<CfbCatalog> {
@@ -218,30 +284,35 @@ export async function getCatalog(
     if (!res.ok) throw new Error(`season_index ${season} ${res.status}`);
     const json = await res.json();
 
-    const weeks: WeekMeta[] = ((json?.weeks ?? []) as any[])
-      .map(parseWeekEntry)
-      .filter((w): w is WeekMeta => w !== null);
+    // Football publishes `weeks`, basketball `days` (same fields, a `day`
+    // date in place of the `week` number). The namespace decides which list
+    // is read, so a stray key in the other sport's file is never mistaken.
+    const periods = periodDir(season);
+    const weeks: WeekMeta[] = periods === "days"
+      ? ((json?.days ?? []) as any[]).map(parseDayEntry).filter((w): w is WeekMeta => w !== null)
+      : ((json?.weeks ?? []) as any[]).map(parseWeekEntry).filter((w): w is WeekMeta => w !== null);
 
     const scoreFiles: FileItem[] = weeks.map((w) => ({
       week: w.legacyKey,
       file: `${w.id}_scores_bundle.csv`,
-      url: `${root}/weeks/${w.id}/scores_bundle.csv`,
+      url: `${root}/${periods}/${w.id}/scores_bundle.csv`,
     }));
     const gamesFiles: FileItem[] = weeks.map((w) => ({
       week: w.legacyKey,
       file: `${w.id}_games.csv`,
-      url: `${root}/weeks/${w.id}/games.csv`,
+      url: `${root}/${periods}/${w.id}/games.csv`,
     }));
     const openFiles: FileItem[] = weeks
       .filter((w) => w.hasOpen)
       .map((w) => ({
         week: w.legacyKey,
         file: `${w.id}_open.csv`,
-        url: `${root}/weeks/${w.id}/open.csv`,
+        url: `${root}/${periods}/${w.id}/open.csv`,
       }));
 
     return {
       season,
+      periods,
       weeks,
       scoreFiles,
       gamesFiles,
@@ -320,7 +391,7 @@ export async function getWeekGames(
 
   const promise = (async () => {
     const root = await resolveBase(season);
-    const res = await fetch(`${root}/weeks/${id}/index.json`);
+    const res = await fetch(`${root}/${periodDir(season)}/${id}/index.json`);
     if (!res.ok) throw new Error(`week index ${season}/${id} ${res.status}`);
     const json = await res.json();
     return (json?.games ?? []) as GameMeta[];
@@ -347,7 +418,7 @@ export async function getPlayerFiles(
     .map((g) => ({
       week: weekKey,
       file: `players_${g.slug}.csv`,
-      url: `${root}/weeks/${id}/players/${g.slug}.csv`,
+      url: `${root}/${periodDir(season)}/${id}/players/${g.slug}.csv`,
     }));
 }
 
@@ -382,7 +453,7 @@ export async function playerFileForPair(
   return {
     week: weekKey,
     file: `players_${hit.slug}.csv`,
-    url: `${root}/weeks/${id}/players/${hit.slug}.csv`,
+    url: `${root}/${periodDir(season)}/${id}/players/${hit.slug}.csv`,
   };
 }
 
@@ -409,6 +480,6 @@ export async function scoreFileForPair(
   return {
     week: weekKey,
     file: `scores_${hit.slug}.csv`,
-    url: `${root}/weeks/${id}/scores/${hit.slug}.csv`,
+    url: `${root}/${periodDir(season)}/${id}/scores/${hit.slug}.csv`,
   };
 }

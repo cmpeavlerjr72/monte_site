@@ -95,6 +95,8 @@ export default function LegPicker({
   const [team, setTeam] = useState<TeamRef>("A");
   const [side, setSide] = useState<Side>("over");
   const [playerName, setPlayerName] = useState("");
+  // Reconciled to the player's first available stat by the effect below, so
+  // a basketball seeds file (no pass_yds) lands on its own first column.
   const [stat, setStat] = useState("pass_yds");
   const [line, setLine] = useState("");
   const [lineTouched, setLineTouched] = useState(false);
@@ -113,7 +115,9 @@ export default function LegPicker({
         name,
         team: m?.team ?? "",
         role: m?.role,
-        usage: g("pass_att") + g("rush_att") + g("tgt"),
+        // Football touches, or basketball minutes — whichever keys the
+        // players file carries; the other sport's keys read as 0.
+        usage: g("pass_att") + g("rush_att") + g("tgt") + g("min"),
       });
     }
     // Home team first, then usage descending — the order a bettor scans.

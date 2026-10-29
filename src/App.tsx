@@ -212,9 +212,13 @@ export default function App() {
           <Route path="/results" element={<Navigate to="/cfb/record/2025" replace />} />
           <Route path="/game/*" element={<RedirectKeepSearch to="/cfb/scoreboard" />} />
 
-          {/* CBB */}
+          {/* CBB. The football V2 board IS the basketball scoreboard too
+              (one component, sport="cbb": the 2027 dataset mirrors the
+              football layout with days in place of weeks); the old basketball
+              page stays reachable at -classic, like football's. */}
           <Route path="/cbb" element={<SportHomeOrBoard sport="cbb" />} />
-          <Route path="/cbb/scoreboard" element={<CBB_Sims />} />
+          <Route path="/cbb/scoreboard" element={<ScoreboardV2 sport="cbb" />} />
+          <Route path="/cbb/scoreboard-classic" element={<CBB_Sims />} />
           <Route path="/cbb/results" element={<ResultsCBB />} />
           <Route path="/cbb/bracket" element={
             <SeasonGate gate={GATES.cbbBracket} archive title="March 2026 bracket (archive)"

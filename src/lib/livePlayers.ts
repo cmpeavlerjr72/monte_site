@@ -10,7 +10,7 @@
 //
 // Same quiet-null contract as liveGrid.ts: an unpublished file is expected.
 
-import { dataUrl, type Season } from "./cfbData";
+import { dataUrl, periodDir, type Season } from "./cfbData";
 import { useEffect, useState } from "react";
 
 export type LivePlayer = {
@@ -63,7 +63,7 @@ export function useLivePlayers(
     const ac = new AbortController();
     (async () => {
       try {
-        const url = await dataUrl(`weeks/${weekId}/games/${slug}/live_players.json`, ns);
+        const url = await dataUrl(`${periodDir(ns)}/${weekId}/games/${slug}/live_players.json`, ns);
         const res = await fetch(url, { signal: ac.signal, cache: "no-store" });
         if (!res.ok) return;
         const parsed = parseLivePlayers(await res.json());

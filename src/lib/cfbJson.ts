@@ -25,7 +25,7 @@
 //   A_win_prob    = P(home wins)
 //   odds.spread_* is home-perspective (negative = home favored)
 
-import { dataUrl, type Season } from "./cfbData";
+import { dataUrl, periodDir, type Season } from "./cfbData";
 
 /** One row of the new-contract week index. */
 export type JsonWeekRow = {
@@ -111,8 +111,9 @@ async function fetchJson(url: string, signal?: AbortSignal): Promise<any> {
 
 const stripSlashes = (s: string) => s.replace(/^\/+/, "");
 
-/** Normalize an index row; returns null if it has no usable identity. */
-function parseWeekRow(raw: any, weekId: string): JsonWeekRow | null {
+/** Normalize an index row; returns null if it has no usable identity.
+ *  `dir` is the period directory ("weeks" | "days") for the path fallbacks. */
+function parseWeekRow(raw: any, weekId: string, dir: "weeks" | "days" = "weeks"): JsonWeekRow | null {
   if (!raw) return null;
   const teamA = String(raw.teamA ?? raw.team_a ?? raw.home ?? "").trim();
   const teamB = String(raw.teamB ?? raw.team_b ?? raw.away ?? "").trim();
@@ -123,7 +124,7 @@ function parseWeekRow(raw: any, weekId: string): JsonWeekRow | null {
   // if a future export drops them. Game JSON lives under the WEEK directory.
   const summaryPath =
     String(raw.summary_path ?? raw.summaryPath ?? "").trim() ||
-    `weeks/${weekId}/games/${slug}/summary.json`;
+    `${dir}/${weekId}/games/${slug}/summary.json`;
 
   return {
     game_id: raw.game_id != null ? String(raw.game_id) : undefined,
@@ -335,7 +336,7 @@ export function getRegimeTrendCached(
   const memo = regimeTrendCache.get(key);
   if (memo) return memo;
   const promise = (async () => {
-    const rel = `weeks/${weekId}/regime_trend.json`;
+    const rel = `${periodDir(season)}/${weekId}/regime_trend.json`;
     const url = await dataUrl(rel, season);
     const res = await fetch(url, { signal, cache: "no-store" });
     if (res.status === 404) return null;
@@ -378,7 +379,8 @@ export function getWeekEngineCached(
   const memo = weekEngineCache.get(key);
   if (memo) return memo;
   const promise = (async () => {
-    for (const rel of [`weeks/${weekId}/index.json`, `weeks/${weekId}/games/index.json`]) {
+    const dir = periodDir(season);
+    for (const rel of [`${dir}/${weekId}/index.json`, `${dir}/${weekId}/games/index.json`]) {
       try {
         const json = await fetchJson(await dataUrl(rel, season), signal);
         if (!json || typeof json !== "object") continue;
@@ -408,9 +410,10 @@ export async function getJsonWeekIndex(
   season: Season,
   signal?: AbortSignal
 ): Promise<JsonWeekRow[] | null> {
+  const dir = periodDir(season);
   const candidates = [
-    `weeks/${weekId}/index.json`,
-    `weeks/${weekId}/games/index.json`,
+    `${dir}/${weekId}/index.json`,
+    `${dir}/${weekId}/games/index.json`,
   ];
 
   for (const rel of candidates) {
@@ -425,7 +428,7 @@ export async function getJsonWeekIndex(
       if (!isNewContract) continue;
 
       const rows = raw
-        .map((r: any) => parseWeekRow(r, weekId))
+        .map((r: any) => parseWeekRow(r, weekId, dir))
         .filter((r): r is JsonWeekRow => r !== null);
       if (rows.length) return rows;
     } catch (err) {
@@ -455,19 +458,36 @@ export async function getJsonWeekGames(
 
   return Promise.all(
     rows.map(async (row) => {
-      try {
-        const summary = parseSummary(
-          await fetchJson(await dataUrl(row.summary_path, season), signal)
-        );
-        return { row, summary };
-      } catch (err) {
-        if ((err as any)?.name === "AbortError") throw err;
-        console.warn(`[cfbJson] summary failed for ${row.slug}:`, err);
-        return { row, summary: null };
+      // ONE retry after a short pause. A cold load fans out one summary
+      // fetch per game (118 on a basketball day) and the proxy's upstream
+      // TTFB deadline can abort a single one; without this that game's card
+      // silently vanished until the next reload (seen 2026-10-29). A caller
+      // abort (week switch, unmount) is never retried. The fan-out itself is
+      // unchanged: the retry is one more request for one failed game.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const summary = parseSummary(
+            await fetchJson(await dataUrl(row.summary_path, season), signal)
+          );
+          return { row, summary };
+        } catch (err) {
+          if ((err as any)?.name === "AbortError" || signal?.aborted) throw err;
+          if (attempt < SUMMARY_RETRIES) {
+            await new Promise((r) => setTimeout(r, SUMMARY_RETRY_DELAY_MS));
+            if (signal?.aborted) throw err;
+            continue;
+          }
+          console.warn(`[cfbJson] summary failed for ${row.slug} after ${attempt + 1} attempts:`, err);
+          return { row, summary: null };
+        }
       }
     })
   );
 }
+
+/** One retry, 400ms later, for a per-game summary fetch (see getJsonWeekGames). */
+const SUMMARY_RETRIES = 1;
+const SUMMARY_RETRY_DELAY_MS = 400;
 
 /**
  * compact.json — quantiles, histograms AND the raw per-seed point arrays
@@ -924,7 +944,7 @@ export async function getPropsOdds(
   weekId: string,
   signal?: AbortSignal
 ): Promise<PropsOdds> {
-  const rel = `weeks/${weekId}/props_odds.json`;
+  const rel = `${periodDir(season)}/${weekId}/props_odds.json`;
   const url = await dataUrl(rel, season);
   const res = await fetch(url, { signal });
   if (res.status === 404) throw new PropsNotPublished(rel);
@@ -1197,7 +1217,7 @@ export async function getTeamMarkets(
   weekId: string,
   signal?: AbortSignal
 ): Promise<TeamMarkets> {
-  const rel = `weeks/${weekId}/team_markets.json`;
+  const rel = `${periodDir(season)}/${weekId}/team_markets.json`;
   const url = await dataUrl(rel, season);
   // no-store: the established rule (see AGENT_BRIEF #3) — the browser held
   // stale week files for 15 min without it.
@@ -1369,7 +1389,7 @@ export async function getTeamStats(
   weekId: string,
   signal?: AbortSignal
 ): Promise<TeamStats> {
-  const rel = `weeks/${weekId}/team_stats.json`;
+  const rel = `${periodDir(season)}/${weekId}/team_stats.json`;
   const url = await dataUrl(rel, season);
   // no-store: the established rule (see AGENT_BRIEF #3).
   const res = await fetch(url, { signal, cache: "no-store" });

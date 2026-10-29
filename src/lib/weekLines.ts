@@ -11,7 +11,7 @@
 // namespaces that never get one, a week the exporter has not reached yet) —
 // every failure mode here is a quiet `null`, mirroring src/lib/liveGrid.ts.
 
-import { dataUrl, type Season } from "./cfbData";
+import { dataUrl, periodDir, type Season } from "./cfbData";
 import { useEffect, useState } from "react";
 
 /** Which line to grade against — open (bets go in early in the week, the
@@ -154,7 +154,7 @@ export async function fetchWeekLines(
 ): Promise<WeekLines | null> {
   let url: string;
   try {
-    url = await dataUrl(`weeks/${weekId}/lines.json`, ns);
+    url = await dataUrl(`${periodDir(ns)}/${weekId}/lines.json`, ns);
   } catch {
     return null; // dataset unresolvable (e.g. not-yet-published namespace)
   }

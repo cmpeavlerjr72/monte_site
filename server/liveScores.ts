@@ -1022,6 +1022,9 @@ const HF_LIVE_REPOS = new Set<string>([
   "cfb-sims-fcs-2026",
   "cfb-playoff-compacts-2026",
   "cbb-sims-2026",
+  // 2026-27 CBB sims (season 2027 in the basketball project): the daily
+  // chain's mirror of the football layout, read by /cbb/scoreboard.
+  "cbb-sims-2027",
   "mlb-sims-2026",
   "nascar-predictions",
   "tennis-predictions",

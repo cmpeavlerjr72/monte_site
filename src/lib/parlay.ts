@@ -130,6 +130,21 @@ export const PROP_STATS: { key: string; label: string }[] = [
   { key: "rec_yds",   label: "Rec Yds" },
   { key: "rec_td",    label: "Rec TD" },
   { key: "tgt",       label: "Targets" },
+  // Basketball (cbb-sims seeds.json publishes pts, reb, ast, fg3m, pra per
+  // player). Same list on purpose: a leg's stat key is whatever the seeds
+  // file calls it, and the picker offers only the keys a player has.
+  { key: "pts",       label: "Points" },
+  { key: "reb",       label: "Rebounds" },
+  { key: "ast",       label: "Assists" },
+  { key: "fg3m",      label: "3PM" },
+  { key: "pra",       label: "Pts+Reb+Ast" },
+  { key: "min",       label: "Minutes" },
+  { key: "fgm",       label: "FG made" },
+  { key: "fga",       label: "FG att" },
+  { key: "fg3a",      label: "3PA" },
+  { key: "ftm",       label: "FT made" },
+  { key: "fta",       label: "FT att" },
+  { key: "fouls",     label: "Fouls" },
 ];
 
 export const statLabel = (k: string) =>

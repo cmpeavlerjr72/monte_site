@@ -81,10 +81,25 @@ const STAT_OPTIONS: { key: string; label: string; bin: number; unit: string }[] 
   { key: "pass_comp", label: "Completions", bin: 1,  unit: "completions" },
   { key: "pass_att",  label: "Pass att",    bin: 1,  unit: "pass attempts" },
   { key: "int",       label: "INTs",        bin: 1,  unit: "interceptions" },
+  // Basketball (cbb-sims players_dist.json). Points, minutes and PRA span
+  // wide enough to draw as a silhouette; the rest are small counts.
+  { key: "pts",       label: "Points",      bin: 2,  unit: "points" },
+  { key: "reb",       label: "Rebounds",    bin: 1,  unit: "rebounds" },
+  { key: "ast",       label: "Assists",     bin: 1,  unit: "assists" },
+  { key: "fg3m",      label: "3PM",         bin: 1,  unit: "threes made" },
+  { key: "pra",       label: "Pts+Reb+Ast", bin: 2,  unit: "points + rebounds + assists" },
+  { key: "min",       label: "Minutes",     bin: 2,  unit: "minutes" },
+  { key: "fgm",       label: "FG made",     bin: 1,  unit: "field goals made" },
+  { key: "fga",       label: "FG att",      bin: 1,  unit: "field goal attempts" },
+  { key: "fg3a",      label: "3PA",         bin: 1,  unit: "three-point attempts" },
+  { key: "ftm",       label: "FT made",     bin: 1,  unit: "free throws made" },
+  { key: "fta",       label: "FT att",      bin: 1,  unit: "free throw attempts" },
+  { key: "fouls",     label: "Fouls",       bin: 1,  unit: "fouls" },
 ];
 
-/** Yardage first, then whatever the team actually has most of. */
-const STAT_PREFERENCE = ["rush_yds", "rec_yds", "pass_yds"];
+/** Yardage first (football), points first (basketball), then whatever the
+ *  team actually has most of. */
+const STAT_PREFERENCE = ["rush_yds", "rec_yds", "pass_yds", "pts"];
 
 type StatOption = (typeof STAT_OPTIONS)[number];
 

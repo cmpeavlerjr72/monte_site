@@ -27,9 +27,11 @@ import { useSlateEdges } from "../lib/useSlateEdges";
 import { localizeLogoUrl } from "../utils/espnLogos";
 import {
   getCatalog, playerFileForPair, resolveLatestSeason, latestWeek,
-  invalidateSeason, SEASONS, namespaceFor, fcsAvailableFor,
+  invalidateSeason, SEASONS, CBB_SEASONS, namespaceFor, fcsAvailableFor,
   type CfbCatalog, type Division, type DivisionFilter, type FileItem, type Season,
+  type SportKey, type WeekMeta,
 } from "../lib/cfbData";
+import { todayET as todayEtIso } from "../lib/seasons";
 import {
   getJsonWeekGames, getCompactJson, getCompactCached, getWeekEngineCached,
   getRegimeTrendCached,
@@ -49,7 +51,7 @@ import MyBookPanel from "../components/MyBookPanel";
 import { writeSlateGames } from "../lib/slateCache";
 // Which league a placement is filed under — the merged board is two divisions
 // and the feed says which one (src/lib/leagues.ts).
-import { leagueForDivision } from "../lib/leagues";
+import { leagueForDivision, type LeagueId } from "../lib/leagues";
 import { useSuggestions, type SuggestGame } from "../lib/useSuggestions";
 import { useRestingReview } from "../lib/restingReview";
 import {
@@ -181,8 +183,9 @@ const nameMatches = (
   return pool.some((n) => clean(n) === t);
 };
 
-function mapEspnToLiveGames(payload: any): LiveGame[] {
+function mapEspnToLiveGames(payload: any, sport: SportKey = "cfb"): LiveGame[] {
   const events = payload?.events ?? [];
+  const football = sport === "cfb";
   return events.map((e: any) => {
     const type = e?.status?.type ?? e?.competitions?.[0]?.status?.type ?? {};
     const comp = e?.competitions?.[0];
@@ -203,9 +206,14 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
       /CANCEL|POSTPON|SUSPEND|FORFEIT/.test(name) ||
       (state === "final" && !done && !name.includes("FINAL"));
 
-    // Pill text
+    // Pill text. Football names the quarter; basketball takes ESPN's own
+    // "12:34 - 2nd Half" wording (halves, not quarters, in the college game).
     let statusText = type?.shortDetail || type?.detail || type?.description || "";
-    if (state === "in") statusText = `Q${period ?? "-"} ${clock ?? ""}`.trim();
+    if (state === "in") {
+      statusText = football
+        ? `Q${period ?? "-"} ${clock ?? ""}`.trim()
+        : (type?.shortDetail || `H${period ?? "-"} ${clock ?? ""}`).trim();
+    }
     if (state === "final" && !statusText) statusText = "Final";
 
     return {
@@ -223,12 +231,16 @@ function mapEspnToLiveGames(payload: any): LiveGame[] {
       homeNames: nameForms(home?.team),
       awayNames: nameForms(away?.team),
       noContest: noContest || undefined,
-      situation: state === "in" ? parseSituation(comp) : undefined,
+      // Ball spot / down & distance is a football concept: the field strip
+      // must never draw a gridiron under a basketball game.
+      situation: football && state === "in" ? parseSituation(comp) : undefined,
       period: Number.isFinite(Number(period)) ? Number(period) : undefined,
       clockSec: Number.isFinite(Number(comp?.status?.clock ?? e?.status?.clock))
         ? Number(comp?.status?.clock ?? e?.status?.clock) : undefined,
-      weather: parseEventWeather(e?.weather),
-      indoor: comp?.venue?.indoor === true,
+      // Kick weather is football-only too: every arena is "indoor", and a
+      // "Dome" chip on a basketball card would be noise.
+      weather: football ? parseEventWeather(e?.weather) : null,
+      indoor: football && comp?.venue?.indoor === true,
       broadcast: parseEventBroadcast(comp),
       venue: parseEventVenue(comp),
     };
@@ -482,6 +494,12 @@ function buildPlayerMap(data: any[]): PlayerMap {
 
 /* --------------------- Team logo & conference lookup --------------------- */
 import { getTeamLogo, normTeamKey } from "../utils/teamLogo";
+
+/** ESPN's CDN logo for an NCAA team id. The self-hosted /logos copies cover
+ *  the football schools in team_info.csv; a basketball-only school (or any
+ *  name the CSV does not spell) falls through to this, keyed by the index
+ *  row's A_espn_id / B_espn_id — the same ids the football export carries. */
+const espnCdnLogo = (id: string) => `https://a.espncdn.com/i/teamlogos/ncaa/500/${encodeURIComponent(id)}.png`;
 
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
 const teamInfoRaw = Object.values(TEAM_INFO_RAW)[0] ?? "";
@@ -1302,12 +1320,150 @@ const getSearchParam = (name: string) =>
 // the first visit, so a module-level read went stale for any later in-app
 // deep link (a blog post's "See the live game card" link, say).
 const urlSeason = () => (getSearchParam("season") || "").trim();
-const urlWeek = () => (getSearchParam("week") || "").trim().toLowerCase();
+const urlPeriod = (param: string) => (getSearchParam(param) || "").trim().toLowerCase();
+
+/* ============================== sport config ===============================
+ * ONE board, two sports. The basketball dataset mirrors the football one key
+ * for key with DAYS in place of WEEKS (see src/lib/cfbData.ts `periodDir`),
+ * so everything below the period selector — cards, market grid, charts, box
+ * score, props, parlay slip, search, record strip — is the same code. What
+ * differs is listed here and nowhere else.
+ * ========================================================================= */
+type PanelFeatures = {
+  /** The Live / Game Flow drawer tab. It reads ESPN's football summary and
+   *  probability endpoints (src/lib/espnGame.ts), so it is football-only. */
+  liveGamecast: boolean;
+  /** The Team Stats tab (team_stats.json, built from the football sweep). */
+  teamStats: boolean;
+};
+const ALL_PANELS: PanelFeatures = { liveGamecast: true, teamStats: true };
+
+type SportConfig = {
+  key: SportKey;
+  /** Dataset namespaces the season picker offers, newest first. */
+  seasons: readonly Season[];
+  seasonLabel: (ns: Season) => string;
+  /** Selector noun and the URL deep-link param (?week= vs ?date=). */
+  periodNoun: string;
+  periodParam: "week" | "date";
+  /** Football keeps its week dropdown; basketball gets a day picker. */
+  periodPicker: "dropdown" | "day";
+  /** Which period a cold load lands on. */
+  defaultPeriod: (opts: WeekMeta[], catalog: CfbCatalog | null) => WeekMeta;
+  /** The integer the accounts tables store for this period (`picks.week`). */
+  feedPeriod: (periodId: string) => number;
+  /** The FBS/FCS division axis. */
+  divisions: boolean;
+  /** The conference filter + search text off team_info.csv (a football file). */
+  conferences: boolean;
+  /** The Kalshi + DK market feeds (/api/kalshi/cfb, /api/dk/cfb are NCAAF). */
+  markets: boolean;
+  /** Accounts attribution for a placement; undefined = per division (football). */
+  league?: LeagueId;
+  panels: PanelFeatures;
+  /** "Kickoff" / "Tipoff" — the sort option. */
+  startWord: string;
+  classicPath: string;
+};
+
+/** Whole days between two YYYY-MM-DD strings (a - b). */
+const dayDiff = (a: string, b: string) => (Date.parse(a) - Date.parse(b)) / 86_400_000;
+
+const SPORT_CFG: Record<SportKey, SportConfig> = {
+  cfb: {
+    key: "cfb",
+    seasons: SEASONS,
+    seasonLabel: (ns) => String(ns),
+    periodNoun: "Week",
+    periodParam: "week",
+    periodPicker: "dropdown",
+    // Latest available week of the season. (weeks[0] in an ascending
+    // season_index is the OLDEST week — 2025 opened on Week 0's four games.)
+    defaultPeriod: (opts, catalog) => latestWeek(catalog) ?? opts[opts.length - 1],
+    feedPeriod: (id) => { const m = String(id).match(/(\d+)/); return m ? Number(m[1]) : 0; },
+    divisions: true,
+    conferences: true,
+    markets: true,
+    panels: ALL_PANELS,
+    startWord: "Kickoff",
+    classicPath: "/cfb/scoreboard-classic",
+  },
+  cbb: {
+    key: "cbb",
+    seasons: CBB_SEASONS,
+    seasonLabel: (ns) => { const y = Number(String(ns).replace(/\D/g, "")); return y ? `${y - 1}-${String(y).slice(2)}` : String(ns); },
+    periodNoun: "Day",
+    periodParam: "date",
+    periodPicker: "day",
+    // TODAY in US/Eastern when the index has it; otherwise the nearest
+    // published day, ties to the future (a preseason viewer wants opening
+    // night, not an empty board).
+    defaultPeriod: (opts) => {
+      const today = todayEtIso();
+      const exact = opts.find((w) => w.date === today);
+      if (exact) return exact;
+      let best = opts[opts.length - 1];
+      let bestD = Infinity;
+      for (const w of opts) {
+        if (!w.date) continue;
+        const d = Math.abs(dayDiff(w.date, today));
+        if (d < bestD || (d === bestD && w.date > today)) { best = w; bestD = d; }
+      }
+      return best;
+    },
+    // YYYYMMDD: one integer per day, so a day's picks never collide.
+    feedPeriod: (id) => Number(String(id).replace(/\D/g, "")) || 0,
+    divisions: false,
+    conferences: false,
+    markets: false,
+    league: "ncaab",
+    panels: { liveGamecast: false, teamStats: false },
+    startWord: "Tipoff",
+    classicPath: "/cbb/scoreboard-classic",
+  },
+};
+
+/** The basketball period control: previous day, the day list (same look as
+ *  the football week dropdown), next day. Steps through PUBLISHED days only. */
+function DayPicker({ options, value, onChange }: {
+  options: WeekMeta[]; value: string; onChange: (legacyKey: string) => void;
+}) {
+  const idx = options.findIndex((w) => w.legacyKey === value);
+  const prev = idx > 0 ? options[idx - 1] : null;
+  const next = idx >= 0 && idx < options.length - 1 ? options[idx + 1] : null;
+  const arrow = { padding: "4px 9px", fontWeight: 800, lineHeight: "18px" } as const;
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <button type="button" className="ui-btn" aria-label="Previous day" title={prev?.label}
+        disabled={!prev} onClick={() => prev && onChange(prev.legacyKey)} style={arrow}>
+        ‹
+      </button>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={!options.length}
+        className="ui-sel"
+        aria-label="Day"
+        style={{ maxWidth: 190, fontWeight: 800, fontSize: 14, color: "var(--brand-text)" }}
+      >
+        {!options.length && <option value="">—</option>}
+        {options.map((w) => (
+          <option key={w.id} value={w.legacyKey}>{w.label}</option>
+        ))}
+      </select>
+      <button type="button" className="ui-btn" aria-label="Next day" title={next?.label}
+        disabled={!next} onClick={() => next && onChange(next.legacyKey)} style={arrow}>
+        ›
+      </button>
+    </div>
+  );
+}
 
 /* --------------------- page --------------------- */
-function ScoreboardPage() {
+function ScoreboardPage({ sport }: { sport: SportKey }) {
+  const cfg = SPORT_CFG[sport];
   const URL_SEASON = useRef(urlSeason()).current;
-  const URL_WEEK = useRef(urlWeek()).current;
+  const URL_WEEK = useRef(urlPeriod(cfg.periodParam)).current;
   /** ?game=<ESPN game id>: scroll that card into view and flash it once the
    *  slate has rendered (blog previews deep-link here). Consumed once. */
   const focusGameRef = useRef((getSearchParam("game") || "").trim());
@@ -1322,7 +1478,7 @@ function ScoreboardPage() {
    * 2026 once that dataset is published and quietly stays on 2025 until then.
    */
   const [season, setSeason] = useState<Season>(
-    (SEASONS as readonly string[]).includes(URL_SEASON) ? URL_SEASON : ""
+    (cfg.seasons as readonly string[]).includes(URL_SEASON) ? URL_SEASON : ""
   );
   const [catalog, setCatalog] = useState<CfbCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -1341,7 +1497,7 @@ function ScoreboardPage() {
           const c = await getCatalog(season);
           if (alive) setCatalog(c);
         } else {
-          const { season: resolved, catalog: c } = await resolveLatestSeason();
+          const { season: resolved, catalog: c } = await resolveLatestSeason(cfg.seasons);
           if (!alive) return;
           setSeason(resolved);
           setCatalog(c);
@@ -1358,7 +1514,7 @@ function ScoreboardPage() {
 
   const retryCatalog = useCallback(() => {
     if (season) invalidateSeason(season);
-    for (const s of SEASONS) invalidateSeason(s);
+    for (const s of cfg.seasons) invalidateSeason(s);
     setReloadTick((t) => t + 1);
   }, [season]);
 
@@ -1397,11 +1553,9 @@ function ScoreboardPage() {
       }
       deepWeekUsed.current = true;
 
-      // Default = latest available week of this season. (The old code took
-      // weeks[0], which in an ascending season_index is the OLDEST week —
-      // 2025 opened on Week 0's four games.)
-      const last = latestWeek(catalog);
-      return last?.legacyKey ?? weekOptions[weekOptions.length - 1].legacyKey;
+      // Default period is the sport's call: the latest week (football), or
+      // today in ET (basketball) — see SPORT_CFG.
+      return cfg.defaultPeriod(weekOptions, catalog).legacyKey;
     });
   }, [weekOptions, catalog]);
 
@@ -1410,7 +1564,7 @@ function ScoreboardPage() {
     if (typeof window === "undefined" || !season || !selectedWeek) return;
     const params = new URLSearchParams(window.location.search);
     params.set("season", season);
-    params.set("week", selectedWeek);
+    params.set(cfg.periodParam, selectedWeek);
     const next = `${window.location.pathname}?${params.toString()}`;
     if (next !== `${window.location.pathname}${window.location.search}`) {
       window.history.replaceState(null, "", next);
@@ -1449,7 +1603,9 @@ function ScoreboardPage() {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    if (!teamInfoRaw) return;
+    // team_info.csv is the FOOTBALL school list; a basketball board keeps no
+    // conference filter off it (the search box still matches team names).
+    if (!teamInfoRaw || !cfg.conferences) return;
     const parsed = Papa.parse<Record<string, any>>(teamInfoRaw, {
       header: true,
       dynamicTyping: false,
@@ -1661,7 +1817,7 @@ function ScoreboardPage() {
    * FCS dataset with no control on screen to get back — hence showFbs falls
    * back to true here rather than leaving an empty, unrecoverable slate.
    */
-  const fcsOffered = fcsAvailableFor(season);
+  const fcsOffered = cfg.divisions && fcsAvailableFor(season);
   const showFcs = fcsOffered && division !== "fbs";
   const showFbs = !fcsOffered || division !== "fcs";
   /** Namespace for this season's FCS dataset ("fcs-2026"). */
@@ -1740,12 +1896,12 @@ function ScoreboardPage() {
   // Third argument = which season dataset carries the published ESPN
   // snapshots (the espn.com-blocked-network fallback). FCS games ride along:
   // the snapshot files hold the merged 80+81 scoreboard.
-  const livePayload = useLiveScoreboard(slateDates, "cfb", season || SEASONS[0]);
+  const livePayload = useLiveScoreboard(slateDates, cfg.key, season || cfg.seasons[0]);
 
   // normalize and index the live games
   const liveGames: LiveGame[] = useMemo(
-    () => (livePayload ? mapEspnToLiveGames(livePayload) : []),
-    [livePayload]
+    () => (livePayload ? mapEspnToLiveGames(livePayload, cfg.key) : []),
+    [livePayload, cfg.key]
   );
 
   const liveMap = useMemo(() => {
@@ -1888,10 +2044,16 @@ function ScoreboardPage() {
     const m = String(season).match(/(\d{4})/);
     return m ? Number(m[1]) : new Date().getFullYear();
   }, [season]);
-  const feedWeek = useMemo(() => {
-    const m = String(weekId || selectedWeek).match(/(\d+)/);
-    return m ? Number(m[1]) : 0;
-  }, [weekId, selectedWeek]);
+  const feedWeek = useMemo(
+    () => cfg.feedPeriod(weekId || selectedWeek),
+    [cfg, weekId, selectedWeek]
+  );
+  /** Which league a placement from this board is filed under: per division
+   *  on the football board, the sport's own league otherwise. */
+  const leagueOf = useCallback(
+    (division: Division) => cfg.league ?? leagueForDivision(division),
+    [cfg]
+  );
 
   /**
    * Open/close market lines for the slate tally's betting-record panel, one
@@ -2004,7 +2166,9 @@ function ScoreboardPage() {
   const [portalSeeds, setPortalSeeds] = useState<Map<string, SeedPair>>(new Map());
 
   useEffect(() => {
-    if (!season || !selectedWeek) { setKalshiBySlug(new Map()); setKalshiStamp(""); return; }
+    // The Kalshi feed is NCAAF (/api/kalshi/cfb coerces any other namespace to
+    // a football week), so a board with no market feed asks for nothing.
+    if (!cfg.markets || !season || !selectedWeek) { setKalshiBySlug(new Map()); setKalshiStamp(""); setKalshiFees({}); return; }
     const weekId =
       weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
 
@@ -2047,7 +2211,7 @@ function ScoreboardPage() {
   // DK Predictions: same week id, same namespaces, same card-key merge as the
   // Kalshi feed above. Fails to an empty map (no chips), never an error.
   useEffect(() => {
-    if (!season || !selectedWeek) { setDkBySlug(new Map()); return; }
+    if (!cfg.markets || !season || !selectedWeek) { setDkBySlug(new Map()); return; }
     const weekId =
       weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
     const ac = new AbortController();
@@ -3084,6 +3248,7 @@ function ScoreboardPage() {
             // The week's market-eligibility policy, for the card's lines
             // block. Read-only: it changes no number on the card.
             engine={weekEngine ?? null}
+            features={cfg.panels}
             footer={c.jsonRow?.game_id ? <PreviewLink gameId={String(c.jsonRow.game_id)} compact /> : null}
           />
           {openPanel && idx === rowEnd && openCard && (
@@ -3100,6 +3265,7 @@ function ScoreboardPage() {
                 onAddLeg={addLeg}
                 onClose={closePanel}
                 bets={betsOf(openCard.key)}
+                features={cfg.panels}
                 onTab={(kind) => togglePanel(openCard.key, kind)}
                 // Only ever set for the panel it was aimed at, so a stale
                 // payload cannot re-scroll a chart opened by hand.
@@ -3134,7 +3300,7 @@ function ScoreboardPage() {
                          can name and badge it. Never a rail. */
                       homeTeam={openCard.teamA}
                       awayTeam={openCard.teamB}
-                      league={leagueForDivision(openCard.division)}
+                      league={leagueOf(openCard.division)}
                     />
                   ) : null
                 }
@@ -3174,7 +3340,7 @@ function ScoreboardPage() {
                     showTails={betTails} onShowTails={onBetTails}
                     homeTeam={openCard.teamA}
                     awayTeam={openCard.teamB}
-                    league={leagueForDivision(openCard.division)}
+                    league={leagueOf(openCard.division)}
                     regime={suggestions.regimeBySlug.get(openCard.key)}
                     edgeRules={edgeRules} onEdgeRules={onEdgeRules}
                     engine={weekEngine}
@@ -3256,12 +3422,15 @@ function ScoreboardPage() {
         }}
       >
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", rowGap: 6 }}>
+          {cfg.periodPicker === "day" ? (
+            <DayPicker options={weekOptions} value={selectedWeek} onChange={setSelectedWeek} />
+          ) : (
           <select
             value={selectedWeek}
             onChange={(e) => setSelectedWeek(e.target.value)}
             disabled={!weekOptions.length}
             className="ui-sel"
-            aria-label="Week"
+            aria-label={cfg.periodNoun}
             style={{ ...CTL, fontWeight: 800, fontSize: 14, color: "var(--brand-text)" }}
           >
             {!weekOptions.length && <option value="">—</option>}
@@ -3269,6 +3438,7 @@ function ScoreboardPage() {
               <option key={w.id} value={w.legacyKey}>{w.label}</option>
             ))}
           </select>
+          )}
 
           <select
             value={sortBy}
@@ -3276,7 +3446,7 @@ function ScoreboardPage() {
             className="ui-sel" style={CTL}
             aria-label="Sort"
           >
-            <option value="kickoff">Sort: Kickoff</option>
+            <option value="kickoff">Sort: {cfg.startWord}</option>
             <option value="edge">Sort: Edge</option>
           </select>
 
@@ -3331,7 +3501,7 @@ function ScoreboardPage() {
           </span>
           {/* Flip to the classic board, same season/week (the URL carries them). */}
           <a
-            href={`/cfb/scoreboard-classic${typeof window !== "undefined" ? window.location.search : ""}`}
+            href={`${cfg.classicPath}${typeof window !== "undefined" ? window.location.search : ""}`}
             className="ui-btn"
             style={{ padding: "4px 10px", fontSize: 11.5, whiteSpace: "nowrap", textDecoration: "none" }}
           >
@@ -3360,12 +3530,12 @@ function ScoreboardPage() {
               className="ui-sel"
             >
               {!season && <option value="">…</option>}
-              {SEASONS.map((s) => (<option key={s} value={s}>{s}</option>))}
+              {cfg.seasons.map((s) => (<option key={s} value={s}>{cfg.seasonLabel(s)}</option>))}
             </select>
 
             {/* Division. Its own axis, not a season. Hidden entirely for
-                seasons with no FCS dataset. */}
-            {fcsAvailableFor(season) && (
+                seasons with no FCS dataset, and on a board with no divisions. */}
+            {fcsOffered && (
               <>
                 <label style={LBL}>Division</label>
                 <select
@@ -3381,6 +3551,7 @@ function ScoreboardPage() {
               </>
             )}
 
+            {cfg.conferences && (<>
             <label style={LBL}>Conference</label>
             <select
               value={confFilter}
@@ -3390,6 +3561,7 @@ function ScoreboardPage() {
               <option value="all">All conferences</option>
               {confOptions.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+            </>)}
 
             <label style={LBL}>Score</label>
             <select
@@ -3735,10 +3907,10 @@ function ScoreboardPage() {
 /* The page can still throw on unexpected data (a malformed CSV row, a summary
    with a shape we did not anticipate). Without a boundary that unmounts the
    whole app and shows a white screen. */
-export default function Scoreboard() {
+export default function Scoreboard({ sport = "cfb" }: { sport?: SportKey }) {
   return (
     <ErrorBoundary label="Scoreboard">
-      <ScoreboardPage />
+      <ScoreboardPage sport={sport} />
     </ErrorBoundary>
   );
 }
@@ -3826,11 +3998,24 @@ function KickWeatherChip({
   );
 }
 
+/** A card's logo for one side: the self-hosted copy by school name, else
+ *  ESPN's CDN by the index row's team id (basketball-only schools, and any
+ *  spelling team_info.csv lacks). */
+function cardLogo(card: CardGame, side: "A" | "B"): string | undefined {
+  const local = getTeamLogo(side === "A" ? card.teamA : card.teamB);
+  if (local) return local;
+  const id = side === "A" ? card.jsonRow?.A_espn_id : card.jsonRow?.B_espn_id;
+  return id ? espnCdnLogo(id) : undefined;
+}
+
 export function GameCard({
   card, gdata, useMean = false, kalshi, book, bookToken = "", parlayOpen,
   openKind, onToggle, weekLabel, condensed = false, onAddLeg, season,
   flash = false, bets, engine = null, footer, liveView = "picks", liveGrid: cardLiveGrid = null,
+  features = ALL_PANELS,
 }: {
+  /** Which drawer tabs this board offers (sport config); football = all. */
+  features?: PanelFeatures;
   /** Live lines view (page toggle): pregame picks' live % or live value. */
   liveView?: "picks" | "value";
   /** This game's live grid (page-level fetch, live cards only), or null. */
@@ -3885,8 +4070,8 @@ export function GameCard({
   const isDark = useIsDark();
   const aColor = displayTeamColor(card.teamA, isDark);
   const bColor = displayTeamColor(card.teamB, isDark);
-  const aLogo = getTeamLogo(card.teamA);
-  const bLogo = getTeamLogo(card.teamB);
+  const aLogo = cardLogo(card, "A");
+  const bLogo = cardLogo(card, "B");
 
   const expanded = openKind !== null;
 
@@ -3976,7 +4161,7 @@ export function GameCard({
      the card opens the full-width panel on its first tab; the panel's own tab
      strip switches between them. `panelTabsFor` is the single list both read,
      so the card's default and the strip can never disagree. */
-  const tabs = panelTabsFor(card, gdata, bets, openKind);
+  const tabs = panelTabsFor(card, gdata, bets, openKind, features);
   const openLabel = `Open ${card.teamB} @ ${card.teamA}`;
   const openDrawer = () => {
     if (openKind) onToggle(openKind);           // tap again = close
@@ -4242,13 +4427,14 @@ function panelTabsFor(
   gdata: GameData | undefined,
   bets: { n: number; nTail: number; nCand: number } | undefined,
   openKind: PanelKind | null,
+  features: PanelFeatures = ALL_PANELS,
 ): PanelTab[] {
   const jsonRow = card.jsonRow;
   const lv = card.live;
   const liveNow = Boolean(card.liveInProgress);
   const canShowScores = Boolean(gdata?.rowsA?.length) || Boolean(jsonRow);
   const out: PanelTab[] = [];
-  const liveTab = lv?.id && (liveNow || lv.state === "final")
+  const liveTab = features.liveGamecast && lv?.id && (liveNow || lv.state === "final")
     ? { kind: "live" as const, label: liveNow ? "Live" : "Game Flow" }
     : null;
   if (liveTab && liveNow) out.push(liveTab);
@@ -4258,8 +4444,9 @@ function panelTabsFor(
     out.push({ kind: "props", label: "Player Props" });
     out.push({ kind: "box", label: "Box Score" });
     // Team box-stat distributions: team_stats.json is built from the player
-    // sweep, so the FCS (game-level-only) namespace has none.
-    out.push({ kind: "teamstats", label: "Team Stats" });
+    // sweep, so the FCS (game-level-only) namespace has none — and the
+    // basketball export publishes no such file at all (features.teamStats).
+    if (features.teamStats) out.push({ kind: "teamstats", label: "Team Stats" });
   }
   if (liveTab && !liveNow) out.push(liveTab);
   /* OWNER ONLY. Shown whenever the game produced ANY candidate (a Kalshi
@@ -4880,10 +5067,12 @@ export function SimVsKalshi({ card, kalshi, useMean }: {
  * ========================================================================= */
 function CardPanelHost({
   card, kind, gdata, week, season, weekId, useMean, kalshi, onAddLeg, onClose,
-  focus = null, betsPanel = null, placeStrip = null, bets, onTab,
+  focus = null, betsPanel = null, placeStrip = null, bets, onTab, features = ALL_PANELS,
 }: {
   card: CardGame;
   kind: PanelKind;
+  /** Which drawer tabs this board offers (sport config); football = all. */
+  features?: PanelFeatures;
   /** OWNER ONLY bets counts for this game — the Bets tab and its badge. */
   bets?: { n: number; nTail: number; nCand: number };
   /** Switch the drawer to another tab (the card's own onToggle). */
@@ -4917,6 +5106,13 @@ function CardPanelHost({
      an unrelated parent update. */
   const isDark = useIsDark();
   const colorFor = useCallback((t: string) => displayTeamColor(t, isDark), [isDark]);
+  /** This game's logos: the card's own resolution (name, else ESPN id) for
+   *  its two teams, the name map for anything else a panel asks about. */
+  const logoFor = useCallback((t: string): string | undefined =>
+    t === card.teamA ? cardLogo(card, "A")
+    : t === card.teamB ? cardLogo(card, "B")
+    : getTeamLogo(t) || undefined,
+  [card]);
 
   // Sim-conditional live overlay: one fetch, only while the live panel is
   // actually open (not on every other panel kind) and only when the card
@@ -4955,10 +5151,10 @@ function CardPanelHost({
     awayId: lv?.awayId,
     homeColor: colorFor(espnHomeIsA ? card.teamA : card.teamB),
     awayColor: colorFor(espnHomeIsA ? card.teamB : card.teamA),
-    homeLogo: getTeamLogo(espnHomeIsA ? card.teamA : card.teamB) || undefined,
-    awayLogo: getTeamLogo(espnHomeIsA ? card.teamB : card.teamA) || undefined,
+    homeLogo: logoFor(espnHomeIsA ? card.teamA : card.teamB),
+    awayLogo: logoFor(espnHomeIsA ? card.teamB : card.teamA),
   };
-  const tabs = panelTabsFor(card, gdata, bets, kind);
+  const tabs = panelTabsFor(card, gdata, bets, kind, features);
   /** Each game's strip starts scrolled hard left, so the first tab (Bets)
    *  is visible on a phone without a swipe. */
   const tabStripRef = useRef<HTMLDivElement | null>(null);
@@ -4966,8 +5162,8 @@ function CardPanelHost({
     if (tabStripRef.current) tabStripRef.current.scrollLeft = 0;
   }, [card.key]);
   // Header pieces: logos, and kickoff · network · city as one muted line.
-  const logoA = getTeamLogo(card.teamA) || undefined;
-  const logoB = getTeamLogo(card.teamB) || undefined;
+  const logoA = logoFor(card.teamA);
+  const logoB = logoFor(card.teamB);
   const venueFull = lv?.venue ? venueLine(lv.venue) : "";
   const venueWhere = lv?.venue
     ? [lv.venue.city, lv.venue.state || (lv.venue.country && lv.venue.country !== "USA" ? lv.venue.country : "")]
@@ -5111,7 +5307,7 @@ function CardPanelHost({
           ptsA={useMean ? card.meanA : card.medA}
           ptsB={useMean ? card.meanB : card.medB}
           useMean={useMean}
-          logoFor={getTeamLogo}
+          logoFor={logoFor}
           colorFor={colorFor}
         />
       )}
@@ -5123,7 +5319,7 @@ function CardPanelHost({
           teamA={card.teamA} teamB={card.teamB}
           kalshi={kalshi}
           colorFor={colorFor}
-          logoFor={(t) => getTeamLogo(t) || undefined}
+          logoFor={logoFor}
           focus={focus?.kind === "teamstats" ? focus : null}
         />
       )}

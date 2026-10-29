@@ -138,6 +138,58 @@ function teamYards(players: PlayerJson[], useMean: boolean) {
   return { pass: r0(pass), rush: r0(rush), total: r0(pass + rush) };
 }
 
+/* ------------------------------ basketball ------------------------------ */
+
+/** Basketball stat keys as the cbb exporter publishes them (players.json
+ *  `stat_keys`). The layout switch reads the file, never the page: a players
+ *  file is a basketball box score when it carries `pts`. */
+const HOOPS_KEYS = ["min", "pts", "reb", "ast", "fgm", "fga", "fg3m", "fg3a", "ftm", "fta", "fouls"];
+
+function isHoops(data: PlayersJson | null): boolean {
+  if (!data) return false;
+  if (HOOPS_KEYS.some((k) => k === "pts" && data.statKeys.includes(k))) return true;
+  return data.players.some((p) => "pts" in p.stats) && !data.players.some((p) => "pass_yds" in p.stats);
+}
+
+const MAX_HOOPS_ROWS = 10;
+
+/** One rotation table per team: MIN PTS REB AST FG 3PT FT PF, minutes-sorted. */
+function hoopsRows(players: PlayerJson[], useMean: boolean): Row[] {
+  return players
+    .map((p) => {
+      const min = val(p.stats.min, useMean);
+      const pts = val(p.stats.pts, useMean);
+      const reb = val(p.stats.reb, useMean);
+      const ast = val(p.stats.ast, useMean);
+      const fgm = val(p.stats.fgm, useMean), fga = val(p.stats.fga, useMean);
+      const fg3m = val(p.stats.fg3m, useMean), fg3a = val(p.stats.fg3a, useMean);
+      const ftm = val(p.stats.ftm, useMean), fta = val(p.stats.fta, useMean);
+      const pf = meanVal(p.stats.fouls);     // small count — always mean, see meanVal
+      return {
+        key: p.player,
+        name: p.player,
+        cells: [r0(min), r0(pts), r0(reb), r0(ast), `${r0(fgm)}/${r0(fga)}`, `${r0(fg3m)}/${r0(fg3a)}`, `${r0(ftm)}/${r0(fta)}`, d1(pf)],
+        sortBy: min,
+        drop: r0(min) === 0 && r0(pts) === 0,
+      };
+    })
+    .filter((r) => !r.drop)
+    .sort((a, b) => b.sortBy - a.sortBy)
+    .slice(0, MAX_HOOPS_ROWS);
+}
+
+/** Team sums for the comparison bars — the same per-player values the table
+ *  shows, so the same approximation note as `teamYards` applies. */
+function teamHoops(players: PlayerJson[], useMean: boolean) {
+  let reb = 0, ast = 0, fg3m = 0;
+  for (const p of players) {
+    reb += val(p.stats.reb, useMean);
+    ast += val(p.stats.ast, useMean);
+    fg3m += val(p.stats.fg3m, useMean);
+  }
+  return { reb: r0(reb), ast: r0(ast), fg3m: r0(fg3m) };
+}
+
 /* ------------------------------- presentation ------------------------------ */
 
 function StatTable({
@@ -321,8 +373,11 @@ export function BoxScoreView({
     return { home: pick(teamA), away: pick(teamB) };
   }, [data, teamA, teamB]);
 
+  const hoops = isHoops(data);
   const homeY = useMemo(() => teamYards(byTeam.home, useMean), [byTeam.home, useMean]);
   const awayY = useMemo(() => teamYards(byTeam.away, useMean), [byTeam.away, useMean]);
+  const homeH = useMemo(() => teamHoops(byTeam.home, useMean), [byTeam.home, useMean]);
+  const awayH = useMemo(() => teamHoops(byTeam.away, useMean), [byTeam.away, useMean]);
 
   if (!data || !data.players.length) {
     return (
@@ -340,6 +395,13 @@ export function BoxScoreView({
       <div style={{ marginBottom: 10 }}>
         <TeamHeading team={team} logo={logoFor(team)} pts={pts} align={align} />
       </div>
+      {hoops ? (
+        <StatTable
+          title="Rotation"
+          columns={["MIN", "PTS", "REB", "AST", "FG", "3PT", "FT", "PF"]}
+          rows={hoopsRows(players, useMean)}
+        />
+      ) : (<>
       <StatTable
         title="Passing"
         columns={["CP/ATT", "YDS", "TD", "INT"]}
@@ -355,6 +417,7 @@ export function BoxScoreView({
         columns={["REC", "YDS", "TD"]}
         rows={receivingRows(players, useMean)}
       />
+      </>)}
     </div>
   );
 
@@ -380,9 +443,15 @@ export function BoxScoreView({
 
       {/* Team comparison */}
       <div style={{ padding: "4px 0 10px", borderBottom: "1px solid var(--border)" }}>
-        <CompareRow label="Pass Yds" left={awayY.pass} right={homeY.pass} leftColor={awayColor} rightColor={homeColor} />
-        <CompareRow label="Rush Yds" left={awayY.rush} right={homeY.rush} leftColor={awayColor} rightColor={homeColor} />
-        <CompareRow label="Total Yds" left={awayY.total} right={homeY.total} leftColor={awayColor} rightColor={homeColor} />
+        {hoops ? (<>
+          <CompareRow label="Reb" left={awayH.reb} right={homeH.reb} leftColor={awayColor} rightColor={homeColor} />
+          <CompareRow label="Ast" left={awayH.ast} right={homeH.ast} leftColor={awayColor} rightColor={homeColor} />
+          <CompareRow label="3PM" left={awayH.fg3m} right={homeH.fg3m} leftColor={awayColor} rightColor={homeColor} />
+        </>) : (<>
+          <CompareRow label="Pass Yds" left={awayY.pass} right={homeY.pass} leftColor={awayColor} rightColor={homeColor} />
+          <CompareRow label="Rush Yds" left={awayY.rush} right={homeY.rush} leftColor={awayColor} rightColor={homeColor} />
+          <CompareRow label="Total Yds" left={awayY.total} right={homeY.total} leftColor={awayColor} rightColor={homeColor} />
+        </>)}
       </div>
 
       {/* Away | Home */}
@@ -399,7 +468,7 @@ export function BoxScoreView({
       </div>
 
       <div style={{ fontSize: 11, color: "var(--muted)", paddingTop: 4 }}>
-        TD &amp; INT are averages across sims.
+        {hoops ? "Fouls are averages across sims." : "TD & INT are averages across sims."}
       </div>
     </div>
   );

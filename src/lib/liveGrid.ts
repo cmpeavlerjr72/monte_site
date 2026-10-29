@@ -11,7 +11,7 @@
 // games the exporter has not reached yet) — every failure mode here is a
 // quiet `null`, never a thrown error the UI would have to route around.
 
-import { dataUrl, type Season } from "./cfbData";
+import { dataUrl, periodDir, type Season } from "./cfbData";
 import { useEffect, useState } from "react";
 
 export type LiveGridCells = {
@@ -302,7 +302,7 @@ export async function fetchLiveGrid(
 ): Promise<LiveGrid | null> {
   let url: string;
   try {
-    url = await dataUrl(`weeks/${weekId}/games/${slug}/live.json`, ns);
+    url = await dataUrl(`${periodDir(ns)}/${weekId}/games/${slug}/live.json`, ns);
   } catch {
     return null; // dataset unresolvable (e.g. not-yet-published namespace)
   }
