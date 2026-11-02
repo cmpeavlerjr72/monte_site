@@ -844,7 +844,7 @@ export default function ResultsCBB_alt() {
         </h1>
         <div style={{ marginTop: 6, color: "var(--muted)" }}>
           Each candle is one night's profit in units. Green nights made money, red nights lost it.
-          {offSeason && " The 2026-27 season tips Nov 3; until then this opens on last season."}
+          {offSeason && " The 2026-27 season is under way; this view opens on last season."}
         </div>
 
         {/* Controls */}

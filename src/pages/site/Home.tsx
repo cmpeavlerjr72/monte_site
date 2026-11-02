@@ -32,7 +32,7 @@ function Projects() {
   const rows = [
     { name: "College football", to: "/cfb", status: <Pill tone="outline">Live</Pill>,
       body: "Every FBS game and the FCS slate, simulated play by play 10,000 times, with a weekly board and a public record." },
-    { name: "College basketball", to: "/cbb", status: <Pill tone="outline">{cbbLive ? "Live" : "Tips Nov 3"}</Pill>,
+    { name: "College basketball", to: "/cbb", status: <Pill tone="outline">Live</Pill>,
       body: "Daily game sims through the season. Last season's numbers and the March bracket are in the archive." },
     { name: "Fantasy AI", to: "/fantasy-ai", status: <Pill tone="outline">Experiment</Pill>,
       body: "An AI running a real fantasy football team. What it does, and how it's going, lands on the blog." },

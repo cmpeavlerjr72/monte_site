@@ -59,7 +59,7 @@ export default function SportHome({ sport }: { sport: Sport }) {
 
   return (
     <div className="stack sport-home">
-      <PageHeader kicker={offSeason ? "Season tips Nov 3" : "MVPEAV"} title={c.name} sub={c.sub}
+      <PageHeader kicker={sport === "cbb" ? "2026-27 season" : "MVPEAV"} title={c.name} sub={c.sub}
         actions={c.board ? <ButtonLink to={c.board}>{sport === "cfb" ? "Full board" : "Scoreboard"}</ButtonLink> : undefined} />
 
       <div className="sport-home__grid">
