@@ -43,7 +43,28 @@ export type LiveGrid = {
   };
   /** Points still to come from a live state (exports from 2026-10-17). */
   remaining?: Remaining;
+  /** Game-clock geometry. Absent on football files (900 / 3600 / OT = period 5+);
+   *  basketball files carry it: regulation 2400, 2 x 1200, OT periods of 300. */
+  clock?: ClockGeometry;
 };
+
+export type ClockGeometry = { regulation_s: number; period_s: number; n_periods: number; ot_period_s: number };
+
+/** Basketball late block: 30-second bins over the last 4:00 of regulation with
+ *  finer margin bins. Both curve sets are keyed by the LATE margin bin. A null
+ *  cell falls back to the coarse block at the same clock, not the time row. */
+export type LateBlock = {
+  start_s: number;
+  time_bin_s: number;
+  n_time: number;
+  margin_edges: number[];
+  margin_sf: (Curve | null)[][];
+  total_sf: (Curve | null)[][];
+};
+
+/** Exact end-of-regulation row. A level game carries the overtime points; a
+ *  game that is not level is over (zero more points), so it needs no data. */
+export type EndRow = { tied_margin_sf: Curve | null; tied_total_sf: Curve | null };
 
 /** Survival of an integer quantity: v[j] = P(X >= k0 + j) in 0..1; 1 below
  *  k0, 0 past the end (the exporter publishes the full observed range). */
@@ -58,6 +79,16 @@ export type Remaining = {
   total_sf: (Curve | null)[][];
   time_margin_sf: (Curve | null)[];
   time_total_sf: (Curve | null)[];
+  /** Basketball only (see ClockGeometry): total-so-far quantile edges per time
+   *  bin. When present `total_sf` is keyed [time bin][total-so-far bin] (a game
+   *  running hot or cold against the sim), not by margin bin. */
+  total_edges?: number[][];
+  /** The CFB-shaped margin-keyed total curves, kept beside the total-keyed ones. */
+  total_sf_margin?: (Curve | null)[][];
+  late?: LateBlock;
+  end?: EndRow;
+  /** Set from `clock.regulation_s`; its presence selects the basketball pricer. */
+  regulation_s?: number;
   /** Same, given WHO HAS THE BALL and WHERE (exports from 2026-10-17 pm,
    *  INV-162). Absent on older files -> the clock+score cells above. */
   fp?: RemainingFp;
@@ -125,18 +156,47 @@ export function parseLiveGrid(raw: any): LiveGrid | null {
       n: g.n,
     },
     uncond: { p_home_win: u.p_home_win, mean_total: u.mean_total, mean_margin: u.mean_margin },
-    remaining: parseRemaining(raw?.remaining && { ...raw.remaining, fp_block: raw?.remaining_fp }),
+    remaining: parseRemaining(raw?.remaining && { ...raw.remaining, fp_block: raw?.remaining_fp, clock: raw?.clock }),
+    clock: parseClock(raw?.clock),
   };
 }
 
 const toCurve = (c: any): Curve | null =>
   c && isNum(c.k0) && Array.isArray(c.v) ? { k0: c.k0, v: c.v.map((x: number) => x / 1000) } : null;
 
+function parseClock(c: any): ClockGeometry | undefined {
+  return c && isNum(c.regulation_s) && isNum(c.period_s) && isNum(c.n_periods) && c.regulation_s > 0
+    ? { regulation_s: c.regulation_s, period_s: c.period_s, n_periods: c.n_periods,
+        ot_period_s: isNum(c.ot_period_s) ? c.ot_period_s : 300 }
+    : undefined;
+}
+
+const gridOfCurves = (g: any): (Curve | null)[][] =>
+  Array.isArray(g) ? g.map((row: any) => (Array.isArray(row) ? row.map(toCurve) : [])) : [];
+
+function parseLate(l: any): LateBlock | undefined {
+  if (!l || !isNum(l.start_s) || !isNum(l.time_bin_s) || !isNum(l.n_time) || !Array.isArray(l.margin_edges)) return undefined;
+  return {
+    start_s: l.start_s, time_bin_s: l.time_bin_s, n_time: l.n_time, margin_edges: l.margin_edges,
+    margin_sf: gridOfCurves(l.margin_sf), total_sf: gridOfCurves(l.total_sf),
+  };
+}
+
 function parseRemaining(r: any): Remaining | undefined {
   if (!r || !isNum(r.time_bin_s) || !isNum(r.n_time) || !Array.isArray(r.margin_edges)) return undefined;
-  const grid = (g: any) => (Array.isArray(g) ? g.map((row: any) => (Array.isArray(row) ? row.map(toCurve) : [])) : []);
+  const grid = gridOfCurves;
   const row = (g: any) => (Array.isArray(g) ? g.map(toCurve) : []);
+  const bb = parseClock(r.clock);
+  const totalEdges = Array.isArray(r.total_edges) && r.total_edges.every((e: any) => Array.isArray(e))
+    ? (r.total_edges as number[][]) : undefined;
   return {
+    ...(bb ? {
+      regulation_s: bb.regulation_s,
+      total_edges: totalEdges,
+      total_sf_margin: Array.isArray(r.total_sf_margin) ? grid(r.total_sf_margin) : undefined,
+      late: parseLate(r.late),
+      end: r.end ? { tied_margin_sf: toCurve(r.end.tied_margin_sf), tied_total_sf: toCurve(r.end.tied_total_sf) } : undefined,
+    } : {}),
     time_bin_s: r.time_bin_s, n_time: r.n_time, margin_edges: r.margin_edges,
     margin_sf: grid(r.margin_sf), total_sf: grid(r.total_sf),
     time_margin_sf: row(r.time_margin_sf), time_total_sf: row(r.time_total_sf),
@@ -203,8 +263,9 @@ const ZERO: Curve = { k0: 0, v: [1] }; // "nothing more is scored"
 
 function atState(
   rem: Remaining, elapsed: number, simMargin: number,
-  f: (m: Curve, t: Curve) => number, ot = false, ball?: Ball,
+  f: (m: Curve, t: Curve) => number, ot = false, ball?: Ball, simTotal = 0,
 ): number | null {
+  if (rem.regulation_s !== undefined) return atStateBb(rem, elapsed, simMargin, simTotal, f, ot);
   const mb = marginBin(rem.margin_edges, simMargin);
   // Ball known (scrimmage down, spot, offense): price off who has it and
   // where -- the field-zone cell, else the possession-only cell. Otherwise
@@ -242,6 +303,76 @@ function atState(
   return a + (pos - lo) * (b - a);
 }
 
+/* ------------------------------ basketball --------------------------------
+ * Three axes: clock (linear between bin midpoints; 30 s late block in the last
+ * 4:00), margin (bin; curves for cover / moneyline / margin), and total so far
+ * (per-time-bin quantile bin; curves for over / under / total). No fade to
+ * zero: the end of regulation is an exact row. Overtime is NOT modelled until
+ * B9: a level game in OT is priced off the end row's overtime-points
+ * distribution (the pregame OT distribution); an OT game with a lead is null
+ * (never a made-up number). */
+function atStateBb(
+  rem: Remaining, elapsed: number, simMargin: number, simTotal: number,
+  f: (m: Curve, t: Curve) => number, ot: boolean,
+): number | null {
+  const reg = rem.regulation_s as number;
+  const endVal = (): number | null => {
+    if (simMargin !== 0) return ot ? null : f(ZERO, ZERO); // decided: exact, not faded
+    const e = rem.end;
+    return e?.tied_margin_sf && e.tied_total_sf ? f(e.tied_margin_sf, e.tied_total_sf) : null;
+  };
+  if (ot || elapsed >= reg) return endVal();
+
+  const mb = marginBin(rem.margin_edges, simMargin);
+  const coarseVal = (tb: number): number | null => {
+    const m = rem.margin_sf[tb]?.[mb] ?? rem.time_margin_sf[tb];
+    let t: Curve | null | undefined;
+    if (rem.total_edges) {
+      const edges = rem.total_edges[tb];
+      t = edges ? rem.total_sf[tb]?.[marginBin(edges, simTotal)] : undefined;
+      t = t ?? rem.total_sf_margin?.[tb]?.[mb];
+    } else {
+      t = rem.total_sf[tb]?.[mb];
+    }
+    t = t ?? rem.time_total_sf[tb];
+    return m && t ? f(m, t) : null;
+  };
+  const w = rem.time_bin_s;
+  const coarseAt = (el: number): number | null => {
+    const pos = clamp((el - w / 2) / w, 0, rem.n_time - 1);
+    const lo = Math.floor(pos);
+    const a = coarseVal(lo);
+    if (lo === pos || lo + 1 >= rem.n_time) return a;
+    const b = coarseVal(lo + 1);
+    if (a === null || b === null) return a ?? b;
+    return a + (pos - lo) * (b - a);
+  };
+
+  const L = rem.late;
+  if (!L || elapsed < L.start_s) return coarseAt(elapsed);
+  const lmb = marginBin(L.margin_edges, simMargin);
+  const lateVal = (j: number): number | null => {
+    const m = L.margin_sf[j]?.[lmb], t = L.total_sf[j]?.[lmb];
+    return m && t ? f(m, t) : coarseAt(L.start_s + j * L.time_bin_s + L.time_bin_s / 2);
+  };
+  const lw = L.time_bin_s;
+  const lastMid = L.start_s + (L.n_time - 1) * lw + lw / 2;
+  if (elapsed >= lastMid) {
+    // last late midpoint -> the exact end row at `reg`
+    const a = lateVal(L.n_time - 1);
+    const z = endVal();
+    if (a === null || z === null) return a ?? z;
+    return a + clamp((elapsed - lastMid) / (reg - lastMid), 0, 1) * (z - a);
+  }
+  const lpos = clamp((elapsed - L.start_s - lw / 2) / lw, 0, L.n_time - 1);
+  const llo = Math.floor(lpos);
+  const la = lateVal(llo);
+  if (llo === lpos) return la;
+  const lb = lateVal(llo + 1);
+  if (la === null || lb === null) return la ?? lb;
+  return la + (lpos - llo) * (lb - la);
+}
+
 /** Live state for pricing, sim orientation. OT has no clock axis: it is
  *  priced as the last regulation bin (the tied-late cells carry OT). */
 export type SimState = { elapsed: number; scoreA: number; scoreB: number; ot?: boolean; ball?: Ball };
@@ -250,19 +381,19 @@ export type SimState = { elapsed: number; scoreA: number; scoreB: number; ot?: b
 export function pCoverA(g: LiveGrid, st: SimState, lineA: number): number | null {
   if (!g.remaining) return null;
   const cur = st.scoreA - st.scoreB;
-  return atState(g.remaining, st.elapsed, cur, (m) => pAbove(m, -lineA - cur), st.ot, st.ball);
+  return atState(g.remaining, st.elapsed, cur, (m) => pAbove(m, -lineA - cur), st.ot, st.ball, st.scoreA + st.scoreB);
 }
 /** P(team B covers `lineB`) — lineB in B's perspective. */
 export function pCoverB(g: LiveGrid, st: SimState, lineB: number): number | null {
   if (!g.remaining) return null;
   const cur = st.scoreA - st.scoreB;
-  return atState(g.remaining, st.elapsed, cur, (m) => 1 - pAbove(m, lineB - cur), st.ot, st.ball);
+  return atState(g.remaining, st.elapsed, cur, (m) => 1 - pAbove(m, lineB - cur), st.ot, st.ball, st.scoreA + st.scoreB);
 }
 /** P(final total over `line`). */
 export function pOver(g: LiveGrid, st: SimState, line: number): number | null {
   if (!g.remaining) return null;
   const cur = st.scoreA + st.scoreB;
-  return atState(g.remaining, st.elapsed, st.scoreA - st.scoreB, (_m, t) => pAbove(t, line - cur), st.ot, st.ball);
+  return atState(g.remaining, st.elapsed, st.scoreA - st.scoreB, (_m, t) => pAbove(t, line - cur), st.ot, st.ball, cur);
 }
 /** Mean of an integer variable from its survival curve. The curve starts at
  *  the observed minimum (P = 1 there), so E[X] = k0 + sum_{j>=1} P(X >= k0+j). */
@@ -276,8 +407,8 @@ function curveMean(c: Curve): number {
 export function expectedRemaining(g: LiveGrid, st: SimState): { margin: number; total: number } | null {
   if (!g.remaining) return null;
   const cur = st.scoreA - st.scoreB;
-  const margin = atState(g.remaining, st.elapsed, cur, (m) => curveMean(m), st.ot, st.ball);
-  const total = atState(g.remaining, st.elapsed, cur, (_m, t) => curveMean(t), st.ot, st.ball);
+  const margin = atState(g.remaining, st.elapsed, cur, (m) => curveMean(m), st.ot, st.ball, st.scoreA + st.scoreB);
+  const total = atState(g.remaining, st.elapsed, cur, (_m, t) => curveMean(t), st.ot, st.ball, st.scoreA + st.scoreB);
   return margin === null || total === null ? null : { margin, total };
 }
 
@@ -424,7 +555,10 @@ export function useLiveGrid(
  * grid, so the page fetches them once here and hands each card its own.
  * One cached request per game for the life of the page: the file is a static
  * pregame publish, and a quiet null is cached too (unpublished = expected). */
-const gridCache = new Map<string, Promise<LiveGrid | null>>();
+const gridCache = new Map<string, { p: Promise<LiveGrid | null>; at: number }>();
+/** Basketball days re-publish each morning, so a tab left open refreshes (a cached
+ *  null too: the producer may ship after the page loaded). Football stays page-life. */
+const CBB_CACHE_MS = 30 * 60 * 1000;
 
 export type LiveGridReq = { key: string; ns: Season; weekId: string; slug: string };
 
@@ -437,12 +571,13 @@ export function useLiveGrids(reqs: LiveGridReq[]): Map<string, LiveGrid> {
     const list = sig ? sig.split(",").map((s) => s.split("|")) : [];
     Promise.all(list.map(async ([key, ns, weekId, slug]) => {
       const ck = `${ns}|${weekId}|${slug}`;
-      let p = gridCache.get(ck);
-      if (!p) {
-        p = fetchLiveGrid(ns as Season, weekId, slug);
-        gridCache.set(ck, p);
+      let hit = gridCache.get(ck);
+      if (hit && ns.startsWith("cbb") && Date.now() - hit.at > CBB_CACHE_MS) hit = undefined;
+      if (!hit) {
+        hit = { p: fetchLiveGrid(ns as Season, weekId, slug), at: Date.now() };
+        gridCache.set(ck, hit);
       }
-      return [key, await p] as const;
+      return [key, await hit.p] as const;
     })).then((pairs) => {
       if (!alive) return;
       const m = new Map<string, LiveGrid>();

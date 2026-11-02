@@ -79,6 +79,7 @@ import { parseSituation, useGameTeamStats, type LiveSituation } from "../lib/esp
 import { progressBetsOf } from "../lib/liveProgress";
 import { useLiveGrid, useLiveGrids, type LiveGrid } from "../lib/liveGrid";
 import { ballFromSituation, projectedFinal, simStateOf } from "../lib/liveRecord";
+import { parseMbbStatus } from "../lib/mbbLive";
 import { useLivePlayers } from "../lib/livePlayers";
 import {
   useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML, pickValue, MIN_EDGE,
@@ -112,6 +113,12 @@ type LiveGame = {
   /** Quarter (5+ = OT) and seconds left in it, while live. */
   period?: number;
   clockSec?: number;
+  /** Basketball only: halftime (period/clock are then normalised to period 1,
+   *  clock 0), the team id with the ball when ESPN gives one (display only),
+   *  and parser flags for encodings we have not verified. */
+  halftime?: boolean;
+  mbbPossessionId?: string;
+  mbbFlags?: string[];
   /** Kickoff-window stadium weather, straight off the SAME scoreboard event
    *  the rest of this join reads (`event.weather`). ESPN populates it inside
    *  roughly 5 days of kick and omits it entirely otherwise → null. No new
@@ -187,6 +194,7 @@ function mapEspnToLiveGames(payload: any, sport: SportKey = "cfb"): LiveGame[] {
   const events = payload?.events ?? [];
   const football = sport === "cfb";
   return events.map((e: any) => {
+    const mbb = football ? undefined : parseMbbStatus(e);
     const type = e?.status?.type ?? e?.competitions?.[0]?.status?.type ?? {};
     const comp = e?.competitions?.[0];
     const away = comp?.competitors?.find((c: any) => c.homeAway === "away");
@@ -234,9 +242,14 @@ function mapEspnToLiveGames(payload: any, sport: SportKey = "cfb"): LiveGame[] {
       // Ball spot / down & distance is a football concept: the field strip
       // must never draw a gridiron under a basketball game.
       situation: football && state === "in" ? parseSituation(comp) : undefined,
-      period: Number.isFinite(Number(period)) ? Number(period) : undefined,
-      clockSec: Number.isFinite(Number(comp?.status?.clock ?? e?.status?.clock))
+      period: mbb && state === "in" ? mbb.period
+        : Number.isFinite(Number(period)) ? Number(period) : undefined,
+      clockSec: mbb && state === "in" ? mbb.clockSec
+        : Number.isFinite(Number(comp?.status?.clock ?? e?.status?.clock))
         ? Number(comp?.status?.clock ?? e?.status?.clock) : undefined,
+      halftime: mbb?.halftime || undefined,
+      mbbPossessionId: mbb?.possessionId,
+      mbbFlags: mbb && mbb.flags.length ? mbb.flags : undefined,
       // Kick weather is football-only too: every arena is "indoor", and a
       // "Dome" chip on a basketball card would be noise.
       weather: football ? parseEventWeather(e?.weather) : null,
@@ -4193,7 +4206,7 @@ export function GameCard({
   const liveLines = useMemo(() => {
     if (!liveNow || !cardLiveGrid) return null;
     const st = simStateOf(card.finalA, card.finalB, lv?.period, lv?.clockSec,
-      ballFromSituation(lv?.situation, lv?.homeId, lv?.awayId, espnHomeIsA));
+      ballFromSituation(lv?.situation, lv?.homeId, lv?.awayId, espnHomeIsA), cardLiveGrid.clock);
     if (!st) return null;
     const a = card.finalA, b = card.finalB;
     return {
@@ -4758,7 +4771,7 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
       const lvc = c.live;
       const st = g ? simStateOf(c.finalA, c.finalB, lvc?.period, lvc?.clockSec,
         ballFromSituation(lvc?.situation, lvc?.homeId, lvc?.awayId,
-          lvc ? nameMatches(lvc.homeNames, lvc.homeTeam, c.teamA) : true)) : null;
+          lvc ? nameMatches(lvc.homeNames, lvc.homeTeam, c.teamA) : true), g.clock) : null;
       const pf = g && st ? projectedFinal(g, st) : null;
       if (!pf) return c;
       nLive++;

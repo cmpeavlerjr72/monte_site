@@ -13,7 +13,7 @@
 // (lib/liveGrid.ts `remaining`: points still to come from the current
 // clock + margin, independent of how the points so far were scored).
 
-import { expectedRemaining, type Ball, type LiveGrid, type SimState } from "./liveGrid";
+import { expectedRemaining, type Ball, type ClockGeometry, type LiveGrid, type SimState } from "./liveGrid";
 import type { LiveSituation } from "./espnGame";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -32,8 +32,18 @@ export function projectedFinal(grid: LiveGrid, st: SimState): { A: number; B: nu
  *  period + seconds left in it. OT is priced as the end of regulation. */
 export function simStateOf(
   scoreA: unknown, scoreB: unknown, period: unknown, clockSec: unknown, ball?: Ball,
+  clock?: ClockGeometry,
 ): SimState | null {
   if (!isNum(scoreA) || !isNum(scoreB) || !isNum(period) || !isNum(clockSec)) return null;
+  if (clock) {
+    // Basketball (geometry from live.json `clock`): regulation = n_periods x
+    // period_s; any later period is OT, priced at the end of regulation.
+    const ot = period > clock.n_periods;
+    const left = Math.min(Math.max(clockSec, 0), clock.period_s);
+    const elapsed = ot ? clock.regulation_s
+      : Math.max(0, Math.min(clock.regulation_s, (period - 1) * clock.period_s + (clock.period_s - left)));
+    return { elapsed, scoreA, scoreB, ot, ball };
+  }
   const elapsed = period >= 5 ? 3599 : Math.max(0, Math.min(3600, (period - 1) * 900 + (900 - clockSec)));
   return { elapsed, scoreA, scoreB, ot: period >= 5, ball };
 }
