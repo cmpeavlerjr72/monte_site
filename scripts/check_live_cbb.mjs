@@ -18,7 +18,7 @@
  * Exit 0 on pass, 1 on any failure.
  */
 import { build } from "esbuild";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -38,6 +38,7 @@ async function load() {
     `export * from ${JSON.stringify(src("liveGrid"))};`,
     `export * from ${JSON.stringify(src("liveRecord"))};`,
     `export * from ${JSON.stringify(src("mbbLive"))};`,
+    `export * from ${JSON.stringify(src("liveJoin"))};`,
   ].join("\n"));
   const out = join(dir, "out.mjs");
   await build({
@@ -220,5 +221,33 @@ try {
 } catch (e) { bad(String(e.stack || e)); }
 finally { await cleanup(); }
 
+/* ---- join of a CAPTURED in-progress ESPN MBB event (2026-11-02, Queens v Winthrop) ---- */
+try {
+  const { parseMbbStatus, nameForms, pairKey, pairIdsKey, espnHomeIsAOf } = mod;
+  const ev = JSON.parse(await readFile("scripts/fixtures/espn_mbb_in_progress_event.json", "utf8"));
+  console.log("captured in-progress event " + ev.id);
+  const live = parseMbbStatus(ev);
+  eq("state in", live.state, "in"); eq("period 1", live.period, 1);
+  eq("clock is seconds left in the half", live.clockSec > 0 && live.clockSec <= 1200, true);
+  eq("not halftime", live.halftime, false);
+  const comp = ev.competitions[0].competitors;
+  const home = comp.find((c) => c.homeAway === "home").team, away = comp.find((c) => c.homeAway === "away").team;
+  const homeNames = nameForms(home), awayNames = nameForms(away);
+  // our day-index row: teamA "Queens University", teamB "Winthrop", ids 2511 / 2737
+  const byName = new Set(homeNames.flatMap((h) => awayNames.map((a) => pairKey(a, h))));
+  eq("name join hits", byName.has(pairKey("Queens University", "Winthrop")), true);
+  eq("id join key", pairIdsKey(away.id, home.id), pairIdsKey(2511, 2737));
+  eq("id join, ids as numbers vs strings", pairIdsKey(2737, "2511"), pairIdsKey(away.id, home.id));
+  eq("no ids -> no id key", pairIdsKey(undefined, 2737), "");
+  // drift: our name matches no ESPN form, the id join still hits and orients
+  eq("name join MISSES on a drifted name", byName.has(pairKey("Queens (NC)", "Winthrop")), false);
+  const lv = { homeId: String(home.id), homeNames, homeTeam: home.shortDisplayName };
+  eq("orientation by id: A=2511 is ESPN home", espnHomeIsAOf(lv, "Queens (NC)", 2511), true);
+  eq("orientation by id (neutral swap): A=2737 is ESPN away", espnHomeIsAOf(lv, "Winthrop", 2737), false);
+  eq("orientation falls back to names without ids", espnHomeIsAOf(lv, "Queens University", null), true);
+} catch (e) { bad(String(e.stack || e)); }
+
+
+await cleanup();
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);

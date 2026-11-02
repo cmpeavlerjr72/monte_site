@@ -80,6 +80,8 @@ import { progressBetsOf } from "../lib/liveProgress";
 import { useLiveGrid, useLiveGrids, type LiveGrid } from "../lib/liveGrid";
 import { ballFromSituation, projectedFinal, simStateOf } from "../lib/liveRecord";
 import { parseMbbStatus } from "../lib/mbbLive";
+import { clean, espnHomeIsAOf, nameForms, nameMatches, pairIdsKey, pairKey } from "../lib/liveJoin";
+
 import { useLivePlayers } from "../lib/livePlayers";
 import {
   useWeekLines, pickAndGradeSpread, pickAndGradeTotal, pickAndGradeML, pickValue, MIN_EDGE,
@@ -160,34 +162,6 @@ type LiveVenue = {
    *  it because the card prints one or the other and needs to know which:
    *  week 1 2026 opened at Aviva Stadium, whose address has NO state. */
   country: string;
-};
-
-const clean = (s?: string) =>
-  (s ?? "")
-    .toLowerCase()
-    .replace(/&/g, "and")
-    .replace(/\bst\.?\b/g, "state")
-    .replace(/[^a-z0-9 ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const pairKey = (a?: string, b?: string) => {
-  const aa = clean(a), bb = clean(b);
-  return [aa, bb].sort().join("::");
-};
-
-/** Does any of a live team's name forms match this sim name? ESPN's
- *  shortDisplayName alone loses ("ETSU", "LIU", "SE Missouri State"), so
- *  every orientation check runs over the full variant list. */
-const nameMatches = (
-  names: string[] | undefined,
-  fallback: string | undefined,
-  target?: string
-) => {
-  const t = clean(target);
-  if (!t) return false;
-  const pool = names && names.length ? names : [fallback ?? ""];
-  return pool.some((n) => clean(n) === t);
 };
 
 function mapEspnToLiveGames(payload: any, sport: SportKey = "cfb"): LiveGame[] {
@@ -359,13 +333,6 @@ function weatherEmoji(conditionId: number | null): string | null {
 }
 
 /** All the name forms an ESPN team object offers, deduped. */
-function nameForms(team: any): string[] {
-  const out: string[] = [];
-  for (const n of [team?.shortDisplayName, team?.location, team?.displayName]) {
-    if (typeof n === "string" && n && !out.includes(n)) out.push(n);
-  }
-  return out;
-}
 
 
 /* ---------- discover score CSVs (sims) ---------- */
@@ -1173,7 +1140,7 @@ function buildJsonCards(
   jsonGames: JsonGame[],
   division: Division,
   ns: Season,
-  getCardLive: (g: { teamA: string; teamB: string }) => {
+  getCardLive: (g: { teamA: string; teamB: string; A_espn_id?: number | string | null; B_espn_id?: number | string | null }) => {
     lg?: LiveGame; inProgress: boolean;
     aScore?: number; bScore?: number; statusText?: string;
   }
@@ -1208,7 +1175,7 @@ function buildJsonCards(
       ? Math.round(summary.mean_B_pts as number)
       : medB;
 
-    const { lg, inProgress, aScore, bScore, statusText } = getCardLive({ teamA, teamB });
+    const { lg, inProgress, aScore, bScore, statusText } = getCardLive({ teamA, teamB, A_espn_id: row.A_espn_id, B_espn_id: row.B_espn_id });
 
     const { ms, label } = parseKickoffMs(row.date, undefined, row.time_utc);
 
@@ -1962,19 +1929,35 @@ function ScoreboardPage({ sport }: { sport: SportKey }) {
     return m;
   }, [liveGames]);
 
+  /* ESPN team-id pair -> event. Our basketball ids ARE ESPN ids (A_espn_id /
+     B_espn_id in the day index), so this is the primary join, as on the classic
+     page (CBB_sims.tsx pairIdsKey): immune to "St."/"Saint", "App State" and
+     other name drift that the name join below misses. */
+  const liveIdPairMap = useMemo(() => {
+    const m = new Map<string, LiveGame>();
+    for (const g of liveGames) {
+      const k = pairIdsKey(g.awayId, g.homeId);
+      if (k && !m.has(k)) m.set(k, g);
+    }
+    return m;
+  }, [liveGames]);
+
   const getCardLive = useCallback(
-    (game: { teamA: string; teamB: string }) => {
-      const lg = liveMap.get(pairKey(game.teamA, game.teamB));
+    (game: { teamA: string; teamB: string; A_espn_id?: number | string | null; B_espn_id?: number | string | null }) => {
+      const idKey = pairIdsKey(game.A_espn_id ?? undefined, game.B_espn_id ?? undefined);
+      const lg = (idKey ? liveIdPairMap.get(idKey) : undefined) ?? liveMap.get(pairKey(game.teamA, game.teamB));
       const inProgress = lg?.state === "in";
       let aScore: number | undefined, bScore: number | undefined;
       if (lg) {
-        const aMatchesAway = nameMatches(lg.awayNames, lg.awayTeam, game.teamA);
+        const aMatchesAway = game.A_espn_id && lg.homeId
+          ? String(game.A_espn_id) !== lg.homeId
+          : nameMatches(lg.awayNames, lg.awayTeam, game.teamA);
         aScore = aMatchesAway ? lg.awayScore : lg.homeScore;
         bScore = aMatchesAway ? lg.homeScore : lg.awayScore;
       }
       return { lg, inProgress, aScore, bScore, statusText: lg?.statusText };
     },
-    [liveMap]
+    [liveMap, liveIdPairMap]
   );
 
   /* ---- Expanded panel. Lifted out of the card so the panel can render as a
@@ -4144,7 +4127,7 @@ export function GameCard({
      never by slot. */
   const lv = card.live;
   const liveNow = Boolean(card.liveInProgress);
-  const espnHomeIsA = lv ? nameMatches(lv.homeNames, lv.homeTeam, card.teamA) : true;
+  const espnHomeIsA = lv ? espnHomeIsAOf(lv, card.teamA, card.jsonRow?.A_espn_id) : true;
   const liveBits = {
     homeAbbrev: lv?.homeAbbrev,
     awayAbbrev: lv?.awayAbbrev,
@@ -4771,7 +4754,7 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
       const lvc = c.live;
       const st = g ? simStateOf(c.finalA, c.finalB, lvc?.period, lvc?.clockSec,
         ballFromSituation(lvc?.situation, lvc?.homeId, lvc?.awayId,
-          lvc ? nameMatches(lvc.homeNames, lvc.homeTeam, c.teamA) : true), g.clock) : null;
+          lvc ? espnHomeIsAOf(lvc, c.teamA, c.jsonRow?.A_espn_id) : true), g.clock) : null;
       const pf = g && st ? projectedFinal(g, st) : null;
       if (!pf) return c;
       nLive++;
@@ -5209,7 +5192,7 @@ function CardPanelHost({
 
   // Same name-keyed home/away mapping as the card (neutral-site flips).
   const lv = card.live;
-  const espnHomeIsA = lv ? nameMatches(lv.homeNames, lv.homeTeam, card.teamA) : true;
+  const espnHomeIsA = lv ? espnHomeIsAOf(lv, card.teamA, card.jsonRow?.A_espn_id) : true;
   const liveBits = {
     homeAbbrev: lv?.homeAbbrev,
     awayAbbrev: lv?.awayAbbrev,

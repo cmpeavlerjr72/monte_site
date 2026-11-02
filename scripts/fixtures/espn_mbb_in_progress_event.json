@@ -1,0 +1,930 @@
+{
+ "id": "401921423",
+ "uid": "s:40~l:41~e:401921423",
+ "date": "2026-11-02T14:00Z",
+ "name": "Winthrop Eagles at Queens University Royals",
+ "shortName": "WIN VS QUC",
+ "season": {
+  "year": 2027,
+  "type": 2,
+  "slug": "regular-season"
+ },
+ "competitions": [
+  {
+   "id": "401921423",
+   "uid": "s:40~l:41~e:401921423~c:401921423",
+   "date": "2026-11-02T14:00Z",
+   "attendance": 0,
+   "type": {
+    "id": "1",
+    "abbreviation": "STD"
+   },
+   "timeValid": true,
+   "neutralSite": true,
+   "conferenceCompetition": false,
+   "playByPlayAvailable": true,
+   "recent": true,
+   "venue": {
+    "id": "7239",
+    "fullName": "Rock Hill Sports & Event Center",
+    "address": {
+     "city": "Rock Hill",
+     "state": "SC"
+    },
+    "indoor": true
+   },
+   "competitors": [
+    {
+     "id": "2511",
+     "uid": "s:40~l:41~t:2511",
+     "type": "team",
+     "order": 0,
+     "homeAway": "home",
+     "team": {
+      "id": "2511",
+      "uid": "s:40~l:41~t:2511",
+      "location": "Queens University",
+      "name": "Royals",
+      "abbreviation": "QUC",
+      "displayName": "Queens University Royals",
+      "shortDisplayName": "Queens",
+      "color": "192C66",
+      "alternateColor": "857040",
+      "isActive": true,
+      "venue": {
+       "id": "7342"
+      },
+      "links": [
+       {
+        "rel": [
+         "clubhouse",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/_/id/2511/queens-university-royals",
+        "text": "Clubhouse",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "roster",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/roster/_/id/2511",
+        "text": "Roster",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "roster",
+         "sportscenter",
+         "app",
+         "team"
+        ],
+        "href": "sportscenter://x-callback-url/showClubhouse?uid=s:40~l:41~t:2511&section=roster",
+        "text": "Roster",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "stats",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/stats/_/id/2511",
+        "text": "Statistics",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "stats",
+         "sportscenter",
+         "app",
+         "team"
+        ],
+        "href": "sportscenter://x-callback-url/showClubhouse?uid=s:40~l:41~t:2511&section=stats",
+        "text": "Statistics",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "schedule",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/schedule/_/id/2511",
+        "text": "Schedule",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "schedule",
+         "sportscenter",
+         "app",
+         "team"
+        ],
+        "href": "sportscenter://x-callback-url/showClubhouse?uid=s:40~l:41~t:2511&section=scores",
+        "text": "Schedule",
+        "isExternal": false,
+        "isPremium": false
+       }
+      ],
+      "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2511.png",
+      "logoDark": "https://a.espncdn.com/i/teamlogos/ncaa/500-dark/2511.png",
+      "conferenceId": "46"
+     },
+     "score": "22",
+     "linescores": [
+      {
+       "value": 22,
+       "displayValue": "22",
+       "period": 1
+      }
+     ],
+     "statistics": [
+      {
+       "name": "rebounds",
+       "abbreviation": "REB",
+       "displayValue": "6"
+      },
+      {
+       "name": "avgRebounds",
+       "abbreviation": "REB",
+       "displayValue": "6.0"
+      },
+      {
+       "name": "assists",
+       "abbreviation": "AST",
+       "displayValue": "5"
+      },
+      {
+       "name": "fieldGoalsAttempted",
+       "abbreviation": "FGA",
+       "displayValue": "15"
+      },
+      {
+       "name": "fieldGoalsMade",
+       "abbreviation": "FGM",
+       "displayValue": "9"
+      },
+      {
+       "name": "fieldGoalPct",
+       "abbreviation": "FG%",
+       "displayValue": "60.0"
+      },
+      {
+       "name": "freeThrowPct",
+       "abbreviation": "FT%",
+       "displayValue": "0.0"
+      },
+      {
+       "name": "freeThrowsAttempted",
+       "abbreviation": "FTA",
+       "displayValue": "1"
+      },
+      {
+       "name": "freeThrowsMade",
+       "abbreviation": "FTM",
+       "displayValue": "0"
+      },
+      {
+       "name": "points",
+       "abbreviation": "PTS",
+       "displayValue": "22"
+      },
+      {
+       "name": "threePointFieldGoalsAttempted",
+       "abbreviation": "3PA",
+       "displayValue": "8"
+      },
+      {
+       "name": "threePointFieldGoalsMade",
+       "abbreviation": "3PM",
+       "displayValue": "4"
+      },
+      {
+       "name": "avgPoints",
+       "abbreviation": "PTS",
+       "displayValue": "22.0"
+      },
+      {
+       "name": "avgAssists",
+       "abbreviation": "AST",
+       "displayValue": "5.0"
+      },
+      {
+       "name": "threePointFieldGoalPct",
+       "abbreviation": "3P%",
+       "displayValue": "50.0"
+      }
+     ],
+     "leaders": [
+      {
+       "name": "points",
+       "displayName": "Points",
+       "shortDisplayName": "Pts",
+       "abbreviation": "Pts",
+       "leaders": [
+        {
+         "displayValue": "6",
+         "value": 6,
+         "athlete": {
+          "id": "5176643",
+          "fullName": "Nasir Mann",
+          "displayName": "Nasir Mann",
+          "shortName": "N. Mann",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5176643/nasir-mann"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5176643.png",
+          "jersey": "1",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2511"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2511"
+         }
+        }
+       ]
+      },
+      {
+       "name": "rebounds",
+       "displayName": "Rebounds",
+       "shortDisplayName": "Reb",
+       "abbreviation": "Reb",
+       "leaders": [
+        {
+         "displayValue": "2",
+         "value": 2,
+         "athlete": {
+          "id": "5196932",
+          "fullName": "Isaiah Henry",
+          "displayName": "Isaiah Henry",
+          "shortName": "I. Henry",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5196932/isaiah-henry"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5196932.png",
+          "jersey": "5",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2511"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2511"
+         }
+        }
+       ]
+      },
+      {
+       "name": "assists",
+       "displayName": "Assists",
+       "shortDisplayName": "Ast",
+       "abbreviation": "Ast",
+       "leaders": [
+        {
+         "displayValue": "3",
+         "value": 3,
+         "athlete": {
+          "id": "5144110",
+          "fullName": "Jordan Watford",
+          "displayName": "Jordan Watford",
+          "shortName": "J. Watford",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5144110/jordan-watford"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5144110.png",
+          "jersey": "0",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2511"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2511"
+         }
+        }
+       ]
+      },
+      {
+       "name": "rating",
+       "displayName": "Rating",
+       "shortDisplayName": "RAT",
+       "abbreviation": "RAT",
+       "leaders": [
+        {
+         "displayValue": "6 PTS",
+         "value": 10.199999809265137,
+         "athlete": {
+          "id": "5176643",
+          "fullName": "Nasir Mann",
+          "displayName": "Nasir Mann",
+          "shortName": "N. Mann",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5176643/nasir-mann"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5176643.png",
+          "jersey": "1",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2511"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2511"
+         }
+        }
+       ]
+      }
+     ],
+     "curatedRank": {
+      "current": 99
+     },
+     "records": [
+      {
+       "name": "overall",
+       "abbreviation": "Season",
+       "type": "total",
+       "summary": "0-0"
+      },
+      {
+       "name": "Home",
+       "abbreviation": "Home",
+       "type": "home",
+       "summary": "0-0"
+      },
+      {
+       "name": "Road",
+       "abbreviation": "AWAY",
+       "type": "road",
+       "summary": "0-0"
+      },
+      {
+       "name": "vs. Conf.",
+       "abbreviation": "VS CONF",
+       "type": "vsconf",
+       "summary": "0-0"
+      }
+     ]
+    },
+    {
+     "id": "2737",
+     "uid": "s:40~l:41~t:2737",
+     "type": "team",
+     "order": 1,
+     "homeAway": "away",
+     "team": {
+      "id": "2737",
+      "uid": "s:40~l:41~t:2737",
+      "location": "Winthrop",
+      "name": "Eagles",
+      "abbreviation": "WIN",
+      "displayName": "Winthrop Eagles",
+      "shortDisplayName": "Winthrop",
+      "color": "9e0b0e",
+      "alternateColor": "fdb41e",
+      "isActive": true,
+      "venue": {
+       "id": "1922"
+      },
+      "links": [
+       {
+        "rel": [
+         "clubhouse",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/_/id/2737/winthrop-eagles",
+        "text": "Clubhouse",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "roster",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/roster/_/id/2737",
+        "text": "Roster",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "roster",
+         "sportscenter",
+         "app",
+         "team"
+        ],
+        "href": "sportscenter://x-callback-url/showClubhouse?uid=s:40~l:41~t:2737&section=roster",
+        "text": "Roster",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "stats",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/stats/_/id/2737",
+        "text": "Statistics",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "stats",
+         "sportscenter",
+         "app",
+         "team"
+        ],
+        "href": "sportscenter://x-callback-url/showClubhouse?uid=s:40~l:41~t:2737&section=stats",
+        "text": "Statistics",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "schedule",
+         "desktop",
+         "team"
+        ],
+        "href": "https://www.espn.com/mens-college-basketball/team/schedule/_/id/2737",
+        "text": "Schedule",
+        "isExternal": false,
+        "isPremium": false
+       },
+       {
+        "rel": [
+         "schedule",
+         "sportscenter",
+         "app",
+         "team"
+        ],
+        "href": "sportscenter://x-callback-url/showClubhouse?uid=s:40~l:41~t:2737&section=scores",
+        "text": "Schedule",
+        "isExternal": false,
+        "isPremium": false
+       }
+      ],
+      "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2737.png",
+      "logoDark": "https://a.espncdn.com/i/teamlogos/ncaa/500-dark/2737.png",
+      "conferenceId": "6"
+     },
+     "score": "14",
+     "linescores": [
+      {
+       "value": 14,
+       "displayValue": "14",
+       "period": 1
+      }
+     ],
+     "statistics": [
+      {
+       "name": "rebounds",
+       "abbreviation": "REB",
+       "displayValue": "6"
+      },
+      {
+       "name": "avgRebounds",
+       "abbreviation": "REB",
+       "displayValue": "6.0"
+      },
+      {
+       "name": "assists",
+       "abbreviation": "AST",
+       "displayValue": "3"
+      },
+      {
+       "name": "fieldGoalsAttempted",
+       "abbreviation": "FGA",
+       "displayValue": "10"
+      },
+      {
+       "name": "fieldGoalsMade",
+       "abbreviation": "FGM",
+       "displayValue": "6"
+      },
+      {
+       "name": "fieldGoalPct",
+       "abbreviation": "FG%",
+       "displayValue": "60.0"
+      },
+      {
+       "name": "freeThrowPct",
+       "abbreviation": "FT%",
+       "displayValue": "0.0"
+      },
+      {
+       "name": "freeThrowsAttempted",
+       "abbreviation": "FTA",
+       "displayValue": "2"
+      },
+      {
+       "name": "freeThrowsMade",
+       "abbreviation": "FTM",
+       "displayValue": "0"
+      },
+      {
+       "name": "points",
+       "abbreviation": "PTS",
+       "displayValue": "14"
+      },
+      {
+       "name": "threePointFieldGoalsAttempted",
+       "abbreviation": "3PA",
+       "displayValue": "5"
+      },
+      {
+       "name": "threePointFieldGoalsMade",
+       "abbreviation": "3PM",
+       "displayValue": "2"
+      },
+      {
+       "name": "avgPoints",
+       "abbreviation": "PTS",
+       "displayValue": "14.0"
+      },
+      {
+       "name": "avgAssists",
+       "abbreviation": "AST",
+       "displayValue": "3.0"
+      },
+      {
+       "name": "threePointFieldGoalPct",
+       "abbreviation": "3P%",
+       "displayValue": "40.0"
+      }
+     ],
+     "leaders": [
+      {
+       "name": "points",
+       "displayName": "Points",
+       "shortDisplayName": "Pts",
+       "abbreviation": "Pts",
+       "leaders": [
+        {
+         "displayValue": "4",
+         "value": 4,
+         "athlete": {
+          "id": "5239628",
+          "fullName": "Seifeldin Hendawy",
+          "displayName": "Seifeldin Hendawy",
+          "shortName": "S. Hendawy",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5239628/seifeldin-hendawy"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5239628.png",
+          "jersey": "25",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2737"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2737"
+         }
+        }
+       ]
+      },
+      {
+       "name": "rebounds",
+       "displayName": "Rebounds",
+       "shortDisplayName": "Reb",
+       "abbreviation": "Reb",
+       "leaders": [
+        {
+         "displayValue": "1",
+         "value": 1,
+         "athlete": {
+          "id": "5239628",
+          "fullName": "Seifeldin Hendawy",
+          "displayName": "Seifeldin Hendawy",
+          "shortName": "S. Hendawy",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5239628/seifeldin-hendawy"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5239628.png",
+          "jersey": "25",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2737"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2737"
+         }
+        }
+       ]
+      },
+      {
+       "name": "assists",
+       "displayName": "Assists",
+       "shortDisplayName": "Ast",
+       "abbreviation": "Ast",
+       "leaders": [
+        {
+         "displayValue": "1",
+         "value": 1,
+         "athlete": {
+          "id": "5239628",
+          "fullName": "Seifeldin Hendawy",
+          "displayName": "Seifeldin Hendawy",
+          "shortName": "S. Hendawy",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5239628/seifeldin-hendawy"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5239628.png",
+          "jersey": "25",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2737"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2737"
+         }
+        }
+       ]
+      },
+      {
+       "name": "rating",
+       "displayName": "Rating",
+       "shortDisplayName": "RAT",
+       "abbreviation": "RAT",
+       "leaders": [
+        {
+         "displayValue": "4 PTS",
+         "value": 7.800000190734863,
+         "athlete": {
+          "id": "5239628",
+          "fullName": "Seifeldin Hendawy",
+          "displayName": "Seifeldin Hendawy",
+          "shortName": "S. Hendawy",
+          "links": [
+           {
+            "rel": [
+             "playercard",
+             "desktop",
+             "athlete"
+            ],
+            "href": "https://www.espn.com/mens-college-basketball/player/_/id/5239628/seifeldin-hendawy"
+           }
+          ],
+          "headshot": "https://a.espncdn.com/i/headshots/mens-college-basketball/players/full/5239628.png",
+          "jersey": "25",
+          "position": {
+           "abbreviation": "G"
+          },
+          "team": {
+           "id": "2737"
+          },
+          "active": true
+         },
+         "team": {
+          "id": "2737"
+         }
+        }
+       ]
+      }
+     ],
+     "curatedRank": {
+      "current": 99
+     },
+     "records": [
+      {
+       "name": "overall",
+       "abbreviation": "Season",
+       "type": "total",
+       "summary": "0-0"
+      },
+      {
+       "name": "Home",
+       "abbreviation": "Home",
+       "type": "home",
+       "summary": "0-0"
+      },
+      {
+       "name": "Road",
+       "abbreviation": "AWAY",
+       "type": "road",
+       "summary": "0-0"
+      },
+      {
+       "name": "vs. Conf.",
+       "abbreviation": "VS CONF",
+       "type": "vsconf",
+       "summary": "0-0"
+      }
+     ]
+    }
+   ],
+   "notes": [
+    {
+     "type": "event",
+     "headline": "Field of 68 Opening Day Marathon"
+    }
+   ],
+   "situation": {
+    "lastPlay": {
+     "id": "401921423120420470",
+     "type": {
+      "id": "580",
+      "text": "OfficialTVTimeOut"
+     },
+     "text": "Official TV Timeout",
+     "scoreValue": 0,
+     "probability": {
+      "tiePercentage": 0,
+      "homeWinPercentage": 0.721,
+      "awayWinPercentage": 0.279
+     }
+    }
+   },
+   "status": {
+    "clock": 695,
+    "displayClock": "11:35",
+    "period": 1,
+    "type": {
+     "id": "2",
+     "name": "STATUS_IN_PROGRESS",
+     "state": "in",
+     "completed": false,
+     "description": "In Progress",
+     "detail": "11:35 - 1st Half",
+     "shortDetail": "11:35 - 1st"
+    }
+   },
+   "broadcasts": [
+    {
+     "market": "national",
+     "names": [
+      "YouTube"
+     ]
+    }
+   ],
+   "format": {
+    "regulation": {
+     "periods": 2
+    }
+   },
+   "startDate": "2026-11-02T14:00Z",
+   "broadcast": "YouTube",
+   "geoBroadcasts": [
+    {
+     "type": {
+      "id": "4",
+      "shortName": "Streaming"
+     },
+     "market": {
+      "id": "1",
+      "type": "National"
+     },
+     "media": {
+      "shortName": "YouTube"
+     },
+     "lang": "en",
+     "region": "us"
+    }
+   ],
+   "highlights": []
+  }
+ ],
+ "links": [
+  {
+   "language": "en-US",
+   "rel": [
+    "live",
+    "desktop",
+    "event"
+   ],
+   "href": "https://www.espn.com/mens-college-basketball/game?gameId=401921423",
+   "text": "Gamecast",
+   "shortText": "Gamecast",
+   "isExternal": false,
+   "isPremium": false
+  },
+  {
+   "language": "en-US",
+   "rel": [
+    "boxscore",
+    "desktop",
+    "event"
+   ],
+   "href": "https://www.espn.com/mens-college-basketball/boxscore/_/gameId/401921423",
+   "text": "Box Score",
+   "shortText": "Box Score",
+   "isExternal": false,
+   "isPremium": false
+  },
+  {
+   "language": "en-US",
+   "rel": [
+    "pbp",
+    "desktop",
+    "event"
+   ],
+   "href": "https://www.espn.com/mens-college-basketball/playbyplay/_/gameId/401921423",
+   "text": "Play-by-Play",
+   "shortText": "Play-by-Play",
+   "isExternal": false,
+   "isPremium": false
+  }
+ ],
+ "status": {
+  "clock": 695,
+  "displayClock": "11:35",
+  "period": 1,
+  "type": {
+   "id": "2",
+   "name": "STATUS_IN_PROGRESS",
+   "state": "in",
+   "completed": false,
+   "description": "In Progress",
+   "detail": "11:35 - 1st Half",
+   "shortDetail": "11:35 - 1st"
+  }
+ }
+}
