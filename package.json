@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/build_blog.mjs",
+    "build": "node scripts/gen_logo_manifest.mjs && tsc && vite build && node scripts/build_blog.mjs",
     "blog:check": "node scripts/build_blog.mjs --check",
     "preview": "vite preview",
     "preview:refresh": "node scripts/preview_refresh.mjs"

@@ -41,6 +41,7 @@ async function load() {
     `export * from ${JSON.stringify(src("liveJoin"))};`,
     `export { parseMbbSummary } from ${JSON.stringify(src("espnMbb"))};`,
     `export * from ${JSON.stringify(src("liveOddsCbb"))};`,
+    `export * from ${JSON.stringify(resolve("src/utils/espnLogos").split("\\").join("/"))};`,
     `export { pickCbbDay, selectBandRows } from ${JSON.stringify(src("upNextCbb"))};`,
   ].join("\n"));
   const out = join(dir, "out.mjs");
@@ -331,6 +332,21 @@ try {
   const fin = JSON.parse(JSON.stringify(ev)); fin.status.type = { name: "STATUS_FINAL", state: "post", completed: true, shortDetail: "Final" };
   fin.competitions[0].status = { ...fin.competitions[0].status, type: fin.status.type };
   eq("a final event reads as final", findTickLive(indexTickLive([tickLiveOfEvent(fin, parseMbbStatus(fin))]), row).live.state, "final");
+} catch (e) { bad(String(e.stack || e)); }
+
+
+/* ---- logos: self-hosted only when the manifest lists the file, else the ESPN CDN ---- */
+try {
+  const { espnLogoUrl, espnLogoDarkUrl, localizeLogoUrl, hasHostedLogo } = mod;
+  console.log("logos");
+  eq("Michigan 130 is hosted", espnLogoUrl(130), "/logos/130.webp");
+  eq("Pepperdine 2492 is hosted (the band used the CDN for it before)", espnLogoUrl(2492), "/logos/2492.webp");
+  eq("a hosted id with no dark file -> CDN 500-dark", espnLogoDarkUrl(2492), hasHostedLogo("2492-dark") ? "/logos/2492-dark.webp" : "https://a.espncdn.com/i/teamlogos/ncaa/500-dark/2492.png");
+  eq("an id nobody hosts (99999) -> CDN", espnLogoUrl("99999"), "https://a.espncdn.com/i/teamlogos/ncaa/500/99999.png");
+  eq("a baked-in CDN url for an unhosted id stays on the CDN", localizeLogoUrl("https://a.espncdn.com/i/teamlogos/ncaa/500/99999.png"), "https://a.espncdn.com/i/teamlogos/ncaa/500/99999.png");
+  eq("a baked-in CDN url for a hosted id is localized", localizeLogoUrl("https://a.espncdn.com/i/teamlogos/ncaa/500/130.png"), "/logos/130.webp");
+  eq("no id -> nothing", espnLogoUrl(null), undefined);
+  eq("hasHostedLogo agrees with the manifest", hasHostedLogo("130") && !hasHostedLogo("99999"), true);
 } catch (e) { bad(String(e.stack || e)); }
 
 

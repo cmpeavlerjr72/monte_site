@@ -25,6 +25,7 @@ import { bandGame, loadUpNextCbb, selectBandRows, type UpNextCbb } from "../../l
 import type { UpNextGame } from "../../lib/upNext";
 import type { JsonWeekRow } from "../../lib/cfbJson";
 import { getTeamLogo } from "../../utils/teamLogo";
+import { espnLogoUrl } from "../../utils/espnLogos";
 
 const TICKER_PATHS = new Set(["/", "/cfb", "/cbb"]);
 const N_GAMES = 16;
@@ -55,7 +56,7 @@ type BandItem = {
   ptsA: number | null; ptsH: number | null; foot: ReactNode;
 };
 
-const espnLogo = (id?: string | number | null) => (id ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png` : undefined);
+const espnLogo = espnLogoUrl; // self-hosted when listed in the manifest, else the ESPN CDN
 
 /** Basketball: today's day index plus the live feed. */
 function ScoreTickerCbb() {
@@ -199,8 +200,8 @@ function TickerView({ league, label, ariaLabel, boardTo, items, failed, data }: 
                   <li key={g.key} className="tk-game">
                     <Link className="tk-game__link" to={g.to}>
                       <span className={g.live ? "tk-game__kick tk-game__kick--live" : "tk-game__kick"}>{g.kick}</span>
-                      <span className="tk-game__row"><TeamCell team={g.away} size={16} logo={g.awayLogo} /><span className="tk-game__pts num">{g.ptsA ?? "—"}</span></span>
-                      <span className="tk-game__row"><TeamCell team={g.home} size={16} logo={g.homeLogo} /><span className="tk-game__pts num">{g.ptsH ?? "—"}</span></span>
+                      <span className="tk-game__row"><TeamCell team={g.away} size={16} logo={g.awayLogo} eager /><span className="tk-game__pts num">{g.ptsA ?? "—"}</span></span>
+                      <span className="tk-game__row"><TeamCell team={g.home} size={16} logo={g.homeLogo} eager /><span className="tk-game__pts num">{g.ptsH ?? "—"}</span></span>
                       <span className="tk-game__foot">{g.foot}</span>
                     </Link>
                   </li>

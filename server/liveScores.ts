@@ -6815,6 +6815,11 @@ app.get(["/blog", "/blog/", "/blog/tag/:tag", "/blog/:slug"], (req: Request, res
 // /blog/<slug> into a 301 to /blog/<slug>/; the SPA (or the meta route) owns it.
 app.use(express.static(staticDir, { redirect: false }));
 
+// A missing static logo is a real 404, never the SPA's index.html: an <img> (and
+// every onError fallback on the site) must see the failure. express.static above
+// already served any file that exists.
+app.use("/logos", (_req: Request, res: Response) => { res.status(404).type("text/plain").send("not found"); });
+
 app.get("*", (_req: Request, res: Response, next: NextFunction) => {
   res.sendFile(path.join(staticDir, "index.html"), (err) => {
     // Missing/unbuilt dist: report it instead of leaving the request hanging.

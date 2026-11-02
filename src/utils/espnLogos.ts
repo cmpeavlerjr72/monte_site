@@ -1,13 +1,26 @@
 // Logos are self-hosted under /logos so the site renders on networks that block
 // espncdn.com. Regenerate with scripts/fetch_logos.py when teams change.
+import logoFiles from "../lib/logoManifest.json";
+
+/** File names under public/logos (scripts/gen_logo_manifest.mjs, run by `npm run build`).
+ *  A self-hosted logo is requested only when it is listed here: the server's SPA
+ *  fallback answers a missing /logos/<id>.webp with 200 text/html, which an <img>
+ *  can fail to report as an error. Anything not listed goes to ESPN's CDN. */
+const HOSTED = new Set<string>(logoFiles as string[]);
+export const hasHostedLogo = (name: string): boolean => HOSTED.has(name);
+
+const cdn = (id: string | number, dark: boolean) =>
+  `https://a.espncdn.com/i/teamlogos/ncaa/${dark ? "500-dark" : "500"}/${id}.png`;
+
+/** Logo URL for an ESPN team id: the self-hosted copy when it exists, else the CDN. */
 export function espnLogoUrl(espnId: string | number | null | undefined): string | undefined {
   if (espnId == null || espnId === "") return undefined;
-  return `/logos/${espnId}.webp`;
+  return HOSTED.has(String(espnId)) ? `/logos/${espnId}.webp` : cdn(espnId, false);
 }
 
 export function espnLogoDarkUrl(espnId: string | number | null | undefined): string | undefined {
   if (espnId == null || espnId === "") return undefined;
-  return `/logos/${espnId}-dark.webp`;
+  return HOSTED.has(`${espnId}-dark`) ? `/logos/${espnId}-dark.webp` : cdn(espnId, true);
 }
 
 // Rewrite a baked-in CDN logo URL (e.g. from team_info.csv) to its local
@@ -33,9 +46,12 @@ export function localizeLogoUrl(url?: string): string | undefined {
   let s = url.trim();
   if (!s) return undefined;
   const m = s.match(ESPN_LOGO_RE);
-  if (m) return `/logos/${m[2]}${m[1].toLowerCase() === "500-dark" ? "-dark" : ""}.webp`;
+  if (m) {
+    const dark = m[1].toLowerCase() === "500-dark";
+    return HOSTED.has(`${m[2]}${dark ? "-dark" : ""}`) ? `/logos/${m[2]}${dark ? "-dark" : ""}.webp` : cdn(m[2], dark);
+  }
   const c = s.match(CFBD_LOGO_RE);
-  if (c) return `/logos/${c[2]}${c[1] ? "-dark" : ""}.webp`;
+  if (c) return HOSTED.has(`${c[2]}${c[1] ? "-dark" : ""}`) ? `/logos/${c[2]}${c[1] ? "-dark" : ""}.webp` : cdn(c[2], Boolean(c[1]));
   if (s.startsWith("//")) s = "https:" + s;
   if (s.startsWith("http://")) s = "https://" + s.slice(7);
   return s;

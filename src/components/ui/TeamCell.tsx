@@ -8,14 +8,16 @@ const cx = (...c: Array<string | false | null | undefined>) => c.filter(Boolean)
 
 /** Logo + school name. The logo is decorative when the name is printed beside
  *  it (alt=""), so a screen reader hears the name once. */
-export function TeamCell({ team, sub, size = 22, logo, className }: {
+export function TeamCell({ team, sub, size = 22, logo, className, eager }: {
   team: string; sub?: ReactNode; size?: number; logo?: string | null; className?: string;
+  /** Load the logo now (a horizontal rail's off-screen tiles never trigger lazy loading). */
+  eager?: boolean;
 }) {
   const src = logo === undefined ? getTeamLogo(team) : logo || undefined;
   return (
     <span className={cx("team-cell", className)}>
       {src ? (
-        <img src={src} alt="" width={size} height={size} loading="lazy" decoding="async" className="team-cell__logo" />
+        <img src={src} alt="" width={size} height={size} loading={eager ? "eager" : "lazy"} decoding="async" className="team-cell__logo" />
       ) : (
         <span className="team-cell__logo team-cell__logo--none" style={{ width: size, height: size }} aria-hidden="true" />
       )}
