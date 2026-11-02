@@ -17,7 +17,7 @@ export const GATES = {
   /** NCAA tournament Selection Sunday 2027. */
   cbbBracket: { opens: "2027-03-14", label: "Selection Sunday, March 14" },
   /** First day of the 2026-27 college basketball season. */
-  cbbSeason: { opens: "2026-11-03", label: "Nov 3" },
+  cbbSeason: { opens: "2026-11-02", label: "Nov 2" },
 } as const satisfies Record<string, SeasonGate>;
 
 /** Today's calendar date in America/New_York, as YYYY-MM-DD. */
