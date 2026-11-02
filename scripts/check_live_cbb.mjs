@@ -39,6 +39,8 @@ async function load() {
     `export * from ${JSON.stringify(src("liveRecord"))};`,
     `export * from ${JSON.stringify(src("mbbLive"))};`,
     `export * from ${JSON.stringify(src("liveJoin"))};`,
+    `export { parseMbbSummary } from ${JSON.stringify(src("espnMbb"))};`,
+    `export * from ${JSON.stringify(src("liveOddsCbb"))};`,
   ].join("\n"));
   const out = join(dir, "out.mjs");
   await build({
@@ -245,6 +247,47 @@ try {
   eq("orientation by id: A=2511 is ESPN home", espnHomeIsAOf(lv, "Queens (NC)", 2511), true);
   eq("orientation by id (neutral swap): A=2737 is ESPN away", espnHomeIsAOf(lv, "Winthrop", 2737), false);
   eq("orientation falls back to names without ids", espnHomeIsAOf(lv, "Queens University", null), true);
+} catch (e) { bad(String(e.stack || e)); }
+
+
+/* ---- the basketball drawer: ESPN summary parse (captured live + final events) and live odds ---- */
+try {
+  const { parseMbbSummary, liveOddsCbb, parseLiveGrid } = mod;
+  const live = parseMbbSummary(JSON.parse(await readFile("scripts/fixtures/espn_mbb_summary_in_progress.json", "utf8")));
+  console.log("drawer: captured in-progress summary (Queens v Winthrop)");
+  eq("state in", live.state, "in"); eq("period 1", live.period, 1);
+  eq("home is Queens 2511, score 31", `${live.home.id}/${live.home.score}`, "2511/31");
+  eq("away is Winthrop 2737, score 21", `${live.away.id}/${live.away.score}`, "2737/21");
+  eq("first-half linescore so far", live.home.linescores.join(","), "31");
+  eq("team fouls present", live.stats["2511"].fouls !== undefined && live.stats["2737"].fouls !== undefined, true);
+  eq("FG line", live.stats["2511"].fg, "13-20");
+  const box = live.box.find((b) => b.teamId === "2511");
+  eq("box players parsed", box.players.length > 5, true);
+  eq("box points add to the score (no team row double count)", box.players.reduce((s, p) => s + (p.pts ?? 0), 0), 31);
+  eq("ESPN win prob series", live.winProb.length > 2 && live.winProb.every((x) => x >= 0 && x <= 1), true);
+  eq("recent plays carry period+clock", live.plays.every((p) => p.period === 1 && typeof p.clock === "string"), true);
+
+  const fin = parseMbbSummary(JSON.parse(await readFile("scripts/fixtures/espn_mbb_summary_final.json", "utf8")));
+  console.log("drawer: captured final summary (Grambling v NIU)");
+  eq("state post", fin.state, "post");
+  eq("final score home/away", `${fin.home.score}-${fin.away.score}`, "89-87");
+  eq("final linescore home", fin.home.linescores.join(","), "43,46");
+  eq("final linescore sums to the score", fin.away.linescores.reduce((a, b) => a + b, 0), 87);
+  eq("final box points add to the score", fin.box.find((b) => b.teamId === fin.home.id).players.reduce((s, p) => s + (p.pts ?? 0), 0), 89);
+
+  // live odds on the fixture grid: Queens (A) 31, Winthrop (B) 21, 7:55 left in the 1st = 725 s elapsed
+  const g = parseLiveGrid(fixtureRaw());
+  const r = liveOddsCbb(g, { scoreA: 31, scoreB: 21, period: 1, clockSec: 475, spreadLineA: -3.5, totalLine: 168.5 });
+  eq("odds priced", r.kind, "ok");
+  eq("projected margin = +10 (remaining margin mean 0)", r.odds.projMargin, 10, 0.02);
+  // pos 5.5417 between bins 5,6: c = 109, 102 (total so far 52 -> total bin 4, +4) -> 105.208
+  eq("projected total", r.odds.projTotal, 52 + 105.2083, 0.02);
+  eq("P(A wins) = 1 (leads by 10, remaining margin within +-2)", r.odds.pWinA, 1);
+  eq("P(A covers -3.5) = 1", r.odds.pCoverA, 1);
+  eq("P(over 168.5) = 0 (max remaining total 113)", r.odds.pOver, 0, 1e-9);
+  eq("total diff vs line", r.odds.totalDiff, 52 + 105.2083 - 168.5, 0.02);
+  eq("OT with a lead -> ot placeholder kind", liveOddsCbb(g, { scoreA: 70, scoreB: 66, period: 3, clockSec: 200 }).kind, "ot");
+  eq("no score -> no-state", liveOddsCbb(g, { period: 1, clockSec: 475 }).kind, "no-state");
 } catch (e) { bad(String(e.stack || e)); }
 
 

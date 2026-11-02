@@ -451,7 +451,7 @@ function subscribeEspnJson(
  *  `snapKey` ("<eventId>:summary" | "<eventId>:probabilities") names the
  *  branch of the published gamecast snapshot to fall back to when ESPN is
  *  unreachable — a primitive, so it is rule-4 safe as an effect dependency. */
-function useEspnJson(url: string | null, pollMs: number | null, snapKey?: string | null) {
+export function useEspnJson(url: string | null, pollMs: number | null, snapKey?: string | null) {
   const [data, setData] = useState<any | null>(null);
   useEffect(() => {
     if (!url) {

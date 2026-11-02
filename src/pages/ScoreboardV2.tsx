@@ -74,6 +74,7 @@ import LegPicker from "../components/LegPicker";
 import ParlaySlip from "../components/ParlaySlip";
 import { legLabel, type Leg, type LegSpec } from "../lib/parlay";
 import { FieldStrip, LiveGamePanel } from "../components/LiveGamecast";
+import { LiveGamecastCbb } from "../components/LiveGamecastCbb";
 import LiveProgressStrip from "../components/LiveProgress";
 import { parseSituation, useGameTeamStats, type LiveSituation } from "../lib/espnGame";
 import { progressBetsOf } from "../lib/liveProgress";
@@ -1331,8 +1332,9 @@ const urlPeriod = (param: string) => (getSearchParam(param) || "").trim().toLowe
  * differs is listed here and nowhere else.
  * ========================================================================= */
 type PanelFeatures = {
-  /** The Live / Game Flow drawer tab. It reads ESPN's football summary and
-   *  probability endpoints (src/lib/espnGame.ts), so it is football-only. */
+  /** The Live / Game Flow drawer tab. Football reads ESPN's football summary
+   *  and probability endpoints (src/lib/espnGame.ts, LiveGamecast.tsx);
+   *  basketball has its own drawer (LiveGamecastCbb.tsx, src/lib/espnMbb.ts). */
   liveGamecast: boolean;
   /** The Team Stats tab (team_stats.json, built from the football sweep). */
   teamStats: boolean;
@@ -1423,7 +1425,7 @@ const SPORT_CFG: Record<SportKey, SportConfig> = {
     markets: true,
     dkMarkets: false,
     league: "ncaab",
-    panels: { liveGamecast: false, teamStats: false },
+    panels: { liveGamecast: true, teamStats: false },
     startWord: "Tipoff",
     classicPath: "/cbb/scoreboard-classic",
   },
@@ -5315,7 +5317,23 @@ function CardPanelHost({
         </div>
       )}
 
-      {kind === "live" && lv?.id && (
+      {kind === "live" && lv?.id && card.ns.startsWith("cbb") && (
+        <LiveGamecastCbb
+          eventId={lv.id}
+          isLive={lv.state === "in"}
+          bits={liveBits}
+          teamA={card.teamA} teamB={card.teamB} espnHomeIsA={espnHomeIsA}
+          scoreA={card.finalA} scoreB={card.finalB}
+          period={lv.period} clockSec={lv.clockSec}
+          halftime={lv.halftime} possessionId={lv.mbbPossessionId} statusText={lv.statusText}
+          spreadLineA={card.oddsSpread} totalLine={card.oddsTotal}
+          results={{ spread: card.spreadResult, total: card.totalResult, ml: card.mlResult }}
+          med={{ A: card.medA, B: card.medB }}
+          liveGrid={liveGrid}
+          livePlayers={livePlayers}
+        />
+      )}
+      {kind === "live" && lv?.id && !card.ns.startsWith("cbb") && (
         <LiveGamePanel
           eventId={lv.id}
           isLive={lv.state === "in"}
