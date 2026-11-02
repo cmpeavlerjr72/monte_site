@@ -10,8 +10,8 @@
 //   1. Value totals     the Value rule, totals only
 //   2. Value edge 10+   the Value rule, every bet type, the 10+ point edge bucket
 //
-// Each links to the board with that view highlighted. Under the tile, one small
-// line keeps the starred-picks record (the ledger /cfb/record shows) reachable.
+// Each links to the board with that view highlighted. (The starred-picks line
+// that sat under the tile was removed 2026-11-02; /cfb/record stays in the nav.)
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -19,7 +19,6 @@ import { Card, Stat, signedTone } from "../ui";
 import { Skeleton } from "../Skeleton";
 import { loadValueSeason, type ValueSeasonLoad } from "../../lib/valueSeason";
 import { roiOf, tallyN, type Tally } from "../../lib/valueRecord";
-import { loadRecordHeadline, type RecordHeadline } from "../../lib/recordHeadline";
 
 const ROTATE_MS = 6000;
 const signed = (n: number, d = 1) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(d)}`;
@@ -31,14 +30,12 @@ type Panel = { key: string; label: string; to: string; tally: Tally };
 export function RecordTile() {
   const [season, setSeason] = useState<ValueSeasonLoad | null>(null);
   const [failed, setFailed] = useState(false);
-  const [starred, setStarred] = useState<RecordHeadline | null>(null);
   const [idx, setIdx] = useState(0);
   const [paused, setPaused] = useState(false);
 
   useEffect(() => {
     let alive = true;
     loadValueSeason().then((r) => { if (alive) setSeason(r); }).catch(() => { if (alive) setFailed(true); });
-    loadRecordHeadline().then((r) => { if (alive) setStarred(r); }).catch(() => { /* the line just stays out */ });
     return () => { alive = false; };
   }, []);
 
@@ -100,13 +97,6 @@ export function RecordTile() {
           )}
         </div>
       </Card>
-      {starred && starred.summary.scored > 0 && (
-        <p className="rt-note" style={{ margin: "6px 2px 0", fontSize: 11.5 }}>
-          <Link className="link" to="/cfb/record">
-            All starred picks: {starred.summary.wins}-{starred.summary.losses}{starred.summary.pushes ? `-${starred.summary.pushes}` : ""}, {signed(starred.summary.units, 2)}u
-          </Link>
-        </p>
-      )}
     </div>
   );
 }
