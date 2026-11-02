@@ -1,73 +1,112 @@
-// src/components/site/RecordTile.tsx: the CFB sims' 2026 record in one card
-// (live from the published ledger, the same numbers as /cfb/record). It used
-// to headline the homepage; since 2026-10-16 it lives on the CFB home, where
-// the site's CFB-specific numbers belong.
+// src/components/site/RecordTile.tsx: the CFB home's record box. It points a
+// visitor at where results are and what the model is currently good at, so its
+// content is meant to change week to week. Today it rotates (every ~6 s,
+// paused on hover or focus, with dots) through two season-to-date scoreboard
+// records, computed LIVE from the published lines.json + verified finals by the
+// same Value-rule helper the scoreboard's record strip uses (lib/valueRecord.ts,
+// loaded by lib/valueSeason.ts): open line, flat -110 on spread and total,
+// pushes 0 units.
+//
+//   1. Value totals     the Value rule, totals only
+//   2. Value edge 10+   the Value rule, every bet type, the 10+ point edge bucket
+//
+// Each links to the board with that view highlighted. Under the tile, one small
+// line keeps the starred-picks record (the ledger /cfb/record shows) reachable.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, Stat, signedTone } from "../ui";
 import { Skeleton } from "../Skeleton";
+import { loadValueSeason, type ValueSeasonLoad } from "../../lib/valueSeason";
+import { roiOf, tallyN, type Tally } from "../../lib/valueRecord";
 import { loadRecordHeadline, type RecordHeadline } from "../../lib/recordHeadline";
 
-const signed = (n: number, d = 2) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(d)}`;
+const ROTATE_MS = 6000;
+const signed = (n: number, d = 1) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n).toFixed(d)}`;
 const pctSigned = (r: number) => `${r > 0 ? "+" : r < 0 ? "−" : ""}${Math.abs(r * 100).toFixed(1)}%`;
+const wlp = (t: Tally) => `${t.win}-${t.loss}${t.push ? `-${t.push}` : ""}`;
 
-function Sparkline({ points }: { points: { week: number; cum: number }[] }) {
-  if (points.length < 2) return null;
-  const W = 220, H = 56, P = 4;
-  const ys = [0, ...points.map((p) => p.cum)];
-  const lo = Math.min(...ys), hi = Math.max(...ys);
-  const x = (i: number) => P + (i * (W - 2 * P)) / (points.length - 1);
-  const y = (v: number) => H - P - ((v - lo) / (hi - lo || 1)) * (H - 2 * P);
-  const d = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.cum).toFixed(1)}`).join(" ");
-  const last = points[points.length - 1];
-  return (
-    <svg className="rt-spark" viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
-      aria-label={`Running units by week, week ${points[0].week} to week ${last.week}, ending at ${signed(last.cum)} units`}>
-      <line x1={P} x2={W - P} y1={y(0)} y2={y(0)} stroke="var(--border)" strokeWidth="1" />
-      <path d={d} fill="none" stroke="var(--chart-line)" strokeWidth="2" strokeLinejoin="round" />
-      <circle cx={x(points.length - 1)} cy={y(last.cum)} r="4" fill="var(--chart-point)" stroke="var(--card)" strokeWidth="2" />
-    </svg>
-  );
-}
+type Panel = { key: string; label: string; to: string; tally: Tally };
 
 export function RecordTile() {
-  const [rec, setRec] = useState<RecordHeadline | null>(null);
+  const [season, setSeason] = useState<ValueSeasonLoad | null>(null);
   const [failed, setFailed] = useState(false);
+  const [starred, setStarred] = useState<RecordHeadline | null>(null);
+  const [idx, setIdx] = useState(0);
+  const [paused, setPaused] = useState(false);
+
   useEffect(() => {
     let alive = true;
-    loadRecordHeadline().then((r) => { if (alive) setRec(r); }).catch(() => { if (alive) setFailed(true); });
+    loadValueSeason().then((r) => { if (alive) setSeason(r); }).catch(() => { if (alive) setFailed(true); });
+    loadRecordHeadline().then((r) => { if (alive) setStarred(r); }).catch(() => { /* the line just stays out */ });
     return () => { alive = false; };
   }, []);
 
+  const panels: Panel[] = useMemo(() => season ? [
+    { key: "totals", label: "Value totals", to: "/cfb/scoreboard?value=1&bet=total", tally: season.totals },
+    { key: "edge10", label: "Value edge 10+", to: "/cfb/scoreboard?value=1&edge=10", tally: season.edge10 },
+  ].filter((p) => tallyN(p.tally) > 0) : [], [season]);
+
+  const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  useEffect(() => {
+    if (paused || reduced || panels.length < 2) return;
+    const t = setInterval(() => setIdx((i) => (i + 1) % panels.length), ROTATE_MS);
+    return () => clearInterval(t);
+  }, [paused, reduced, panels.length]);
+
+  const cur = panels.length ? panels[idx % panels.length] : null;
+  const roi = cur ? roiOf(cur.tally) : null;
+
   return (
-    <Card className="rt" kicker="The 2026 record" action={<Link to="/cfb/record">Every pick →</Link>}>
-      {failed ? (
-        <p className="rt-note">The record didn't load just now. <Link className="link" to="/cfb/record">Open the record page</Link>.</p>
-      ) : !rec ? (
-        <div aria-busy="true" role="status" aria-label="Loading the record" className="rt-body">
-          <Skeleton height={52} width="60%" />
-          <Skeleton height={16} width="85%" />
-          <Skeleton height={56} />
+    <div className="rt-wrap">
+      <Card className="rt" kicker="What the model is good at">
+        <div
+          className="rt-body"
+          onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}
+          onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}
+        >
+          {failed ? (
+            <p className="rt-note">The record didn't load just now. <Link className="link" to="/cfb/record">Open the record page</Link>.</p>
+          ) : !season ? (
+            <div aria-busy="true" role="status" aria-label="Loading the record">
+              <Skeleton height={52} width="60%" />
+              <Skeleton height={16} width="85%" />
+            </div>
+          ) : !cur ? (
+            <p className="rt-note">No graded value bets yet this season. <Link className="link" to="/cfb/scoreboard">Open the board</Link>.</p>
+          ) : (
+            <Link to={cur.to} className="rt-panel" aria-label={`${cur.label}: open the scoreboard with this view`} style={{ color: "inherit", textDecoration: "none", display: "block" }}>
+              <Stat size="xl" label={cur.label} value={roi == null ? "—" : `${pctSigned(roi)} ROI`} tone={signedTone(roi)} />
+              <p className="rt-line">
+                <span className="num"><b>{wlp(cur.tally)}</b></span>
+                {" · "}
+                <span className={`num tone-${(signedTone(cur.tally.pnl) ?? "muted")}`}><b>{signed(cur.tally.pnl)}u</b></span>
+                {" · "}<span className="num">{tallyN(cur.tally)}</span> bets
+              </p>
+              <p className="rt-note">season to date, open line, -110 · see these games on the board →</p>
+            </Link>
+          )}
+          {panels.length > 1 && (
+            <div role="tablist" aria-label="Records" style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              {panels.map((p, i) => (
+                <button key={p.key} type="button" role="tab" aria-selected={i === idx % panels.length} aria-label={p.label}
+                  onClick={() => setIdx(i)}
+                  style={{
+                    width: 8, height: 8, borderRadius: 999, padding: 0, border: 0, cursor: "pointer",
+                    background: i === idx % panels.length ? "var(--brand)" : "var(--border)",
+                  }} />
+              ))}
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="rt-body">
-          <Stat size="xl" label="Return per unit risked"
-            value={rec.summary.roi == null ? "—" : pctSigned(rec.summary.roi)}
-            tone={signedTone(rec.summary.roi)} />
-          <p className="rt-line">
-            <span className="num"><b>{rec.summary.wins}-{rec.summary.losses}{rec.summary.pushes ? `-${rec.summary.pushes}` : ""}</b></span>
-            {" · "}
-            <span className={`num tone-${(signedTone(rec.summary.units) ?? "muted")}`}><b>{signed(rec.summary.units)}u</b></span>
-            {" on "}<span className="num">{rec.summary.scored}</span> starred picks
-          </p>
-          <Sparkline points={rec.weeks} />
-          <p className="rt-note">
-            {rec.throughWeek != null ? `Through week ${rec.throughWeek}. ` : ""}
-            Every pick posted before kickoff, graded at the price we posted it, fees in. The bad weeks stay up.
-          </p>
-        </div>
+      </Card>
+      {starred && starred.summary.scored > 0 && (
+        <p className="rt-note" style={{ margin: "6px 2px 0", fontSize: 11.5 }}>
+          <Link className="link" to="/cfb/record">
+            All starred picks: {starred.summary.wins}-{starred.summary.losses}{starred.summary.pushes ? `-${starred.summary.pushes}` : ""}, {signed(starred.summary.units, 2)}u
+          </Link>
+        </p>
       )}
-    </Card>
+    </div>
   );
 }

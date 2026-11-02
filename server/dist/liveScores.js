@@ -776,6 +776,59 @@ app.get("/api/live", (req, res) => {
         }
     }, 25_000);
 });
+// ---- FINALS, COMPACT (2026-11-02) ----
+// GET /api/finals?sport=cfb&dates=20261031,20261101 -> { dates: { "20261031": [[eventId, homeTeamId, homeScore, awayTeamId, awayScore], ...] } }
+// Completed games only, reduced from the cached ESPN scoreboard so the CFB home
+// tile can grade a whole season without pulling ~1 MB of scoreboard per date into the
+// browser. A date that is entirely final and at least two days old is kept for the life of
+// the process; anything else rides the scoreboard cache's own TTL.
+const FINALS_PERM = new Map();
+app.get("/api/finals", async (req, res) => {
+    try {
+        const sport = toSport(req.query.sport);
+        const dates = String(req.query.dates || "").split(",").map((d) => d.replace(/-/g, "").trim())
+            .filter((d) => /^\d{8}$/.test(d)).slice(0, 14);
+        const today = currentETDate();
+        const out = {};
+        await Promise.all(dates.map(async (d) => {
+            const key = `${sport}:${d}`;
+            const hit = FINALS_PERM.get(key);
+            if (hit) {
+                out[d] = hit;
+                return;
+            }
+            const payload = await getScoreboard(sport, d);
+            const events = (payload?.events ?? []).filter((e) => e?.id);
+            const rows = [];
+            let allFinal = events.length > 0;
+            for (const e of events) {
+                const t = e?.status?.type ?? e?.competitions?.[0]?.status?.type ?? {};
+                const done = Boolean(t.completed) || String(t.state || "").toLowerCase() === "post";
+                if (!done) {
+                    allFinal = false;
+                    continue;
+                }
+                const comp = e?.competitions?.[0];
+                const h = comp?.competitors?.find((c) => c.homeAway === "home");
+                const a = comp?.competitors?.find((c) => c.homeAway === "away");
+                const hs = Number(h?.score), as = Number(a?.score);
+                if (!h || !a || !Number.isFinite(hs) || !Number.isFinite(as))
+                    continue;
+                rows.push([String(e.id), String(h?.team?.id), hs, String(a?.team?.id), as]);
+            }
+            out[d] = rows;
+            const ageDays = (Date.parse(`${today.slice(0, 4)}-${today.slice(4, 6)}-${today.slice(6, 8)}`) -
+                Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`)) / 86_400_000;
+            if (allFinal && ageDays >= 2)
+                FINALS_PERM.set(key, rows);
+        }));
+        res.set("Cache-Control", "public, max-age=60").json({ sport, dates: out });
+    }
+    catch (err) {
+        console.error("GET /api/finals error:", err?.message || err);
+        res.status(502).json({ error: "finals_upstream_error" });
+    }
+});
 // ---- EXACT ESPN PASS-THROUGH (no cache, no wrapping) ----
 app.get("/api/espn/scoreboard", async (req, res) => {
     try {

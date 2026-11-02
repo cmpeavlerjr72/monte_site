@@ -475,6 +475,7 @@ function buildPlayerMap(data: any[]): PlayerMap {
 
 /* --------------------- Team logo & conference lookup --------------------- */
 import { getTeamLogo, normTeamKey } from "../utils/teamLogo";
+import { edgeBucket, valueBetsForGame } from "../lib/valueRecord";
 import { espnLogoUrl } from "../utils/espnLogos";
 
 /** ESPN's CDN logo for an NCAA team id — the LAST resort. team_info.csv only
@@ -4646,11 +4647,11 @@ function computeLineRecord(
         : typeof c.finalA === "number" && typeof c.finalB === "number" ? { A: c.finalA, B: c.finalB } : undefined;
       if (fin === undefined) continue;
       let contributed = false;
-      for (const [mk, agg] of [["spread", ats], ["total", tot], ["ml", ml]] as const) {
-        const v = pickValue(mk, lg, frame, wl.spread_total_price, fin, mode.dogs);
-        if (!v) continue;
+      // One shared grader (lib/valueRecord.ts): the CFB home tile calls the same function.
+      for (const v of valueBetsForGame(lg, frame, wl.spread_total_price, fin, mode.dogs)) {
+        const agg = v.market === "spread" ? ats : v.market === "total" ? tot : ml;
         agg[v.result]++; agg.pnl += v.pnl; contributed = true;
-        const b = splits.edge[v.edge >= 0.10 ? 2 : v.edge >= 0.06 ? 1 : 0];
+        const b = splits.edge[edgeBucket(v.edge)];
         b.n++; b.pnl += v.pnl;
         const fd = v.dog ? splits.dog : splits.fav;
         fd.n++; fd.pnl += v.pnl;
@@ -4742,6 +4743,16 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
   const [modeKind, setModeKind] = useState<"value" | "leans">("value");
   const [dogs, setDogs] = useState(false);
   const mode = useMemo<RecordMode>(() => ({ kind: modeKind, dogs }), [modeKind, dogs]);
+  /* Deep link from the CFB home tile: ?bet=total (or spread / ml) and/or ?edge=10
+     highlight that market row and the 10+ edge bucket in the Value record. Value
+     and the Open frame are already this strip's defaults. */
+  const [focus] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      const bet = q.get("bet");
+      return { bet: bet === "spread" || bet === "total" || bet === "ml" ? bet : null, edge10: q.get("edge") === "10" };
+    } catch { return { bet: null, edge10: false }; }
+  });
 
   /* PROJECTED (owner 2026-10-17): the same record, with every live game
      graded at the same frame's lines against its PROJECTED FINAL (current
@@ -4913,10 +4924,10 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
     );
   }
 
-  const rows: { label: string; record: string; pnl: number }[] = [];
-  const atsRec = fmtMarketRecord(rec.ats); if (atsRec) rows.push({ label: "ATS", record: atsRec, pnl: rec.ats.pnl });
-  const totRec = fmtMarketRecord(rec.tot); if (totRec) rows.push({ label: "Totals", record: totRec, pnl: rec.tot.pnl });
-  const mlRec = fmtMarketRecord(rec.ml); if (mlRec) rows.push({ label: "ML", record: mlRec, pnl: rec.ml.pnl });
+  const rows: { label: string; record: string; pnl: number; hot?: boolean }[] = [];
+  const atsRec = fmtMarketRecord(rec.ats); if (atsRec) rows.push({ label: "ATS", record: atsRec, pnl: rec.ats.pnl, hot: focus.bet === "spread" });
+  const totRec = fmtMarketRecord(rec.tot); if (totRec) rows.push({ label: "Totals", record: totRec, pnl: rec.tot.pnl, hot: focus.bet === "total" });
+  const mlRec = fmtMarketRecord(rec.ml); if (mlRec) rows.push({ label: "ML", record: mlRec, pnl: rec.ml.pnl, hot: focus.bet === "ml" });
   if (!rows.length) {
     const projOnly = projRowFor(true);
     return projOnly ? <>{projOnly}</> : null;
@@ -4932,8 +4943,9 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
   const bk = (label: string, b: Bucket) => {
     if (!b.n) return null;
     const f = fmtPnl(b.pnl);
+    const hot = focus.edge10 && label === "10+";
     return (
-      <span key={label} style={{ whiteSpace: "nowrap" }}>
+      <span key={label} style={{ whiteSpace: "nowrap", ...(hot ? { fontWeight: 800, color: "var(--brand-text)", textDecoration: "underline", textUnderlineOffset: 3 } : undefined) }}>
         {label} <span style={{ color: f.color, fontWeight: 700 }}>{f.text}</span> ({b.n})
       </span>
     );
@@ -4962,7 +4974,8 @@ function SlateTallyBar({ tally, cards, weekLines, weekLinesFcs = null, condensed
           return (
             <Fragment key={r.label}>
               <span style={{ color: "var(--muted)" }}>·</span>
-              <span title={`${r.label} ${r.record} · ${text}`}>{r.label} {r.record}</span>
+              <span title={`${r.label} ${r.record} · ${text}`}
+                style={r.hot ? { fontWeight: 800, color: "var(--brand-text)", textDecoration: "underline", textUnderlineOffset: 3 } : undefined}>{r.label} {r.record}</span>
             </Fragment>
           );
         })}

@@ -41,6 +41,8 @@ async function load() {
     `export * from ${JSON.stringify(src("liveJoin"))};`,
     `export { parseMbbSummary } from ${JSON.stringify(src("espnMbb"))};`,
     `export * from ${JSON.stringify(src("liveOddsCbb"))};`,
+    `export * from ${JSON.stringify(src("valueRecord"))};`,
+    `export { parseWeekLines, pickValue } from ${JSON.stringify(src("weekLines"))};`,
     `export * from ${JSON.stringify(resolve("src/utils/espnLogos").split("\\").join("/"))};`,
     `export { pickCbbDay, selectBandRows } from ${JSON.stringify(src("upNextCbb"))};`,
   ].join("\n"));
@@ -347,6 +349,46 @@ try {
   eq("a baked-in CDN url for a hosted id is localized", localizeLogoUrl("https://a.espncdn.com/i/teamlogos/ncaa/500/130.png"), "/logos/130.webp");
   eq("no id -> nothing", espnLogoUrl(null), undefined);
   eq("hasHostedLogo agrees with the manifest", hasHostedLogo("130") && !hasHostedLogo("99999"), true);
+} catch (e) { bad(String(e.stack || e)); }
+
+
+/* ---- CFB home tile: the shared Value-rule helper reproduces the board's numbers on a saved week ---- */
+try {
+  const { parseWeekLines, pickValue, seasonValue, valueBetsForGame, edgeBucket, roiOf, tallyN } = mod;
+  console.log("value record: saved week 09 (lines.json + finals)");
+  const lines = parseWeekLines(JSON.parse(await readFile("scripts/fixtures/value_week09_lines.json", "utf8")));
+  const finals = JSON.parse(await readFile("scripts/fixtures/value_week09_finals.json", "utf8"));
+  const games = Object.entries(lines.games).filter(([s, g]) => g.sim && finals[s])
+    .map(([s, lg]) => ({ lg, price: lines.spread_total_price, fin: { A: finals[s][0], B: finals[s][1] } }));
+  eq("games with a sim and a final", games.length > 30, true);
+
+  // REFERENCE: the scoreboard's Value loop exactly as it was written inline (ScoreboardV2 computeLineRecord),
+  // calling pickValue per market and bucketing at 0.10 / 0.06 -- not through valueBetsForGame.
+  const mk = () => ({ win: 0, loss: 0, push: 0, pnl: 0 });
+  const ref = { spread: mk(), total: mk(), ml: mk(), e10: mk(), e10bets: 0 };
+  const refEdge = [0, 0, 0];
+  for (const g of games) {
+    for (const m of ["spread", "total", "ml"]) {
+      const v = pickValue(m, g.lg, "open", g.price, g.fin, false);
+      if (!v) continue;
+      ref[m][v.result]++; ref[m].pnl += v.pnl;
+      const b = v.edge >= 0.10 ? 2 : v.edge >= 0.06 ? 1 : 0; refEdge[b]++;
+      if (b === 2) { ref.e10[v.result]++; ref.e10.pnl += v.pnl; }
+    }
+  }
+  const s = seasonValue(games, "open");
+  const same = (name, a, b) => eq(name, `${a.win}-${a.loss}-${a.push} ${a.pnl.toFixed(6)}`, `${b.win}-${b.loss}-${b.push} ${b.pnl.toFixed(6)}`);
+  same("Value totals: tile helper == board loop", s.totals, ref.total);
+  same("Value edge 10+ (all bet types): tile helper == board loop", s.edge10, ref.e10);
+  const viaBets = games.flatMap((g) => valueBetsForGame(g.lg, "open", g.price, g.fin, false));
+  eq("bets per edge bucket agree", [0, 1, 2].map((k) => viaBets.filter((b) => edgeBucket(b.edge) === k).length).join(), refEdge.join());
+  eq("ROI is units per bet risked", roiOf(s.totals), tallyN(s.totals) ? s.totals.pnl / tallyN(s.totals) : null, 1e-12);
+  eq("pushes are 0 units", viaBets.filter((b) => b.result === "push").every((b) => b.pnl === 0), true);
+  eq("spread/total grade at flat -110 (a win pays 100/110)", viaBets.filter((b) => b.market !== "ml" && b.result === "win").every((b) => Math.abs(b.pnl - 100 / 110) < 1e-9), true);
+  // frozen snapshot of the saved week, so a grading change shows up here before it shows up on the home page
+  console.log(`  info week 09: totals ${s.totals.win}-${s.totals.loss}-${s.totals.push} ${s.totals.pnl.toFixed(3)}u, edge10 ${s.edge10.win}-${s.edge10.loss}-${s.edge10.push} ${s.edge10.pnl.toFixed(3)}u`);
+  eq("snapshot totals", `${s.totals.win}-${s.totals.loss}-${s.totals.push}`, "24-16-0");
+  eq("snapshot edge10", `${s.edge10.win}-${s.edge10.loss}-${s.edge10.push}`, "19-16-1");
 } catch (e) { bad(String(e.stack || e)); }
 
 
