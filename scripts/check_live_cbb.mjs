@@ -41,6 +41,7 @@ async function load() {
     `export * from ${JSON.stringify(src("liveJoin"))};`,
     `export { parseMbbSummary } from ${JSON.stringify(src("espnMbb"))};`,
     `export * from ${JSON.stringify(src("liveOddsCbb"))};`,
+    `export { pickCbbDay, selectBandRows } from ${JSON.stringify(src("upNextCbb"))};`,
   ].join("\n"));
   const out = join(dir, "out.mjs");
   await build({
@@ -288,6 +289,48 @@ try {
   eq("total diff vs line", r.odds.totalDiff, 52 + 105.2083 - 168.5, 0.02);
   eq("OT with a lead -> ot placeholder kind", liveOddsCbb(g, { scoreA: 70, scoreB: 66, period: 3, clockSec: 200 }).kind, "ot");
   eq("no score -> no-state", liveOddsCbb(g, { period: 1, clockSec: 475 }).kind, "no-state");
+} catch (e) { bad(String(e.stack || e)); }
+
+
+/* ---- the CBB home band: which day, which games, live/final from the id-first join ---- */
+try {
+  const { pickCbbDay, selectBandRows, findTickLive, indexTickLive, tickLiveOfEvent, parseMbbStatus } = mod;
+  console.log("band: day selection");
+  const days = [{ id: "2026-11-02", date: "2026-11-02" }, { id: "2026-11-05", date: "2026-11-05" }, { id: "2026-11-09", date: "2026-11-09" }];
+  eq("today listed -> today", pickCbbDay(days, "2026-11-05").id, "2026-11-05");
+  eq("today has no games -> nearest day, ties to the future (11-03 is 1 day from 11-02 and 2 from 11-05)", pickCbbDay(days, "2026-11-03").id, "2026-11-02");
+  eq("equidistant -> the future day", pickCbbDay([{ id: "a", date: "2026-11-02" }, { id: "b", date: "2026-11-04" }], "2026-11-03").id, "b");
+  eq("preseason viewer -> opening night", pickCbbDay(days, "2026-10-20").id, "2026-11-02");
+  eq("season over -> last day", pickCbbDay(days, "2027-04-20").id, "2026-11-09");
+  eq("no days -> null", pickCbbDay([], "2026-11-02"), null);
+
+  console.log("band: game selection");
+  const at = (h) => `2026-11-02T${String(h).padStart(2, "0")}:00:00Z`;
+  const rows = [8, 11, 14, 16, 19, 22].map((h) => ({ slug: `g${h}`, time_utc: at(h) }));
+  const ms = (h, m = 0) => Date.parse(at(h)) + m * 60000;
+  eq("mid-day: games older than 4 h after tip drop, the rest lead", selectBandRows(rows, ms(15), 3).map((r) => r.slug).join(), "g14,g16,g19");
+  eq("games are in kickoff order even if the index is not", selectBandRows([...rows].reverse(), ms(7), 2).map((r) => r.slug).join(), "g8,g11");
+  eq("a day with finals only -> the last N, as football", selectBandRows(rows, ms(23) + 6 * 3600000, 2).map((r) => r.slug).join(), "g19,g22");
+  eq("the live feed retires an early final and keeps a long game in", selectBandRows(rows, ms(14, 30), 3,
+    (r) => (r.slug === "g8" ? false : r.slug === "g11" ? true : undefined)).map((r) => r.slug).join(), "g8,g14,g16");
+  eq("empty day -> empty band", selectBandRows([], ms(12), 5).length, 0);
+
+  console.log("band: live join (captured in-progress event)");
+  const ev = JSON.parse(await readFile("scripts/fixtures/espn_mbb_in_progress_event.json", "utf8"));
+  const idx = indexTickLive([tickLiveOfEvent(ev, parseMbbStatus(ev))]);
+  const row = { teamA: "Queens University", teamB: "Winthrop", A_espn_id: "2511", B_espn_id: "2737" };
+  const hit = findTickLive(idx, row);
+  eq("joined by ids", hit?.live.state, "in");
+  eq("status text is ESPN's short detail", /1st/.test(hit.live.text), true);
+  eq("scores oriented to A (sim home = Queens)", `${hit.scoreA}-${hit.scoreB}`, "22-14");
+  const drift = findTickLive(idx, { ...row, teamA: "Queens (NC)" });
+  eq("id join survives a drifted name", drift?.live.state, "in");
+  eq("name fallback when the row has no ids", findTickLive(idx, { teamA: "Queens University", teamB: "Winthrop" })?.live.state, "in");
+  eq("neutral swap: A is ESPN away -> scores flip", `${findTickLive(idx, { teamA: "Winthrop", teamB: "Queens University", A_espn_id: "2737", B_espn_id: "2511" }).scoreA}`, "14");
+  eq("no match -> undefined", findTickLive(idx, { teamA: "X", teamB: "Y", A_espn_id: "1", B_espn_id: "2" }), undefined);
+  const fin = JSON.parse(JSON.stringify(ev)); fin.status.type = { name: "STATUS_FINAL", state: "post", completed: true, shortDetail: "Final" };
+  fin.competitions[0].status = { ...fin.competitions[0].status, type: fin.status.type };
+  eq("a final event reads as final", findTickLive(indexTickLive([tickLiveOfEvent(fin, parseMbbStatus(fin))]), row).live.state, "final");
 } catch (e) { bad(String(e.stack || e)); }
 
 
