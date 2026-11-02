@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 // Pure, so scripts/check_fcs_names.mjs can verify the Kalshi join against the
 // real FBS + FCS school lists without booting this server.
 import { cfbNameKey, pairKeyOf } from "./cfbNames.js";
+import { cbbNameKey, cbbPairKeyOf } from "./cbbNames.js";
 import { registerSimbook } from "./simbook.js";
 // ACCOUNTS (docs/ACCOUNTS_DESIGN.md): the SERVICE-ROLE client. It exists to do
 // three things and nothing else — verify JWTs, write app_orders rows, and read
@@ -1246,13 +1247,19 @@ const KALSHI_STAT_SERIES: Record<string, string> = {
  * ------------------------------------------------------------------------ */
 type KalshiFeeParams = { fee_type: string; fee_multiplier: number };
 const FEE_TTL_MS = 6 * 60 * 60 * 1000;
-let FEE_CACHE: { at: number; params: Record<string, KalshiFeeParams> } | null = null;
-let FEE_INFLIGHT: Promise<Record<string, KalshiFeeParams>> | null = null;
+// Keyed by the requested series list: football and basketball ask for
+// different series, and one shared slot would hand either sport the other's
+// fee params for six hours.
+const FEE_CACHE = new Map<string, { at: number; params: Record<string, KalshiFeeParams> }>();
+const FEE_INFLIGHT = new Map<string, Promise<Record<string, KalshiFeeParams>>>();
 
 async function kalshiFeeParams(series: string[]): Promise<Record<string, KalshiFeeParams>> {
-  if (FEE_CACHE && Date.now() - FEE_CACHE.at < FEE_TTL_MS) return FEE_CACHE.params;
-  if (FEE_INFLIGHT) return FEE_INFLIGHT;
-  FEE_INFLIGHT = (async () => {
+  const feeKey = series.join(",");
+  const cached = FEE_CACHE.get(feeKey);
+  if (cached && Date.now() - cached.at < FEE_TTL_MS) return cached.params;
+  const pending = FEE_INFLIGHT.get(feeKey);
+  if (pending) return pending;
+  const work = (async () => {
     const out: Record<string, KalshiFeeParams> = {};
     const settled = await Promise.allSettled(
       series.map((s) => kalshiJson(`/series/${s}`))
@@ -1272,10 +1279,11 @@ async function kalshiFeeParams(series: string[]): Promise<Record<string, KalshiF
     }
     // Only cache a useful answer, so a total outage retries next request
     // instead of pinning an empty map for six hours.
-    if (Object.keys(out).length) FEE_CACHE = { at: Date.now(), params: out };
+    if (Object.keys(out).length) FEE_CACHE.set(feeKey, { at: Date.now(), params: out });
     return out;
-  })().finally(() => { FEE_INFLIGHT = null; });
-  return FEE_INFLIGHT;
+  })().finally(() => { FEE_INFLIGHT.delete(feeKey); });
+  FEE_INFLIGHT.set(feeKey, work);
+  return work;
 }
 
 /** The school a stat-market subtitle names, with the strike phrase stripped. */
@@ -1338,6 +1346,8 @@ type KalshiPayload = {
   reason?: string;
   season?: string;
   week?: string;
+  /** CBB only: the slate day (YYYY-MM-DD); `week` carries the same value. */
+  day?: string;
   matched?: number;
   unmatched?: string[];
   /** Stat series that failed this build; their quotes are simply absent. */
@@ -1571,17 +1581,60 @@ async function ourWeekGames(season: string, week: string): Promise<
   return [];
 }
 
+type SlateGame = { slug: string; teamA: string; teamB: string; date?: string };
+
+/**
+ * Sport-agnostic Kalshi <-> slate join. Football (KXNCAAF*) and men's college
+ * basketball (KXNCAAMB*) list the same market shapes — a two-market winner
+ * event titled "<away> vs <home>", "Over X.5 points" total rungs and
+ * "<Team> wins by over X.5" spread rungs — so the only per-sport inputs are
+ * the slate, the three series tickers, the stat families and the name key.
+ */
+type KalshiJoinSpec = {
+  season: string;
+  /** Period id echoed into the payload as `week` (a YYYY-MM-DD day for CBB). */
+  week: string;
+  loadSlate: () => Promise<SlateGame[]>;
+  gameSeries: string;
+  totalSeries: string;
+  spreadSeries: string;
+  /** series ticker -> stat name; {} when the sport has no stat families. */
+  statSeries: Record<string, string>;
+  nameKey: (s: string) => string;
+  pairKey: (a: string, b: string) => string;
+  /** Extra payload fields appended after `week` (football passes none). */
+  extra?: Record<string, unknown>;
+};
+
 async function buildKalshiCfb(season: string, week: string): Promise<KalshiPayload> {
+  return buildKalshiJoin({
+    season,
+    week,
+    loadSlate: () => ourWeekGames(season, week),
+    gameSeries: KALSHI_GAME_SERIES,
+    totalSeries: "KXNCAAFTOTAL",
+    spreadSeries: "KXNCAAFSPREAD",
+    statSeries: KALSHI_STAT_SERIES,
+    nameKey: cfbNameKey,
+    pairKey: pairKeyOf,
+  });
+}
+
+async function buildKalshiJoin(spec: KalshiJoinSpec): Promise<KalshiPayload> {
+  const { season, week, gameSeries, totalSeries, spreadSeries, extra } = spec;
+  const cfbNameKey = spec.nameKey;
+  const pairKeyOf = spec.pairKey;
+  const STAT_SERIES = spec.statSeries;
   const updated = new Date().toISOString();
 
-  const ours = await ourWeekGames(season, week);
+  const ours = await spec.loadSlate();
   if (!ours.length) {
-    return { available: false, reason: "no_slate", updated, season, week, games: [] };
+    return { available: false, reason: "no_slate", updated, season, week, ...extra, games: [] };
   }
 
-  const events = await kalshiEvents(KALSHI_GAME_SERIES);
+  const events = await kalshiEvents(gameSeries);
   if (!events.length) {
-    return { available: false, reason: "no_markets_listed", updated, season, week, games: [] };
+    return { available: false, reason: "no_markets_listed", updated, season, week, ...extra, games: [] };
   }
 
   // Index Kalshi events by unordered team pair + date. Titles read
@@ -1615,11 +1668,11 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
   // never per market. Adding the stat families grows the fan-out by 9 cheap
   // calls per 45s (a staged-empty family is a single empty page), which is
   // what keeps this route clear of the shared-IP 429 episode of 2026-08-26.
-  const statSeries = Object.keys(KALSHI_STAT_SERIES);
+  const statSeries = Object.keys(STAT_SERIES);
   const [winBy, totBy, sprBy] = await Promise.all([
-    kalshiMarketsBySeries("KXNCAAFGAME"),
-    kalshiMarketsBySeries("KXNCAAFTOTAL"),
-    kalshiMarketsBySeries("KXNCAAFSPREAD"),
+    kalshiMarketsBySeries(gameSeries),
+    kalshiMarketsBySeries(totalSeries),
+    kalshiMarketsBySeries(spreadSeries),
   ]);
 
   // The stat families fan out INDEPENDENTLY (allSettled, not all). Going from
@@ -1630,7 +1683,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
   // and it is LOGGED rather than swallowed, because the 2026-08-26 incident
   // was expensive precisely because it was invisible.
   const feeParamsP = kalshiFeeParams([
-    "KXNCAAFGAME", "KXNCAAFTOTAL", "KXNCAAFSPREAD", ...statSeries,
+    gameSeries, totalSeries, spreadSeries, ...statSeries,
   ]).catch(() => ({} as Record<string, KalshiFeeParams>));
   const statSettled = await Promise.allSettled(
     statSeries.map((s) => kalshiMarketsBySeries(s))
@@ -1684,7 +1737,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
   };
 
   const games = matches.map(({ slug, ev, teamA, teamB }): KalshiGame => {
-    const suffix = String(ev.event_ticker).replace(/^KXNCAAFGAME-/, "");
+    const suffix = String(ev.event_ticker).replace(new RegExp(`^${gameSeries}-`), "");
     const out: KalshiGame = {
       slug,
       event_ticker: ev.event_ticker,
@@ -1705,7 +1758,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     // over — the same half-integer grid team_stats.json publishes rungs on,
     // so the client joins by strike with no interpolation anywhere.
     for (let i = 0; i < statSeries.length; i++) {
-      const stat = KALSHI_STAT_SERIES[statSeries[i]];
+      const stat = STAT_SERIES[statSeries[i]];
       for (const m of seriesMarkets(statBy[i], statSeries[i], suffix)) {
         // Two live subtitle shapes, both verified 2026-08-26/28:
         //   "North Carolina: 300+"                  (the stat ladders)
@@ -1723,7 +1776,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     }
 
     // Winner: one binary market per team, identified by yes_sub_title.
-    for (const m of seriesMarkets(winBy, "KXNCAAFGAME", suffix)) {
+    for (const m of seriesMarkets(winBy, gameSeries, suffix)) {
       const k = cfbNameKey(m?.yes_sub_title ?? "");
       const price = marketPrice(m);
       const side = k === keyA ? "A" : k === keyB ? "B" : null;
@@ -1741,8 +1794,8 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     }
 
     // Total: "Over X.5 points scored"; floor_strike is the line.
-    const totalMarkets = seriesMarkets(totBy, "KXNCAAFTOTAL", suffix);
-    const spreadMarkets = seriesMarkets(sprBy, "KXNCAAFSPREAD", suffix);
+    const totalMarkets = seriesMarkets(totBy, totalSeries, suffix);
+    const spreadMarkets = seriesMarkets(sprBy, spreadSeries, suffix);
 
     // Totals: floor_strike is the line, yes = P(over).
     out.total_ladder = buildLadder(
@@ -1793,6 +1846,7 @@ async function buildKalshiCfb(season: string, week: string): Promise<KalshiPaylo
     updated,
     season,
     week,
+    ...extra,
     matched: games.length,
     unmatched,
     // Named so a degraded feed is visible to whoever is looking at the JSON,
@@ -1866,6 +1920,120 @@ app.get(
         updated: new Date().toISOString(),
         season,
         week,
+        games: [],
+      });
+    }
+  })
+);
+
+// ----------------------------------------------------------------------------
+// Men's college basketball (KXNCAAMB*) — same join, day-keyed slate.
+//
+// The CBB dataset (mvpeav/cbb-sims-<yr>, root <yr>/days/<YYYY-MM-DD>/) has
+// the football index shape (teamA = HOME, ET `date`), and Kalshi's ticker
+// date token equals that ET date, so the football join runs unchanged with
+// a basketball name overlay (./cbbNames.ts) and no stat families.
+// ----------------------------------------------------------------------------
+async function ourCbbDayGames(season: string, day: string): Promise<SlateGame[]> {
+  const m = season.match(/^cbb-(\d{4})$/);
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return [];
+  const yr = m[1];
+  const repo = `cbb-sims-${yr}`;
+  if (!HF_ARCHIVE_REPOS.has(repo) && !HF_LIVE_REPOS.has(repo)) return [];
+  try {
+    const url = `https://huggingface.co/datasets/${HF_OWNER}/${repo}/resolve/main/${yr}/days/${day}/index.json`;
+    const r = await fetchWithTimeout(url, { headers: { "user-agent": "monte-site-proxy" }, redirect: "follow" }, 12_000);
+    if (!r.ok) return [];
+    const j: any = await r.json();
+    return (j?.games ?? [])
+      .map((g: any) => ({
+        slug: String(g?.slug ?? ""),
+        teamA: String(g?.teamA ?? ""),
+        teamB: String(g?.teamB ?? ""),
+        date: g?.date ? String(g.date) : undefined,
+      }))
+      .filter((g: any) => g.slug && g.teamA && g.teamB);
+  } catch {
+    return [];
+  }
+}
+
+export async function buildKalshiCbb(season: string, day: string): Promise<KalshiPayload> {
+  return buildKalshiJoin({
+    season,
+    week: day,
+    loadSlate: () => ourCbbDayGames(season, day),
+    gameSeries: "KXNCAAMBGAME",
+    totalSeries: "KXNCAAMBTOTAL",
+    spreadSeries: "KXNCAAMBSPREAD",
+    statSeries: {},
+    nameKey: cbbNameKey,
+    pairKey: cbbPairKeyOf,
+    extra: { day },
+  });
+}
+
+app.get(
+  "/api/kalshi/cbb",
+  asyncRoute(async (req: Request, res: Response) => {
+    // Basketball namespace ("cbb-2027") + a slate DAY. Both are validated
+    // strictly and a bad value is refused rather than defaulted: a default
+    // would hand the client some other day's prices under its own slugs.
+    const season = String(req.query.season || "");
+    const day = String(req.query.day || "");
+    if (!/^cbb-\d{4}$/.test(season) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      res.status(400).json({ available: false, reason: "bad_request", updated: new Date().toISOString(), games: [] });
+      return;
+    }
+    const key = `cbb:${season}:${day}`;
+
+    res.set("Cache-Control", "public, max-age=45");
+
+    const hit = KALSHI_CACHE.get(key);
+    if (hit && Date.now() - hit.at < KALSHI_TTL_MS) {
+      res.json(hit.payload);
+      return;
+    }
+
+    let work = KALSHI_INFLIGHT.get(key);
+    if (!work) {
+      work = buildKalshiCbb(season, day)
+        .then((payload) => {
+          KALSHI_CACHE.set(key, { at: Date.now(), payload });
+          if (KALSHI_CACHE.size > 8) {
+            const oldest = KALSHI_CACHE.keys().next().value;
+            if (oldest !== undefined) KALSHI_CACHE.delete(oldest);
+          }
+          return payload;
+        })
+        .finally(() => KALSHI_INFLIGHT.delete(key));
+      KALSHI_INFLIGHT.set(key, work);
+    }
+
+    try {
+      res.json(await work);
+    } catch (err: any) {
+      console.error("[/api/kalshi/cbb] failed:", err?.message ?? err);
+      // STALE-IF-ERROR: a transient upstream failure should not blank every
+      // price on the page. The last good payload is worth far more than an
+      // empty one for the minute it takes Kalshi to answer again, so serve
+      // it (flagged `stale`) and only fall back to empty when we have never
+      // had a good build for this week.
+      const stale = KALSHI_CACHE.get(key);
+      if (stale) {
+        console.warn(`[/api/kalshi/cbb] serving stale payload for ${key} ` +
+          `(${Math.round((Date.now() - stale.at) / 1000)}s old)`);
+        res.json({ ...stale.payload, stale: true, reason: "upstream_unavailable" });
+        return;
+      }
+      // Never throw at the client: an unavailable market feed just hides the row.
+      res.json({
+        available: false,
+        reason: "upstream_unavailable",
+        updated: new Date().toISOString(),
+        season,
+        week: day,
+        day,
         games: [],
       });
     }

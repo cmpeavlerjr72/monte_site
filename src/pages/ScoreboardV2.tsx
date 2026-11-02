@@ -1,7 +1,7 @@
 // src/pages/ScoreboardV2.tsx — the sportsbook-grammar board, live beside the
 // classic one (since 2026-10-16 the V2 board IS /cfb/scoreboard; the classic
 // board lives at /cfb/scoreboard-classic so the owner can still flip).
-import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback, type SyntheticEvent } from "react";
 import * as Papa from "papaparse";
 import { PreviewLink } from "../components/blog/PreviewLink";
 import SlateSearch from "../components/SlateSearch";
@@ -62,7 +62,7 @@ import {
 } from "../lib/ownerPrefs";
 import { buildGameYesP, buildStatYesP, useTeamStatsDocs } from "../lib/teamStatMarkets";
 import type { FeeParams, Sizing, Suggestion, UnitMode } from "../lib/suggestedBets";
-import { getKalshiCfb, indexKalshiBySlug, type KalshiGame } from "../lib/kalshi";
+import { getKalshiCbb, getKalshiCfb, indexKalshiBySlug, type KalshiGame, type KalshiPayload } from "../lib/kalshi";
 import { getDkCfb, indexDkBySlug, type DkGame } from "../lib/dk";
 import {
   readPortalToken, writePortalToken, usePortalBook, computePortalBets,
@@ -494,11 +494,14 @@ function buildPlayerMap(data: any[]): PlayerMap {
 
 /* --------------------- Team logo & conference lookup --------------------- */
 import { getTeamLogo, normTeamKey } from "../utils/teamLogo";
+import { espnLogoUrl } from "../utils/espnLogos";
 
-/** ESPN's CDN logo for an NCAA team id. The self-hosted /logos copies cover
- *  the football schools in team_info.csv; a basketball-only school (or any
- *  name the CSV does not spell) falls through to this, keyed by the index
- *  row's A_espn_id / B_espn_id — the same ids the football export carries. */
+/** ESPN's CDN logo for an NCAA team id — the LAST resort. team_info.csv only
+ *  names football schools, but public/logos self-hosts a copy per ESPN id
+ *  (/logos/<id>.webp, basketball-only schools included), and the site
+ *  self-hosts precisely because some networks block espncdn.com. So a card
+ *  resolves name -> self-hosted id file -> this, and an <img> whose id file
+ *  404s falls back here once (logoFallbackOnError). */
 const espnCdnLogo = (id: string) => `https://a.espncdn.com/i/teamlogos/ncaa/500/${encodeURIComponent(id)}.png`;
 
 const TEAM_INFO_RAW = import.meta.glob("../assets/team_info.csv", { as: "raw", eager: true }) as Record<string, string>;
@@ -1060,6 +1063,24 @@ function sortCards(
 const fcsCardKey = (slug: string) => `fcs:${slug}`;
 
 /**
+ * Fee params for the board. The bet-pricing layer (lib/suggestedBets.ts)
+ * labels game rungs with the NCAAF series names ("KXNCAAFGAME" / SPREAD /
+ * TOTAL) as FAMILY ids and looks fees up by them, so on the basketball board
+ * Kalshi's KXNCAAMB* params are also filed under those family names.
+ * Football payloads pass through untouched.
+ */
+function feesForBoard(p: KalshiPayload | null, isCbb: boolean): Record<string, FeeParams> {
+  const fp = (p?.fee_params ?? {}) as Record<string, FeeParams>;
+  if (!isCbb) return fp;
+  const out: Record<string, FeeParams> = { ...fp };
+  for (const fam of ["GAME", "SPREAD", "TOTAL"]) {
+    const v = fp[`KXNCAAMB${fam}`];
+    if (v) out[`KXNCAAF${fam}`] = v;
+  }
+  return out;
+}
+
+/**
  * Grade the sim's spread/total/ML picks against a pair of final scores.
  *
  * Pure function factored out of `buildJsonCards` so the SAME math grades
@@ -1356,8 +1377,11 @@ type SportConfig = {
   divisions: boolean;
   /** The conference filter + search text off team_info.csv (a football file). */
   conferences: boolean;
-  /** The Kalshi + DK market feeds (/api/kalshi/cfb, /api/dk/cfb are NCAAF). */
+  /** The Kalshi market feed: /api/kalshi/cfb (NCAAF, week-keyed) for
+   *  football, /api/kalshi/cbb (KXNCAAMB*, day-keyed) for basketball. */
   markets: boolean;
+  /** The DK Predictions feed (/api/dk/cfb) — NCAAF only. */
+  dkMarkets: boolean;
   /** Accounts attribution for a placement; undefined = per division (football). */
   league?: LeagueId;
   panels: PanelFeatures;
@@ -1384,6 +1408,7 @@ const SPORT_CFG: Record<SportKey, SportConfig> = {
     divisions: true,
     conferences: true,
     markets: true,
+    dkMarkets: true,
     panels: ALL_PANELS,
     startWord: "Kickoff",
     classicPath: "/cfb/scoreboard-classic",
@@ -1415,7 +1440,8 @@ const SPORT_CFG: Record<SportKey, SportConfig> = {
     feedPeriod: (id) => Number(String(id).replace(/\D/g, "")) || 0,
     divisions: false,
     conferences: false,
-    markets: false,
+    markets: true,
+    dkMarkets: false,
     league: "ncaab",
     panels: { liveGamecast: false, teamStats: false },
     startWord: "Tipoff",
@@ -2166,11 +2192,15 @@ function ScoreboardPage({ sport }: { sport: SportKey }) {
   const [portalSeeds, setPortalSeeds] = useState<Map<string, SeedPair>>(new Map());
 
   useEffect(() => {
-    // The Kalshi feed is NCAAF (/api/kalshi/cfb coerces any other namespace to
-    // a football week), so a board with no market feed asks for nothing.
+    // A board with no market feed asks for nothing. Football asks
+    // /api/kalshi/cfb per namespace + week; basketball asks /api/kalshi/cbb
+    // for the selected DAY (the period's YYYY-MM-DD `date`, not its key).
     if (!cfg.markets || !season || !selectedWeek) { setKalshiBySlug(new Map()); setKalshiStamp(""); setKalshiFees({}); return; }
-    const weekId =
-      weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
+    const period = weekOptions.find((w) => w.legacyKey === selectedWeek);
+    const weekId = period?.id ?? selectedWeek;
+    const isCbb = cfg.key === "cbb";
+    const cbbDay = isCbb ? (period?.date ?? "") : "";
+    if (isCbb && !/^\d{4}-\d{2}-\d{2}$/.test(cbbDay)) { setKalshiBySlug(new Map()); setKalshiStamp(""); setKalshiFees({}); return; }
 
     const ac = new AbortController();
     let alive = true;
@@ -2180,8 +2210,9 @@ function ScoreboardPage({ sport }: { sport: SportKey }) {
         // Kalshi events to whichever dataset it is asked about, so the FCS
         // call needs no client-side name handling — see server/cfbNames.ts.
         const [fbsPayload, fcsPayload] = await Promise.all([
-          showFbs ? getKalshiCfb(season, weekId, ac.signal) : null,
-          showFcs ? getKalshiCfb(fcsNs, weekId, ac.signal) : null,
+          isCbb ? getKalshiCbb(season, cbbDay, ac.signal)
+            : showFbs ? getKalshiCfb(season, weekId, ac.signal) : null,
+          !isCbb && showFcs ? getKalshiCfb(fcsNs, weekId, ac.signal) : null,
         ]);
         if (!alive) return;
 
@@ -2193,7 +2224,7 @@ function ScoreboardPage({ sport }: { sport: SportKey }) {
 
         setKalshiBySlug(merged);
         // Fee params are exchange-level, identical across namespaces.
-        setKalshiFees((fbsPayload?.fee_params ?? fcsPayload?.fee_params ?? {}) as Record<string, FeeParams>);
+        setKalshiFees(feesForBoard(fbsPayload ?? fcsPayload, isCbb));
         // Primitive stamp for the scan signature — must move whenever either
         // feed does, or a refreshed FCS payload would not retrigger the scan.
         setKalshiStamp(
@@ -2211,7 +2242,7 @@ function ScoreboardPage({ sport }: { sport: SportKey }) {
   // DK Predictions: same week id, same namespaces, same card-key merge as the
   // Kalshi feed above. Fails to an empty map (no chips), never an error.
   useEffect(() => {
-    if (!cfg.markets || !season || !selectedWeek) { setDkBySlug(new Map()); return; }
+    if (!cfg.dkMarkets || !season || !selectedWeek) { setDkBySlug(new Map()); return; }
     const weekId =
       weekOptions.find((w) => w.legacyKey === selectedWeek)?.id ?? selectedWeek;
     const ac = new AbortController();
@@ -3998,14 +4029,34 @@ function KickWeatherChip({
   );
 }
 
-/** A card's logo for one side: the self-hosted copy by school name, else
- *  ESPN's CDN by the index row's team id (basketball-only schools, and any
- *  spelling team_info.csv lacks). */
+/** A card's logo for one side, in order: (1) the self-hosted copy by school
+ *  name (team_info.csv — every football card, unchanged); (2) the self-hosted
+ *  copy by the index row's ESPN id (/logos/<id>.webp — basketball-only
+ *  schools and any spelling team_info.csv lacks); (3) ESPN's CDN by that id. */
 function cardLogo(card: CardGame, side: "A" | "B"): string | undefined {
   const local = getTeamLogo(side === "A" ? card.teamA : card.teamB);
   if (local) return local;
   const id = side === "A" ? card.jsonRow?.A_espn_id : card.jsonRow?.B_espn_id;
+  return id ? (espnLogoUrl(id) ?? espnCdnLogo(id)) : undefined;
+}
+
+/** The CDN URL an <img> showing cardLogo() should retry ONCE if the
+ *  self-hosted id file is missing (a handful of crosswalk ids have no local
+ *  copy). Undefined when cardLogo resolved by name — nothing to fall back to. */
+function cardLogoFallback(card: CardGame, side: "A" | "B"): string | undefined {
+  if (getTeamLogo(side === "A" ? card.teamA : card.teamB)) return undefined;
+  const id = side === "A" ? card.jsonRow?.A_espn_id : card.jsonRow?.B_espn_id;
   return id ? espnCdnLogo(id) : undefined;
+}
+
+/** onError for a card logo carrying `data-fallback`: swap to it once. The
+ *  data-fell-back flag makes a failing fallback a dead end, never a loop. */
+function logoFallbackOnError(e: SyntheticEvent<HTMLImageElement>) {
+  const img = e.currentTarget;
+  const fb = img.dataset.fallback;
+  if (!fb || img.dataset.fellBack) return;
+  img.dataset.fellBack = "1";
+  img.src = fb;
 }
 
 export function GameCard({
@@ -4193,10 +4244,12 @@ export function GameCard({
   const nameSize = condensed ? 12 : 13.5;
 
   const teamCell = (team: string, logo: string | null | undefined, color: string | undefined,
-                    proj: number, real: number | undefined, won: boolean) => (
+                    proj: number, real: number | undefined, won: boolean,
+                    logoFallback?: string) => (
     <div style={{ display: "flex", alignItems: "center", gap: condensed ? 6 : 8, minWidth: 0, cursor: "pointer" }}>
       {logo ? (
-        <img src={logo} alt="" width={logoPx} height={logoPx} style={{ objectFit: "contain", flex: "none" }} loading="lazy" />
+        <img src={logo} alt="" width={logoPx} height={logoPx} style={{ objectFit: "contain", flex: "none" }} loading="lazy"
+          data-fallback={logoFallback} onError={logoFallbackOnError} />
       ) : (
         <div style={{ width: logoPx, height: logoPx, borderRadius: 6, background: color ?? "var(--brand)", flex: "none" }} />
       )}
@@ -4231,8 +4284,8 @@ export function GameCard({
   );
   const aWon = showReal && (card.finalA as number) >= (card.finalB as number);
   const bWon = showReal && (card.finalB as number) >= (card.finalA as number);
-  const cellB = teamCell(card.teamB, bLogo, bColor, projB, card.finalB, !cardIsFinal || bWon);
-  const cellA = teamCell(card.teamA, aLogo, aColor, projA, card.finalA, !cardIsFinal || aWon);
+  const cellB = teamCell(card.teamB, bLogo, bColor, projB, card.finalB, !cardIsFinal || bWon, cardLogoFallback(card, "B"));
+  const cellA = teamCell(card.teamA, aLogo, aColor, projA, card.finalA, !cardIsFinal || aWon, cardLogoFallback(card, "A"));
 
   /* Final grading, placed on the cell it was graded on: the pick's team row
      for spread/ML, Over = top row / Under = bottom for the total. Verified and
@@ -5186,10 +5239,12 @@ function CardPanelHost({
           display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0,
           fontSize: 13, fontWeight: 800, color: "var(--brand-text)", whiteSpace: "nowrap",
         }}>
-          {logoB && <img src={logoB} alt="" width={20} height={20} style={{ objectFit: "contain", flex: "none" }} />}
+          {logoB && <img src={logoB} alt="" width={20} height={20} style={{ objectFit: "contain", flex: "none" }}
+            data-fallback={logoB === cardLogo(card, "B") ? cardLogoFallback(card, "B") : undefined} onError={logoFallbackOnError} />}
           {card.teamB}
           <span style={{ color: "var(--muted)", fontWeight: 600 }}>@</span>
-          {logoA && <img src={logoA} alt="" width={20} height={20} style={{ objectFit: "contain", flex: "none" }} />}
+          {logoA && <img src={logoA} alt="" width={20} height={20} style={{ objectFit: "contain", flex: "none" }}
+            data-fallback={logoA === cardLogo(card, "A") ? cardLogoFallback(card, "A") : undefined} onError={logoFallbackOnError} />}
           {card.teamA}
         </span>
         {headerMeta && (

@@ -171,6 +171,31 @@ export async function getKalshiCfb(
   }
 }
 
+/**
+ * Men's college basketball: the same payload shape from /api/kalshi/cbb,
+ * keyed by the slate DAY (YYYY-MM-DD) of the cbb-<yr> namespace instead of a
+ * football week. `week` in the payload echoes the day.
+ */
+export async function getKalshiCbb(
+  season: string,
+  dayId: string,
+  signal?: AbortSignal
+): Promise<KalshiPayload> {
+  try {
+    const res = await fetch(
+      `/api/kalshi/cbb?season=${encodeURIComponent(season)}&day=${encodeURIComponent(dayId)}`,
+      { signal }
+    );
+    if (!res.ok) return EMPTY;
+    const json = (await res.json()) as KalshiPayload;
+    return json && typeof json === "object" && Array.isArray(json.games) ? json : EMPTY;
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") throw err;
+    console.warn("[kalshi] cbb feed unavailable:", err);
+    return EMPTY;
+  }
+}
+
 export function indexKalshiBySlug(p: KalshiPayload): Map<string, KalshiGame> {
   const m = new Map<string, KalshiGame>();
   if (!p.available) return m;
